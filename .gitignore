@@ -1,0 +1,46 @@
+# Node / Expo
+node_modules/
+.expo/
+.expo-shared/
+dist/
+web-build/
+*.tsbuildinfo
+
+# Python / BFF
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Segredos e ambiente
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Build nativo
+android/
+ios/
+*.apk
+*.aab
+*.ipa
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Saída de trabalho local
+*.log
+/tmp/
+scratch/

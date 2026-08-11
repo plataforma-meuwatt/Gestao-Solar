@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Gestão Solar",
+    "slug": "gestao-solar",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "gestaosolar",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#02061A",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.meuwatt.gestaosolar"
+    },
+    "android": {
+      "package": "com.meuwatt.gestaosolar",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      ["expo-splash-screen", { "backgroundColor": "#02061A", "resizeMode": "contain" }]
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:8100"
+    }
+  }
+}

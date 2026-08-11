@@ -1,0 +1,19 @@
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+sqlalchemy==2.0.43
+alembic==1.16.5
+psycopg2-binary==2.9.10
+pydantic==2.11.9
+pydantic-settings==2.11.0
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+httpx==0.28.1
+python-multipart==0.0.20
+
+# PDF sob demanda (Fase 5) — Chromium headless rodando o motor vetorial do mw-fe
+playwright==1.55.0
+
+# Testes
+pytest==8.4.2
+pytest-asyncio==1.2.0
+respx==0.22.0
