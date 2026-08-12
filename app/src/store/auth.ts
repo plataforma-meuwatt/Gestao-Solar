@@ -7,10 +7,10 @@
  * interceptor de 401 dispara no cold start.
  */
 
-import * as SecureStore from 'expo-secure-store'
 import { create } from 'zustand'
 
 import { api, definirToken } from '@/lib/api'
+import { apagar, gravar, ler } from '@/lib/cofre'
 
 const CHAVE = 'gestaosolar.sessao.v1'
 
@@ -42,7 +42,7 @@ export const useAuth = create<EstadoAuth>((set) => ({
 
   hidratar: async () => {
     try {
-      const bruto = await SecureStore.getItemAsync(CHAVE)
+      const bruto = await ler(CHAVE)
       if (bruto) {
         const s = JSON.parse(bruto) as Sessao
         definirToken(s.token)
@@ -61,13 +61,13 @@ export const useAuth = create<EstadoAuth>((set) => ({
       senha,
     })
     const sessao: Sessao = { token: data.token, usuario: data.usuario }
-    await SecureStore.setItemAsync(CHAVE, JSON.stringify(sessao))
+    await gravar(CHAVE, JSON.stringify(sessao))
     definirToken(sessao.token)
     set({ token: sessao.token, usuario: sessao.usuario })
   },
 
   sair: async () => {
-    await SecureStore.deleteItemAsync(CHAVE)
+    await apagar(CHAVE)
     definirToken(null)
     set({ token: null, usuario: null })
   },
