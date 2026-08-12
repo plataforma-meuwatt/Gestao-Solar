@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* As faces vêm do BFF (`/painel/fontes/…`), as mesmas seis do app e do motor de PDF.
+   Sem CDN: a fonte é parte da identidade e não pode depender de rede de terceiro. */
+@font-face {
+  font-family: Figtree;
+  src: url('/painel/fontes/Figtree-400.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Figtree;
+  src: url('/painel/fontes/Figtree-500.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: Figtree;
+  src: url('/painel/fontes/Figtree-600.ttf') format('truetype');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: Figtree;
+  src: url('/painel/fontes/Figtree-700.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/painel/fontes/IBMPlexMono-500.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-fundo text-corpo font-sans antialiased;
+    background-image: radial-gradient(
+      60rem 26rem at 50% -18rem,
+      rgba(64, 110, 255, 0.16),
+      transparent 70%
+    );
+    background-attachment: fixed;
+  }
+  /* Todo número alinhado em coluna: sem isto os valores dançam ao atualizar. */
+  .mono {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-ambar ring-offset-2 ring-offset-fundo;
+  }
+}
+
+@layer components {
+  .cartao {
+    @apply bg-superficie border border-borda rounded-card;
+  }
+  .campo {
+    @apply h-11 w-full rounded-campo bg-afundado border border-borda px-3.5 text-corpo
+           placeholder:text-fraco focus:border-ambar focus:outline-none;
+  }
+  .rotulo-campo {
+    @apply block text-xs font-medium text-rotulo mb-1.5;
+  }
+  .btn {
+    @apply h-11 px-4 rounded-campo font-semibold text-sm inline-flex items-center
+           justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed
+           transition-colors;
+  }
+  .btn-primario {
+    @apply btn bg-ambar text-fundo hover:bg-ambar-texto;
+  }
+  .btn-secundario {
+    @apply btn bg-superficie-alta border border-borda text-forte hover:bg-borda-forte;
+  }
+  .btn-fantasma {
+    @apply btn h-9 px-3 text-xs bg-transparent border border-borda text-rotulo
+           hover:text-forte hover:border-borda-forte;
+  }
+  .rotulo-secao {
+    @apply text-[11px] font-semibold tracking-[0.08em] uppercase text-rotulo;
+  }
+}
