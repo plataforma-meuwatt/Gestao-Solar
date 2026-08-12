@@ -126,7 +126,21 @@ Carregando (skeleton, nunca spinner solto), vazio, erro, offline com selo de hor
 
 ---
 
-## 6. O que NÃO existe (não invente)
+## 6. Pendências conhecidas
+
+**`react-native-screens` duplicado.** O `expo-doctor` aponta duas versões na árvore: a
+direta (`~4.26.0`, que o SDK 57 valida) e a `4.27.0` que o `expo-router` traz aninhada.
+Existe um `overrides` no `package.json` que resolve numa instalação limpa. Não afeta o
+Expo Go — lá os módulos nativos vêm do próprio app — mas **precisa estar resolvido antes
+do primeiro build nativo** (Fase 8), porque um build só admite uma versão de cada módulo
+nativo.
+
+**Expo Go exige a build do SDK 57.** Cada build do Expo Go embute uma única versão de SDK.
+A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev/go).
+
+---
+
+## 7. O que NÃO existe (não invente)
 
 - Não há gateway de pagamento. As mensalidades são cadastradas à mão no BFF.
 - Não há endpoint `/equipment/{id}/history` no mw-api. A visão de histórico do equipamento

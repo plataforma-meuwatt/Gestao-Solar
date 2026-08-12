@@ -6,15 +6,13 @@
     "orientation": "portrait",
     "scheme": "gestaosolar",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "backgroundColor": "#02061A",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.meuwatt.gestaosolar"
     },
     "android": {
-      "package": "com.meuwatt.gestaosolar",
-      "edgeToEdgeEnabled": true
+      "package": "com.meuwatt.gestaosolar"
     },
     "plugins": [
       "expo-router",
