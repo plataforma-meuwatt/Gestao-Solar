@@ -40,21 +40,35 @@ ver" fica num lugar só.
 CORS não é problema: app nativo não é browser, e o BFF fala com os upstreams
 server-to-server. Nada a mudar no `CORS_ORIGINS` do mw-api.
 
-## Autenticação
+## Autenticação — contas conectadas
 
-**Login** (`POST /api/v1/auth/login`): recebe e-mail + senha e tenta autenticar nos dois
-upstreams — `POST /auth/login` do mw-api e `POST /api/v1/meuacesso/auth/login` do meuPlano.
-Basta um aceitar. O que aceitou define a identidade; se os dois aceitarem, os dois vínculos
-são gravados no `gs_user`.
+> Decisão detalhada em [DECISAO_IDENTIDADE.md](DECISAO_IDENTIDADE.md). Este desenho
+> substitui a tentativa dupla de login que constava no plano original.
 
-**A senha só autentica.** Para as chamadas de dados, o BFF usa **credenciais de serviço**
-(uma conta técnica em cada sistema) e aplica a autorização por conta própria. O JWT do
-usuário expira (24 h no mw-api) e guardar senha de usuário para renovar seria inaceitável.
+**O Gestão Solar tem conta própria** (e-mail + senha dele). Cada produto mantém o login que
+já tem — nada muda para quem usa o meuWatt ou o meuPlano hoje.
 
-**O escopo é capturado no login**, enquanto o BFF ainda tem o token do usuário: chama
-`GET /plants` (mw-api) e o escopo de usinas do meuPlano, e grava em `gs_user_plant_access`.
-Revalidação a cada login e a cada 24 h. Se o dono perder acesso a uma usina lá, perde aqui
-no próximo ciclo.
+Dentro do app, o cliente **conecta** as contas dos outros produtos, uma vez cada. A conexão
+não guarda a senha: guarda um **token de aplicativo**, longo, revogável e cifrado em
+repouso, específico para o Gestão Solar.
+
+```
+gs_users        id, email, senha própria, nome
+gs_conexoes     gs_user_id, produto, usuario_remoto, token_cifrado,
+                conectado_em, ultima_renovacao, revogado_em
+```
+
+O meuPlano **já tem o fluxo pronto** (`app_login.py` — autorizar → trocar por `device_token`
+revogável → renovar), construído para o Analisador de Instrumentos; o Gestão Solar entra
+como mais um aplicativo autorizado. O meuWatt precisa do equivalente: tem device flow, mas
+sem token renovável.
+
+Conectar o meuWatt e conectar o meuPlano são passos **independentes** — quem contratou só um
+produto conecta só ele, e o app esconde a aba correspondente.
+
+**O escopo de usinas** vem de cada conexão: com o token daquela conexão, o BFF pergunta a
+cada produto quais usinas aquela pessoa vê. É isso que também recorta a conciliação para
+"as poucas usinas deste cliente" (abaixo).
 
 ### Papéis que já existem e são reaproveitados
 
@@ -68,7 +82,13 @@ Não se inventa autorização do zero — o BFF confia nesses papéis e apenas o
 ## Vínculo entre as usinas dos dois sistemas
 
 Os dois sistemas nunca se falaram. O `Usina.plant_code` do meuPlano existe "p/ reconciliação
-futura" mas está vazio. O vínculo mora no BFF, em `gs_plant_link`:
+futura" mas está vazio.
+
+**A conexão de contas recorta o problema:** quando o cliente conecta os dois produtos, o BFF
+descobre quais usinas de cada lado são dele. O casamento deixa de ser "todas contra todas" e
+vira "as poucas deste cliente" — tipicamente 3 contra 2. Nesse recorte, quem confirma é o
+próprio cliente, no primeiro acesso; ele conhece as usinas dele melhor que qualquer
+algoritmo. O vínculo confirmado mora no BFF, em `gs_plant_link`:
 
 | coluna | conteúdo |
 |---|---|
