@@ -5,24 +5,28 @@ a mesma coisa **fatiada por rodada**, cada arquivo autocontido (contexto + princ
 identidade + navegação + as telas daquela rodada), pronto para colar sem precisar de mais
 nada.
 
-Mandar os 7 grupos de uma vez produz resultado raso — o designer não tem espaço para
-pensar em 35 telas ao mesmo tempo, e a linguagem visual sai inconsistente entre elas.
-
 ## Ordem
 
-| Rodada | Arquivo | Telas | Por quê nesta ordem |
+| Rodada | Arquivo | Telas | Situação |
 |---|---|---|---|
-| 1 | [`01-entrada-inicio.md`](01-entrada-inicio.md) | 1.1–1.3, 2.1–2.3 | Fixa card, KPI, faixa de atenção e cabeçalho colapsável — todo o resto herda |
-| 2 | `02-usinas-geracao.md` | 3.1–3.6 | Lista, visão geral e as quatro visões de geração |
-| 3 | `03-mapa-equipamentos.md` | 3.7–3.13 | Mapa da planta e os detalhes por tipo de equipamento |
-| 4 | `04-manutencao.md` | 3.14–3.17 | Cronograma, item e OS |
-| 5 | `05-documentos.md` | 4.1–4.5 | Central de PDF e visualizador |
-| 6 | `06-financeiro.md` | 5.1–5.2 | Mensalidades |
-| 7 | `07-assistente-sistema.md` | 6.1–6.4, 7.1–7.4 | Chat, credencial revelável, perfil e estados transversais |
+| 1 | [`01-entrada-inicio.md`](01-entrada-inicio.md) | 1.1–1.3, 2.1–2.3 | **Entregue e implementado.** O designer foi além e trouxe junto 3.1–3.6 (usinas e geração), 3.8–3.9 (equipamentos e inversor) |
+| 2 | [`02-documentos-financeiro.md`](02-documentos-financeiro.md) | 4.1–4.5, 5.1–5.2 | Documentos e Financeiro |
+| 3 | a escrever | 6.1–6.4, 7.1–7.4 | Assistente (com o card de credencial revelável) e as telas de sistema |
+| 4 | a escrever | 3.7, 3.10–3.13 | Mapa da planta e os detalhes de estação solarimétrica e relés |
+| 5 | a escrever | 3.14–3.17 | Cronograma, item do cronograma e OS |
 
-Os arquivos das rodadas 2 a 7 são gerados a partir do `PROMPT_DESIGNER.md` no momento de
-usar — o cabeçalho (contexto, princípios, identidade, navegação) é o mesmo em todos, muda
-só a seção "AS TELAS DESTA RODADA" e a prancha pedida ao final.
+**O que ficou para trás:** a rodada 1 pulou à frente e cobriu as telas de geração, mas o
+**mapa da planta** (3.7) e o bloco de **manutenção** (3.14–3.17) continuam sem desenho. O
+mapa é a tela mais difícil do produto e merece uma rodada só dele; a manutenção depende de
+decidir como a matriz de 12 meses cabe em 390 pt sem virar planilha.
+
+O primeiro arquivo é autocontido (contexto + princípios + identidade + navegação). A partir
+do segundo, os prompts são de **continuidade**: presumem que o designer está no mesmo
+projeto, com os componentes da rodada 1 já criados, e mandam reusá-los. Isso é o que
+mantém a coerência entre rodadas — e é bem mais curto de ler.
+
+Mandar os 7 grupos de uma vez produz resultado raso: o designer não tem espaço para pensar
+em 35 telas ao mesmo tempo, e a linguagem visual sai inconsistente entre elas.
 
 ## Ao receber o resultado de uma rodada
 
