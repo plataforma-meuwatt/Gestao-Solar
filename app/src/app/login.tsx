@@ -28,6 +28,7 @@ import { ambarAlpha, cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme
 
 export default function Login() {
   const entrar = useAuth((s) => s.entrar)
+  const entrarEmDemonstracao = useAuth((s) => s.entrarEmDemonstracao)
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
   const [mostrarSenha, setMostrarSenha] = useState(false)
@@ -35,9 +36,18 @@ export default function Login() {
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
 
-  const podeEntrar = email.trim().length > 0 && senha.length > 0 && !carregando
+  const preenchido = email.trim().length > 0 && senha.length > 0
+  // Em desenvolvimento o botão nunca fica travado: com os campos vazios ele entra em
+  // demonstração, que é o único caminho enquanto o BFF não existe.
+  const podeEntrar = (preenchido || __DEV__) && !carregando
 
   async function aoEntrar() {
+    if (__DEV__ && !preenchido) {
+      await entrarEmDemonstracao()
+      router.replace('/(tabs)')
+      return
+    }
+
     setErro(null)
     setCarregando(true)
     try {
@@ -45,6 +55,8 @@ export default function Login() {
       router.replace('/(tabs)')
     } catch (e) {
       setErro(mensagemDeErro(e))
+      // Sem servidor no ar, insistir na credencial não leva a lugar nenhum — a saída de
+      // desenvolvimento fica logo abaixo do erro.
     } finally {
       setCarregando(false)
     }
@@ -120,11 +132,19 @@ export default function Login() {
             <View style={estilos.progressoPreenchido} />
           </View>
         ) : (
-          <Botao titulo="Entrar" onPress={() => void aoEntrar()} desabilitado={!podeEntrar} />
+          <Botao
+            titulo={__DEV__ && !preenchido ? 'Entrar sem senha' : 'Entrar'}
+            onPress={() => void aoEntrar()}
+            desabilitado={!podeEntrar}
+          />
         )}
 
         <Text style={estilos.apoio}>
-          {carregando ? 'Entrando…' : 'Use o mesmo login do meuWatt ou do meuPlano.'}
+          {carregando
+            ? 'Entrando…'
+            : __DEV__ && !preenchido
+              ? 'Modo desenvolvimento: entra com dados de exemplo, sem servidor.'
+              : 'Use o mesmo login do meuWatt ou do meuPlano.'}
         </Text>
 
         {!carregando ? (

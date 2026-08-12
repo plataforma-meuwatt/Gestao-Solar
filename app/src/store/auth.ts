@@ -32,7 +32,25 @@ type EstadoAuth = {
   hidratado: boolean
   hidratar: () => Promise<void>
   entrar: (email: string, senha: string) => Promise<void>
+  entrarEmDemonstracao: () => Promise<void>
   sair: () => Promise<void>
+}
+
+/**
+ * Sessão de mentira para percorrer as telas antes de o BFF existir.
+ *
+ * O token é `demo` de propósito: se alguma tela tentar chamar a API de verdade com ele, o
+ * servidor recusa — é melhor falhar visivelmente do que passar por autenticado. A entrada
+ * só aparece em `__DEV__`, então não existe no app publicado.
+ */
+const USUARIO_DEMO: Usuario = {
+  id: 0,
+  nome: 'Renan Moraes',
+  email: 'demonstracao@gestaosolar.app',
+  empresa: 'Solaris Energia',
+  tem_meuwatt: true,
+  tem_meuplano: true,
+  nivel_acesso: 2,
 }
 
 export const useAuth = create<EstadoAuth>((set) => ({
@@ -61,6 +79,13 @@ export const useAuth = create<EstadoAuth>((set) => ({
       senha,
     })
     const sessao: Sessao = { token: data.token, usuario: data.usuario }
+    await gravar(CHAVE, JSON.stringify(sessao))
+    definirToken(sessao.token)
+    set({ token: sessao.token, usuario: sessao.usuario })
+  },
+
+  entrarEmDemonstracao: async () => {
+    const sessao: Sessao = { token: 'demo', usuario: USUARIO_DEMO }
     await gravar(CHAVE, JSON.stringify(sessao))
     definirToken(sessao.token)
     set({ token: sessao.token, usuario: sessao.usuario })
