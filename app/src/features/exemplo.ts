@@ -241,6 +241,148 @@ export const equipamentos: Equipamento[] = [
 
 export const resumoEquipamentos = { parados: 2, alerta: 1, semDados: 1 }
 
+/* ------------------------------------------------------------ Documentos */
+
+export type PecaPdf = { nome: string; tamanho: string; offline: boolean }
+
+/**
+ * Um fechamento mensal são DUAS peças — Relatório de Geração e Anexo de Paradas — e elas
+ * andam juntas. É assim que o meuWatt publica hoje (`kind` = geracao | paradas), e por
+ * isso o card agrupa em vez de listar dois itens soltos.
+ */
+export type Fechamento = {
+  id: string
+  competencia: string
+  usina: string
+  emitidoEm: string
+  pecas: PecaPdf[]
+}
+
+export const fechamentos: Fechamento[] = [
+  {
+    id: 'pf-2026-07',
+    competencia: 'Julho de 2026',
+    usina: 'Porto Ferreira',
+    emitidoEm: '01/08/2026',
+    pecas: [
+      { nome: 'Relatório de Geração', tamanho: '2,4 MB', offline: true },
+      { nome: 'Anexo de Paradas', tamanho: '640 kB', offline: true },
+    ],
+  },
+  {
+    id: 'rb-2026-07',
+    competencia: 'Julho de 2026',
+    usina: 'Ribeirão Bonito',
+    emitidoEm: '01/08/2026',
+    pecas: [
+      { nome: 'Relatório de Geração', tamanho: '2,1 MB', offline: false },
+      { nome: 'Anexo de Paradas', tamanho: '512 kB', offline: false },
+    ],
+  },
+  {
+    id: 'pf-2026-06',
+    competencia: 'Junho de 2026',
+    usina: 'Porto Ferreira',
+    emitidoEm: '01/07/2026',
+    pecas: [
+      { nome: 'Relatório de Geração', tamanho: '2,3 MB', offline: false },
+      { nome: 'Anexo de Paradas', tamanho: '588 kB', offline: false },
+    ],
+  },
+]
+
+export const tiposRelatorio = ['Diário', 'Mensal', 'Anual', 'UCs']
+
+/* ------------------------------------------------------------- Financeiro */
+
+export type SituacaoFatura = 'pago' | 'aVencer' | 'emAberto' | 'vencido'
+
+export const situacaoRotulo: Record<SituacaoFatura, string> = {
+  pago: 'Pago',
+  aVencer: 'A vencer',
+  emAberto: 'Em aberto',
+  vencido: 'Vencido',
+}
+
+export const situacaoTom: Record<SituacaoFatura, Tom> = {
+  pago: 'ok',
+  aVencer: 'alerta',
+  emAberto: 'semDados',
+  vencido: 'parado',
+}
+
+/**
+ * O dono assina dois produtos e recebe uma cobrança só. A soma dos dois é o número que o
+ * card do Início anuncia — se um dia divergir, é bug de agregação no BFF, não de tela.
+ */
+export const assinaturas = [
+  {
+    id: 'meuwatt',
+    produto: 'meuWatt',
+    descricao: 'monitoramento',
+    valor: 'R$ 2.480,00',
+    diaVencimento: 15,
+    situacao: 'aVencer' as SituacaoFatura,
+  },
+  {
+    id: 'meuplano',
+    produto: 'meuPlano',
+    descricao: 'manutenção',
+    valor: 'R$ 1.700,00',
+    diaVencimento: 15,
+    situacao: 'aVencer' as SituacaoFatura,
+  },
+]
+
+export const financeiro = {
+  competenciaAtual: 'agosto de 2026',
+  total: 'R$ 4.180,00',
+  vencimento: '15/08',
+
+  /** Quando há atraso, o card do topo troca de cor e passa a falar da parcela vencida. */
+  pendencia: {
+    titulo: '1 mensalidade vencida',
+    valor: 'R$ 2.480,00',
+    detalhe: 'meuWatt · abril de 2026 · vencida há',
+    diasAtraso: '118 dias',
+    orientacao: 'Fale com a administração para regularizar. O monitoramento segue ativo.',
+  },
+
+  rodape:
+    'A baixa das mensalidades é feita pela administração. Este app informa a situação, não recebe pagamento.',
+}
+
+export type LinhaHistorico = {
+  id: string
+  mes: string
+  produto: string
+  valor: string
+  situacao: SituacaoFatura
+}
+
+export const historicoFaturas: LinhaHistorico[] = [
+  { id: 'h1', mes: 'Agosto de 2026', produto: 'meuWatt + meuPlano', valor: 'R$ 4.180,00', situacao: 'aVencer' },
+  { id: 'h2', mes: 'Julho de 2026', produto: 'meuWatt + meuPlano', valor: 'R$ 4.180,00', situacao: 'pago' },
+  { id: 'h3', mes: 'Junho de 2026', produto: 'meuWatt + meuPlano', valor: 'R$ 4.180,00', situacao: 'pago' },
+  { id: 'h4', mes: 'Maio de 2026', produto: 'meuPlano', valor: 'R$ 1.700,00', situacao: 'emAberto' },
+  { id: 'h5', mes: 'Abril de 2026', produto: 'meuWatt', valor: 'R$ 2.480,00', situacao: 'vencido' },
+]
+
+export const faturaDetalhe = {
+  produto: 'meuWatt',
+  situacao: 'pago' as SituacaoFatura,
+  competencia: 'competência julho de 2026',
+  valor: 'R$ 2.480,00',
+  linhas: [
+    { rotulo: 'Vencimento', valor: '15/07/2026', mono: true },
+    { rotulo: 'Pago em', valor: '14/07/2026', mono: true },
+    { rotulo: 'Forma', valor: 'Boleto', mono: false },
+    { rotulo: 'Usinas cobertas', valor: '3', mono: false },
+  ],
+  observacao: 'Observação: valor proporcional à capacidade instalada contratada em março.',
+  comprovante: { nome: 'Comprovante de pagamento', tamanho: '184 kB', offline: false },
+}
+
 /* ------------------------------------------------------ Inversor INV-03 */
 
 export const inversor = {

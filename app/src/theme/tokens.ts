@@ -39,6 +39,27 @@ export const cores = {
 
   /** Contorno do ícone de aba inativa — mais forte que a borda de card, de propósito. */
   iconeInativo: branco(0.45),
+
+  /** Véu atrás da folha que sobe. */
+  veu: preto(0.55),
+
+  /** Fundo do visualizador de PDF: mais claro que o app, para o papel branco não gritar. */
+  fundoPapel: '#0A0D1C',
+} as const
+
+/**
+ * Cores do documento impresso — não da interface.
+ *
+ * Vivem à parte de propósito: o PDF é um artefato de papel, com fundo branco e tinta
+ * escura, e não segue o tema escuro do app. Misturar as duas paletas levaria alguém a
+ * usar cinza de papel num card, ou âmbar de marca numa página impressa.
+ */
+export const papel = {
+  folha: '#FFFFFF',
+  titulo: '#1F2A44',
+  subtitulo: '#94A3B8',
+  texto: '#CBD3E3',
+  figura: '#E7ECF5',
 } as const
 
 /**
