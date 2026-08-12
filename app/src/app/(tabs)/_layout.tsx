@@ -11,6 +11,7 @@
 
 import { Redirect, Tabs } from 'expo-router'
 import { StyleSheet, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAuth } from '@/store/auth'
 import { ALTURA_TAB_BAR, cores, fontes } from '@/theme/tokens'
@@ -25,6 +26,7 @@ function IconeAba({ focada }: { focada: boolean }) {
 
 export default function LayoutAbas() {
   const token = useAuth((s) => s.token)
+  const insets = useSafeAreaInsets()
   if (!token) return <Redirect href="/login" />
 
   return (
@@ -33,7 +35,13 @@ export default function LayoutAbas() {
         headerShown: false,
         tabBarActiveTintColor: cores.ambar,
         tabBarInactiveTintColor: cores.textoRotulo,
-        tabBarStyle: estilos.barra,
+        // A barra cresce pela margem do sistema em vez de ficar sob ela: no Android o
+        // modo edge-to-edge é padrão desde o SDK 57, e sem isto os botões de navegação
+        // do aparelho cobrem os rótulos das abas.
+        tabBarStyle: [
+          estilos.barra,
+          { height: ALTURA_TAB_BAR + insets.bottom, paddingBottom: 10 + insets.bottom },
+        ],
         tabBarItemStyle: estilos.item,
         tabBarLabelStyle: estilos.rotulo,
         tabBarIcon: ({ focused }) => <IconeAba focada={focused} />,
@@ -49,13 +57,12 @@ export default function LayoutAbas() {
 }
 
 const estilos = StyleSheet.create({
+  // Altura e recuo inferior vêm do componente, somados à margem do sistema.
   barra: {
-    height: ALTURA_TAB_BAR,
     backgroundColor: cores.painelFlutuante,
     borderTopColor: cores.borda,
     borderTopWidth: 1,
     paddingTop: 8,
-    paddingBottom: 10,
   },
   item: { gap: 6 },
   icone: { width: 22, height: 22, borderRadius: 11, borderWidth: 2 },

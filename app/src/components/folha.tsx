@@ -9,9 +9,10 @@
 
 import type { ReactNode } from 'react'
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { Chevron, StatusChip } from '@/components/base'
-import { cores, espaco, fontes, raio, tomAlpha, tons, TOQUE_MIN } from '@/theme/tokens'
+import { ALTURA_TAB_BAR, cores, espaco, fontes, raio, tomAlpha, tons, TOQUE_MIN } from '@/theme/tokens'
 
 export function Folha({
   visivel,
@@ -29,12 +30,15 @@ export function Folha({
   cabecalho?: ReactNode
   children: ReactNode
 }) {
+  const insets = useSafeAreaInsets()
   return (
     <Modal visible={visivel} transparent animationType="slide" onRequestClose={aoFechar}>
       <View style={estilos.raiz}>
         {/* O véu fecha ao toque — é o gesto que todo mundo tenta primeiro. */}
         <Pressable style={estilos.veu} onPress={aoFechar} />
-        <View style={estilos.painel}>
+        {/* O recuo do fundo soma a margem do sistema, senão o último botão da folha
+            fica sob a barra de navegação do Android. */}
+        <View style={[estilos.painel, { paddingBottom: 28 + insets.bottom }]}>
           <View style={estilos.alca} />
           {cabecalho ?? (
             <>
@@ -120,10 +124,16 @@ export function LinhaPdf({
   )
 }
 
-/** Botão flutuante de ação, acima da barra de abas. */
+/**
+ * Botão flutuante de ação, acima da barra de abas.
+ *
+ * A distância do fundo soma a margem do sistema: no Android a barra de navegação do
+ * aparelho fica por cima do conteúdo, e sem isso o botão nasce debaixo dela.
+ */
 export function BotaoFlutuante({ onPress }: { onPress?: () => void }) {
+  const insets = useSafeAreaInsets()
   return (
-    <Pressable style={estilos.fab} onPress={onPress}>
+    <Pressable style={[estilos.fab, { bottom: ALTURA_TAB_BAR + 16 + insets.bottom }]} onPress={onPress}>
       <View style={estilos.fabBarraH} />
       <View style={estilos.fabBarraV} />
     </Pressable>
@@ -141,7 +151,6 @@ const estilos = StyleSheet.create({
     borderTopRightRadius: raio.sheet,
     paddingHorizontal: espaco.md,
     paddingTop: 10,
-    paddingBottom: 28,
     maxHeight: '88%',
   },
   alca: {
@@ -198,7 +207,6 @@ const estilos = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: espaco.md,
-    bottom: 84,
     width: 56,
     height: 56,
     borderRadius: 28,

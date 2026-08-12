@@ -155,7 +155,9 @@ export function Tela({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
             estilos.conteudo,
-            paraTabBar && { paddingBottom: ALTURA_TAB_BAR + espaco.lg },
+            // A barra de abas cresce pela margem do sistema no Android; a reserva no fim
+            // do conteúdo tem de crescer junto, senão o último card fica atrás dela.
+            paraTabBar && { paddingBottom: ALTURA_TAB_BAR + espaco.lg + insets.bottom },
             contentStyle,
           ]}
         >
