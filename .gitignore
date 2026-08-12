@@ -23,6 +23,11 @@ venv/
 *.pem
 *.key
 
+# Banco local de desenvolvimento. Guarda credenciais de serviço cifradas — nunca versionar.
+*.db
+*.sqlite
+*.sqlite3
+
 # Build nativo
 android/
 ios/

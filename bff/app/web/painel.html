@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gestão Solar — Painel</title>
+<style>
+/* Mesma paleta do app. Tema único e deliberado: é a mesma marca, e o painel é usado
+   pelo time internamente, sem preferência de tema para respeitar. */
+:root {
+  --fundo: #02061A;
+  --superficie: rgba(255,255,255,.04);
+  --superficie-alta: rgba(255,255,255,.08);
+  --afundado: rgba(0,0,0,.25);
+  --borda: rgba(255,255,255,.08);
+  --borda-forte: rgba(255,255,255,.12);
+  --ambar: #FFC315;
+  --ambar-texto: #FFD75E;
+  --forte: #F5FDFF;
+  --corpo: #DDE2F6;
+  --rotulo: #D6C4AC;
+  --fraco: #94A3B8;
+  --ok: #34D399;
+  --alerta: #FBBF24;
+  --erro: #F87171;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; background: var(--fundo);
+  background-image: radial-gradient(60rem 26rem at 50% -16rem, rgba(64,110,255,.20), transparent 70%);
+  color: var(--corpo);
+  font: 400 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.mono, code { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+.folha { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+header.topo { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; color: var(--forte); }
+h1 em { font-style: normal; color: var(--ambar); }
+.quem { margin-left: auto; font-size: .85rem; color: var(--fraco); display: flex; gap: .9rem; align-items: center; }
+
+h2 { font-size: 1.15rem; font-weight: 600; color: var(--forte); margin: 0 0 .3rem; }
+.apoio { margin: 0 0 1.2rem; color: var(--rotulo); font-size: .92rem; max-width: 60ch; }
+
+.cartao {
+  background: var(--superficie); border: 1px solid var(--borda);
+  border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem;
+}
+.cartao > header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+.cartao h3 { margin: 0; font-size: 1.05rem; font-weight: 600; color: var(--forte); }
+
+.selo {
+  display: inline-flex; align-items: center; gap: .45rem;
+  font-size: .78rem; font-weight: 600; border-radius: 12px; padding: .3rem .65rem;
+}
+.selo .ponto { width: .5rem; height: .5rem; border-radius: 50%; background: currentColor; }
+.selo.ok { color: var(--ok); background: rgba(52,211,153,.10); border: 1px solid rgba(52,211,153,.33); }
+.selo.erro { color: var(--erro); background: rgba(248,113,113,.10); border: 1px solid rgba(248,113,113,.33); }
+.selo.neutro { color: var(--fraco); background: rgba(148,163,184,.10); border: 1px solid rgba(148,163,184,.33); }
+
+label { display: block; font-size: .78rem; font-weight: 500; color: var(--rotulo); margin-bottom: .35rem; }
+input {
+  width: 100%; height: 2.9rem; padding: 0 .85rem;
+  background: var(--afundado); border: 1px solid var(--borda); border-radius: 12px;
+  color: var(--corpo); font: inherit;
+}
+input:focus { outline: none; border-color: var(--ambar); }
+.campos { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; }
+.campos .largo { grid-column: 1 / -1; }
+@media (max-width: 40rem) { .campos { grid-template-columns: 1fr; } }
+
+button {
+  height: 2.9rem; padding: 0 1.1rem; border-radius: 12px; border: 1px solid transparent;
+  font: 600 .95rem/1 inherit; cursor: pointer;
+}
+button.primario { background: var(--ambar); color: #02061A; }
+button.secundario { background: var(--superficie-alta); border-color: var(--borda); color: var(--forte); }
+button.fantasma { background: transparent; border-color: var(--borda); color: var(--rotulo); height: 2.4rem; padding: 0 .8rem; font-size: .85rem; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--ambar); outline-offset: 2px; }
+.acoes { display: flex; gap: .6rem; margin-top: 1rem; flex-wrap: wrap; align-items: center; }
+
+.detalhe { font-size: .85rem; color: var(--rotulo); margin-top: .8rem; }
+.detalhe.erro { color: var(--erro); }
+.detalhe.ok { color: var(--ok); }
+
+/* Conciliação: uma linha por usina do meuWatt. */
+.par { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1rem; align-items: center;
+  padding: .9rem 0; border-top: 1px solid var(--borda); }
+.par:first-of-type { border-top: none; }
+.lado { min-width: 0; }
+.lado .nome { font-weight: 600; color: var(--forte); }
+.lado .meta { font-size: .8rem; color: var(--fraco); }
+.seta { color: var(--fraco); font-size: 1.1rem; }
+select {
+  width: 100%; height: 2.7rem; padding: 0 .7rem;
+  background: var(--afundado); border: 1px solid var(--borda); border-radius: 12px;
+  color: var(--corpo); font: inherit;
+}
+select:focus { outline: none; border-color: var(--ambar); }
+.motivos { font-size: .75rem; color: var(--fraco); margin-top: .3rem; }
+@media (max-width: 48rem) {
+  .par { grid-template-columns: 1fr; gap: .5rem; }
+  .seta { display: none; }
+}
+
+.entrada { max-width: 24rem; margin: 12vh auto 0; }
+.oculto { display: none !important; }
+.aviso {
+  background: rgba(251,191,36,.10); border: 1px solid rgba(251,191,36,.33);
+  color: var(--alerta); border-radius: 12px; padding: .8rem 1rem;
+  font-size: .88rem; margin-bottom: 1.2rem;
+}
+.vazio { color: var(--fraco); font-size: .9rem; padding: 1rem 0; }
+</style>
+</head>
+<body>
+
+<!-- ENTRADA ------------------------------------------------------------ -->
+<div id="tela-entrada" class="folha entrada">
+  <h1>Gestão <em>Solar</em></h1>
+  <p class="apoio">Painel de administração.</p>
+  <div class="cartao">
+    <div id="erro-entrada" class="detalhe erro oculto"></div>
+    <div style="display:grid;gap:.9rem">
+      <div>
+        <label for="email">E-mail</label>
+        <input id="email" type="email" autocomplete="username">
+      </div>
+      <div>
+        <label for="senha">Senha</label>
+        <input id="senha" type="password" autocomplete="current-password">
+      </div>
+      <button class="primario" onclick="entrar()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAINEL -------------------------------------------------------------- -->
+<div id="tela-painel" class="folha oculto">
+  <header class="topo">
+    <h1>Gestão <em>Solar</em></h1>
+    <div class="quem">
+      <span id="nome-gestor" class="mono"></span>
+      <button class="fantasma" onclick="sair()">Sair</button>
+    </div>
+  </header>
+
+  <h2>Conexões</h2>
+  <p class="apoio">
+    A conta de serviço que o Gestão Solar usa para ler cada produto. Ela precisa enxergar
+    as usinas dos clientes — o teste confere isso e diz quantas encontrou.
+  </p>
+  <div id="integracoes"></div>
+
+  <h2 style="margin-top:2.5rem">Usinas</h2>
+  <p class="apoio">
+    Qual usina do meuWatt corresponde a qual do meuPlano. As sugestões são ordenadas por
+    coordenada, nome e potência — confirme cada uma; um par errado mistura a geração de uma
+    usina com a manutenção de outra.
+  </p>
+  <div id="aviso-conciliacao" class="aviso oculto"></div>
+  <div class="cartao" id="conciliacao"><div class="vazio">Carregando…</div></div>
+</div>
+
+<script>
+const API = '/api/painel'
+let token = localStorage.getItem('gs_painel_token')
+
+function el(id) { return document.getElementById(id) }
+function escapar(t) {
+  return String(t ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ))
+}
+
+async function chamar(caminho, opcoes = {}) {
+  const r = await fetch(API + caminho, {
+    ...opcoes,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opcoes.headers || {}),
+    },
+  })
+  if (r.status === 401 || r.status === 403) { sair(); throw new Error('Sessão encerrada') }
+  const corpo = r.status === 204 ? null : await r.json()
+  if (!r.ok) throw new Error(corpo?.detail || 'Falha na operação')
+  return corpo
+}
+
+/* ---------------------------------------------------------------- entrada */
+
+async function entrar() {
+  const erro = el('erro-entrada')
+  erro.classList.add('oculto')
+  try {
+    const r = await fetch(API + '/entrar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: el('email').value, senha: el('senha').value }),
+    })
+    const corpo = await r.json()
+    if (!r.ok) throw new Error(corpo.detail || 'Não foi possível entrar')
+    token = corpo.token
+    localStorage.setItem('gs_painel_token', token)
+    localStorage.setItem('gs_painel_nome', corpo.nome)
+    abrirPainel()
+  } catch (e) {
+    erro.textContent = e.message
+    erro.classList.remove('oculto')
+  }
+}
+
+function sair() {
+  token = null
+  localStorage.removeItem('gs_painel_token')
+  el('tela-painel').classList.add('oculto')
+  el('tela-entrada').classList.remove('oculto')
+}
+
+function abrirPainel() {
+  el('tela-entrada').classList.add('oculto')
+  el('tela-painel').classList.remove('oculto')
+  el('nome-gestor').textContent = localStorage.getItem('gs_painel_nome') || ''
+  carregarIntegracoes()
+  carregarConciliacao()
+}
+
+/* ------------------------------------------------------------ integrações */
+
+const ROTULO = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
+const DESCRICAO = {
+  meuwatt: 'monitoramento de geração — usinas, inversores, relatórios',
+  meuplano: 'manutenção — cronograma, ordens de serviço, assistente',
+}
+
+async function carregarIntegracoes() {
+  const lista = await chamar('/integracoes')
+  el('integracoes').innerHTML = lista.map(cartaoIntegracao).join('')
+}
+
+function cartaoIntegracao(i) {
+  const classe = i.estado === 'ok' ? 'ok' : i.estado === 'falhou' ? 'erro' : 'neutro'
+  const texto = i.estado === 'ok' ? 'Conectado'
+    : i.estado === 'falhou' ? 'Com problema' : 'Não testada'
+  const quando = i.testada_em
+    ? new Date(i.testada_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+    : null
+
+  return `
+  <div class="cartao">
+    <header>
+      <h3>${ROTULO[i.produto]}</h3>
+      <span class="selo ${classe}"><span class="ponto"></span>${texto}</span>
+    </header>
+    <p class="apoio" style="margin-bottom:1rem">${DESCRICAO[i.produto]}</p>
+    <div class="campos">
+      <div class="largo">
+        <label for="url-${i.produto}">Endereço da API</label>
+        <input id="url-${i.produto}" class="mono" value="${escapar(i.base_url || '')}"
+               placeholder="https://api.exemplo.com.br">
+      </div>
+      <div>
+        <label for="usuario-${i.produto}">Usuário de serviço</label>
+        <input id="usuario-${i.produto}" value="${escapar(i.usuario_servico || '')}"
+               placeholder="servico@empresa.com.br" autocomplete="off">
+      </div>
+      <div>
+        <label for="senha-${i.produto}">Senha</label>
+        <input id="senha-${i.produto}" type="password" autocomplete="new-password"
+               placeholder="${i.configurada ? 'deixe vazio para manter' : ''}">
+      </div>
+    </div>
+    <div class="acoes">
+      <button class="primario" onclick="salvarIntegracao('${i.produto}')">Salvar</button>
+      <button class="secundario" onclick="testarIntegracao('${i.produto}')"
+              ${i.configurada ? '' : 'disabled'}>Testar conexão</button>
+      ${quando ? `<span class="detalhe mono" style="margin:0">último teste ${quando}</span>` : ''}
+    </div>
+    <div id="detalhe-${i.produto}" class="detalhe ${i.estado === 'ok' ? 'ok' : i.estado === 'falhou' ? 'erro' : ''}">
+      ${escapar(i.detalhe || '')}
+    </div>
+  </div>`
+}
+
+async function salvarIntegracao(produto) {
+  const detalhe = el('detalhe-' + produto)
+  try {
+    await chamar('/integracoes/' + produto, {
+      method: 'PUT',
+      body: JSON.stringify({
+        base_url: el('url-' + produto).value.trim(),
+        usuario_servico: el('usuario-' + produto).value.trim(),
+        senha: el('senha-' + produto).value || null,
+      }),
+    })
+    // Salvar não prova nada — testar prova. Encadear os dois é o que o gestor faria.
+    await testarIntegracao(produto)
+  } catch (e) {
+    detalhe.className = 'detalhe erro'
+    detalhe.textContent = e.message
+  }
+}
+
+async function testarIntegracao(produto) {
+  const detalhe = el('detalhe-' + produto)
+  detalhe.className = 'detalhe'
+  detalhe.textContent = 'Testando…'
+  try {
+    const r = await chamar('/integracoes/' + produto + '/testar', { method: 'POST' })
+    detalhe.className = 'detalhe ' + (r.ok ? 'ok' : 'erro')
+    detalhe.textContent = r.detalhe
+    await carregarIntegracoes()
+    if (r.ok) await carregarConciliacao()
+  } catch (e) {
+    detalhe.className = 'detalhe erro'
+    detalhe.textContent = e.message
+  }
+}
+
+/* ------------------------------------------------------------ conciliação */
+
+let dadosConciliacao = null
+
+async function carregarConciliacao() {
+  const caixa = el('conciliacao')
+  try {
+    dadosConciliacao = await chamar('/conciliacao')
+  } catch (e) {
+    caixa.innerHTML = `<div class="detalhe erro">${escapar(e.message)}</div>`
+    return
+  }
+
+  const aviso = el('aviso-conciliacao')
+  if (dadosConciliacao.aviso) {
+    aviso.textContent = dadosConciliacao.aviso
+    aviso.classList.remove('oculto')
+  } else {
+    aviso.classList.add('oculto')
+  }
+
+  if (!dadosConciliacao.linhas.length) {
+    caixa.innerHTML = '<div class="vazio">Nenhuma usina no meuWatt. Configure e teste a conexão acima.</div>'
+    return
+  }
+
+  caixa.innerHTML = dadosConciliacao.linhas.map(linhaConciliacao).join('')
+}
+
+function linhaConciliacao(l) {
+  const usada = new Set()
+  const opcoes = dadosConciliacao.meuplano.map(u => {
+    const escolhida = String(u.id) === String(l.vinculado_a)
+    usada.add(u.id)
+    return `<option value="${escapar(u.id)}" ${escolhida ? 'selected' : ''}>${escapar(u.nome)}</option>`
+  }).join('')
+
+  const topo = l.candidatos[0]
+  const dica = !l.vinculado_a && topo
+    ? `<div class="motivos">sugestão: <strong>${escapar(topo.nome)}</strong> — ${escapar(topo.motivos.join(', '))}</div>`
+    : ''
+
+  const mw = dadosConciliacao.meuwatt.find(u => u.id === l.mw_slug) || {}
+  const meta = [mw.cidade, mw.uf].filter(Boolean).join(', ')
+
+  return `
+  <div class="par">
+    <div class="lado">
+      <div class="nome">${escapar(l.mw_nome)}</div>
+      <div class="meta mono">${escapar(l.mw_slug)}${meta ? ' · ' + escapar(meta) : ''}</div>
+    </div>
+    <div class="seta">→</div>
+    <div class="lado">
+      <select onchange="vincular('${escapar(l.mw_slug)}', this.value)">
+        <option value="">— sem par no meuPlano —</option>
+        ${opcoes}
+      </select>
+      ${dica}
+    </div>
+  </div>`
+}
+
+async function vincular(slug, valor) {
+  const linha = dadosConciliacao.linhas.find(l => l.mw_slug === slug)
+  const mw = dadosConciliacao.meuwatt.find(u => u.id === slug) || {}
+  try {
+    await chamar('/conciliacao/vincular', {
+      method: 'POST',
+      body: JSON.stringify({
+        mw_slug: slug,
+        mp_usina_id: valor ? Number(valor) : null,
+        nome: linha?.mw_nome || mw.nome || slug,
+        cidade: mw.cidade || null,
+        uf: mw.uf || null,
+        kwp: mw.kwp ?? null,
+      }),
+    })
+    await carregarConciliacao()
+  } catch (e) {
+    alert(e.message)          // conflito de vínculo precisa parar o gestor, não passar batido
+    await carregarConciliacao()
+  }
+}
+
+/* ------------------------------------------------------------------ boot */
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !el('tela-entrada').classList.contains('oculto')) entrar()
+})
+
+if (token) {
+  chamar('/integracoes').then(abrirPainel).catch(() => sair())
+}
+</script>
+</body>
+</html>

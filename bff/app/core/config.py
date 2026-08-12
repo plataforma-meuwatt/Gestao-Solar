@@ -19,16 +19,21 @@ class Settings(BaseSettings):
     gs_jwt_secret: str = "dev-inseguro-trocar"
     gs_jwt_expira_horas: int = 24 * 30
 
-    # meuWatt (mw-api)
-    meuwatt_api_url: str = "https://api.meuwatt.com.br"
-    meuwatt_service_email: str = ""
-    meuwatt_service_password: str = ""
-    meuwatt_web_url: str = "https://app.meuwatt.com.br"
+    # Chave Fernet dos segredos guardados (senha das contas de serviço, tokens dos
+    # clientes). Sem ela o painel não consegue gravar integração nenhuma.
+    gs_encryption_key: str = ""
 
-    # meuPlano
+    # A sessão do painel do gestor é curta de propósito: é a tela que guarda as
+    # credenciais de serviço dos dois upstreams.
+    gs_painel_sessao_horas: int = 8
+
+    # Endereços dos upstreams. Servem de sugestão inicial no painel — o que vale é o que
+    # o gestor grava em /painel, junto com a credencial de serviço. Credencial NÃO mora
+    # mais em variável de ambiente: mudar uma exigiria redeploy, e o painel precisa que
+    # ela seja editável e testável na hora.
+    meuwatt_api_url: str = "https://api.meuwatt.com.br"
+    meuwatt_web_url: str = "https://app.meuwatt.com.br"
     meuplano_api_url: str = "https://api.meuplano.com.br"
-    meuplano_service_email: str = ""
-    meuplano_service_password: str = ""
 
     environment: str = "development"
 
@@ -45,8 +50,7 @@ class Settings(BaseSettings):
             nome
             for nome, valor in (
                 ("GS_JWT_SECRET", self.gs_jwt_secret),
-                ("MEUWATT_SERVICE_PASSWORD", self.meuwatt_service_password),
-                ("MEUPLANO_SERVICE_PASSWORD", self.meuplano_service_password),
+                ("GS_ENCRYPTION_KEY", self.gs_encryption_key),
             )
             if not valor or valor == "dev-inseguro-trocar"
         ]

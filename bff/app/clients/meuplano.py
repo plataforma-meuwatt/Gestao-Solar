@@ -24,9 +24,19 @@ class MeuPlanoError(RuntimeError):
 
 
 class MeuPlanoClient:
-    def __init__(self, base_url: str | None = None, timeout: float = 30.0) -> None:
+    """A credencial de serviço vem do que o gestor gravou no painel, não do ambiente."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        usuario: str | None = None,
+        senha: str | None = None,
+        timeout: float = 30.0,
+    ) -> None:
         s = get_settings()
         self.base_url = (base_url or s.meuplano_api_url).rstrip("/")
+        self._usuario = usuario
+        self._senha = senha
         self._timeout = timeout
         self._service_token: str | None = None
 
@@ -46,10 +56,12 @@ class MeuPlanoClient:
     async def _token_servico(self) -> str:
         if self._service_token:
             return self._service_token
-        s = get_settings()
-        if not s.meuplano_service_password:
-            raise MeuPlanoError("MEUPLANO_SERVICE_PASSWORD não configurada")
-        dados = await self.autenticar(s.meuplano_service_email, s.meuplano_service_password)
+        if not self._usuario or not self._senha:
+            raise MeuPlanoError(
+                "A ponte com o meuPlano não tem credencial de serviço. "
+                "Configure em Painel → Conexões."
+            )
+        dados = await self.autenticar(self._usuario, self._senha)
         if not dados:
             raise MeuPlanoError("credencial de serviço do meuPlano recusada")
         self._service_token = dados["access_token"]
@@ -80,6 +92,18 @@ class MeuPlanoClient:
         """Permissões e organizações do usuário — é daqui que sai o escopo de usinas dele
         e o `nivel_acesso` que decide o que o assistente pode revelar."""
         return await self._get("/api/v1/meuacesso/auth/me/session", token=token)
+
+    async def usinas(self, token: str | None = None) -> list[dict[str, Any]]:
+        """As usinas visíveis. Com `token` do usuário, devolve o escopo DELE — é assim que
+        o teste da ponte descobre o que a conta de serviço enxerga.
+
+        O meuPlano devolve ora uma lista, ora um envelope paginado; normalizado aqui para
+        o resto do BFF não precisar saber disso.
+        """
+        dados = await self._get("/api/v1/meuacesso/usinas", token=token)
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
 
     async def cronograma(self, usina_id: int, container_id: int | None = None) -> dict[str, Any]:
         return await self._get(

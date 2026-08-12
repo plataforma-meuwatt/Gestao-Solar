@@ -28,9 +28,20 @@ class MeuWattError(RuntimeError):
 
 
 class MeuWattClient:
-    def __init__(self, base_url: str | None = None, timeout: float = 30.0) -> None:
+    """A credencial de serviço vem de fora (do que o gestor gravou no painel), não do
+    ambiente — é o que permite configurar e testar a ponte sem redeploy."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        usuario: str | None = None,
+        senha: str | None = None,
+        timeout: float = 30.0,
+    ) -> None:
         s = get_settings()
         self.base_url = (base_url or s.meuwatt_api_url).rstrip("/")
+        self._usuario = usuario
+        self._senha = senha
         self._timeout = timeout
         self._service_token: str | None = None
 
@@ -53,10 +64,12 @@ class MeuWattClient:
     async def _token_servico(self) -> str:
         if self._service_token:
             return self._service_token
-        s = get_settings()
-        if not s.meuwatt_service_password:
-            raise MeuWattError("MEUWATT_SERVICE_PASSWORD não configurada")
-        dados = await self.autenticar(s.meuwatt_service_email, s.meuwatt_service_password)
+        if not self._usuario or not self._senha:
+            raise MeuWattError(
+                "A ponte com o meuWatt não tem credencial de serviço. "
+                "Configure em Painel → Conexões."
+            )
+        dados = await self.autenticar(self._usuario, self._senha)
         if not dados:
             raise MeuWattError("credencial de serviço do meuWatt recusada")
         self._service_token = dados["access_token"]
