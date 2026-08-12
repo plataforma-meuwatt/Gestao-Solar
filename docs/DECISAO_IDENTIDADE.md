@@ -97,21 +97,61 @@ gs_conexoes
 Nunca a senha. O token é cifrado no banco e revogável dos dois lados — pelo cliente, na
 tela de conexões do Gestão Solar, ou por quem administra o produto de origem.
 
-### Na tela
+### Dois caminhos para conectar, um resultado só
 
-O primeiro acesso é um passo a passo curto:
+**Caminho A — o cliente já tem conta no produto.** Ele autoriza uma vez pela tela do próprio
+produto, e o hub guarda o token.
+
+**Caminho B — o cliente não tem conta.** O hub cria a conta lá **com uma senha aleatória de
+40 caracteres que ele mesmo gera e guarda cifrada**. O cliente nunca vê nem precisa dessa
+senha: ele sempre entra pelo hub. Logo após criar, o hub obtém o token de aplicativo e a
+senha deixa de importar.
+
+> Se um dia o cliente quiser entrar direto no meuWatt, usa "esqueci minha senha" e define
+> uma. Isso **não quebra a conexão**, porque o hub acessa por token, não por senha.
+
+Os dois caminhos terminam igual: uma linha em `gs_conexoes` com um token revogável. O resto
+do sistema não distingue.
+
+### Os três problemas do caminho B
+
+| Problema | Solução |
+|---|---|
+| **O e-mail já existe lá** — o cliente acha que não tem conta, mas tem | Consultar antes de criar; se existir, cair no caminho A ("encontramos uma conta sua — conecte-a") |
+| **Criar usuário exige decisão que o hub não toma** — no meuPlano nasce dentro de uma organização, com papel e nível de cofre; no meuWatt, com acesso a plantas específicas | Se o cliente **já foi cadastrado comercialmente** do lado de lá, o vínculo existe e o provisionamento é automático. Se não, vira **solicitação** que alguém do time aprova, definindo organização e usinas — uma vez por cliente |
+| **Conta órfã** — cliente cancela o hub e ficam contas que ele não sabe que tem | Desconectar revoga o token; a conta lá segue existindo mas inerte, o que é correto: o contrato daquele produto pode continuar |
+
+### O primeiro acesso, na tela
 
 1. Criar a conta do Gestão Solar (e-mail, senha, nome)
-2. **Conectar o meuWatt** — abre a tela de autorização do meuWatt, o cliente entra com a
-   conta dele lá, autoriza e volta
+2. **Conectar o meuWatt** — caminho A ou B, conforme o e-mail já exista lá ou não
 3. **Conectar o meuPlano** — idem
 4. Confirmar quais usinas de um lado correspondem às do outro (seção 3)
 
-Passos 2 e 3 são opcionais e independentes: quem só contratou monitoramento conecta só o
-meuWatt, e o app esconde a aba de manutenção.
+Passos 2 e 3 são independentes: quem contratou só monitoramento conecta só o meuWatt, e o
+app esconde a aba de manutenção.
 
-Depois, em Perfil → Conexões, o cliente vê o que está conectado, quando foi, e pode
-desconectar.
+Depois, em Perfil → Conexões, o cliente vê o que está conectado, quando foi, e desconecta
+quando quiser.
+
+### O caminho inverso, para depois
+
+"Associar conta Gestão Solar" dentro do meuWatt ou do meuPlano é o mesmo fluxo começando do
+outro lado — o usuário já logado lá autoriza dali. Não vale construir agora: enquanto o hub
+não estiver no ar, não há o que associar.
+
+### O que o cliente vê no fim
+
+- **uma conta** — o e-mail e a senha do Gestão Solar
+- **uma tela de entrada**
+- **uma lista de usinas**, vindas dos dois lados sem ele saber de onde
+- **um lugar** para ver o que está conectado e desconectar
+
+Por baixo são três contas coladas por token, e ele nunca encosta nisso. É unificação na
+casca — 95% do benefício de uma conta única, sem migração e sem ninguém ficar refém.
+
+Se um dia todo cliente novo nascer pelo hub, os logins diretos ficam vestigiais por conta
+própria. A porta para uma unificação real continua aberta, sem nunca ter sido forçada.
 
 ---
 
@@ -215,12 +255,16 @@ autorizando do seu jeito; o Gestão Solar apenas se conecta aos dois.
 |---|---|---|---|
 | 1 | Corrigir a escalação de privilégio | mw-api | Segurança ativa, independe de tudo |
 | 2 | Remover a senha mestra de desenvolvimento | meuPlano | Idem |
-| 3 | `gs_users` + `gs_conexoes` + login próprio | BFF | Base do Gestão Solar |
-| 4 | Gestão Solar como aplicativo autorizado no meuPlano | meuPlano | O fluxo já existe; é registrar mais um aplicativo |
-| 5 | Fluxo equivalente no meuWatt | mw-api | Adaptar o device flow para emitir token renovável |
-| 6 | Tela de conexões + conciliação de usinas | app + BFF | Fecha o primeiro acesso |
-| 7 | CNPJ + UC nos dois cadastros | os dois | Resolve a conciliação para sempre |
+| 3 | CNPJ + UC nos dois cadastros, preenchidos à mão | os dois | Uma tarde de trabalho; muda o que a tela de conciliação precisa adivinhar |
+| 4 | `gs_users` + `gs_conexoes` + login próprio | BFF | Base do Gestão Solar |
+| 5 | Conexão pelo caminho A (conta existente) | BFF + meuPlano | O fluxo do meuPlano já existe; é registrar mais um aplicativo |
+| 6 | Fluxo equivalente no meuWatt | mw-api | Adaptar o device flow para emitir token renovável |
+| 7 | Conexão pelo caminho B (provisionar conta) | BFF + os dois | Depende de decidir como a organização/usinas são atribuídas |
+| 8 | Tela de conexões + conciliação de usinas | app + BFF | Fecha o primeiro acesso |
 
-Os itens 1 e 2 são independentes e podem ser feitos hoje. Do 3 em diante é a Fase 1 do
-Gestão Solar, agora com o desenho de conexão no lugar do login duplo que estava no plano
-original.
+Os itens 1 e 2 são independentes e podem ser feitos hoje. O item 3 vem antes da tela de
+conciliação de propósito: com CNPJ e UC preenchidos, a tela sugere com confiança em vez de
+adivinhar por nome.
+
+O caminho A (item 5) entrega o produto funcionando; o caminho B (item 7) é conforto para
+cliente novo e pode esperar.
