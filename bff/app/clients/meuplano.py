@@ -105,6 +105,25 @@ class MeuPlanoClient:
             return dados.get("items") or dados.get("results") or []
         return dados or []
 
+    async def procurar_usuario_por_email(self, email: str) -> dict[str, Any] | None:
+        """Busca exata. Este sistema tem o endpoint de lookup; o meuWatt não."""
+        try:
+            return await self._get("/api/v1/meuacesso/admin/users/lookup", email=email)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+
+    async def usinas_do_usuario(self, user_id: str | int) -> list[int]:
+        """Os ids das usinas que aquele usuário enxerga.
+
+        Lista vazia aqui significa "sem restrição explícita" — o usuário cai na regra da
+        organização dele. O painel trata isso como "nenhuma sugestão", não como "nenhuma
+        usina": quem decide é o gestor.
+        """
+        dados = await self._get(f"/api/v1/meuacesso/admin/users/{user_id}/usinas")
+        return [int(i) for i in (dados or [])]
+
     async def cronograma(self, usina_id: int, container_id: int | None = None) -> dict[str, Any]:
         return await self._get(
             f"/api/v1/maintenance/usinas/{usina_id}/cronograma", container_id=container_id
@@ -113,9 +132,13 @@ class MeuPlanoClient:
     async def ordens_servico(
         self, usina_id: int, status: str | None = None
     ) -> list[dict[str, Any]]:
-        return await self._get(
+        dados = await self._get(
             "/api/v1/meuacesso/service-orders", plant_id=usina_id, status=status
         )
+        # Ora lista, ora envelope paginado — normalizado aqui, como nas usinas.
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
 
     async def ordem_servico(self, so_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/service-orders/{so_id}")

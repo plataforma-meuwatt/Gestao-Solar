@@ -1,12 +1,12 @@
-"""API do painel do gestor.
+"""API do painel: entrada, pontes com os produtos e conciliação de usinas.
 
-Duas responsabilidades: configurar as pontes com os produtos, e casar as usinas dos dois
-lados. A página web em `app/web/` consome estes endpoints.
+A gestão de clientes vive em `painel_clientes.py`.
 
-Tudo aqui exige `gestor_atual` — sessão de escopo `painel`, conta com `is_gestor`.
+Tudo aqui exige `gestor_atual` — sessão de escopo `painel`, perfil que abre o painel. O
+que mexe em credencial de serviço sobe para `administrador_atual`.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import (
+    administrador_atual,
     conferir_senha,
     criar_token_painel,
     gestor_atual,
@@ -40,24 +41,32 @@ class EntrarOut(BaseModel):
     token: str
     expira_em: datetime
     nome: str
+    perfil: str
 
 
 @router.post("/entrar", response_model=EntrarOut)
 def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     usuario = db.scalar(select(User).where(User.email == body.email.strip().lower()))
 
-    # Mensagem única para conta inexistente, senha errada e conta sem cargo: quem tenta
-    # adivinhar não aprende qual das três aconteceu.
+    # Mensagem única para conta inexistente, senha errada e perfil sem acesso ao painel:
+    # quem tenta adivinhar não aprende qual das três aconteceu.
     if (
         usuario is None
         or not usuario.ativo
-        or not usuario.is_gestor
+        or not usuario.abre_painel
         or not conferir_senha(body.senha, usuario.senha_hash)
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "E-mail ou senha inválidos")
 
+    usuario.ultimo_login = datetime.now(UTC)
+    db.commit()
+
     token, expira = criar_token_painel(usuario.id)
-    return EntrarOut(token=token, expira_em=expira, nome=usuario.nome)
+    # O perfil vai na resposta para a barra lateral esconder o que atendimento não abre.
+    # É conforto de interface, não segurança: o backend recusa de qualquer forma.
+    return EntrarOut(
+        token=token, expira_em=expira, nome=usuario.nome, perfil=usuario.perfil.value
+    )
 
 
 # ------------------------------------------------------------------- integrações
@@ -111,7 +120,7 @@ def salvar_integracao(
     produto: Produto,
     body: IntegracaoIn,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(administrador_atual),
 ) -> IntegracaoOut:
     try:
         integracao = integracoes.salvar(
@@ -139,7 +148,7 @@ class TesteOut(BaseModel):
 async def testar_integracao(
     produto: Produto,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(administrador_atual),
 ) -> TesteOut:
     resultado = await integracoes.testar(db, produto)
     return TesteOut(ok=resultado.ok, detalhe=resultado.detalhe, usinas_visiveis=resultado.usinas)

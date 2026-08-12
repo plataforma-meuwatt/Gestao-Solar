@@ -34,6 +34,19 @@ def gerar_hash_senha(senha: str) -> str:
     )
 
 
+def gerar_senha_provisoria() -> str:
+    """Senha forte que uma pessoa consegue ditar por telefone.
+
+    O alfabeto exclui os pares que se confundem falados ou escritos à mão — `0/O`, `1/I/L`,
+    `5/S`, `2/Z` — e os grupos de quatro com hífen evitam que alguém perca a conta ao
+    transcrever. Três grupos do alfabeto de 26 dão ~56 bits: é provisória, será trocada no
+    primeiro acesso, e o custo de errar ao ditar é maior que o de encurtar.
+    """
+    alfabeto = "ABCDEFGHJKMNPQRTUVWXY346789"
+    grupos = ["".join(secrets.choice(alfabeto) for _ in range(4)) for _ in range(3)]
+    return "-".join(grupos)
+
+
 def conferir_senha(senha: str, guardado: str | None) -> bool:
     """Comparação em tempo constante. Hash malformado devolve `False` em silêncio — do
     ponto de vista de quem tenta entrar, é indistinguível de senha errada, que é o que
@@ -99,7 +112,7 @@ def gestor_atual(
     db: Session = Depends(get_db),
 ) -> User:
     """Guarda do painel. Exige as três coisas: token válido, escopo de painel, e a conta
-    ainda ser de gestor — quem perdeu o cargo perde o painel na requisição seguinte, sem
+    ainda abrir o painel — quem perdeu o cargo perde o acesso na requisição seguinte, sem
     depender do token expirar."""
     if cred is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Não autenticado")
@@ -114,6 +127,18 @@ def gestor_atual(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
 
     usuario = db.get(User, user_id)
-    if usuario is None or not usuario.ativo or not usuario.is_gestor:
+    if usuario is None or not usuario.ativo or not usuario.abre_painel:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à administração")
     return usuario
+
+
+def administrador_atual(gestor: User = Depends(gestor_atual)) -> User:
+    """Guarda das telas que mexem no que quebra tudo: as pontes com os produtos (que
+    guardam credencial de serviço) e a própria equipe. Atendimento cuida de cliente e
+    diagnóstico, e não passa daqui."""
+    if not gestor.e_administrador:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Esta área é restrita a administradores.",
+        )
+    return gestor

@@ -99,6 +99,28 @@ class MeuWattClient:
     async def usina(self, slug: str) -> dict[str, Any]:
         return await self._get(f"/plants/{slug}")
 
+    async def usuarios(self, apenas_ativos: bool = True) -> list[dict[str, Any]]:
+        """Todos os usuários. Não há busca por e-mail nesta API — quem precisa filtrar,
+        filtra do lado de cá."""
+        return await self._get("/admin/users", only_active=apenas_ativos)
+
+    async def plantas_do_usuario(self, user_id: str | int) -> list[str]:
+        """Os slugs das plantas que aquele usuário enxerga.
+
+        Reconstituído a partir de `user_plants`, que é a concessão direta. Não cobre quem
+        vê plantas por ser funcionário de uma empresa de O&M — a API não expõe esse
+        agregado, e para o dono de usina (nosso caso) a concessão direta é o que vale.
+        """
+        associacoes = await self._get("/admin/user-plants")
+        plant_ids = {
+            a.get("plant_id") for a in associacoes if str(a.get("user_id")) == str(user_id)
+        }
+        if not plant_ids:
+            return []
+
+        # A associação traz plant_id; o resto do sistema trabalha com slug.
+        return [p["slug"] for p in await self.usinas() if p.get("id") in plant_ids]
+
     async def monitoramento_atual(self, slug: str) -> dict[str, Any]:
         return await self._get(f"/plants/{slug}/monitoring/current")
 

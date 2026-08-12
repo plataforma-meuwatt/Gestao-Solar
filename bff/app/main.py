@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
-from app.api.v1 import painel
+from app.api.v1 import painel, painel_clientes
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -30,6 +30,7 @@ app = FastAPI(
 )
 
 app.include_router(painel.router)
+app.include_router(painel_clientes.router)
 
 _PAGINA_PAINEL = Path(__file__).parent / "web" / "painel.html"
 
