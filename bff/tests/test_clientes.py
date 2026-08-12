@@ -118,6 +118,34 @@ def test_definir_usinas_remove_o_que_saiu(db, administrador, usinas):
     assert svc.contar_usinas(db)[um.id] == 1
 
 
+@pytest.mark.asyncio
+async def test_sugestao_lista_todas_as_usinas(db, administrador, usinas):
+    """Sem vínculo com produto nenhum, a lista não pode vir vazia: o gestor precisa poder
+    conceder à mão. A indicação dos produtos ordena, não filtra."""
+    cliente = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
+
+    lista = await svc.usinas_sugeridas(db, cliente)
+
+    assert len(lista) == len(usinas)
+    assert all(u.origem == [] for u in lista)  # nenhum produto indicou
+    assert all(u.dono_atual is None for u in lista)
+
+
+@pytest.mark.asyncio
+async def test_sugestao_marca_a_usina_de_outro_dono(db, administrador, usinas):
+    """A usina alheia aparece na lista, identificada — esconder faria o gestor procurar uma
+    usina que existe e não entender por que sumiu."""
+    porto, _ = usinas
+    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    dois = svc.criar(db, nome="Dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
+
+    svc.definir_usinas(db, um, [porto.id])
+    lista = await svc.usinas_sugeridas(db, dois)
+
+    alvo = next(u for u in lista if u.plant_link_id == porto.id)
+    assert alvo.dono_atual == "Um"
+
+
 def test_usina_liberada_pode_ir_para_outro(db, administrador, usinas):
     """Cliente trocou de dono: tirar de um tem de liberar para o outro na hora."""
     porto, _ = usinas

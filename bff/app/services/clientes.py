@@ -224,8 +224,6 @@ async def usinas_sugeridas(db: Session, cliente: User) -> list[UsinaSugerida]:
             origem.append("meuWatt")
         if link.mp_usina_id and link.mp_usina_id in ids_mp:
             origem.append("meuPlano")
-        if not origem and link.id not in concedidas:
-            continue
         saida.append(
             UsinaSugerida(
                 plant_link_id=link.id,
@@ -235,6 +233,12 @@ async def usinas_sugeridas(db: Session, cliente: User) -> list[UsinaSugerida]:
                 dono_atual=donos.get(link.id),
             )
         )
+
+    # TODAS as usinas entram na lista, não só as indicadas pelos produtos. Filtrar
+    # travaria o caso comum de um cliente ainda sem vínculo: o gestor veria "nenhuma usina
+    # para escolher" com usinas cadastradas bem ali. A indicação vira ordenação, não
+    # filtro — o que os produtos apontam sobe, o resto continua alcançável.
+    saida.sort(key=lambda u: (not u.ja_concedida, not u.origem, bool(u.dono_atual), u.nome))
     return saida
 
 

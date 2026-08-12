@@ -1,18 +1,31 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, KeyRound, Link2Off, Power, Stethoscope } from 'lucide-react'
+import { ArrowLeft, KeyRound, Link2Off, Pencil, Power, Stethoscope } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
-import { Cartao, Carregando, Erro, Pagina, Selo, Vazio, type Tom } from '@/components/base'
 import {
+  Campo,
+  Cartao,
+  Carregando,
+  Erro,
+  Modal,
+  Pagina,
+  Selo,
+  Vazio,
+  type Tom,
+} from '@/components/base'
+import {
+  definirUsinas,
   desvincular,
   editarCliente,
   obterCliente,
   regenerarSenha,
+  type ClienteDetalhe as TipoCliente,
   type Produto,
   type SituacaoAcesso,
 } from '@/features/api'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
+import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
 import { mensagemDeErro } from '@/lib/api'
 
 const ACESSO: Record<SituacaoAcesso, { tom: Tom; rotulo: string }> = {
@@ -30,6 +43,8 @@ export function DetalheCliente() {
 
   const [erro, setErro] = useState('')
   const [senha, setSenha] = useState<string | null>(null)
+  const [editandoUsinas, setEditandoUsinas] = useState(false)
+  const [editandoDados, setEditandoDados] = useState(false)
 
   const { data: cliente, isLoading } = useQuery({
     queryKey: ['cliente', clienteId],
@@ -86,7 +101,15 @@ export function DetalheCliente() {
       {erro ? <Erro className="mb-4">{erro}</Erro> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Cartao titulo="Conta">
+        <Cartao
+          titulo="Conta"
+          acao={
+            <button onClick={() => setEditandoDados(true)} className="btn-fantasma">
+              <Pencil size={13} />
+              Editar
+            </button>
+          }
+        >
           <dl className="px-5 pb-5 flex flex-col gap-3 text-sm">
             <div className="flex justify-between gap-4">
               <dt className="text-rotulo">E-mail</dt>
@@ -157,11 +180,25 @@ export function DetalheCliente() {
           )}
         </Cartao>
 
-        <Cartao titulo={`Usinas · ${cliente.usinas.length}`} className="lg:col-span-2">
+        <Cartao
+          titulo={`Usinas · ${cliente.usinas.length}`}
+          className="lg:col-span-2"
+          acao={
+            <button onClick={() => setEditandoUsinas(true)} className="btn-fantasma">
+              <Pencil size={13} />
+              Alterar usinas
+            </button>
+          }
+        >
           {cliente.usinas.length === 0 ? (
             <Vazio
               titulo="Nenhuma usina concedida"
               descricao="O cliente entra no aplicativo, mas não vê usina nenhuma até você conceder."
+              acao={
+                <button onClick={() => setEditandoUsinas(true)} className="btn-primario">
+                  Conceder usinas
+                </button>
+              }
             />
           ) : (
             cliente.usinas.map((u, i) => (
@@ -199,6 +236,126 @@ export function DetalheCliente() {
           aoFechar={() => setSenha(null)}
         />
       ) : null}
+
+      {editandoUsinas ? (
+        <ModalUsinas
+          cliente={cliente}
+          aoFechar={() => setEditandoUsinas(false)}
+          aoSalvar={recarregar}
+        />
+      ) : null}
+
+      {editandoDados ? (
+        <ModalDados
+          cliente={cliente}
+          aoFechar={() => setEditandoDados(false)}
+          aoSalvar={recarregar}
+        />
+      ) : null}
     </Pagina>
+  )
+}
+
+/** Mesma escolha do cadastro, reaproveitada — ver SeletorUsinas. */
+function ModalUsinas({
+  cliente,
+  aoFechar,
+  aoSalvar,
+}: {
+  cliente: TipoCliente
+  aoFechar: () => void
+  aoSalvar: () => void
+}) {
+  const [erro, setErro] = useState('')
+  const selecao = useSelecaoUsinas(
+    cliente.id,
+    cliente.usinas.map((u) => u.plant_link_id),
+  )
+
+  const salvar = useMutation({
+    mutationFn: () => definirUsinas(cliente.id, [...selecao.escolhidas]),
+    onSuccess: () => {
+      aoSalvar()
+      aoFechar()
+    },
+    onError: (e) => setErro(mensagemDeErro(e)),
+  })
+
+  return (
+    <Modal titulo="Usinas do cliente" aoFechar={aoFechar} largura="max-w-2xl">
+      <p className="text-sm text-rotulo mb-4">
+        Marque o que {cliente.nome} vê no aplicativo. Desmarcar tira do aplicativo dele na
+        hora e libera a usina para outro cliente.
+      </p>
+
+      {erro ? (
+        <div className="mb-4">
+          <Erro>{erro}</Erro>
+        </div>
+      ) : null}
+
+      <ListaDeUsinas {...selecao} />
+
+      <div className="flex gap-2 mt-5">
+        <button onClick={() => salvar.mutate()} className="btn-primario" disabled={salvar.isPending}>
+          {salvar.isPending ? 'Salvando…' : 'Salvar usinas'}
+        </button>
+        <button onClick={aoFechar} className="btn-secundario">
+          Cancelar
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function ModalDados({
+  cliente,
+  aoFechar,
+  aoSalvar,
+}: {
+  cliente: TipoCliente
+  aoFechar: () => void
+  aoSalvar: () => void
+}) {
+  const [nome, setNome] = useState(cliente.nome)
+  const [empresa, setEmpresa] = useState(cliente.empresa ?? '')
+  const [erro, setErro] = useState('')
+
+  const salvar = useMutation({
+    mutationFn: () => editarCliente(cliente.id, { nome, empresa: empresa || null }),
+    onSuccess: () => {
+      aoSalvar()
+      aoFechar()
+    },
+    onError: (e) => setErro(mensagemDeErro(e)),
+  })
+
+  return (
+    <Modal titulo="Dados do cliente" aoFechar={aoFechar}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setErro('')
+          salvar.mutate()
+        }}
+        className="flex flex-col gap-4"
+      >
+        {erro ? <Erro>{erro}</Erro> : null}
+        <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} required autoFocus />
+        <Campo rotulo="Empresa" value={empresa} onChange={(e) => setEmpresa(e.target.value)} />
+        <p className="text-xs text-fraco">
+          O e-mail não muda: é com ele que o cliente entra, e trocar exigiria entregar acesso
+          de novo.
+        </p>
+        <div className="flex gap-2">
+          <button type="submit" className="btn-primario" disabled={salvar.isPending}>
+            {salvar.isPending ? 'Salvando…' : 'Salvar'}
+          </button>
+          <button type="button" onClick={aoFechar} className="btn-secundario">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }

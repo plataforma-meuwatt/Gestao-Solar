@@ -10,22 +10,21 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { Aviso, Campo, Cartao, Erro, Pagina, Passos, Selo } from '@/components/base'
+import { Aviso, Campo, Cartao, Erro, Pagina, Passos } from '@/components/base'
 import {
   criarCliente,
   definirUsinas,
   procurarUsuario,
-  usinasSugeridas,
   vincular,
   type Produto,
-  type UsinaSugerida,
   type UsuarioRemoto,
 } from '@/features/api'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
+import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
 import { mensagemDeErro } from '@/lib/api'
 
 const NOMES_PASSOS = ['Dados', 'meuWatt', 'meuPlano', 'Usinas']
@@ -287,34 +286,13 @@ function PassoUsinas({
   aoConcluir: () => void
 }) {
   const [erro, setErro] = useState('')
-  const [escolhidas, setEscolhidas] = useState<Set<number> | null>(null)
-  const [sugestoes, setSugestoes] = useState<UsinaSugerida[] | null>(null)
-
-  const carregar = useMutation({
-    mutationFn: () => usinasSugeridas(clienteId),
-    onSuccess: (r) => {
-      setSugestoes(r)
-      // Já vem marcado o que os produtos indicam — o gestor tira, em vez de procurar.
-      setEscolhidas(new Set(r.filter((u) => u.origem.length > 0 && !u.dono_atual).map((u) => u.plant_link_id)))
-    },
-    onError: (e) => setErro(mensagemDeErro(e)),
-  })
+  const selecao = useSelecaoUsinas(clienteId)
 
   const salvar = useMutation({
-    mutationFn: () => definirUsinas(clienteId, [...(escolhidas ?? [])]),
+    mutationFn: () => definirUsinas(clienteId, [...selecao.escolhidas]),
     onSuccess: aoConcluir,
     onError: (e) => setErro(mensagemDeErro(e)),
   })
-
-  if (sugestoes === null && !carregar.isPending && !carregar.isError) carregar.mutate()
-
-  function alternar(id: number) {
-    setEscolhidas((atual) => {
-      const novo = new Set(atual ?? [])
-      novo.has(id) ? novo.delete(id) : novo.add(id)
-      return novo
-    })
-  }
 
   return (
     <Cartao className="p-5 max-w-2xl">
@@ -325,52 +303,8 @@ function PassoUsinas({
 
       {erro ? <Erro className="mt-4">{erro}</Erro> : null}
 
-      {carregar.isPending ? <p className="text-sm text-fraco py-6">Consultando as plataformas…</p> : null}
-
-      {sugestoes && sugestoes.length === 0 ? (
-        <div className="mt-4">
-          <Aviso>
-            Nenhuma usina para sugerir. Isso acontece quando o cliente não foi vinculado a
-            nenhum produto, ou quando as usinas ainda não foram casadas entre as duas
-            plataformas — veja a tela Usinas.
-          </Aviso>
-        </div>
-      ) : null}
-
-      <div className="mt-4 flex flex-col gap-2">
-        {(sugestoes ?? []).map((u) => {
-          const bloqueada = !!u.dono_atual
-          const marcada = escolhidas?.has(u.plant_link_id) ?? false
-          return (
-            <label
-              key={u.plant_link_id}
-              className={`flex items-center gap-3 rounded-campo border px-4 py-3 cursor-pointer
-                ${bloqueada ? 'border-borda opacity-60 cursor-not-allowed' : marcada ? 'border-ambar/40 bg-ambar/5' : 'border-borda hover:border-borda-forte'}`}
-            >
-              <input
-                type="checkbox"
-                className="accent-[#FFC315] w-4 h-4"
-                checked={marcada}
-                disabled={bloqueada}
-                onChange={() => alternar(u.plant_link_id)}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-forte">{u.nome}</p>
-                <p className="text-xs text-fraco">
-                  {u.origem.length ? `indicada por ${u.origem.join(' e ')}` : 'sem indicação'}
-                </p>
-              </div>
-              {bloqueada ? (
-                <span className="flex items-center gap-1.5 text-[11px] text-alerta">
-                  <AlertTriangle size={13} />
-                  já é de {u.dono_atual}
-                </span>
-              ) : u.origem.length === 2 ? (
-                <Selo tom="ok">nos dois</Selo>
-              ) : null}
-            </label>
-          )
-        })}
+      <div className="mt-4">
+        <ListaDeUsinas {...selecao} />
       </div>
 
       <div className="flex gap-2 mt-5">
