@@ -17,6 +17,7 @@ import { View } from 'react-native'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
+import { MolduraCelular } from '@/components/MolduraCelular'
 import { aoDeslogar } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { cores } from '@/theme/tokens'
@@ -56,21 +57,23 @@ export default function LayoutRaiz() {
   }
 
   return (
-    <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            animation: 'slide_from_right',
-            contentStyle: { backgroundColor: cores.fundo },
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="login" options={{ animation: 'fade' }} />
-          <Stack.Screen name="perfil" options={{ animation: 'slide_from_left' }} />
-        </Stack>
-      </QueryClientProvider>
-    </SafeAreaProvider>
+    <MolduraCelular>
+      <SafeAreaProvider>
+        <QueryClientProvider client={queryClient}>
+          <StatusBar style="light" />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              animation: 'slide_from_right',
+              contentStyle: { backgroundColor: cores.fundo },
+            }}
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="login" options={{ animation: 'fade' }} />
+            <Stack.Screen name="perfil" options={{ animation: 'slide_from_left' }} />
+          </Stack>
+        </QueryClientProvider>
+      </SafeAreaProvider>
+    </MolduraCelular>
   )
 }

@@ -45,6 +45,9 @@ export const cores = {
 
   /** Fundo do visualizador de PDF: mais claro que o app, para o papel branco não gritar. */
   fundoPapel: '#0A0D1C',
+
+  /** Área em volta da moldura de celular, só na revisão pelo navegador. */
+  palco: '#070A16',
 } as const
 
 /**
