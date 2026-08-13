@@ -1,28 +1,30 @@
-"""BFF do Gestão Solar.
+"""BFF do Gestão Solar — a API, e só a API.
 
 Agrega a mw-api (meuWatt) e o backend do meuPlano num contrato só, aplica a autorização do
 dono da usina e hospeda o financeiro de mensalidades — que não existe em nenhum dos dois.
 
-Serve também o painel do gestor em `/painel`: cadastro de clientes, vínculo com os
-produtos, conciliação de usinas e diagnóstico.
+**Este serviço não serve tela.** O painel do gestor é uma aplicação própria, num serviço
+próprio (`painel/`), e o aplicativo é nativo. Cada um no seu quadrado: a API escala pelo
+volume de requisição, o painel é arquivo estático servido por um servidor estático, e um
+deploy de tela não reinicia o processo que atende o aplicativo de ninguém.
+
+O preço disso é que toda chamada do painel é origem cruzada — daí o CORS abaixo, com lista
+explícita de origens (`GS_CORS_ORIGENS`).
 
 Contrato completo em `docs/CONTRATO_API.md`.
 """
 
-from pathlib import Path
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-
-from app.api.v1 import painel, painel_clientes
+from app.api.v1 import auth, painel, painel_clientes
 from app.core.config import get_settings
 
 settings = get_settings()
 settings.validar_producao()
 
 app = FastAPI(
-    title="Gestão Solar BFF",
+    title="Gestão Solar API",
     version="0.1.0",
     # Em produção o Swagger fica fora — mesma postura da mw-api.
     docs_url=None if settings.producao else "/docs",
@@ -30,48 +32,36 @@ app = FastAPI(
     openapi_url=None if settings.producao else "/openapi.json",
 )
 
+# Em produção vale exatamente o que `GS_CORS_ORIGENS` disser — e `validar_producao` recusa
+# subir com a lista vazia. Em desenvolvimento, além dela, qualquer porta local: o painel
+# roda em 5180, o Expo web sorteia a sua, e o celular com Expo Go entra pelo IP da rede.
+_origens = settings.cors_origens
+_regex_local = None if settings.producao else r"http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+):\d+"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origens,
+    allow_origin_regex=_regex_local,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
-
-_WEB = Path(__file__).parent / "web"
-_PAINEL = _WEB / "painel"
 
 
 @app.get("/health", tags=["infra"])
 def health() -> dict[str, str]:
+    """Sonda de saúde do serviço. Responde sem tocar no banco nem nos upstreams — é sobre
+    o processo estar de pé, não sobre o sistema estar inteiro. Para essa outra pergunta
+    existem as telas de Conexões e Rotas."""
     return {"status": "ok", "ambiente": settings.environment}
 
 
-# As seis faces da marca, servidas pelo próprio BFF: a fonte é parte da identidade e não
-# pode depender de CDN de terceiro.
-if (_WEB / "fontes").is_dir():
-    app.mount("/painel/fontes", StaticFiles(directory=_WEB / "fontes"), name="fontes-painel")
-
-if (_PAINEL / "assets").is_dir():
-    app.mount("/painel/assets", StaticFiles(directory=_PAINEL / "assets"), name="painel-assets")
-
-
-@app.get("/painel", include_in_schema=False)
-@app.get("/painel/{caminho:path}", include_in_schema=False)
-def pagina_painel(caminho: str = "") -> FileResponse:
-    """O painel é uma aplicação de página única: toda rota devolve o mesmo HTML, e o
-    roteamento acontece no navegador. Sem isso, recarregar em `/painel/clientes/3` daria
-    404 — e o gestor não conseguiria favoritar nem voltar pelo botão do navegador.
-
-    `caminho` existe para o FastAPI aceitar as sub-rotas; o conteúdo é sempre o mesmo.
-    """
-    _ = caminho
-    indice = _PAINEL / "index.html"
-    if not indice.is_file():
-        raise HTTPException(
-            503,
-            "O painel ainda não foi construído. Rode `npm run build` em painel/.",
-        )
-    return FileResponse(indice, media_type="text/html")
-
-
 # Os routers do app entram aqui conforme as fases avançam:
-#   Fase 1  auth, plants
+#   Fase 1  auth ✔, plants
 #   Fase 2  generation
 #   Fase 3  equipment
 #   Fase 4  maintenance

@@ -1,0 +1,16 @@
+# Fim de linha.
+#
+# O Git no Windows converte LF para CRLF ao materializar os arquivos. Para código-fonte
+# isso é inofensivo; para os arquivos que rodam DENTRO do contêiner Linux, não é: um
+# `entrypoint.sh` com CRLF vira `#!/bin/sh\r`, e o kernel procura um interpretador chamado
+# "sh\r" que não existe. O erro que aparece é "no such file or directory" apontando para um
+# arquivo que está visivelmente ali — das mensagens mais enganosas que existem.
+#
+# Estes nascem e morrem com LF, em qualquer sistema operacional.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
+.dockerignore text eol=lf
+
+# O resto segue a configuração de quem clonou.
+* text=auto

@@ -2,35 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
-/* As faces vêm do BFF (`/painel/fontes/…`), as mesmas seis do app e do motor de PDF.
+/* As seis faces da marca, servidas pelo próprio painel (`public/fontes/`) — as mesmas do
+   app e do motor de PDF. Moraram no BFF enquanto ele servia esta tela; com serviços
+   separados elas vêm junto do front, que é quem as usa.
    Sem CDN: a fonte é parte da identidade e não pode depender de rede de terceiro. */
 @font-face {
   font-family: Figtree;
-  src: url('/painel/fontes/Figtree-400.ttf') format('truetype');
+  src: url('/fontes/Figtree-400.ttf') format('truetype');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: Figtree;
-  src: url('/painel/fontes/Figtree-500.ttf') format('truetype');
+  src: url('/fontes/Figtree-500.ttf') format('truetype');
   font-weight: 500;
   font-display: swap;
 }
 @font-face {
   font-family: Figtree;
-  src: url('/painel/fontes/Figtree-600.ttf') format('truetype');
+  src: url('/fontes/Figtree-600.ttf') format('truetype');
   font-weight: 600;
   font-display: swap;
 }
 @font-face {
   font-family: Figtree;
-  src: url('/painel/fontes/Figtree-700.ttf') format('truetype');
+  src: url('/fontes/Figtree-700.ttf') format('truetype');
   font-weight: 700;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Mono';
-  src: url('/painel/fontes/IBMPlexMono-500.ttf') format('truetype');
+  src: url('/fontes/IBMPlexMono-500.ttf') format('truetype');
   font-weight: 500;
   font-display: swap;
 }

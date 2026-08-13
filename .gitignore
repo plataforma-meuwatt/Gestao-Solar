@@ -16,12 +16,14 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# Segredos e ambiente
+# Segredos e ambiente. O `.env*` pega também o `.env.txt` — o bloco de notas onde as
+# credenciais são coladas antes de virarem configuração é tão sensível quanto o .env.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 *.pem
 *.key
+credenciais*.txt
 
 # Banco local de desenvolvimento. Guarda credenciais de serviço cifradas — nunca versionar.
 *.db

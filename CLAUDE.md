@@ -35,12 +35,30 @@ Idioma do produto e da UI: **português do Brasil**.
 Monorepo com três aplicativos:
 
 ```
-Gestao Solar/
-├── app/          Expo / React Native — o app do dono da usina
-├── painel/       React + Vite — o painel do gestor (time interno)
-├── bff/          FastAPI — agrega mw-api + meuPlano, serve o painel, gera PDF
+Gestao Solar/            ← o repositório Git é aqui, na raiz
+├── bff/          BACK  — FastAPI. A API, e só a API. Agrega mw-api + meuPlano, gera PDF
+├── painel/       FRONT — React + Vite servido por nginx. O gestor (time interno)
+├── app/          APP   — Expo / React Native. O dono da usina
+├── dev.ps1       sobe as três
 └── docs/         ARQUITETURA · CONTRATO_API · TELAS · DECISAO_IDENTIDADE · PROMPT_DESIGNER
 ```
+
+**São três aplicações independentes, não um monolito em pastas.** Cada uma tem seu deploy:
+back e front são dois serviços separados no Railway (`Dockerfile` + `railway.json` dentro
+de cada pasta, Root Directory apontando para ela); o app vai para as lojas via EAS.
+
+Consequências que o código carrega, e que não devem ser "simplificadas" de volta:
+
+- **A API não serve tela.** Já serviu o painel em `/painel`; não serve mais. Um deploy de
+  tela não reinicia o processo que atende o aplicativo de ninguém.
+- **Toda chamada do painel é origem cruzada.** Daí `GS_CORS_ORIGENS`, com lista explícita
+  — nunca `*`, porque as respostas carregam sessão de gestor.
+- **O endereço da API não é compilado no bundle.** Vem de `API_URL` em tempo de execução
+  (`painel/entrypoint.sh` escreve `config.js`), para o mesmo artefato servir qualquer
+  ambiente.
+- **As fontes moram no front** (`painel/public/fontes/`), que é quem as usa.
+
+O `bff/` continua sendo o único que fala com o mundo externo.
 
 **O painel é onde o cliente nasce.** Cadastrar, vincular as contas dele no meuWatt e no
 meuPlano, conceder usinas, entregar a senha provisória e conferir no diagnóstico que o dado
@@ -53,33 +71,48 @@ que está o desenho, o modelo de autenticação e o mapa de qual dado vem de ond
 
 ## 3. Como rodar
 
-**BFF** (a partir de `bff/`):
+O caminho normal é o `dev.ps1` da raiz, que sobe backend e painel em janelas separadas:
 
 ```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env      # preencher as credenciais de serviço
-alembic upgrade head
-uvicorn app.main:app --reload --port 8100
+.\dev.ps1 -Instalar    # primeira vez: venv, dependências, migrations
+.\dev.ps1              # backend + painel
+.\dev.ps1 -App         # backend + painel + aplicativo (Expo)
 ```
 
-API em `http://localhost:8100`, Swagger em `/docs`.
+Back em `http://localhost:8100` (Swagger em `/docs`), front em `http://localhost:5180`.
 
-**App** (a partir de `app/`):
+Em desenvolvimento o front chama a API por **proxy do Vite**, não por CORS — a origem fica
+a mesma e o caminho exercitado (`/api/painel/...`) é o mesmo de produção. Para reproduzir
+produção de verdade, `docker build` nas duas pastas e rodar com `API_URL` e
+`GS_CORS_ORIGENS`.
+
+À mão, se precisar de uma parte só:
 
 ```powershell
-npm install
-npm start                   # Expo dev server
-npx tsc --noEmit            # checagem de tipos
+# bff/ — o PYTHONPATH é obrigatório: os módulos são importados como `app.*`
+$env:PYTHONPATH = "$PWD"
+.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
+.\venv\Scripts\python.exe -m pytest
+.\venv\Scripts\python.exe -m alembic upgrade head
+
+# painel/ e app/
+npm run dev  ·  npm start  ·  npx tsc --noEmit
 ```
+
+O banco é o Postgres do Supabase, configurado em `bff/.env` (não versionado; modelo em
+`.env.example`). Duas armadilhas já resolvidas, que voltariam se alguém refizer a
+configuração do zero:
+
+- A senha vai **url-encoded** na `DATABASE_URL` (`#` → `%23`), senão chega truncada.
+- A porta é a **5432** (session pooler), não a 6543: o transaction pooler não mantém a
+  sessão entre comandos e o Alembic precisa disso.
 
 ---
 
 ## 4. Stack
 
-**BFF:** Python 3.12 · FastAPI · SQLAlchemy 2 · Pydantic v2 · Alembic · httpx (clientes dos
-upstreams) · Playwright (Chromium headless para PDF) · PostgreSQL.
+**BFF:** Python 3.12+ · FastAPI · SQLAlchemy 2 · Pydantic v2 · Alembic · httpx (clientes dos
+upstreams) · Playwright (Chromium headless para PDF) · PostgreSQL (Supabase).
 
 **App:** Expo SDK 57 · React Native 0.86 · expo-router · zustand · TanStack Query 5 · axios ·
 expo-secure-store · expo-notifications · react-native-webview · expo-updates.
@@ -93,6 +126,43 @@ expo-secure-store · expo-notifications · react-native-webview · expo-updates.
 O app **nunca** fala direto com a mw-api nem com o meuPlano. Tudo passa pelo BFF, que
 autoriza, agrega e traduz. Se uma tela precisa de um dado novo, o caminho é: endpoint no
 BFF → cliente do upstream em `bff/app/clients/` → tela.
+
+### Quem entra é o apelido, não o e-mail
+
+A identidade de uma conta é o `apelido` (`gs_users.apelido`, único). O e-mail é contato —
+opcional, não único — e serve para achar a conta da pessoa no meuWatt e no meuPlano.
+
+O motivo é concreto e não deve ser desfeito por parecer estranho: **a mesma pessoa pode
+ter duas contas aqui**, com poderes diferentes. `renanmarquezini` é o gestor do sistema;
+`renan.marquezini` é o dono de usina que ele atende. Mesmo humano, mesmo e-mail, dois
+papéis. Com o e-mail como chave, a segunda conta seria recusada como duplicada.
+
+Três consequências:
+
+- Validação e normalização em `bff/app/core/apelido.py`, num lugar só. O front sugere
+  (`sugerirApelido` em `painel/…/Novo.tsx`), o servidor decide.
+- `svc.criar` recusa e-mail repetido **entre clientes** — dois clientes com o mesmo e-mail
+  são quase sempre o mesmo cadastrado duas vezes. Cliente e gestor podem dividi-lo.
+- A senha provisória é entregue com o apelido, nunca com o e-mail: mandar o e-mail junto
+  convida o cliente a tentar entrar com ele, que é exatamente o que não funciona.
+
+### Toda rota de upstream entra no catálogo da sonda
+
+`bff/app/services/sonda.py` lista as rotas do meuWatt e do meuPlano de que este sistema
+depende, e o painel (Rotas → *Sondar*) exercita uma a uma com o token gravado.
+
+Ao adicionar uma chamada em `bff/app/clients/`, **adicione a rota ao catálogo**. Sem isso
+ela vira ponto cego: quebra num deploy do produto de origem e ninguém sabe até um cliente
+reclamar de tela vazia. Há um teste que compara o catálogo com o código dos clientes.
+
+Duas regras do catálogo:
+
+- **A sonda só lê.** Rota com efeito colateral (gerar PDF, abrir conversa no assistente)
+  entra com `sonda=False` e o motivo escrito — declarada e não chamada. Omitir daria a
+  impressão de que a lista está completa.
+- **Ordem é funcional.** As rotas que capturam parâmetro (`/plants` devolve o slug) vêm
+  antes das que o consomem. Quem depende de um parâmetro que não apareceu é reportada
+  como *pulada*, jamais como falha — ela não falhou, não foi chamada.
 
 ### Autorização é do BFF, não do app
 
@@ -120,6 +190,22 @@ Três coisas a respeitar ao mexer nisso:
 A conta de serviço com senha (`usuario_servico`/`senha_cifrada`) é o caminho **antigo**:
 segue funcionando para o que já está gravado, mas a tela não oferece mais criar assim, e
 conectar por token apaga a senha guardada.
+
+### Usina existe em três formatos, e os três aparecem
+
+O inventário de usinas (`services/conciliacao.montar` + Painel → Usinas) trata igualmente:
+nos dois produtos, só no meuWatt, e **só no meuPlano**. O terceiro caso é comum —
+manutenção contratada sem monitoramento — e a primeira versão da tela o omitia por
+percorrer apenas o meuWatt procurando par. Onze das dezessete usinas reais eram invisíveis.
+
+Duas regras que não devem ser "simplificadas":
+
+- **Existir num produto ≠ estar no aplicativo.** `PlantLink.ativo` é o interruptor, e ele
+  é do gestor. Só uma usina ligada pode ser concedida a um cliente. Desligar preserva
+  vínculos e concessões; apagar é recusado enquanto houver cliente com ela.
+- **Usina não casada aparece duas vezes, uma em cada grupo.** O sistema não *sabe* que são
+  a mesma; esconder uma delas seria decidir no lugar de quem decide. O que se oferece é o
+  apontamento (`par_provavel_*`) e o botão que casa as duas.
 
 ### Nada de "chips" para selecionar opção
 
@@ -178,22 +264,27 @@ A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev
 
 ---
 
-## 7. Dependências fora deste repositório
+## 8. Dependências fora deste repositório
 
 Trabalho que precisa acontecer no meuWatt e no meuPlano:
 
 | Onde | O quê | Estado |
 |---|---|---|
 | `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | pendente — bloqueia o PDF sob demanda |
-| `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito** (13/08/2026) |
-| `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito** (13/08/2026) |
+| `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito e no ar** (13/08/2026) |
+| `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito e no ar** (13/08/2026) |
+| `mw-api` | `GET /plants/{slug}/breakdowns/range` responde **500** em qualquer intervalo | pendente — achado pela sonda em 13/08/2026 |
 | `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | pendente — bloqueia L2 no assistente |
 
-As duas migrations de token **ainda não foram aplicadas**: rodar `alembic upgrade head` em
-cada produto é o que falta para a tela de Conexões funcionar contra eles.
+As duas pontes estão conectadas e testadas contra produção: `api.meuwatt.com.br` e
+`meuplano.up.railway.app`.
+
+**O 500 do `breakdowns/range`** é do lado do mw-api — reproduz com qualquer par de datas,
+inclusive um único dia. Bloqueia a tela de Paradas e o histórico do equipamento, que é
+montado cruzando `slots` + `breakdowns`. É a única rota vermelha na sonda.
 
 ---
 
-## 8. Git
+## 9. Git
 
 Trabalhar em `main`. Repositório: `https://github.com/plataforma-meuwatt/Gestao-Solar`.

@@ -7,6 +7,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Antes do bundle, e sem `type="module"`: precisa ser síncrono para `window.__GS_API__`
+         já existir quando o cliente HTTP for criado, na primeira linha de código do app. -->
+    <script src="/config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

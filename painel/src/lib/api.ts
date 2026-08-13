@@ -8,7 +8,27 @@
 
 import axios from 'axios'
 
-export const api = axios.create({ baseURL: '/api/painel', timeout: 30000 })
+declare global {
+  interface Window {
+    /** Endereço da API, escrito em `/config.js` quando o contêiner sobe. */
+    __GS_API__?: string
+  }
+}
+
+/**
+ * Onde está a API.
+ *
+ * Vazio significa mesma origem — o caso do desenvolvimento, em que o Vite faz proxy de
+ * `/api` para o BFF local. Em produção o painel e a API são serviços separados, em
+ * domínios separados, e o valor vem de `/config.js` (gerado a partir de `API_URL`).
+ *
+ * A resolução acontece aqui, uma vez, e não em cada chamada: `baseURL` é fixado na criação
+ * do cliente, então um `config.js` que chegasse tarde não teria efeito — é por isso que
+ * ele é carregado de forma síncrona no `index.html`, antes deste módulo.
+ */
+const base = (window.__GS_API__ ?? '').replace(/\/$/, '')
+
+export const api = axios.create({ baseURL: `${base}/api/painel`, timeout: 30000 })
 
 let token: string | null = null
 let aoPerder: (() => void) | null = null

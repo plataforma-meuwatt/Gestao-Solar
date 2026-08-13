@@ -13,9 +13,33 @@
 import axios from 'axios'
 import Constants from 'expo-constants'
 
-const baseURL =
+const configurado =
   (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl ??
   'http://localhost:8100'
+
+/**
+ * Em desenvolvimento, `localhost` é uma armadilha: no celular com Expo Go ele aponta para
+ * o próprio aparelho, não para a máquina que roda o BFF — e o sintoma é "sem conexão com a
+ * internet" numa rede que está perfeita.
+ *
+ * O endereço certo é o mesmo que serve o bundle. O Expo o publica em `hostUri`
+ * (`192.168.0.12:8081`), então basta trocar a porta pela do BFF. Assim ninguém precisa
+ * descobrir e digitar o IP da máquina — e ele continua funcionando quando o roteador
+ * distribuir outro amanhã.
+ *
+ * Em produção vale o que está no `app.json`, sem adivinhação.
+ */
+function resolverBaseURL(): string {
+  if (!__DEV__ || !/\/\/(localhost|127\.0\.0\.1)/.test(configurado)) return configurado
+
+  const anfitriao = Constants.expoConfig?.hostUri?.split(':')[0]
+  if (!anfitriao) return configurado
+
+  const porta = configurado.split(':').pop()
+  return `http://${anfitriao}:${porta}`
+}
+
+export const baseURL = resolverBaseURL()
 
 export const api = axios.create({ baseURL, timeout: 12000 })
 

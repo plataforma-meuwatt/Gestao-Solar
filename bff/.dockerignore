@@ -1,0 +1,27 @@
+# O pip reinstala tudo dentro da imagem; o venv local só faz cada deploy começar com
+# minutos de upload — e traz binários compilados para Windows.
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Segredos. As variáveis de produção vêm do painel do Railway, nunca de um arquivo dentro
+# da imagem — uma imagem circula, é copiada e fica em cache de registry.
+.env
+.env.*
+!.env.example
+
+# Banco local de desenvolvimento. Guarda tokens cifrados — nunca entra numa imagem.
+*.db
+*.sqlite
+*.sqlite3
+
+# O painel construído que o BFF servia quando eram um serviço só. Não é mais dele.
+app/web/painel/
+
+tests/
+*.log

@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     # credenciais de serviço dos dois upstreams.
     gs_painel_sessao_horas: int = 8
 
+    # De onde o navegador pode chamar esta API. Separadas por vírgula.
+    #
+    # Existe porque o painel é um serviço próprio, num domínio próprio: toda chamada dele
+    # é origem cruzada, e sem esta lista o navegador as barra antes de saírem. Uma lista
+    # explícita, e não `*`: as respostas daqui carregam sessão de gestor, e liberar
+    # qualquer origem deixaria qualquer página aberta no mesmo navegador falar com a API
+    # em nome de quem estivesse logado.
+    gs_cors_origens: str = ""
+
+    @property
+    def cors_origens(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.gs_cors_origens.split(",") if o.strip()]
+
     # Endereços dos upstreams. Servem de sugestão inicial no painel — o que vale é o que
     # o gestor grava em /painel, junto com a credencial de serviço. Credencial NÃO mora
     # mais em variável de ambiente: mudar uma exigiria redeploy, e o painel precisa que
@@ -57,6 +70,16 @@ class Settings(BaseSettings):
         if faltando:
             raise RuntimeError(
                 "Variáveis obrigatórias ausentes em produção: " + ", ".join(faltando)
+            )
+
+        # Sem origem liberada, a API sobe saudável e o painel abre numa tela em branco com
+        # um erro de CORS no console — a falha mais cara de diagnosticar do conjunto,
+        # porque nada no servidor acusa. Melhor não subir.
+        if not self.cors_origens:
+            raise RuntimeError(
+                "GS_CORS_ORIGENS está vazia. Informe o endereço do painel "
+                "(ex.: https://painel.exemplo.com.br), senão o navegador barra todas as "
+                "chamadas dele a esta API."
             )
 
 

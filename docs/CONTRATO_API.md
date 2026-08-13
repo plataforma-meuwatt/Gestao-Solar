@@ -12,32 +12,52 @@ Formato de erro: `{"detail": "mensagem em português"}` — o app exibe `detail`
 ### `POST /auth/login`
 
 ```json
-{ "email": "dono@empresa.com.br", "senha": "..." }
+{ "apelido": "renan.marquezini", "senha": "..." }
 ```
 
-O BFF tenta autenticar nos dois upstreams. Basta um aceitar.
+Entra-se pelo **apelido**, não pelo e-mail — a conta é do Gestão Solar, criada pelo gestor
+no painel, e não a mesma do meuWatt ou do meuPlano. O porquê está em
+[`DECISAO_IDENTIDADE.md`](DECISAO_IDENTIDADE.md) e em `bff/app/core/apelido.py`.
 
 ```json
 {
   "token": "eyJ...",
-  "expira_em": "2026-08-12T14:30:00Z",
+  "expira_em": "2026-09-12T14:30:00Z",
   "usuario": {
     "id": 12,
-    "nome": "Renan",
-    "email": "dono@empresa.com.br",
+    "nome": "Renan Marquezini",
+    "apelido": "renan.marquezini",
+    "email": "renan@splendoroem.com.br",
     "empresa": "Solar Ltda",
     "tem_meuwatt": true,
     "tem_meuplano": true,
-    "nivel_acesso": 2
+    "nivel_acesso": 2,
+    "usinas": 3,
+    "trocar_senha": false
   }
 }
 ```
 
-`401` quando nenhum dos dois aceita. `403` quando o usuário existe mas não é proprietário.
+`401` — com a mesma frase para conta inexistente, senha errada e conta desativada: quem
+tenta adivinhar não aprende qual das três aconteceu.
 
-### `GET /me`
+`tem_meuwatt` / `tem_meuplano` decidem quais abas o app mostra; `usinas` distingue "ainda
+não concederam nenhuma" de "erro ao carregar", que na tela seriam a mesma lista vazia.
 
-Devolve o mesmo objeto `usuario` acima, com a lista de usinas acessíveis.
+### `GET /auth/eu`
+
+O mesmo objeto `usuario`, atualizado. O app chama ao abrir: o token dura 30 dias e, nesse
+intervalo, o gestor pode ter concedido uma usina ou vinculado um produto.
+
+### `POST /auth/trocar-senha`
+
+```json
+{ "senha_atual": "...", "senha_nova": "..." }
+```
+
+`204`. Fecha o ciclo da senha provisória. Exige a senha atual mesmo com a sessão
+autenticada — um celular desbloqueado esquecido na mesa não deve bastar para trocar a
+senha e trancar o dono para fora.
 
 ---
 
@@ -347,7 +367,124 @@ atual sozinho não responde.
 ```
 
 `evento`: `token_gravado` · `token_removido` · `teste_ok` · `teste_falhou` ·
-`senha_gravada`. O valor do token nunca aparece — só o prefixo.
+`senha_gravada` · `sonda_ok` · `sonda_falhou`. O valor do token nunca aparece — só o
+prefixo.
+
+---
+
+## Painel do gestor — inventário de usinas
+
+Duas decisões independentes moram aqui: **qual usina é qual** (casar meuWatt com meuPlano)
+e **quais entram no aplicativo**.
+
+Uma usina pode existir nos dois produtos, só no meuWatt ou **só no meuPlano** — manutenção
+sem monitoramento é um caso normal de negócio. A versão anterior destas rotas percorria
+apenas o meuWatt procurando par, e por isso omitia inteiramente o terceiro caso.
+
+### `GET /conciliacao`
+
+```json
+{
+  "meuwatt": [ { "id": "porto-ferreira", "nome": "Porto Ferreira", "cidade": "…", "uf": "SP", "kwp": 1200 } ],
+  "meuplano": [ { "id": "19", "nome": "UFV PORTO FERREIRA", "cidade": "…", "uf": "SP", "kwp": 1200 } ],
+  "linhas": [
+    { "chave": "link:3", "nome": "Porto Ferreira", "plant_link_id": 3,
+      "mw_slug": "porto-ferreira", "mw_nome": "Porto Ferreira",
+      "mp_usina_id": 19, "mp_nome": "UFV PORTO FERREIRA",
+      "cidade": "Porto Ferreira", "uf": "SP", "kwp": 1200,
+      "origem": "ambos", "no_app": true, "candidatos": [],
+      "par_provavel_mw": null, "par_provavel_nome": null, "par_provavel_motivos": [] }
+  ],
+  "aviso": null
+}
+```
+
+`plant_link_id` **nulo** = a usina existe num produto e ainda não foi trazida para cá. É o
+estado inicial de tudo, e é o que distingue "não está no app" de "não existe".
+
+`origem` é `ambos` · `meuwatt` · `meuplano`. `candidatos` sugere o par do meuPlano para
+uma linha do meuWatt; `par_provavel_*` faz o caminho inverso, para uma linha do meuPlano.
+
+Uma usina que existe nos dois produtos e **ainda não foi casada** aparece em **duas
+linhas**, uma em cada grupo. É deliberado: o sistema não sabe que são a mesma, e esconder
+uma delas seria decidir no lugar do gestor. O `par_provavel_*` é o que evita que ele tenha
+de cruzar os dois grupos a olho. Ao casar, as duas viram uma.
+
+### `PUT /conciliacao/usina`
+
+```json
+{ "plant_link_id": null, "mw_slug": null, "mp_usina_id": 20,
+  "nome": "Bady Bassit 2", "cidade": null, "uf": null, "kwp": null, "no_app": true }
+```
+
+Casar, descasar e ligar/desligar no aplicativo são a **mesma** operação: gravar o estado
+desejado daquela usina. Rotas separadas obrigariam a tela a encadear duas chamadas para
+"trazer a usina do meuPlano para o app", com a segunda podendo falhar sozinha.
+
+`400` se os dois identificadores vierem nulos — seria uma usina que não existe em lugar
+nenhum. `409` se o identificador já pertencer a outra linha, com o nome de quem o tem:
+dois vínculos apontando para a mesma usina de um produto misturariam dados de duas plantas.
+
+Desligar (`no_app: false`) preserva vínculos e concessões — o gestor religa sem refazer nada.
+
+### `DELETE /conciliacao/usina/{plant_link_id}`
+
+`204`. Tira a usina do Gestão Solar de vez. `409` enquanto algum cliente a tiver
+concedida, com os nomes: apagar levaria o acesso dele junto por cascata, e o sintoma seria
+uma usina sumindo do app sem ninguém ter mexido naquele cliente.
+
+---
+
+## Painel do gestor — sonda de rotas
+
+O teste da conexão responde *"o token vale?"*. A sonda responde outra pergunta: **quais das
+rotas de que dependemos ainda respondem, e com que forma?** Um token válido convive com
+uma rota que mudou de lugar num deploy do produto de origem, e o sintoma disso é uma aba
+vazia no aplicativo de um cliente, semanas depois.
+
+O catálogo vive em `bff/app/services/sonda.py`. Toda chamada nova em `bff/app/clients/`
+deve entrar nele — há um teste que compara os dois.
+
+### `GET /integracoes/{produto}/rotas`
+
+O catálogo, sem chamar nada. Abre instantâneo e vale mesmo com a ponte fora do ar. Exige
+sessão de painel.
+
+### `POST /integracoes/{produto}/rotas/sondar`
+
+Exercita o catálogo inteiro com o token gravado. **Só administrador**: é uma dúzia de
+requisições ao produto de terceiro usando a credencial de serviço, não uma tela de consulta.
+
+```json
+{
+  "produto": "meuwatt",
+  "base_url": "https://api.meuwatt.com.br",
+  "ok": true,
+  "detalhe": "As 12 rotas exercitadas responderam.",
+  "executada_em": "2026-08-13T20:45:00Z",
+  "rotas": [
+    { "chave": "mw.slots", "metodo": "GET",
+      "caminho": "/plants/porto-ferreira/slots",
+      "alimenta": "Inversores da tela de Equipamentos",
+      "essencial": true, "situacao": "ok", "status": 200, "ms": 180,
+      "detalhe": null, "itens": 4,
+      "campos": ["id", "position", "serial", "status"] }
+  ]
+}
+```
+
+`situacao` tem quatro valores, e a diferença entre eles é o ponto da tela:
+
+| | o que significa | o que fazer |
+|---|---|---|
+| `ok` | respondeu | nada |
+| `falhou` | respondeu erro, ou não respondeu | investigar; `detalhe` traz a frase do produto |
+| `pulada` | não foi chamada — faltou um parâmetro que a rota anterior devia ter dado | olhar a rota anterior, não esta |
+| `nao_sondada` | decisão nossa de não chamar (efeito colateral), com o motivo | nada |
+
+`ok` no nível da varredura ignora falhas em rotas `essencial: false` — recurso a menos não
+é ponte quebrada. `campos` traz a forma da resposta, nunca o conteúdo: é por ali que uma
+mudança de formato aparece antes de virar tela quebrada no celular do cliente.
 
 ---
 

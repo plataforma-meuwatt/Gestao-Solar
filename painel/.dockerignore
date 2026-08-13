@@ -1,0 +1,9 @@
+# O `npm ci` reinstala tudo dentro da imagem; enviar as dependências locais só faz cada
+# deploy começar com minutos de upload — e traz binários compilados para outra plataforma.
+node_modules/
+dist/
+*.tsbuildinfo
+
+.env
+.env.*
+*.log

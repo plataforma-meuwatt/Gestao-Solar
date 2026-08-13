@@ -16,7 +16,12 @@ from app.core.db import Base
 import app.models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+
+# O `%%` não é enfeite: o alembic.ini passa pelo configparser, que trata `%` como início
+# de interpolação. Uma senha url-encoded (`#` vira `%23`, comum em senha forte) derruba o
+# `alembic upgrade` com "invalid interpolation syntax" antes de tocar no banco. Dobrar o
+# sinal aqui é o escape; o configparser o desfaz ao entregar a URL para o engine.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
