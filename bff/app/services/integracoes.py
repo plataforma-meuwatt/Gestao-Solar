@@ -226,6 +226,45 @@ async def _exercitar(produto: Produto, base_url: str, token: str) -> ResultadoTe
     )
 
 
+# ── endereço ────────────────────────────────────────────────────────────────
+
+
+class EnderecoInvalido(ValueError):
+    """A mensagem é para quem digitou o endereço."""
+
+
+def normalizar_endereco(base_url: str) -> str:
+    """Devolve o endereço pronto para uso, ou levanta `EnderecoInvalido`.
+
+    Completa o `https://` quando falta. Copiar um domínio de onde ele aparece sem
+    esquema — a barra do navegador, o painel do Railway, um e-mail — é o caminho normal,
+    e recusar `meuplano.up.railway.app` por causa disso seria implicância: não há
+    ambiguidade nenhuma sobre o que a pessoa quis dizer.
+
+    Sem esta função o valor chegava cru ao httpx, que respondia
+    `UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol` —
+    uma frase de biblioteca, em inglês, vazando para a tela do gestor. O erro era dele,
+    a mensagem tinha de ser para ele.
+    """
+    endereco = (base_url or "").strip().rstrip("/")
+    if not endereco:
+        raise EnderecoInvalido("Informe o endereço da API antes de conectar.")
+
+    if "://" not in endereco:
+        endereco = f"https://{endereco}"
+    elif not endereco.startswith(("http://", "https://")):
+        esquema = endereco.split("://", 1)[0]
+        raise EnderecoInvalido(
+            f"O endereço começa com '{esquema}://', que não é um endereço de API. "
+            "Use https:// (ou http:// para um servidor local)."
+        )
+
+    host = endereco.split("://", 1)[1]
+    if not host or "/" in host.split("?")[0][:1] or " " in host:
+        raise EnderecoInvalido("O endereço não parece um domínio válido.")
+    return endereco
+
+
 # ── gravação ────────────────────────────────────────────────────────────────
 
 
@@ -242,9 +281,11 @@ async def salvar_token(
     podia estar funcionando — continua de pé. Gravar primeiro e testar depois deixaria o
     gestor com as duas coisas quebradas e nenhuma forma de voltar.
     """
-    endereco = (base_url or "").strip().rstrip("/")
-    if not endereco:
-        return ResultadoTeste(False, "Informe o endereço da API antes de conectar.")
+    try:
+        endereco = normalizar_endereco(base_url)
+    except EnderecoInvalido as exc:
+        # Para antes da rede e antes do banco: a conexão anterior não é tocada.
+        return ResultadoTeste(False, str(exc))
 
     try:
         limpo = validar(produto, token)
@@ -351,7 +392,8 @@ def salvar(
         integracao = Integracao(produto=produto, base_url="", usuario_servico="", senha_cifrada="")
         db.add(integracao)
 
-    integracao.base_url = base_url.rstrip("/")
+    # `EnderecoInvalido` é um `ValueError` — o router já o transforma em 400 com a frase.
+    integracao.base_url = normalizar_endereco(base_url)
     integracao.usuario_servico = usuario
     if senha:
         integracao.senha_cifrada = cifrar(senha)

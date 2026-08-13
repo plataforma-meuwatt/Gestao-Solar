@@ -237,6 +237,49 @@ async def test_token_aceito_que_nao_ve_usina_nenhuma_e_falha(db, monkeypatch):
 async def test_endereco_vazio_para_antes_de_tudo(db):
     r = await integracoes.salvar_token(db, Produto.MEUWATT, "  ", MW)
     assert not r.ok and "endereço" in r.detalhe
+    assert integracoes.obter(db, Produto.MEUWATT) is None  # nem chegou ao banco
+
+
+class TestEndereco:
+    """O endereço é digitado à mão, e o engano dele também precisa de uma frase própria.
+
+    Sem isto o valor cru chegava ao httpx, que respondia `UnsupportedProtocol: Request URL
+    is missing an 'http://' or 'https://' protocol` — biblioteca, em inglês, na tela do
+    gestor.
+    """
+
+    def test_completa_o_esquema_que_faltou(self):
+        """Copiar o domínio sem esquema é o caminho normal — a barra do navegador e o
+        painel do Railway mostram assim. Recusar por isso seria implicância."""
+        assert (
+            integracoes.normalizar_endereco("meuplano.up.railway.app")
+            == "https://meuplano.up.railway.app"
+        )
+
+    def test_preserva_o_esquema_dito_e_apara_as_bordas(self):
+        assert integracoes.normalizar_endereco("http://localhost:8000/") == "http://localhost:8000"
+        assert (
+            integracoes.normalizar_endereco("  https://api.meuwatt.com.br/  ")
+            == "https://api.meuwatt.com.br"
+        )
+
+    def test_esquema_que_nao_e_de_api_diz_qual_era(self):
+        """Colar a URL do banco na caixa da API é engano de quem tem várias na mão."""
+        with pytest.raises(integracoes.EnderecoInvalido, match="postgres://"):
+            integracoes.normalizar_endereco("postgres://user@host/db")
+
+    def test_vazio_pede_o_endereco(self):
+        for ruim in ("", "   ", None):
+            with pytest.raises(integracoes.EnderecoInvalido, match="Informe o endereço"):
+                integracoes.normalizar_endereco(ruim)
+
+
+async def test_endereco_sem_https_conecta_e_grava_completo(db, monkeypatch):
+    _upstream(monkeypatch)
+    r = await integracoes.salvar_token(db, Produto.MEUWATT, "api.meuwatt.com.br", MW)
+
+    assert r.ok
+    assert integracoes.obter(db, Produto.MEUWATT).base_url == "https://api.meuwatt.com.br"
 
 
 # ── 4. histórico ─────────────────────────────────────────────────────────────
