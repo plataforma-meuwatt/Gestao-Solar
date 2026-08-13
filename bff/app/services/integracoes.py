@@ -136,9 +136,13 @@ async def cliente_meuplano(db: Session) -> MeuPlanoClient:
 # ── diagnóstico ─────────────────────────────────────────────────────────────
 
 
-def _detalhe_do_upstream(resposta: httpx.Response) -> str | None:
+def detalhe_do_upstream(resposta: httpx.Response) -> str | None:
     """A frase que o produto escreveu. Vale ouro: é lá que mora "token revogado" e
-    "expirado em 3 de março" — o BFF só a repassa, sem tentar reescrevê-la."""
+    "expirado em 3 de março" — o BFF só a repassa, sem tentar reescrevê-la.
+
+    Pública porque a sonda (`services/sonda.py`) precisa exatamente da mesma leitura: uma
+    segunda cópia divergiria no dia em que um dos produtos mudasse o nome do campo.
+    """
     try:
         corpo = resposta.json()
     except Exception:
@@ -165,7 +169,7 @@ def _traduzir(exc: Exception, produto: Produto) -> ResultadoTeste:
         return ResultadoTeste(False, f"O {nome} não respondeu a tempo. Tente de novo em instantes.")
     if isinstance(exc, httpx.HTTPStatusError):
         codigo = exc.response.status_code
-        dito = _detalhe_do_upstream(exc.response)
+        dito = detalhe_do_upstream(exc.response)
         if codigo in (401, 403):
             # O produto já explica em português (revogado, expirado, conta desativada).
             return ResultadoTeste(False, dito or f"O {nome} recusou este token.")

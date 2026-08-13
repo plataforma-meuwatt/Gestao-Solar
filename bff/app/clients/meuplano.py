@@ -57,7 +57,7 @@ class MeuPlanoClient:
         return await self._get("/api/v1/meuacesso/auth/me/profile", token=token)
 
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
-        async with httpx.AsyncClient(timeout=self._timeout) as c:
+        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as c:
             r = await c.post(
                 f"{self.base_url}/api/v1/meuacesso/auth/login",
                 json={"email": email, "senha": senha},
@@ -87,7 +87,7 @@ class MeuPlanoClient:
         self, metodo: str, path: str, token: str | None = None, **kwargs: Any
     ) -> httpx.Response:
         jwt = token or await self._token_servico()
-        async with httpx.AsyncClient(timeout=self._timeout) as c:
+        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as c:
             r = await c.request(
                 metodo, f"{self.base_url}{path}", headers={"Authorization": f"Bearer {jwt}"}, **kwargs
             )
@@ -140,7 +140,42 @@ class MeuPlanoClient:
         dados = await self._get(f"/api/v1/meuacesso/admin/users/{user_id}/usinas")
         return [int(i) for i in (dados or [])]
 
+    async def contratos(self, usina_id: int | None = None) -> list[dict[str, Any]]:
+        """Os contratos de O&M de uma usina — os containers do **pipeline**.
+
+        A fonte é `/pipelines/global/contrato/containers`, e não a lista do financeiro:
+        são duas tabelas diferentes (`PipelineContainer` e `FinContainer`) com numerações
+        próprias. O cronograma valida o `container_id` contra a primeira, então um id
+        colhido da segunda responde "Contrato (container) não encontrado" — um 404 que
+        parece problema de permissão e é só a tabela errada.
+        """
+        dados = await self._get(
+            "/api/v1/meuacesso/pipelines/global/contrato/containers", usina_id=usina_id
+        )
+        return dados if isinstance(dados, list) else (dados.get("items") or [])
+
     async def cronograma(self, usina_id: int, container_id: int | None = None) -> dict[str, Any]:
+        """O cronograma de manutenção da usina, dentro de um contrato.
+
+        `container_id` é **obrigatório** no upstream — sem ele a resposta é 422. Este
+        cliente o tratava como opcional, e o resultado era a tela de manutenção falhando
+        com um erro de validação em vez de mostrar o cronograma.
+
+        Quando não vem informado, é descoberto: uma usina normalmente tem um contrato só,
+        e é esse o cronograma que o dono dela quer ver. Com mais de um, vale o primeiro —
+        escolher qual contrato mostrar é decisão de produto que ainda não foi tomada, e
+        chutar em silêncio seria pior do que a tela pedir para escolher no dia em que isso
+        aparecer.
+        """
+        if container_id is None:
+            contratos = await self.contratos(usina_id)
+            if not contratos:
+                raise MeuPlanoError(
+                    f"A usina {usina_id} não tem contrato de manutenção no meuPlano, "
+                    "e o cronograma é sempre dentro de um contrato."
+                )
+            container_id = contratos[0]["id"]
+
         return await self._get(
             f"/api/v1/maintenance/usinas/{usina_id}/cronograma", container_id=container_id
         )

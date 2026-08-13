@@ -56,6 +56,8 @@ const ROTULO_EVENTO: Record<EventoIntegracao['evento'], string> = {
   teste_ok: 'Teste passou',
   teste_falhou: 'Teste falhou',
   senha_gravada: 'Conta de serviço gravada',
+  sonda_ok: 'Varredura de rotas passou',
+  sonda_falhou: 'Varredura de rotas achou falha',
 }
 
 function quando(iso: string | null): string {
