@@ -15,7 +15,8 @@ export type SituacaoAcesso = 'nunca' | 'entregue' | 'usado'
 export type ClienteResumo = {
   id: number
   nome: string
-  email: string
+  apelido: string
+  email: string | null
   empresa: string | null
   ativo: boolean
   usinas: number
@@ -43,7 +44,8 @@ export type UsinaDoCliente = {
 export type ClienteDetalhe = {
   id: number
   nome: string
-  email: string
+  apelido: string
+  email: string | null
   empresa: string | null
   ativo: boolean
   acesso: SituacaoAcesso
@@ -89,7 +91,14 @@ export type ResultadoTeste = {
 }
 
 export type EventoIntegracao = {
-  evento: 'token_gravado' | 'token_removido' | 'teste_ok' | 'teste_falhou' | 'senha_gravada'
+  evento:
+    | 'token_gravado'
+    | 'token_removido'
+    | 'teste_ok'
+    | 'teste_falhou'
+    | 'senha_gravada'
+    | 'sonda_ok'
+    | 'sonda_falhou'
   ocorrido_em: string
   ator_email: string | null
   token_prefixo: string | null
@@ -97,15 +106,50 @@ export type EventoIntegracao = {
   usinas_visiveis: number | null
 }
 
+export type UsinaLado = {
+  id: string
+  nome: string
+  cidade: string | null
+  uf: string | null
+  kwp: number | null
+}
+
+export type Candidato = { mp_usina_id: number; nome: string; pontos: number; motivos: string[] }
+
+/** De onde a usina vem. `meuplano` sozinho é normal: manutenção sem monitoramento. */
+export type OrigemUsina = 'ambos' | 'meuwatt' | 'meuplano'
+
+export type LinhaUsina = {
+  chave: string
+  nome: string
+  /** Nulo = existe num produto e ainda não foi trazida para o Gestão Solar. */
+  plant_link_id: number | null
+  mw_slug: string | null
+  mw_nome: string | null
+  mp_usina_id: number | null
+  mp_nome: string | null
+  cidade: string | null
+  uf: string | null
+  kwp: number | null
+  origem: OrigemUsina
+  /** Existe aqui **e** está ligada. Só uma usina no app pode ser concedida a um cliente. */
+  no_app: boolean
+  /** Candidatas do meuPlano, para uma linha do meuWatt. */
+  candidatos: Candidato[]
+  /**
+   * O caminho inverso: para uma usina só do meuPlano, de qual usina do meuWatt ela parece
+   * ser par. As duas linhas continuam separadas de propósito — o sistema não sabe que são
+   * a mesma —, mas o gestor não precisa cruzar os grupos a olho.
+   */
+  par_provavel_mw: string | null
+  par_provavel_nome: string | null
+  par_provavel_motivos: string[]
+}
+
 export type Conciliacao = {
-  meuwatt: { id: string; nome: string; cidade: string | null; uf: string | null; kwp: number | null }[]
-  meuplano: { id: string; nome: string; cidade: string | null; uf: string | null; kwp: number | null }[]
-  linhas: {
-    mw_slug: string
-    mw_nome: string
-    vinculado_a: number | null
-    candidatos: { mp_usina_id: number; nome: string; pontos: number; motivos: string[] }[]
-  }[]
+  meuwatt: UsinaLado[]
+  meuplano: UsinaLado[]
+  linhas: LinhaUsina[]
   aviso: string | null
 }
 
@@ -121,7 +165,8 @@ export type Diagnostico = {
 export type Membro = {
   id: number
   nome: string
-  email: string
+  apelido: string
+  email: string | null
   perfil: 'atendimento' | 'administrador'
   ativo: boolean
   ultimo_login: string | null
@@ -134,9 +179,20 @@ export const listarClientes = () => api.get<ClienteResumo[]>('/clientes').then((
 export const obterCliente = (id: number) =>
   api.get<ClienteDetalhe>(`/clientes/${id}`).then((r) => r.data)
 
-export const criarCliente = (dados: { nome: string; email: string; empresa?: string | null }) =>
+export const criarCliente = (dados: {
+  nome: string
+  apelido: string
+  email?: string | null
+  empresa?: string | null
+}) =>
   api
-    .post<{ id: number; nome: string; email: string; senha_provisoria: string }>('/clientes', dados)
+    .post<{
+      id: number
+      nome: string
+      apelido: string
+      email: string | null
+      senha_provisoria: string
+    }>('/clientes', dados)
     .then((r) => r.data)
 
 export const editarCliente = (
@@ -176,14 +232,25 @@ export const definirUsinas = (clienteId: number, plant_link_ids: number[]) =>
 export const carregarConciliacao = () =>
   api.get<Conciliacao>('/conciliacao').then((r) => r.data)
 
-export const vincularUsina = (dados: {
-  mw_slug: string
-  mp_usina_id: number | null
+/**
+ * Grava o estado desejado de uma usina — casar, descasar e ligar/desligar no app são a
+ * mesma operação vista de ângulos diferentes. Uma rota só evita que "trazer a usina do
+ * meuPlano para o app" precise de duas chamadas, com a segunda podendo falhar sozinha.
+ */
+export const salvarUsina = (dados: {
+  plant_link_id?: number | null
+  mw_slug?: string | null
+  mp_usina_id?: number | null
   nome: string
   cidade?: string | null
   uf?: string | null
   kwp?: number | null
-}) => api.post('/conciliacao/vincular', dados)
+  no_app?: boolean
+}) => api.put<LinhaUsina>('/conciliacao/usina', dados).then((r) => r.data)
+
+/** Tira a usina do Gestão Solar. Recusado enquanto algum cliente a tiver concedida. */
+export const removerUsina = (plantLinkId: number) =>
+  api.delete(`/conciliacao/usina/${plantLinkId}`)
 
 /* ------------------------------------------------------------- integrações */
 
@@ -208,6 +275,46 @@ export const desconectarToken = (produto: Produto) =>
 export const historicoIntegracao = (produto: Produto) =>
   api.get<EventoIntegracao[]>(`/integracoes/${produto}/eventos`).then((r) => r.data)
 
+/* ------------------------------------------------------------------- sonda */
+
+/**
+ * `pendente` só existe no catálogo em repouso — é a rota que ainda não foi chamada nesta
+ * sessão. Depois de sondar, toda rota está em um dos outros quatro estados.
+ */
+export type SituacaoRota = 'ok' | 'falhou' | 'pulada' | 'nao_sondada' | 'pendente'
+
+export type RotaSondada = {
+  chave: string
+  metodo: string
+  caminho: string
+  /** O que esta rota sustenta do lado de cá — o que quebra no app se ela cair. */
+  alimenta: string
+  essencial: boolean
+  situacao: SituacaoRota
+  status: number | null
+  ms: number | null
+  detalhe: string | null
+  itens: number | null
+  campos: string[]
+}
+
+export type Varredura = {
+  produto: Produto
+  base_url: string | null
+  ok: boolean
+  detalhe: string
+  executada_em: string
+  rotas: RotaSondada[]
+}
+
+/** O catálogo, sem chamar nada. Abre instantâneo e vale mesmo com a ponte fora do ar. */
+export const listarRotas = (produto: Produto) =>
+  api.get<Varredura>(`/integracoes/${produto}/rotas`).then((r) => r.data)
+
+/** Exercita o catálogo inteiro com o token gravado. Uma dúzia de chamadas ao produto. */
+export const sondarRotas = (produto: Produto) =>
+  api.post<Varredura>(`/integracoes/${produto}/rotas/sondar`).then((r) => r.data)
+
 /* ------------------------------------------------------------ diagnóstico */
 
 export const carregarDiagnostico = (clienteId: number) =>
@@ -219,7 +326,8 @@ export const listarEquipe = () => api.get<Membro[]>('/equipe').then((r) => r.dat
 
 export const criarMembro = (dados: {
   nome: string
-  email: string
+  apelido: string
+  email?: string | null
   perfil: 'atendimento' | 'administrador'
   senha: string
 }) => api.post<Membro>('/equipe', dados).then((r) => r.data)

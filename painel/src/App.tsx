@@ -8,6 +8,7 @@ import { Equipe } from '@/features/equipe/Equipe'
 import { DetalheCliente } from '@/features/clientes/Detalhe'
 import { ListaClientes } from '@/features/clientes/Lista'
 import { NovoCliente } from '@/features/clientes/Novo'
+import { Rotas } from '@/features/rotas/Rotas'
 import { Usinas } from '@/features/usinas/Usinas'
 import { aoPerderSessao } from '@/lib/api'
 import { Layout, SoAdministrador } from '@/shell/Layout'
@@ -32,7 +33,11 @@ aoPerderSessao(() => useAuth.getState().sair())
 export function App() {
   return (
     <QueryClientProvider client={qc}>
-      <Router basename="/painel">
+      {/* Sem `basename`: o painel é um serviço próprio e vive na raiz do domínio dele.
+          Enquanto o BFF o servia, ele morava sob `/painel` — e um basename sobrando é
+          silencioso do pior jeito: nenhuma rota casa, o React monta um nada, e a tela
+          fica preta sem um erro sequer no console. */}
+      <Router>
         <Routes>
           <Route path="/entrar" element={<Entrada />} />
 
@@ -47,6 +52,14 @@ export function App() {
               element={
                 <SoAdministrador>
                   <Conexoes />
+                </SoAdministrador>
+              }
+            />
+            <Route
+              path="/rotas"
+              element={
+                <SoAdministrador>
+                  <Rotas />
                 </SoAdministrador>
               }
             />

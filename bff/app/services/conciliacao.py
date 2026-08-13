@@ -1,9 +1,18 @@
-"""Sugere quais usinas dos dois sistemas são a mesma.
+"""O inventário de usinas dos dois sistemas, e quais delas são a mesma.
 
-**Sugere — não decide.** Um casamento errado mistura a geração de uma usina com a
-manutenção de outra, e ninguém percebe até alguém questionar um relatório. Por isso a
-saída daqui é sempre uma lista ordenada de candidatos com o motivo de cada pontuação, para
-uma pessoa confirmar.
+Duas responsabilidades, e a distinção importa:
+
+**1. Inventariar.** `montar` junta os dois lados numa lista só de usinas do Gestão Solar.
+Uma usina pode existir nos dois sistemas, só no meuWatt, ou só no meuPlano — e as três
+situações precisam aparecer. A versão anterior deste arquivo percorria apenas o meuWatt e
+procurava par no meuPlano, o que tornava **invisível toda usina que só existe no meuPlano**:
+com 16 lá e 6 aqui, dez sumiam da tela sem aviso nenhum. Manutenção sem monitoramento é um
+caso normal de negócio, não uma anomalia.
+
+**2. Sugerir o par — não decidir.** Um casamento errado mistura a geração de uma usina com
+a manutenção de outra, e ninguém percebe até alguém questionar um relatório. Por isso a
+saída é sempre uma lista ordenada de candidatos com o motivo de cada pontuação, para uma
+pessoa confirmar.
 
 Três pistas, em ordem de confiança:
 
@@ -155,3 +164,164 @@ def sugerir(
         )
 
     return sugestoes
+
+
+# ── inventário ──────────────────────────────────────────────────────────────
+
+
+def nome_de(usina: dict[str, Any]) -> str:
+    """Os dois produtos escrevem o nome em chaves diferentes."""
+    return usina.get("name") or usina.get("nome") or ""
+
+
+@dataclass
+class Linha:
+    """Uma usina do Gestão Solar, com o que se sabe dela de cada lado.
+
+    `plant_link_id` nulo significa que ela ainda não existe aqui — foi vista num dos
+    produtos e nunca foi trazida para dentro. É o estado inicial de tudo, e a diferença
+    entre "não está no app" e "não existe" é justamente essa.
+    """
+
+    #: Identificador estável para a tela. `mw:slug`, `mp:12` ou `link:3`.
+    chave: str
+    nome: str
+    plant_link_id: int | None = None
+    mw_slug: str | None = None
+    mw_nome: str | None = None
+    mp_usina_id: int | None = None
+    mp_nome: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    #: Existe aqui **e** está ligada. Só uma usina no app pode ser concedida a um cliente.
+    no_app: bool = False
+    #: Candidatas do meuPlano para esta usina do meuWatt, da mais provável para a menos.
+    candidatos: list[Candidato] = field(default_factory=list)
+    #: O caminho inverso: para uma usina só do meuPlano, qual usina do meuWatt parece ser
+    #: a mesma. Sem isto, `Ibitinga` apareceria duas vezes na tela — uma em cada grupo —
+    #: sem nada indicando que provavelmente são a mesma coisa, e o gestor teria de cruzar
+    #: os dois grupos a olho. Continuam duas linhas de propósito: o sistema não *sabe* que
+    #: são a mesma, e esconder uma delas seria decidir no lugar de quem decide.
+    par_provavel_mw: str | None = None
+    par_provavel_nome: str | None = None
+    par_provavel_motivos: list[str] = field(default_factory=list)
+
+    @property
+    def origem(self) -> str:
+        if self.mw_slug and self.mp_usina_id:
+            return "ambos"
+        return "meuwatt" if self.mw_slug else "meuplano"
+
+
+def montar(
+    usinas_mw: list[dict[str, Any]],
+    usinas_mp: list[dict[str, Any]],
+    links: list[Any],
+    limite: int = 3,
+) -> list[Linha]:
+    """A lista completa: o que já existe aqui, mais o que ainda só existe lá.
+
+    A ordem de montagem é o cuidado principal — cada usina precisa aparecer **uma vez só**.
+    Primeiro os vínculos já gravados (que são a verdade deste sistema), depois o que sobrou
+    de cada produto. Sem isso, uma usina casada apareceria três vezes: uma como vínculo,
+    uma como "só meuWatt" e uma como "só meuPlano".
+
+    `links` são os `PlantLink`; o parâmetro é solto (`Any`) para este módulo continuar sem
+    saber de banco — ele é testado com objetos simples.
+    """
+    por_slug = {u.get("slug"): u for u in usinas_mw if u.get("slug")}
+    por_id = {int(u["id"]): u for u in usinas_mp if u.get("id") is not None}
+
+    sugestoes = {s.mw_slug: s.candidatos for s in sugerir(usinas_mw, usinas_mp, limite)}
+
+    linhas: list[Linha] = []
+    slugs_usados: set[str] = set()
+    ids_usados: set[int] = set()
+
+    # 1. O que este sistema já conhece.
+    for link in links:
+        mw = por_slug.get(link.mw_plant_slug) if link.mw_plant_slug else None
+        mp = por_id.get(link.mp_usina_id) if link.mp_usina_id else None
+        if link.mw_plant_slug:
+            slugs_usados.add(link.mw_plant_slug)
+        if link.mp_usina_id:
+            ids_usados.add(link.mp_usina_id)
+
+        linhas.append(
+            Linha(
+                chave=f"link:{link.id}",
+                nome=link.nome,
+                plant_link_id=link.id,
+                mw_slug=link.mw_plant_slug,
+                # O nome do produto quando ele responde; senão, o guardado. Uma usina
+                # apagada lá continua legível aqui em vez de virar uma linha sem nome.
+                mw_nome=nome_de(mw) if mw else (link.nome if link.mw_plant_slug else None),
+                mp_usina_id=link.mp_usina_id,
+                mp_nome=nome_de(mp) if mp else (link.nome if link.mp_usina_id else None),
+                cidade=link.cidade,
+                uf=link.uf,
+                kwp=link.kwp,
+                no_app=bool(link.ativo),
+                # Uma usina já casada não precisa de sugestão; uma só-meuWatt ainda precisa.
+                candidatos=[] if link.mp_usina_id else sugestoes.get(link.mw_plant_slug, []),
+            )
+        )
+
+    # 2. O que só existe no meuWatt.
+    for slug, u in por_slug.items():
+        if slug in slugs_usados:
+            continue
+        linhas.append(
+            Linha(
+                chave=f"mw:{slug}",
+                nome=nome_de(u),
+                mw_slug=slug,
+                mw_nome=nome_de(u),
+                cidade=u.get("city"),
+                uf=u.get("state"),
+                kwp=u.get("capacity_kwp") or u.get("total_capacity_kwp"),
+                candidatos=sugestoes.get(slug, []),
+            )
+        )
+
+    # O caminho inverso da sugestão: de cada usina do meuPlano ainda solta, para a usina do
+    # meuWatt que parece ser a mesma. Só entre as que continuam sem par dos dois lados —
+    # apontar para uma usina do meuWatt já casada seria sugerir um conflito.
+    #: mp_usina_id → (slug, nome, pontos, motivos) da melhor usina do meuWatt para ela.
+    inverso: dict[int, tuple[str, str, float, list[str]]] = {}
+    for linha_mw in linhas:
+        if linha_mw.origem != "meuwatt" or not linha_mw.mw_slug:
+            continue
+        for c in linha_mw.candidatos:
+            if c.mp_usina_id in ids_usados:
+                continue
+            anterior = inverso.get(c.mp_usina_id)
+            # Uma usina do meuPlano pode ser candidata de duas do meuWatt. Fica com a de
+            # maior pontuação — a mesma regra que ordena a lista de candidatos.
+            if anterior is None or c.pontos > anterior[2]:
+                inverso[c.mp_usina_id] = (linha_mw.mw_slug, linha_mw.nome, c.pontos, c.motivos)
+
+    # 3. O que só existe no meuPlano — o grupo que a versão anterior não mostrava.
+    for id_mp, u in por_id.items():
+        if id_mp in ids_usados:
+            continue
+        par = inverso.get(id_mp)
+        linhas.append(
+            Linha(
+                chave=f"mp:{id_mp}",
+                nome=nome_de(u),
+                mp_usina_id=id_mp,
+                mp_nome=nome_de(u),
+                cidade=u.get("city") or u.get("cidade"),
+                uf=u.get("uf") or u.get("state"),
+                kwp=u.get("potencia_kwp") or u.get("capacity_kwp"),
+                par_provavel_mw=par[0] if par else None,
+                par_provavel_nome=par[1] if par else None,
+                par_provavel_motivos=list(par[3]) if par else [],
+            )
+        )
+
+    # No app primeiro, depois as casadas, depois por nome: o que exige decisão sobe.
+    linhas.sort(key=lambda l: (not l.no_app, l.origem != "ambos", l.nome.lower()))
+    return linhas

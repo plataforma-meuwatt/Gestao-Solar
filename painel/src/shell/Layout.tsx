@@ -13,6 +13,7 @@
 import {
   Cable,
   LogOut,
+  Route,
   Stethoscope,
   Sun,
   Users,
@@ -36,6 +37,7 @@ const MENU: ItemMenu[] = [
   { para: '/usinas', rotulo: 'Usinas', icone: Sun },
   { para: '/diagnostico', rotulo: 'Diagnóstico', icone: Stethoscope },
   { para: '/conexoes', rotulo: 'Conexões', icone: Cable, soAdministrador: true },
+  { para: '/rotas', rotulo: 'Rotas', icone: Route, soAdministrador: true },
   { para: '/equipe', rotulo: 'Equipe', icone: UsersRound, soAdministrador: true },
 ]
 
