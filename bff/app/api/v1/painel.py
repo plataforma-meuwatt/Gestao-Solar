@@ -24,7 +24,7 @@ from app.core.security import (
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import conciliacao, integracoes
+from app.services import conciliacao, integracoes, sonda
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
 
@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/painel", tags=["painel"])
 
 
 class EntrarIn(BaseModel):
-    email: str
+    apelido: str
     senha: str
 
 
@@ -41,12 +41,17 @@ class EntrarOut(BaseModel):
     token: str
     expira_em: datetime
     nome: str
+    apelido: str
     perfil: str
 
 
 @router.post("/entrar", response_model=EntrarOut)
 def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
-    usuario = db.scalar(select(User).where(User.email == body.email.strip().lower()))
+    # Um apelido malformado é só um apelido que não existe: normaliza o que dá e deixa a
+    # busca falhar. Responder "formato inválido" aqui contaria a quem tenta adivinhar que
+    # o formato importa, e o `.strip().lower()` é o que faz "Renan " entrar como `renan`.
+    procurado = (body.apelido or "").strip().lower()
+    usuario = db.scalar(select(User).where(User.apelido == procurado))
 
     # Mensagem única para conta inexistente, senha errada e perfil sem acesso ao painel:
     # quem tenta adivinhar não aprende qual das três aconteceu.
@@ -56,7 +61,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
         or not usuario.abre_painel
         or not conferir_senha(body.senha, usuario.senha_hash)
     ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "E-mail ou senha inválidos")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
 
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
@@ -65,7 +70,11 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     # O perfil vai na resposta para a barra lateral esconder o que atendimento não abre.
     # É conforto de interface, não segurança: o backend recusa de qualquer forma.
     return EntrarOut(
-        token=token, expira_em=expira, nome=usuario.nome, perfil=usuario.perfil.value
+        token=token,
+        expira_em=expira,
+        nome=usuario.nome,
+        apelido=usuario.apelido,
+        perfil=usuario.perfil.value,
     )
 
 
@@ -154,7 +163,7 @@ def salvar_integracao(
     try:
         integracao = integracoes.salvar(
             db, produto, body.base_url, body.usuario_servico, body.senha,
-            ator_email=usuario.email,
+            ator_email=usuario.identificacao,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -178,7 +187,7 @@ async def testar_integracao(
     db: Session = Depends(get_db),
     usuario: User = Depends(administrador_atual),
 ) -> TesteOut:
-    resultado = await integracoes.testar(db, produto, ator_email=usuario.email)
+    resultado = await integracoes.testar(db, produto, ator_email=usuario.identificacao)
     return TesteOut(
         ok=resultado.ok,
         detalhe=resultado.detalhe,
@@ -202,7 +211,7 @@ async def conectar_por_token(
     — a conexão anterior continua de pé (ver `integracoes.salvar_token`).
     """
     resultado = await integracoes.salvar_token(
-        db, produto, body.base_url, body.token, ator_email=usuario.email
+        db, produto, body.base_url, body.token, ator_email=usuario.identificacao
     )
     return TesteOut(
         ok=resultado.ok,
@@ -221,8 +230,97 @@ def desconectar_token(
 ) -> IntegracaoOut:
     """Para de usar o token deste lado. NÃO o revoga no produto de origem — só quem o
     emitiu pode fazer isso, lá. A tela avisa, porque a diferença importa."""
-    integracoes.remover_token(db, produto, ator_email=usuario.email)
+    integracoes.remover_token(db, produto, ator_email=usuario.identificacao)
     return _integracao_out(produto, integracoes.obter(db, produto))
+
+
+class RotaSondadaOut(BaseModel):
+    chave: str
+    metodo: str
+    caminho: str
+    alimenta: str
+    essencial: bool
+    situacao: str
+    status: int | None = None
+    ms: int | None = None
+    detalhe: str | None = None
+    itens: int | None = None
+    campos: list[str] = []
+
+
+class VarreduraOut(BaseModel):
+    produto: str
+    base_url: str | None = None
+    ok: bool
+    detalhe: str
+    executada_em: datetime
+    rotas: list[RotaSondadaOut] = []
+
+
+@router.get("/integracoes/{produto}/rotas", response_model=VarreduraOut)
+def listar_rotas(
+    produto: Produto, _: User = Depends(gestor_atual)
+) -> VarreduraOut:
+    """O catálogo, sem bater em nada.
+
+    Existe separado da varredura porque a lista tem valor sozinha: é o inventário do que
+    este sistema depende no produto de origem. Abre instantâneo, e serve de referência
+    mesmo com a ponte fora do ar.
+    """
+    return VarreduraOut(
+        produto=produto.value,
+        ok=True,
+        detalhe=f"{len(sonda.CATALOGO[produto])} rotas catalogadas. Nenhuma foi chamada.",
+        executada_em=datetime.now(UTC),
+        rotas=[
+            RotaSondadaOut(
+                chave=r.chave,
+                metodo=r.metodo,
+                caminho=r.caminho,
+                alimenta=r.alimenta,
+                essencial=r.essencial,
+                situacao="nao_sondada" if not r.sonda else "pendente",
+                detalhe=r.nao_sondada_porque,
+            )
+            for r in sonda.CATALOGO[produto]
+        ],
+    )
+
+
+@router.post("/integracoes/{produto}/rotas/sondar", response_model=VarreduraOut)
+async def sondar_rotas(
+    produto: Produto,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(administrador_atual),
+) -> VarreduraOut:
+    """Exercita o catálogo inteiro com o token gravado.
+
+    Restrito a administrador, e não a qualquer gestor: a varredura é uma dúzia de
+    requisições ao produto de terceiro e usa a credencial de serviço — não é uma tela de
+    consulta que qualquer um abre sem consequência.
+
+    Fica registrada no histórico da ponte para responder "quando foi a última vez que
+    passou inteira?", que é a pergunta de quem investiga uma quebra.
+    """
+    varredura = await sonda.varrer(db, produto)
+
+    integracoes.registrar_evento(
+        db,
+        produto,
+        "sonda_ok" if varredura.ok else "sonda_falhou",
+        ator_email=usuario.identificacao,
+        detalhe=varredura.detalhe,
+    )
+    db.commit()
+
+    return VarreduraOut(
+        produto=varredura.produto,
+        base_url=varredura.base_url,
+        ok=varredura.ok,
+        detalhe=varredura.detalhe,
+        executada_em=varredura.executada_em,
+        rotas=[RotaSondadaOut(**vars(r)) for r in varredura.rotas],
+    )
 
 
 @router.get("/integracoes/{produto}/eventos", response_model=list[EventoOut])
@@ -318,10 +416,32 @@ class CandidatoOut(BaseModel):
 
 
 class LinhaConciliacao(BaseModel):
-    mw_slug: str
-    mw_nome: str
-    vinculado_a: int | None = None
-    candidatos: list[CandidatoOut]
+    """Uma usina do inventário, com o que se sabe dela de cada lado.
+
+    `plant_link_id` nulo = existe num produto e ainda não foi trazida para cá. É o estado
+    inicial de tudo, e é o que distingue "não está no app" de "não existe".
+    """
+
+    chave: str
+    nome: str
+    plant_link_id: int | None = None
+    mw_slug: str | None = None
+    mw_nome: str | None = None
+    mp_usina_id: int | None = None
+    mp_nome: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    #: `ambos` · `meuwatt` · `meuplano`
+    origem: str
+    no_app: bool
+    candidatos: list[CandidatoOut] = []
+    #: Para uma usina só do meuPlano: de qual usina do meuWatt ela parece ser par. As duas
+    #: linhas continuam separadas — o sistema não sabe que são a mesma —, mas o gestor não
+    #: precisa cruzar os dois grupos a olho para descobrir.
+    par_provavel_mw: str | None = None
+    par_provavel_nome: str | None = None
+    par_provavel_motivos: list[str] = []
 
 
 class ConciliacaoOut(BaseModel):
@@ -331,11 +451,39 @@ class ConciliacaoOut(BaseModel):
     aviso: str | None = None
 
 
+def _linha_out(linha: conciliacao.Linha) -> LinhaConciliacao:
+    return LinhaConciliacao(
+        chave=linha.chave,
+        nome=linha.nome,
+        plant_link_id=linha.plant_link_id,
+        mw_slug=linha.mw_slug,
+        mw_nome=linha.mw_nome,
+        mp_usina_id=linha.mp_usina_id,
+        mp_nome=linha.mp_nome,
+        cidade=linha.cidade,
+        uf=linha.uf,
+        kwp=linha.kwp,
+        origem=linha.origem,
+        no_app=linha.no_app,
+        candidatos=[
+            CandidatoOut(mp_usina_id=c.mp_usina_id, nome=c.nome, pontos=c.pontos, motivos=c.motivos)
+            for c in linha.candidatos
+        ],
+        par_provavel_mw=linha.par_provavel_mw,
+        par_provavel_nome=linha.par_provavel_nome,
+        par_provavel_motivos=linha.par_provavel_motivos,
+    )
+
+
 @router.get("/conciliacao", response_model=ConciliacaoOut)
 async def carregar_conciliacao(
     db: Session = Depends(get_db), _: User = Depends(gestor_atual)
 ) -> ConciliacaoOut:
-    """As duas listas, os vínculos já salvos e as sugestões para o que falta."""
+    """O inventário completo: o que já está no app, e o que existe nos produtos e não está.
+
+    Inclui as usinas que existem **só no meuPlano** — manutenção sem monitoramento é um
+    caso normal, e a versão anterior desta rota as omitia por percorrer apenas o meuWatt.
+    """
     usinas_mw: list[dict[str, Any]] = []
     usinas_mp: list[dict[str, Any]] = []
     avisos: list[str] = []
@@ -352,96 +500,156 @@ async def carregar_conciliacao(
     except Exception as exc:  # noqa: BLE001
         avisos.append(f"meuPlano indisponível: {exc}")
 
-    vinculos = {
-        link.mw_plant_slug: link.mp_usina_id
-        for link in db.scalars(select(PlantLink)).all()
-        if link.mw_plant_slug
-    }
-
-    sugestoes = conciliacao.sugerir(usinas_mw, usinas_mp)
+    links = list(db.scalars(select(PlantLink)).all())
+    linhas = conciliacao.montar(usinas_mw, usinas_mp, links)
 
     return ConciliacaoOut(
         meuwatt=[
             UsinaLado(
                 id=u.get("slug", ""),
-                nome=u.get("name") or "",
+                nome=conciliacao.nome_de(u),
                 cidade=u.get("city"),
                 uf=u.get("state"),
-                kwp=u.get("capacity_kwp"),
+                kwp=u.get("capacity_kwp") or u.get("total_capacity_kwp"),
             )
             for u in usinas_mw
         ],
         meuplano=[
             UsinaLado(
                 id=str(u.get("id", "")),
-                nome=u.get("name") or u.get("nome") or "",
+                nome=conciliacao.nome_de(u),
                 cidade=u.get("city") or u.get("cidade"),
-                uf=u.get("uf"),
-                kwp=u.get("potencia_kwp"),
+                uf=u.get("uf") or u.get("state"),
+                kwp=u.get("potencia_kwp") or u.get("capacity_kwp"),
             )
             for u in usinas_mp
         ],
-        linhas=[
-            LinhaConciliacao(
-                mw_slug=s.mw_slug,
-                mw_nome=s.mw_nome,
-                vinculado_a=vinculos.get(s.mw_slug),
-                candidatos=[
-                    CandidatoOut(
-                        mp_usina_id=c.mp_usina_id,
-                        nome=c.nome,
-                        pontos=c.pontos,
-                        motivos=c.motivos,
-                    )
-                    for c in s.candidatos
-                ],
-            )
-            for s in sugestoes
-        ],
+        linhas=[_linha_out(l) for l in linhas],
         aviso=" · ".join(avisos) if avisos else None,
     )
 
 
-class VincularIn(BaseModel):
-    mw_slug: str
-    # Nulo desfaz o vínculo — é o caso da usina que só existe de um lado.
+class UsinaIn(BaseModel):
+    """Uma usina do inventário, do jeito que o gestor a definiu.
+
+    Os dois identificadores são opcionais e independentes: dá para gravar uma usina só do
+    meuWatt, só do meuPlano, ou casada. O que não se aceita é nenhum dos dois — seria uma
+    usina que não existe em lugar nenhum.
+    """
+
+    plant_link_id: int | None = None
+    mw_slug: str | None = None
     mp_usina_id: int | None = None
-    nome: str
+    nome: str = Field(min_length=1)
     cidade: str | None = None
     uf: str | None = None
     kwp: float | None = None
+    #: Se ela entra no aplicativo. Desligada, continua existindo aqui com os vínculos e as
+    #: concessões intactos — o gestor pode religá-la sem refazer nada.
+    no_app: bool = True
 
 
-@router.post("/conciliacao/vincular")
-def vincular(
-    body: VincularIn, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
-) -> dict[str, str]:
-    """Grava o par confirmado. Uma usina do meuPlano só pode pertencer a um vínculo — dois
-    slugs apontando para a mesma usina misturaria dados de duas plantas."""
-    if body.mp_usina_id is not None:
-        conflito = db.scalar(
-            select(PlantLink).where(
-                PlantLink.mp_usina_id == body.mp_usina_id,
-                PlantLink.mw_plant_slug != body.mw_slug,
-            )
+def _conflito(db: Session, campo, valor, exceto_id: int | None) -> PlantLink | None:
+    """Outra usina já usa este identificador? Dois vínculos apontando para a mesma usina de
+    um produto misturariam os dados de duas plantas."""
+    if valor is None:
+        return None
+    condicoes = [campo == valor]
+    if exceto_id is not None:
+        condicoes.append(PlantLink.id != exceto_id)
+    return db.scalar(select(PlantLink).where(*condicoes))
+
+
+@router.put("/conciliacao/usina", response_model=LinhaConciliacao)
+def salvar_usina(
+    body: UsinaIn, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+) -> LinhaConciliacao:
+    """Cria ou atualiza uma usina do inventário — casando, descasando ou só ligando no app.
+
+    É um endpoint só para as três coisas porque elas são a mesma operação vista de ângulos
+    diferentes: gravar o estado desejado daquela usina. Separar em `vincular`,
+    `desvincular` e `ativar` obrigaria a tela a chamar duas rotas para "trazer a usina do
+    meuPlano para o app", com a chance de a segunda falhar depois da primeira.
+    """
+    if body.mw_slug is None and body.mp_usina_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "A usina precisa existir em pelo menos um dos dois produtos.",
         )
-        if conflito is not None:
+
+    link = db.get(PlantLink, body.plant_link_id) if body.plant_link_id else None
+    if body.plant_link_id and link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
+
+    alvo = link.id if link else None
+    for campo, valor, produto in (
+        (PlantLink.mw_plant_slug, body.mw_slug, "meuWatt"),
+        (PlantLink.mp_usina_id, body.mp_usina_id, "meuPlano"),
+    ):
+        outro = _conflito(db, campo, valor, alvo)
+        if outro is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Esta usina do meuPlano já está vinculada a “{conflito.nome}”. "
+                f"Esta usina do {produto} já pertence a “{outro.nome}”. "
                 "Desfaça o outro vínculo antes.",
             )
 
-    link = db.scalar(select(PlantLink).where(PlantLink.mw_plant_slug == body.mw_slug))
     if link is None:
-        link = PlantLink(mw_plant_slug=body.mw_slug, nome=body.nome)
+        link = PlantLink(nome=body.nome)
         db.add(link)
 
+    link.mw_plant_slug = body.mw_slug
     link.mp_usina_id = body.mp_usina_id
     link.nome = body.nome
     link.cidade = body.cidade
     link.uf = body.uf
     link.kwp = body.kwp
+    link.ativo = body.no_app
     db.commit()
+    db.refresh(link)
 
-    return {"situacao": "vinculada" if body.mp_usina_id else "desvinculada"}
+    return LinhaConciliacao(
+        chave=f"link:{link.id}",
+        nome=link.nome,
+        plant_link_id=link.id,
+        mw_slug=link.mw_plant_slug,
+        mw_nome=link.nome if link.mw_plant_slug else None,
+        mp_usina_id=link.mp_usina_id,
+        mp_nome=link.nome if link.mp_usina_id else None,
+        cidade=link.cidade,
+        uf=link.uf,
+        kwp=link.kwp,
+        origem=("ambos" if link.mw_plant_slug and link.mp_usina_id
+                else "meuwatt" if link.mw_plant_slug else "meuplano"),
+        no_app=link.ativo,
+    )
+
+
+@router.delete("/conciliacao/usina/{plant_link_id}", status_code=204)
+def remover_usina(
+    plant_link_id: int, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+) -> None:
+    """Tira a usina do Gestão Solar de vez.
+
+    Recusa enquanto houver cliente com ela concedida: apagar levaria junto o acesso dele
+    por cascata, e o sintoma seria uma usina que sumiu do app sem ninguém ter mexido
+    naquele cliente. Para tirar do ar sem perder nada, o caminho é desligar `no_app`.
+    """
+    link = db.get(PlantLink, plant_link_id)
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
+
+    donos = db.scalars(
+        select(User.nome)
+        .join(UserPlantAccess, UserPlantAccess.user_id == User.id)
+        .where(UserPlantAccess.plant_link_id == plant_link_id)
+    ).all()
+    if donos:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"“{link.nome}” está concedida a {', '.join(donos)}. "
+            "Tire a usina desse cliente antes, ou apenas desligue-a do aplicativo.",
+        )
+
+    db.delete(link)
+    db.commit()

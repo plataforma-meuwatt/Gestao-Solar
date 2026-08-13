@@ -18,6 +18,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.apelido import ApelidoInvalido
+from app.core.apelido import normalizar as normalizar_apelido
 from app.core.security import gerar_hash_senha, gerar_senha_provisoria
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
@@ -45,15 +47,36 @@ class ClienteCriado:
 
 
 def criar(
-    db: Session, *, nome: str, email: str, empresa: str | None, criado_por: User
+    db: Session,
+    *,
+    nome: str,
+    apelido: str,
+    email: str | None,
+    empresa: str | None,
+    criado_por: User,
 ) -> ClienteCriado:
-    email = email.strip().lower()
+    try:
+        apelido = normalizar_apelido(apelido)
+    except ApelidoInvalido as exc:
+        raise RegraDeNegocio(str(exc)) from exc
 
-    if db.scalar(select(User).where(User.email == email)) is not None:
-        raise RegraDeNegocio(f"Já existe uma conta com o e-mail {email}.")
+    email = (email or "").strip().lower() or None
+
+    if db.scalar(select(User).where(User.apelido == apelido)) is not None:
+        raise RegraDeNegocio(f"O apelido “{apelido}” já está em uso.")
+
+    # O e-mail repetido só bloqueia entre CLIENTES. Dois clientes com o mesmo e-mail são
+    # quase sempre o mesmo cliente cadastrado duas vezes, e o sintoma seria usina
+    # aparecendo na conta errada. Já um cliente que divide o e-mail com um gestor é o caso
+    # esperado: a mesma pessoa administrando o sistema e sendo dona de uma usina.
+    if email and db.scalar(
+        select(User).where(User.email == email, User.perfil == Perfil.CLIENTE)
+    ) is not None:
+        raise RegraDeNegocio(f"Já existe um cliente com o e-mail {email}.")
 
     senha = gerar_senha_provisoria()
     usuario = User(
+        apelido=apelido,
         email=email,
         nome=nome.strip(),
         empresa=(empresa or "").strip() or None,

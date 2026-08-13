@@ -29,6 +29,7 @@ def db():
 @pytest.fixture
 def administrador(db):
     u = User(
+        apelido="admin",
         email="admin@gestaosolar.local",
         nome="Admin",
         perfil=Perfil.ADMINISTRADOR,
@@ -42,6 +43,7 @@ def administrador(db):
 @pytest.fixture
 def atendente(db):
     u = User(
+        apelido="atendimento",
         email="atendimento@gestaosolar.local",
         nome="Atendimento",
         perfil=Perfil.ATENDIMENTO,

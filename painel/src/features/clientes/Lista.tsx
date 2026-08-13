@@ -27,7 +27,8 @@ export function ListaClientes() {
     return data.filter(
       (c) =>
         c.nome.toLowerCase().includes(termo) ||
-        c.email.toLowerCase().includes(termo) ||
+        c.apelido.includes(termo) ||
+        (c.email ?? '').toLowerCase().includes(termo) ||
         (c.empresa ?? '').toLowerCase().includes(termo),
     )
   }, [data, busca])
@@ -103,7 +104,7 @@ function LinhaCliente({ cliente, primeiro }: { cliente: ClienteResumo; primeiro:
           {!cliente.ativo ? <span className="text-fraco font-normal"> · desativado</span> : null}
         </p>
         <p className="text-xs text-fraco truncate">
-          {cliente.email}
+          <span className="mono">{cliente.apelido}</span>
           {cliente.empresa ? ` · ${cliente.empresa}` : ''}
         </p>
       </div>

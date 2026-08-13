@@ -14,7 +14,7 @@ from app.services import clientes as svc
 
 def test_criar_cliente_devolve_senha_que_funciona(db, administrador):
     criado = svc.criar(
-        db, nome="Renan", email="Renan@Solaris.com.BR", empresa="Solaris", criado_por=administrador
+        db, nome="Renan", apelido="renan", email="Renan@Solaris.com.BR", empresa="Solaris", criado_por=administrador
     )
 
     assert criado.usuario.perfil is Perfil.CLIENTE
@@ -28,7 +28,7 @@ def test_criar_cliente_devolve_senha_que_funciona(db, administrador):
 def test_senha_provisoria_nao_fica_guardada(db, administrador):
     """Ela existe no retorno e no hash — em nenhum outro lugar. É o que garante que
     nenhum GET consiga devolvê-la depois."""
-    criado = svc.criar(db, nome="Renan", email="a@b.com", empresa=None, criado_por=administrador)
+    criado = svc.criar(db, nome="Renan", apelido="acliente", email="a@b.com", empresa=None, criado_por=administrador)
 
     registro = db.query(SenhaProvisoria).filter_by(gs_user_id=criado.usuario.id).one()
     for valor in vars(registro).values():
@@ -36,14 +36,53 @@ def test_senha_provisoria_nao_fica_guardada(db, administrador):
     assert criado.senha_provisoria not in (criado.usuario.senha_hash or "")
 
 
-def test_email_repetido_e_recusado(db, administrador):
-    svc.criar(db, nome="Renan", email="a@b.com", empresa=None, criado_por=administrador)
-    with pytest.raises(svc.RegraDeNegocio, match="Já existe"):
-        svc.criar(db, nome="Outro", email="A@B.com", empresa=None, criado_por=administrador)
+def test_apelido_repetido_e_recusado(db, administrador):
+    """O apelido é a identidade: dois iguais tornariam impossível dizer quem entra."""
+    svc.criar(db, nome="Renan", apelido="renan", email="a@b.com", empresa=None, criado_por=administrador)
+    with pytest.raises(svc.RegraDeNegocio, match="já está em uso"):
+        # Maiúscula não faz um apelido novo — senão `Renan` e `renan` seriam duas contas
+        # indistinguíveis na tela e na hora de ditar por telefone.
+        svc.criar(db, nome="Outro", apelido="RENAN", email="c@d.com", empresa=None, criado_por=administrador)
+
+
+def test_email_repetido_entre_clientes_e_recusado(db, administrador):
+    """Dois clientes com o mesmo e-mail são quase sempre o mesmo cliente cadastrado duas
+    vezes — e o sintoma seria usina aparecendo na conta errada."""
+    svc.criar(db, nome="Renan", apelido="renan", email="a@b.com", empresa=None, criado_por=administrador)
+    with pytest.raises(svc.RegraDeNegocio, match="Já existe um cliente"):
+        svc.criar(db, nome="Outro", apelido="outro", email="A@B.com", empresa=None, criado_por=administrador)
+
+
+def test_cliente_pode_repetir_o_email_de_um_gestor(db, administrador):
+    """O caso que motivou trocar o e-mail pelo apelido: a mesma pessoa administra o
+    sistema e, separadamente, é dona de uma usina. São duas contas, dois poderes."""
+    criado = svc.criar(
+        db,
+        nome="Admin",
+        apelido="admin.cliente",
+        email=administrador.email,
+        empresa=None,
+        criado_por=administrador,
+    )
+    assert criado.usuario.email == administrador.email
+    assert criado.usuario.id != administrador.id
+
+
+def test_apelido_com_espaco_e_recusado(db, administrador):
+    with pytest.raises(svc.RegraDeNegocio, match="espaço"):
+        svc.criar(db, nome="X", apelido="renan marquezini", email=None, empresa=None, criado_por=administrador)
+
+
+def test_cliente_sem_email_e_valido(db, administrador):
+    """O e-mail só é preciso para achar a conta nos produtos. Sem ele o cliente entra
+    igual — não é o que autentica."""
+    criado = svc.criar(db, nome="Sem Email", apelido="sem.email", email=None, empresa=None, criado_por=administrador)
+    assert criado.usuario.email is None
+    assert conferir_senha(criado.senha_provisoria, criado.usuario.senha_hash)
 
 
 def test_regenerar_senha_invalida_a_anterior(db, administrador):
-    criado = svc.criar(db, nome="Renan", email="a@b.com", empresa=None, criado_por=administrador)
+    criado = svc.criar(db, nome="Renan", apelido="acliente", email="a@b.com", empresa=None, criado_por=administrador)
     antiga = criado.senha_provisoria
 
     nova = svc.regenerar_senha(db, criado.usuario, administrador)
@@ -56,7 +95,7 @@ def test_regenerar_senha_invalida_a_anterior(db, administrador):
 def test_situacao_do_acesso_acompanha_o_uso(db, administrador):
     from datetime import UTC, datetime, timedelta
 
-    cliente = User(email="c@d.com", nome="Cliente", perfil=Perfil.CLIENTE)
+    cliente = User(apelido="cliente", email="c@d.com", nome="Cliente", perfil=Perfil.CLIENTE)
     db.add(cliente)
     db.commit()
 
@@ -73,8 +112,8 @@ def test_situacao_do_acesso_acompanha_o_uso(db, administrador):
 
 def test_usina_de_outro_cliente_e_recusada(db, administrador, usinas):
     porto, _ = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
-    dois = svc.criar(db, nome="Dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    dois = svc.criar(db, nome="Dois", apelido="dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id])
 
@@ -86,8 +125,8 @@ def test_conflito_nao_grava_nada(db, administrador, usinas):
     """A operação é tudo-ou-nada: gravar parcialmente deixaria o gestor sem saber o que
     entrou."""
     porto, ribeirao = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
-    dois = svc.criar(db, nome="Dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    dois = svc.criar(db, nome="Dois", apelido="dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id])
 
@@ -100,7 +139,7 @@ def test_conflito_nao_grava_nada(db, administrador, usinas):
 def test_manter_a_propria_usina_nao_e_conflito(db, administrador, usinas):
     """Editar a lista de um cliente que já tem a usina não pode reclamar dele mesmo."""
     porto, ribeirao = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id])
     svc.definir_usinas(db, um, [porto.id, ribeirao.id])
@@ -110,7 +149,7 @@ def test_manter_a_propria_usina_nao_e_conflito(db, administrador, usinas):
 
 def test_definir_usinas_remove_o_que_saiu(db, administrador, usinas):
     porto, ribeirao = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id, ribeirao.id])
     svc.definir_usinas(db, um, [ribeirao.id])
@@ -122,7 +161,7 @@ def test_definir_usinas_remove_o_que_saiu(db, administrador, usinas):
 async def test_sugestao_lista_todas_as_usinas(db, administrador, usinas):
     """Sem vínculo com produto nenhum, a lista não pode vir vazia: o gestor precisa poder
     conceder à mão. A indicação dos produtos ordena, não filtra."""
-    cliente = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    cliente = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
 
     lista = await svc.usinas_sugeridas(db, cliente)
 
@@ -136,8 +175,8 @@ async def test_sugestao_marca_a_usina_de_outro_dono(db, administrador, usinas):
     """A usina alheia aparece na lista, identificada — esconder faria o gestor procurar uma
     usina que existe e não entender por que sumiu."""
     porto, _ = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
-    dois = svc.criar(db, nome="Dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    dois = svc.criar(db, nome="Dois", apelido="dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id])
     lista = await svc.usinas_sugeridas(db, dois)
@@ -149,8 +188,8 @@ async def test_sugestao_marca_a_usina_de_outro_dono(db, administrador, usinas):
 def test_usina_liberada_pode_ir_para_outro(db, administrador, usinas):
     """Cliente trocou de dono: tirar de um tem de liberar para o outro na hora."""
     porto, _ = usinas
-    um = svc.criar(db, nome="Um", email="um@a.com", empresa=None, criado_por=administrador).usuario
-    dois = svc.criar(db, nome="Dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
+    um = svc.criar(db, nome="Um", apelido="umcliente", email="um@a.com", empresa=None, criado_por=administrador).usuario
+    dois = svc.criar(db, nome="Dois", apelido="dois", email="dois@a.com", empresa=None, criado_por=administrador).usuario
 
     svc.definir_usinas(db, um, [porto.id])
     svc.definir_usinas(db, um, [])

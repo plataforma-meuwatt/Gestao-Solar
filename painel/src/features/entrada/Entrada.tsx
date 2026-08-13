@@ -10,7 +10,7 @@ export function Entrada() {
   const navegar = useNavigate()
   const local = useLocation() as { state?: { de?: string } }
 
-  const [email, setEmail] = useState('')
+  const [apelido, setApelido] = useState('')
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
   const [entrando, setEntrando] = useState(false)
@@ -22,10 +22,10 @@ export function Entrada() {
     setErro('')
     setEntrando(true)
     try {
-      await entrar(email.trim(), senha)
+      await entrar(apelido.trim().toLowerCase(), senha)
       navegar(local.state?.de || '/clientes', { replace: true })
     } catch (err) {
-      // Os campos ficam como estão: refazer o e-mail por causa de senha errada é o
+      // Os campos ficam como estão: refazer o apelido por causa de senha errada é o
       // atrito que faz alguém desistir na segunda tentativa.
       setErro(mensagemDeErro(err))
     } finally {
@@ -47,11 +47,16 @@ export function Entrada() {
           {erro ? <Erro>{erro}</Erro> : null}
 
           <Campo
-            rotulo="E-mail"
-            type="email"
+            rotulo="Apelido"
             autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            // O apelido é sempre minúsculo. Corrigir a caixa aqui, e não só no envio,
+            // evita a cena de digitar "Renan", ver "Renan" na tela e receber erro sem
+            // entender o motivo.
+            value={apelido}
+            onChange={(e) => setApelido(e.target.value.toLowerCase())}
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="seu.apelido"
             autoFocus
             required
           />

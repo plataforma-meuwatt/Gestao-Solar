@@ -1,8 +1,13 @@
 """Quem usa o Gestão Solar.
 
-Uma tabela só para cliente e gestor: os dois entram com e-mail e senha, e o que muda é o
+Uma tabela só para cliente e gestor: os dois entram com apelido e senha, e o que muda é o
 `perfil`. Separar em duas tabelas duplicaria autenticação, senha e sessão para ganhar
 nada — a diferença entre eles é o que a tela abre, não como entram.
+
+Quem autentica é o **apelido**, não o e-mail (ver `core/apelido.py`). O motivo é concreto:
+a mesma pessoa pode ser o gestor do sistema e, separadamente, o dono de uma usina que ele
+atende. São dois papéis, dois conjuntos de poderes e duas contas — e com o e-mail como
+chave a segunda seria recusada como duplicada.
 """
 
 from datetime import datetime
@@ -45,7 +50,14 @@ class User(Base):
     __tablename__ = "gs_users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+
+    #: Como esta conta entra. Único, minúsculo, validado em `core/apelido.py`.
+    apelido: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+    #: Contato — e, no cliente, a chave que acha a conta dele no meuWatt e no meuPlano.
+    #: Opcional porque não é o que autentica: uma conta de gestor pode não ter e-mail
+    #: próprio, e duas contas da mesma pessoa podem compartilhar o mesmo.
+    email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     nome: Mapped[str] = mapped_column(String(255))
     empresa: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -77,6 +89,15 @@ class User(Base):
         cascade="all, delete-orphan",
         foreign_keys="VinculoProduto.gs_user_id",
     )
+
+    @property
+    def identificacao(self) -> str:
+        """Como esta conta aparece num registro de auditoria.
+
+        Prefere o e-mail, que alcança a pessoa fora do sistema; cai no apelido quando não
+        há e-mail, para a linha do histórico nunca ficar sem autor.
+        """
+        return self.email or self.apelido
 
     @property
     def abre_painel(self) -> bool:

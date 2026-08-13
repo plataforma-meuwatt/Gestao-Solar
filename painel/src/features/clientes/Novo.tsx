@@ -29,6 +29,26 @@ import { mensagemDeErro } from '@/lib/api'
 
 const NOMES_PASSOS = ['Dados', 'meuWatt', 'meuPlano', 'Usinas']
 
+/**
+ * Um apelido plausível a partir do e-mail, só para o campo já nascer preenchido.
+ *
+ * Espelha `core/apelido.sugerir` do BFF. A cópia é aceitável porque é sugestão, não
+ * validação: quem recusa um apelido inválido é o servidor, num lugar só. Se as duas
+ * divergirem, o pior que acontece é a tela propor algo que o gestor corrige antes de
+ * salvar.
+ */
+function sugerirApelido(email: string): string {
+  return email
+    .trim()
+    .toLowerCase()
+    .split('@')[0]
+    .replace(/[\s_]+/g, '.')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/[._-]{2,}/g, '.')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 32)
+}
+
 export function NovoCliente() {
   const navegar = useNavigate()
   const qc = useQueryClient()
@@ -37,6 +57,11 @@ export function NovoCliente() {
   const [erro, setErro] = useState('')
 
   const [nome, setNome] = useState('')
+  const [apelido, setApelido] = useState('')
+  // Enquanto o gestor não digitar um apelido próprio, ele acompanha o e-mail. Quem edita
+  // o campo assume o controle — daí o sinalizador, e não uma comparação de valores: sem
+  // ele, apagar o apelido para reescrevê-lo faria a sugestão voltar por cima.
+  const [apelidoManual, setApelidoManual] = useState(false)
   const [email, setEmail] = useState('')
   const [empresa, setEmpresa] = useState('')
 
@@ -44,7 +69,8 @@ export function NovoCliente() {
   const [senha, setSenha] = useState<string | null>(null)
 
   const criar = useMutation({
-    mutationFn: () => criarCliente({ nome, email, empresa: empresa || null }),
+    mutationFn: () =>
+      criarCliente({ nome, apelido, email: email || null, empresa: empresa || null }),
     onSuccess: (r) => {
       setClienteId(r.id)
       setSenha(r.senha_provisoria)
@@ -84,9 +110,25 @@ export function NovoCliente() {
               rotulo="E-mail"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (!apelidoManual) setApelido(sugerirApelido(e.target.value))
+              }}
               placeholder="renan@solaris.com.br"
-              nota="É com este e-mail que ele entra no aplicativo."
+              nota="Serve para achar a conta dele no meuWatt e no meuPlano. Não é com ele que entra."
+              disabled={!!clienteId}
+            />
+            <Campo
+              rotulo="Apelido"
+              value={apelido}
+              onChange={(e) => {
+                setApelidoManual(true)
+                setApelido(e.target.value.toLowerCase())
+              }}
+              placeholder="renan.marquezini"
+              nota="É com este apelido que ele entra no aplicativo."
+              autoCapitalize="none"
+              spellCheck={false}
               required
               disabled={!!clienteId}
             />
@@ -145,7 +187,7 @@ export function NovoCliente() {
       {senha && passo > 0 ? (
         <SenhaProvisoria
           nome={nome}
-          email={email}
+          apelido={apelido}
           senha={senha}
           aoFechar={() => setSenha(null)}
         />

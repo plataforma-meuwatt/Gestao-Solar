@@ -16,18 +16,20 @@ type Copia = 'nao-tentou' | 'copiado' | 'falhou'
 
 export function SenhaProvisoria({
   nome,
-  email,
+  apelido,
   senha,
   aoFechar,
 }: {
   nome: string
-  email: string
+  apelido: string
   senha: string
   aoFechar: () => void
 }) {
   const [copia, setCopia] = useState<Copia>('nao-tentou')
 
-  const texto = `Acesso ao Gestão Solar\n\nE-mail: ${email}\nSenha provisória: ${senha}\n\nNo primeiro acesso o aplicativo pede para você criar uma senha própria.`
+  // Só o apelido vai na mensagem. Mandar o e-mail junto convidaria o cliente a tentar
+  // entrar com ele, que é exatamente o que não funciona.
+  const texto = `Acesso ao Gestão Solar\n\nApelido: ${apelido}\nSenha provisória: ${senha}\n\nNo primeiro acesso o aplicativo pede para você criar uma senha própria.`
 
   async function copiar() {
     try {
@@ -47,8 +49,8 @@ export function SenhaProvisoria({
       </p>
 
       <div className="mt-4 rounded-campo bg-afundado border border-borda p-4 select-text">
-        <p className="text-xs text-rotulo">E-mail</p>
-        <p className="mono text-sm text-forte">{email}</p>
+        <p className="text-xs text-rotulo">Apelido</p>
+        <p className="mono text-sm text-forte">{apelido}</p>
         <p className="text-xs text-rotulo mt-3">Senha provisória</p>
         <p className="mono text-2xl font-semibold text-ambar tracking-wider">{senha}</p>
       </div>

@@ -17,11 +17,15 @@ const CHAVE = 'gestaosolar.sessao.v1'
 export type Usuario = {
   id: number
   nome: string
-  email: string
+  /** Com o que ele entra. O e-mail é contato — ver `bff/app/core/apelido.py`. */
+  apelido: string
+  email: string | null
   empresa: string | null
   tem_meuwatt: boolean
   tem_meuplano: boolean
   nivel_acesso: number
+  usinas: number
+  trocar_senha: boolean
 }
 
 type Sessao = { token: string; usuario: Usuario }
@@ -31,7 +35,7 @@ type EstadoAuth = {
   usuario: Usuario | null
   hidratado: boolean
   hidratar: () => Promise<void>
-  entrar: (email: string, senha: string) => Promise<void>
+  entrar: (apelido: string, senha: string) => Promise<void>
   entrarEmDemonstracao: () => Promise<void>
   sair: () => Promise<void>
 }
@@ -46,11 +50,14 @@ type EstadoAuth = {
 const USUARIO_DEMO: Usuario = {
   id: 0,
   nome: 'Renan Moraes',
+  apelido: 'demonstracao',
   email: 'demonstracao@gestaosolar.app',
   empresa: 'Solaris Energia',
   tem_meuwatt: true,
   tem_meuplano: true,
   nivel_acesso: 2,
+  usinas: 2,
+  trocar_senha: false,
 }
 
 export const useAuth = create<EstadoAuth>((set) => ({
@@ -73,9 +80,9 @@ export const useAuth = create<EstadoAuth>((set) => ({
     }
   },
 
-  entrar: async (email, senha) => {
+  entrar: async (apelido, senha) => {
     const { data } = await api.post<{ token: string; usuario: Usuario }>('/api/v1/auth/login', {
-      email,
+      apelido: apelido.trim().toLowerCase(),
       senha,
     })
     const sessao: Sessao = { token: data.token, usuario: data.usuario }

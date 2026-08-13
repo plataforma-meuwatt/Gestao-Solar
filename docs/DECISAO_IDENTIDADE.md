@@ -43,6 +43,37 @@ Foram consideradas três opções:
 
 Ganho não previsto: **a conexão resolve boa parte da conciliação de usinas** (seção 3).
 
+### 1b. A identidade da conta é o apelido, não o e-mail (13/08/2026)
+
+A conta própria do Gestão Solar nasceu com e-mail e senha, como todo o resto. Passou a ser
+**apelido** e senha, e o e-mail virou contato — opcional, não único.
+
+O que forçou a mudança foi um caso que apareceu no primeiro cadastro real: **a mesma pessoa
+tem dois papéis aqui.** Renan Marquezini administra o Gestão Solar e, separadamente, é o
+dono de uma usina atendida por ele. São dois conjuntos de poderes muito diferentes — a
+conta de gestor alcança os tokens de serviço dos dois produtos — e portanto duas contas.
+Com o e-mail como chave única, a segunda era recusada como duplicada, e as saídas
+disponíveis eram todas piores:
+
+| Saída | Por que não |
+|---|---|
+| Um e-mail falso para a segunda conta | Um identificador que não alcança ninguém, e que alguém vai tentar usar para recuperar senha |
+| `renan+gestor@…` | Funciona, mas é um truque de provedor: nem todo servidor de e-mail o aceita, e ninguém dita "mais" ao telefone |
+| Uma conta só, com os dois poderes | Apaga a distinção que motiva tudo: o dono de usina passaria a enxergar a tela de Conexões |
+| **Apelido como identidade** ✔ | `renanmarquezini` e `renan.marquezini` são duas contas óbvias, ditáveis, e o e-mail continua sendo o mesmo nas duas |
+
+Três consequências que o código carrega:
+
+- **O e-mail não sai de cena** — é ele que acha a conta da pessoa no meuWatt e no meuPlano,
+  na hora de vincular. Perdeu a unicidade e a obrigatoriedade, não a função. Entre
+  **clientes** ele continua único: dois clientes com o mesmo e-mail são quase sempre o
+  mesmo cliente cadastrado duas vezes, e o sintoma seria usina aparecendo na conta errada.
+- **O formato é apertado** (`core/apelido.py`): minúsculas, sem acento, um separador por
+  vez, nunca nas pontas. Um apelido é ditado por telefone, digitado no celular em campo e
+  comparado a olho na lista da equipe — espaço e maiúscula estragam as três coisas.
+- **A senha provisória é entregue com o apelido**, nunca com o e-mail. Mandar o e-mail
+  junto convida o cliente a tentar entrar com ele, que é exatamente o que não funciona.
+
 ---
 
 ## 2. Como a conexão funciona

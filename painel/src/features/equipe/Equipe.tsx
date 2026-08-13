@@ -75,7 +75,12 @@ function LinhaMembro({
     <div className={`flex items-center gap-4 px-5 py-4 ${primeiro ? '' : 'border-t border-borda'}`}>
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-forte truncate">{membro.nome}</p>
-        <p className="mono text-xs text-fraco truncate">{membro.email}</p>
+        <p className="mono text-xs text-fraco truncate">
+          {/* O apelido primeiro: é ele que a pessoa digita para entrar, e é por ele que
+              se confere de quem é a conta quando dois membros têm nomes parecidos. */}
+          {membro.apelido}
+          {membro.email ? ` · ${membro.email}` : ''}
+        </p>
       </div>
 
       {membro.ultimo_login ? (
@@ -112,13 +117,14 @@ function LinhaMembro({
 function ModalNovoMembro({ aoFechar }: { aoFechar: () => void }) {
   const qc = useQueryClient()
   const [nome, setNome] = useState('')
+  const [apelido, setApelido] = useState('')
   const [email, setEmail] = useState('')
   const [perfil, setPerfil] = useState<Membro['perfil']>('atendimento')
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
 
   const criar = useMutation({
-    mutationFn: () => criarMembro({ nome, email, perfil, senha }),
+    mutationFn: () => criarMembro({ nome, apelido, email: email || null, perfil, senha }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['equipe'] })
       aoFechar()
@@ -140,11 +146,22 @@ function ModalNovoMembro({ aoFechar }: { aoFechar: () => void }) {
 
         <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} required autoFocus />
         <Campo
+          rotulo="Apelido"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value.toLowerCase())}
+          placeholder="joao.silva"
+          nota="É com ele que a pessoa entra no painel."
+          autoCapitalize="none"
+          spellCheck={false}
+          minLength={3}
+          required
+        />
+        <Campo
           rotulo="E-mail"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          required
+          nota="Opcional — serve para alcançar a pessoa, não para entrar."
         />
         <Seletor
           rotulo="Perfil"

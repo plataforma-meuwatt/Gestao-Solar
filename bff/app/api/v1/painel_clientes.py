@@ -14,6 +14,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.apelido import ApelidoInvalido
+from app.core.apelido import normalizar as normalizar_apelido
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha, gestor_atual
 from app.models.integracao import Produto
@@ -46,7 +48,8 @@ class VinculoOut(BaseModel):
 class ClienteResumo(BaseModel):
     id: int
     nome: str
-    email: str
+    apelido: str
+    email: str | None = None
     empresa: str | None = None
     ativo: bool
     usinas: int
@@ -71,6 +74,7 @@ def listar_clientes(
         ClienteResumo(
             id=c.id,
             nome=c.nome,
+            apelido=c.apelido,
             email=c.email,
             empresa=c.empresa,
             ativo=c.ativo,
@@ -87,14 +91,19 @@ def listar_clientes(
 
 class ClienteIn(BaseModel):
     nome: str = Field(min_length=2)
-    email: EmailStr
+    #: Com o que ele entra no aplicativo. Não precisa parecer com o e-mail.
+    apelido: str = Field(min_length=3)
+    #: Continua sendo pedido porque é a chave que acha a conta dele no meuWatt e no
+    #: meuPlano — sem ele o vínculo com os produtos vira busca manual. Mas não autentica.
+    email: EmailStr | None = None
     empresa: str | None = None
 
 
 class ClienteCriadoOut(BaseModel):
     id: int
     nome: str
-    email: str
+    apelido: str
+    email: str | None = None
     # Aparece só aqui, uma vez. Nenhum outro endpoint devolve isto.
     senha_provisoria: str
 
@@ -109,7 +118,8 @@ def criar_cliente(
         criado = svc.criar(
             db,
             nome=body.nome,
-            email=str(body.email),
+            apelido=body.apelido,
+            email=str(body.email) if body.email else None,
             empresa=body.empresa,
             criado_por=gestor,
         )
@@ -119,6 +129,7 @@ def criar_cliente(
     return ClienteCriadoOut(
         id=criado.usuario.id,
         nome=criado.usuario.nome,
+        apelido=criado.usuario.apelido,
         email=criado.usuario.email,
         senha_provisoria=criado.senha_provisoria,
     )
@@ -153,7 +164,8 @@ class UsinaDoCliente(BaseModel):
 class ClienteDetalhe(BaseModel):
     id: int
     nome: str
-    email: str
+    apelido: str
+    email: str | None = None
     empresa: str | None = None
     ativo: bool
     acesso: str
@@ -179,6 +191,7 @@ def detalhe_cliente(
     return ClienteDetalhe(
         id=cliente.id,
         nome=cliente.nome,
+        apelido=cliente.apelido,
         email=cliente.email,
         empresa=cliente.empresa,
         ativo=cliente.ativo,
@@ -234,6 +247,7 @@ def editar_cliente(
     return ClienteResumo(
         id=cliente.id,
         nome=cliente.nome,
+        apelido=cliente.apelido,
         email=cliente.email,
         empresa=cliente.empresa,
         ativo=cliente.ativo,
@@ -486,7 +500,8 @@ async def _diagnostico_meuplano(db: Session, usinas: list[PlantLink]) -> BlocoDi
 class MembroOut(BaseModel):
     id: int
     nome: str
-    email: str
+    apelido: str
+    email: str | None = None
     perfil: str
     ativo: bool
     ultimo_login: datetime | None = None
@@ -503,6 +518,7 @@ def listar_equipe(
         MembroOut(
             id=m.id,
             nome=m.nome,
+            apelido=m.apelido,
             email=m.email,
             perfil=m.perfil.value,
             ativo=m.ativo,
@@ -514,7 +530,8 @@ def listar_equipe(
 
 class MembroIn(BaseModel):
     nome: str = Field(min_length=2)
-    email: EmailStr
+    apelido: str = Field(min_length=3)
+    email: EmailStr | None = None
     perfil: Perfil = Perfil.ATENDIMENTO
     senha: str = Field(min_length=8)
 
@@ -529,12 +546,19 @@ def criar_membro(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Use a tela de clientes para criar um cliente."
         )
-    email = str(body.email).strip().lower()
-    if db.scalar(select(User).where(User.email == email)) is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Já existe uma conta com {email}.")
+    try:
+        apelido = normalizar_apelido(body.apelido)
+    except ApelidoInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    if db.scalar(select(User).where(User.apelido == apelido)) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"O apelido “{apelido}” já está em uso."
+        )
 
     membro = User(
-        email=email,
+        apelido=apelido,
+        email=str(body.email).strip().lower() if body.email else None,
         nome=body.nome.strip(),
         perfil=body.perfil,
         senha_hash=gerar_hash_senha(body.senha),
@@ -545,6 +569,7 @@ def criar_membro(
     return MembroOut(
         id=membro.id,
         nome=membro.nome,
+        apelido=membro.apelido,
         email=membro.email,
         perfil=membro.perfil.value,
         ativo=membro.ativo,
@@ -596,6 +621,7 @@ def editar_membro(
     return MembroOut(
         id=membro.id,
         nome=membro.nome,
+        apelido=membro.apelido,
         email=membro.email,
         perfil=membro.perfil.value,
         ativo=membro.ativo,

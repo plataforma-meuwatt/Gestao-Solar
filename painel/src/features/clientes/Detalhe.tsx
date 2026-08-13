@@ -112,8 +112,12 @@ export function DetalheCliente() {
         >
           <dl className="px-5 pb-5 flex flex-col gap-3 text-sm">
             <div className="flex justify-between gap-4">
+              <dt className="text-rotulo">Apelido</dt>
+              <dd className="mono text-corpo truncate">{cliente.apelido}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
               <dt className="text-rotulo">E-mail</dt>
-              <dd className="mono text-corpo truncate">{cliente.email}</dd>
+              <dd className="mono text-corpo truncate">{cliente.email ?? '—'}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-rotulo">Situação</dt>
@@ -231,7 +235,7 @@ export function DetalheCliente() {
       {senha ? (
         <SenhaProvisoria
           nome={cliente.nome}
-          email={cliente.email}
+          apelido={cliente.apelido}
           senha={senha}
           aoFechar={() => setSenha(null)}
         />

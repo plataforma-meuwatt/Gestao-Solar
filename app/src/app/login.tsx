@@ -1,11 +1,11 @@
 /**
  * Login.
  *
- * A credencial é a que o usuário JÁ TEM no meuWatt ou no meuPlano — o BFF tenta nos dois
- * e basta um aceitar. Daí a linha de apoio sob o botão: sem ela, o dono não sabe qual
- * senha digitar.
+ * Entra-se com o **apelido**, não com o e-mail: a conta é do Gestão Solar, criada pelo
+ * gestor no painel, e não a mesma do meuWatt ou do meuPlano. Daí a linha de apoio sob o
+ * botão — sem ela, o dono da usina tentaria o e-mail e a senha que já conhece.
  *
- * No erro os campos NÃO são limpos. Refazer o e-mail inteiro por causa de uma senha
+ * No erro os campos NÃO são limpos. Refazer o apelido inteiro por causa de uma senha
  * errada é o tipo de atrito que faz o usuário desistir na segunda tentativa.
  */
 
@@ -29,14 +29,14 @@ import { ambarAlpha, cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme
 export default function Login() {
   const entrar = useAuth((s) => s.entrar)
   const entrarEmDemonstracao = useAuth((s) => s.entrarEmDemonstracao)
-  const [email, setEmail] = useState('')
+  const [apelido, setApelido] = useState('')
   const [senha, setSenha] = useState('')
   const [mostrarSenha, setMostrarSenha] = useState(false)
-  const [focado, setFocado] = useState<'email' | 'senha' | null>(null)
+  const [focado, setFocado] = useState<'apelido' | 'senha' | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
 
-  const preenchido = email.trim().length > 0 && senha.length > 0
+  const preenchido = apelido.trim().length > 0 && senha.length > 0
   // Em desenvolvimento o botão nunca fica travado: com os campos vazios ele entra em
   // demonstração, que é o único caminho enquanto o BFF não existe.
   const podeEntrar = (preenchido || __DEV__) && !carregando
@@ -51,7 +51,7 @@ export default function Login() {
     setErro(null)
     setCarregando(true)
     try {
-      await entrar(email.trim(), senha)
+      await entrar(apelido.trim(), senha)
       router.replace('/(tabs)')
     } catch (e) {
       setErro(mensagemDeErro(e))
@@ -63,7 +63,7 @@ export default function Login() {
   }
 
   /** Borda do campo: vermelha no erro, âmbar no foco, discreta em repouso. */
-  const bordaCampo = (campo: 'email' | 'senha') => {
+  const bordaCampo = (campo: 'apelido' | 'senha') => {
     if (erro && campo === 'senha') return tons.parado
     if (focado === campo) return cores.ambar
     return cores.borda
@@ -91,18 +91,20 @@ export default function Login() {
 
         <View style={[estilos.campos, carregando && estilos.camposTravados]}>
           <View>
-            <Text style={estilos.rotuloCampo}>E-mail</Text>
+            <Text style={estilos.rotuloCampo}>Apelido</Text>
             <TextInput
-              style={[estilos.campo, { borderColor: bordaCampo('email') }]}
-              value={email}
-              onChangeText={setEmail}
-              onFocus={() => setFocado('email')}
+              style={[estilos.campo, { borderColor: bordaCampo('apelido') }]}
+              value={apelido}
+              // Minúscula na hora de digitar, não só no envio: quem digita "Renan" e vê
+              // "Renan" na tela não entende por que o servidor recusou.
+              onChangeText={(t) => setApelido(t.toLowerCase())}
+              onFocus={() => setFocado('apelido')}
               onBlur={() => setFocado(null)}
               autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
+              autoCorrect={false}
+              autoComplete="username"
               editable={!carregando}
-              placeholder="voce@empresa.com.br"
+              placeholder="seu.apelido"
               placeholderTextColor={cores.textoFraco}
             />
           </View>
@@ -144,7 +146,7 @@ export default function Login() {
             ? 'Entrando…'
             : __DEV__ && !preenchido
               ? 'Modo desenvolvimento: entra com dados de exemplo, sem servidor.'
-              : 'Use o mesmo login do meuWatt ou do meuPlano.'}
+              : 'Use o apelido e a senha que a Gestão Solar enviou. Não é o login do meuWatt nem do meuPlano.'}
         </Text>
 
         {!carregando ? (
