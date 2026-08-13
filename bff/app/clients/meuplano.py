@@ -31,16 +31,30 @@ class MeuPlanoClient:
         base_url: str | None = None,
         usuario: str | None = None,
         senha: str | None = None,
+        token: str | None = None,
         timeout: float = 30.0,
     ) -> None:
         s = get_settings()
         self.base_url = (base_url or s.meuplano_api_url).rstrip("/")
         self._usuario = usuario
         self._senha = senha
+        # Token pessoal (`mp_pat_…`) gerado no meuPlano e colado no painel — ver o gêmeo
+        # em clients/meuwatt.py.
+        self._token_fixo = token
         self._timeout = timeout
         self._service_token: str | None = None
 
     # ------------------------------------------------------------------ auth
+
+    async def quem_sou_eu(self, token: str | None = None) -> dict[str, Any]:
+        """De quem é a credencial em uso — o que permite à tela dizer "token de Fulano".
+
+        `/auth/me/profile` e não `/auth/me`: o segundo devolve papel, permissões e id,
+        mas **não o nome** da pessoa. Um e-mail de serviço não diz a ninguém de quem é a
+        conta; o nome, sim — e a tela de Conexões existe justamente para que o gestor
+        repare que colou o token da pessoa errada.
+        """
+        return await self._get("/api/v1/meuacesso/auth/me/profile", token=token)
 
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
         async with httpx.AsyncClient(timeout=self._timeout) as c:
@@ -54,6 +68,8 @@ class MeuPlanoClient:
         return r.json()
 
     async def _token_servico(self) -> str:
+        if self._token_fixo:
+            return self._token_fixo
         if self._service_token:
             return self._service_token
         if not self._usuario or not self._senha:

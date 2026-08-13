@@ -23,7 +23,7 @@ cumprida, os documentos em PDF, e se as mensalidades estão em dia.
    │  + Postgres próprio         │   usuários, vínculo de usinas, assinaturas
    │  + Chromium headless        │   roda o motor vetorial do mw-fe
    └───────┬─────────────┬───────┘
-           │             │  credencial de serviço, server-to-server
+           │             │  token pessoal, server-to-server (ver DECISAO_IDENTIDADE § 2b)
    ┌───────▼──────┐ ┌────▼─────────┐
    │   mw-api     │ │  meuPlano    │
    │  (meuWatt)   │ │   backend    │

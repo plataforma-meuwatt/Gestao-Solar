@@ -23,7 +23,7 @@ from app.core.security import (
 )
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
-from app.models.user import User
+from app.models.user import Perfil, User, UserPlantAccess
 from app.services import conciliacao, integracoes
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
@@ -81,6 +81,13 @@ class IntegracaoOut(BaseModel):
     detalhe: str | None = None
     testada_em: datetime | None = None
     usinas_visiveis: int | None = None
+    # Como esta ponte se autentica. `False` = linha antiga, por conta de serviço — a tela
+    # mostra o aviso de migração em cima dela.
+    por_token: bool = False
+    token_prefixo: str | None = None
+    token_dono_nome: str | None = None
+    token_dono_email: str | None = None
+    token_gravado_em: datetime | None = None
 
 
 class IntegracaoIn(BaseModel):
@@ -91,28 +98,48 @@ class IntegracaoIn(BaseModel):
     senha: str | None = None
 
 
+class TokenIn(BaseModel):
+    base_url: str = Field(min_length=4)
+    #: O valor colado pelo gestor. Sem `min_length` apertado de propósito: quem valida é
+    #: `core/tokens_produto`, que sabe dizer POR QUE está errado — "faltam caracteres" é
+    #: uma resposta melhor do que um 422 do Pydantic dizendo "string curta".
+    token: str = Field(min_length=1)
+
+
+class EventoOut(BaseModel):
+    evento: str
+    ocorrido_em: datetime
+    ator_email: str | None = None
+    token_prefixo: str | None = None
+    detalhe: str | None = None
+    usinas_visiveis: int | None = None
+
+
+def _integracao_out(produto: Produto, integracao) -> IntegracaoOut:
+    if integracao is None:
+        return IntegracaoOut(produto=produto.value, configurada=False, estado="nunca")
+    return IntegracaoOut(
+        produto=produto.value,
+        configurada=True,
+        base_url=integracao.base_url,
+        usuario_servico=integracao.usuario_servico,
+        estado=integracao.estado.value,
+        detalhe=integracao.detalhe_teste,
+        testada_em=integracao.testada_em,
+        usinas_visiveis=integracao.usinas_visiveis,
+        por_token=integracao.por_token,
+        token_prefixo=integracao.token_prefixo,
+        token_dono_nome=integracao.token_dono_nome,
+        token_dono_email=integracao.token_dono_email,
+        token_gravado_em=integracao.token_gravado_em,
+    )
+
+
 @router.get("/integracoes", response_model=list[IntegracaoOut])
 def listar_integracoes(
     db: Session = Depends(get_db), _: User = Depends(gestor_atual)
 ) -> list[IntegracaoOut]:
-    saida = []
-    for produto, integracao in integracoes.listar(db).items():
-        if integracao is None:
-            saida.append(IntegracaoOut(produto=produto.value, configurada=False, estado="nunca"))
-        else:
-            saida.append(
-                IntegracaoOut(
-                    produto=produto.value,
-                    configurada=True,
-                    base_url=integracao.base_url,
-                    usuario_servico=integracao.usuario_servico,
-                    estado=integracao.estado.value,
-                    detalhe=integracao.detalhe_teste,
-                    testada_em=integracao.testada_em,
-                    usinas_visiveis=integracao.usinas_visiveis,
-                )
-            )
-    return saida
+    return [_integracao_out(p, i) for p, i in integracoes.listar(db).items()]
 
 
 @router.put("/integracoes/{produto}", response_model=IntegracaoOut)
@@ -120,38 +147,156 @@ def salvar_integracao(
     produto: Produto,
     body: IntegracaoIn,
     db: Session = Depends(get_db),
-    _: User = Depends(administrador_atual),
+    usuario: User = Depends(administrador_atual),
 ) -> IntegracaoOut:
+    """Caminho ANTIGO, por conta de serviço. Mantido para não quebrar o que já está
+    gravado; a tela oferece o token."""
     try:
         integracao = integracoes.salvar(
-            db, produto, body.base_url, body.usuario_servico, body.senha
+            db, produto, body.base_url, body.usuario_servico, body.senha,
+            ator_email=usuario.email,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    return IntegracaoOut(
-        produto=produto.value,
-        configurada=True,
-        base_url=integracao.base_url,
-        usuario_servico=integracao.usuario_servico,
-        estado=integracao.estado.value,
-    )
+    return _integracao_out(produto, integracao)
 
 
 class TesteOut(BaseModel):
     ok: bool
     detalhe: str
     usinas_visiveis: int | None = None
+    #: De quem é o token que respondeu. A tela mostra isto ao lado do resultado porque
+    #: "conectado" com a pessoa errada é um sucesso enganoso.
+    dono_nome: str | None = None
+    dono_email: str | None = None
 
 
 @router.post("/integracoes/{produto}/testar", response_model=TesteOut)
 async def testar_integracao(
     produto: Produto,
     db: Session = Depends(get_db),
-    _: User = Depends(administrador_atual),
+    usuario: User = Depends(administrador_atual),
 ) -> TesteOut:
-    resultado = await integracoes.testar(db, produto)
-    return TesteOut(ok=resultado.ok, detalhe=resultado.detalhe, usinas_visiveis=resultado.usinas)
+    resultado = await integracoes.testar(db, produto, ator_email=usuario.email)
+    return TesteOut(
+        ok=resultado.ok,
+        detalhe=resultado.detalhe,
+        usinas_visiveis=resultado.usinas,
+        dono_nome=resultado.dono_nome,
+        dono_email=resultado.dono_email,
+    )
+
+
+@router.put("/integracoes/{produto}/token", response_model=TesteOut)
+async def conectar_por_token(
+    produto: Produto,
+    body: TokenIn,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(administrador_atual),
+) -> TesteOut:
+    """Cola um token pessoal e conecta.
+
+    Responde com o resultado do teste, não com a integração: o que o gestor precisa
+    saber neste instante é se funcionou e como quem. Se não funcionou, nada foi gravado
+    — a conexão anterior continua de pé (ver `integracoes.salvar_token`).
+    """
+    resultado = await integracoes.salvar_token(
+        db, produto, body.base_url, body.token, ator_email=usuario.email
+    )
+    return TesteOut(
+        ok=resultado.ok,
+        detalhe=resultado.detalhe,
+        usinas_visiveis=resultado.usinas,
+        dono_nome=resultado.dono_nome,
+        dono_email=resultado.dono_email,
+    )
+
+
+@router.delete("/integracoes/{produto}/token", response_model=IntegracaoOut)
+def desconectar_token(
+    produto: Produto,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(administrador_atual),
+) -> IntegracaoOut:
+    """Para de usar o token deste lado. NÃO o revoga no produto de origem — só quem o
+    emitiu pode fazer isso, lá. A tela avisa, porque a diferença importa."""
+    integracoes.remover_token(db, produto, ator_email=usuario.email)
+    return _integracao_out(produto, integracoes.obter(db, produto))
+
+
+@router.get("/integracoes/{produto}/eventos", response_model=list[EventoOut])
+def historico_integracao(
+    produto: Produto,
+    db: Session = Depends(get_db),
+    _: User = Depends(administrador_atual),
+) -> list[EventoOut]:
+    """O que já aconteceu com esta ponte. Responde "desde quando parou?", que o estado
+    atual sozinho não responde."""
+    return [
+        EventoOut(
+            evento=e.evento,
+            ocorrido_em=e.ocorrido_em,
+            ator_email=e.ator_email,
+            token_prefixo=e.token_prefixo,
+            detalhe=e.detalhe,
+            usinas_visiveis=e.usinas_visiveis,
+        )
+        for e in integracoes.historico(db, produto)
+    ]
+
+
+# ---------------------------------------------------------------------- usinas
+
+
+class UsinaOut(BaseModel):
+    id: int
+    nome: str
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    tem_meuwatt: bool
+    tem_meuplano: bool
+    dono_id: int | None = None
+    dono_nome: str | None = None
+
+
+@router.get("/usinas", response_model=list[UsinaOut])
+def listar_usinas(
+    db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+) -> list[UsinaOut]:
+    """As usinas que o Gestão Solar conhece, e de quem é cada uma.
+
+    Responde à pergunta que a conciliação não responde: *esta usina chega em alguém?* Uma
+    usina casada nos dois lados e sem dono é invisível no aplicativo, e sem esta lista o
+    gestor só descobriria isso pelo cliente reclamando.
+    """
+    donos = {
+        pid: (uid, nome)
+        for pid, uid, nome in db.execute(
+            select(UserPlantAccess.plant_link_id, User.id, User.nome)
+            .join(User, User.id == UserPlantAccess.user_id)
+            .where(User.perfil == Perfil.CLIENTE)
+        ).all()
+    }
+
+    saida = []
+    for link in db.scalars(select(PlantLink).where(PlantLink.ativo).order_by(PlantLink.nome)).all():
+        dono = donos.get(link.id)
+        saida.append(
+            UsinaOut(
+                id=link.id,
+                nome=link.nome,
+                cidade=link.cidade,
+                uf=link.uf,
+                kwp=link.kwp,
+                tem_meuwatt=link.tem_meuwatt,
+                tem_meuplano=link.tem_meuplano,
+                dono_id=dono[0] if dono else None,
+                dono_nome=dono[1] if dono else None,
+            )
+        )
+    return saida
 
 
 # ------------------------------------------------------------------ conciliação

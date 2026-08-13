@@ -275,3 +275,94 @@ não alcança o nível do acesso.
 ```json
 { "token": "ExponentPushToken[...]" }
 ```
+
+---
+
+## Painel do gestor — conexões
+
+> Base **`/api/painel`**, não `/api/v1`: é o time interno, com sessão própria e curta
+> (`gs_painel_sessao_horas`). Tudo aqui exige perfil de administrador.
+
+A ponte com cada produto se estabelece por **token pessoal**: alguém gera um token na
+própria conta do meuWatt/meuPlano e cola no painel. Formato e motivos em
+[`DECISAO_IDENTIDADE.md`](DECISAO_IDENTIDADE.md) § 2b.
+
+### `GET /integracoes`
+
+Uma linha por produto, configurada ou não.
+
+```json
+[
+  { "produto": "meuwatt", "configurada": true, "base_url": "https://api.meuwatt.com.br",
+    "estado": "ok", "detalhe": "Conectado como Fulano da Silva. 12 usina(s) visíveis.",
+    "testada_em": "2026-08-13T12:50:00Z", "usinas_visiveis": 12,
+    "por_token": true, "token_prefixo": "mw_pat_kOdt",
+    "token_dono_nome": "Fulano da Silva", "token_dono_email": "fulano@meuwatt.com.br",
+    "token_gravado_em": "2026-08-13T12:49:00Z", "usuario_servico": null }
+]
+```
+
+`estado`: `nunca` · `ok` · `falhou`. `por_token: false` = conexão antiga, ainda por conta de
+serviço com senha — a tela mostra o aviso de migração em cima dela.
+
+### `PUT /integracoes/{produto}/token`
+
+```json
+{ "base_url": "https://api.meuwatt.com.br", "token": "mw_pat_…" }
+```
+
+Valida o formato (local), identifica o dono e conta as usinas — **só grava se as três
+passarem**. Responde com o resultado do teste, não com a integração: o que interessa neste
+instante é se funcionou e como quem.
+
+```json
+{ "ok": true, "detalhe": "Conectado como Fulano da Silva. 12 usina(s) visíveis.",
+  "usinas_visiveis": 12, "dono_nome": "Fulano da Silva",
+  "dono_email": "fulano@meuwatt.com.br" }
+```
+
+Quando `ok: false`, **nada foi gravado** e a conexão anterior continua de pé. O `detalhe`
+distingue os casos, porque cada um pede uma correção diferente: token do produto errado,
+cópia truncada, token revogado ou expirado (a frase vem do próprio produto), endereço
+errado, servidor fora, e "aceito mas não enxerga usina nenhuma".
+
+### `POST /integracoes/{produto}/testar`
+
+Mesmo corpo de resposta. Exercita a credencial gravada.
+
+### `DELETE /integracoes/{produto}/token`
+
+Para de usar o token deste lado e devolve a integração limpa. **Não revoga** nada no
+produto de origem — só quem emitiu pode, e é lá que a porta se fecha de verdade.
+
+### `GET /integracoes/{produto}/eventos`
+
+Histórico da ponte, mais recente primeiro. Responde "desde quando parou?", que o estado
+atual sozinho não responde.
+
+```json
+[ { "evento": "teste_falhou", "ocorrido_em": "2026-08-13T13:02:00Z",
+    "ator_email": "admin@gestaosolar.local", "token_prefixo": "mw_pat_kOdt",
+    "detalhe": "Token revogado. Emita um novo no meuWatt.", "usinas_visiveis": null } ]
+```
+
+`evento`: `token_gravado` · `token_removido` · `teste_ok` · `teste_falhou` ·
+`senha_gravada`. O valor do token nunca aparece — só o prefixo.
+
+---
+
+## Os tokens, do lado de cada produto
+
+Rotas dos produtos, não do BFF. Documentadas aqui porque é o painel que manda o gestor
+até elas.
+
+| | meuWatt | meuPlano |
+|---|---|---|
+| Emitir | `POST /auth/tokens` | `POST /api/v1/meuacesso/auth/tokens` |
+| Listar | `GET /auth/tokens` | `GET /api/v1/meuacesso/auth/tokens` |
+| Revogar | `DELETE /auth/tokens/{id}` | `DELETE /api/v1/meuacesso/auth/tokens/{id}` |
+| Corpo da emissão | `{"name": "...", "expires_in_days": 365}` | `{"nome": "...", "validade_dias": 365}` |
+
+`expires_in_days` / `validade_dias` nulo = sem prazo, que é o certo para integração de
+servidor. A emissão devolve o valor em claro **uma única vez**; listar nunca o devolve.
+Emitir e revogar exigem sessão — um token não gerencia tokens.

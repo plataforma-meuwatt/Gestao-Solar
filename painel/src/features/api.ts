@@ -72,6 +72,29 @@ export type Integracao = {
   detalhe: string | null
   testada_em: string | null
   usinas_visiveis: number | null
+  /** `false` = conexão antiga, ainda por conta de serviço com senha. */
+  por_token: boolean
+  token_prefixo: string | null
+  token_dono_nome: string | null
+  token_dono_email: string | null
+  token_gravado_em: string | null
+}
+
+export type ResultadoTeste = {
+  ok: boolean
+  detalhe: string
+  usinas_visiveis: number | null
+  dono_nome: string | null
+  dono_email: string | null
+}
+
+export type EventoIntegracao = {
+  evento: 'token_gravado' | 'token_removido' | 'teste_ok' | 'teste_falhou' | 'senha_gravada'
+  ocorrido_em: string
+  ator_email: string | null
+  token_prefixo: string | null
+  detalhe: string | null
+  usinas_visiveis: number | null
 }
 
 export type Conciliacao = {
@@ -172,11 +195,18 @@ export const salvarIntegracao = (
 ) => api.put<Integracao>(`/integracoes/${produto}`, dados).then((r) => r.data)
 
 export const testarIntegracao = (produto: Produto) =>
-  api
-    .post<{ ok: boolean; detalhe: string; usinas_visiveis: number | null }>(
-      `/integracoes/${produto}/testar`,
-    )
-    .then((r) => r.data)
+  api.post<ResultadoTeste>(`/integracoes/${produto}/testar`).then((r) => r.data)
+
+/** Cola o token e conecta. Se o token não servir, nada é gravado do lado do BFF —
+ *  a resposta traz o motivo e a conexão anterior continua de pé. */
+export const conectarPorToken = (produto: Produto, dados: { base_url: string; token: string }) =>
+  api.put<ResultadoTeste>(`/integracoes/${produto}/token`, dados).then((r) => r.data)
+
+export const desconectarToken = (produto: Produto) =>
+  api.delete<Integracao>(`/integracoes/${produto}/token`).then((r) => r.data)
+
+export const historicoIntegracao = (produto: Produto) =>
+  api.get<EventoIntegracao[]>(`/integracoes/${produto}/eventos`).then((r) => r.data)
 
 /* ------------------------------------------------------------ diagnóstico */
 

@@ -80,6 +80,89 @@ mas com duas limitações para este uso:
 
 O trabalho é adaptar, não inventar: o desenho do meuPlano serve de referência direta.
 
+---
+
+## 2b. O que foi construído — TOKEN PESSOAL (13/08/2026)
+
+> Feito. Esta seção descreve o que existe hoje; as seções acima registram o desenho que
+> levou até aqui.
+
+O caminho escolhido não foi o fluxo de autorização pelo navegador, e sim o **token pessoal
+colado à mão** — mais simples e suficiente enquanto quem conecta é o gestor, não o cliente
+final. A pessoa gera um token na própria conta de cada produto, copia, e cola em
+**Painel → Conexões**. O fluxo de autorização pelo navegador continua sendo o caminho certo
+para quando o CLIENTE conectar as contas dele pelo app; a máquina de tokens construída
+agora é a base dos dois.
+
+### O formato, e por que ele não é opaco
+
+```
+mw_pat_<32 caracteres de sorteio><6 de verificação>     meuWatt
+mp_pat_<32 caracteres de sorteio><6 de verificação>     meuPlano
+```
+
+O valor viaja pela área de transferência de um humano que tem **dois** tokens parecidos e
+**duas** caixas parecidas na tela. Trocá-los de lugar é o erro provável, e o mais caro de
+diagnosticar: o servidor responde 401, exatamente como responderia a um token revogado,
+expirado, ou de conta desativada.
+
+Por isso o valor se descreve:
+
+- o **prefixo** diz de qual produto ele é — quem recebe responde "este é um token do
+  meuPlano, e o campo é do meuWatt" em vez de "credencial recusada";
+- o **dígito verificador** (CRC-32 do sorteio, em base62) pega a cópia truncada.
+
+As duas conferências são locais. O painel recusa o engano **sem gastar uma chamada de
+rede**, e com a frase que resolve.
+
+### Onde cada peça vive
+
+| Peça | meuWatt | meuPlano |
+|---|---|---|
+| Formato e regra | `src/api_tokens/token_format.py` · `service.py` | `app/services/meuacesso/api_tokens.py` |
+| Tabelas | `user_api_tokens` + `user_api_token_events` (migration 131) | `app_api_tokens` + `app_api_token_events` (migration `jt00pat11ok0`) |
+| Rotas | `POST/GET/DELETE /auth/tokens` | `POST/GET/DELETE /api/v1/meuacesso/auth/tokens` |
+| Entra na autenticação | `src/auth/dependencies.py::get_current_user` | `services/meuacesso/auth.py::get_current_principal` |
+| Tela de geração | menu do usuário → Tokens de acesso | Minha conta → Tokens de acesso |
+
+O formato é **implementado três vezes** (os dois produtos e `bff/app/core/tokens_produto.py`),
+de propósito: são repositórios que sobem separados, e importar um do outro criaria um
+acoplamento de deploy para economizar quarenta linhas. O que segura a divergência são os
+testes — `tests/test_api_tokens.py` nos dois produtos e `tests/test_conexao_por_token.py`
+no BFF carregam o formato esperado e falham em vermelho se um lado mudar sozinho.
+
+### As três garantias que sustentam o desenho
+
+1. **O valor em claro existe uma vez.** O banco guarda SHA-256; nenhum endpoint relê o
+   token. Quem perde, revoga e emite outro — é o único comportamento possível, e o certo.
+2. **Token não emite token.** Emitir e revogar exigem sessão de verdade. Sem essa trava, um
+   token vazado emitiria outro antes de você cortar o primeiro, e revogar não significaria
+   nada.
+3. **Token não herda o modo de desenvolvimento.** No meuPlano, com
+   `MEUACESSO_AUTH_ENABLED` desligada uma sessão comum vira `admin_sistema` com todas as
+   permissões. O token resolve o principal **real** do dono em qualquer configuração —
+   senão o Gestão Solar teria acesso total por causa de uma variável de ambiente.
+
+### O que o painel faz com isso
+
+Gravar exige passar por três camadas, da mais barata para a mais cara: **formato** (local),
+**identidade** (`/auth/me` — de quem é o token) e **alcance** (quantas usinas ele enxerga).
+Se qualquer uma falhar, **nada é gravado** e a conexão anterior continua de pé — gravar
+primeiro e testar depois deixaria o gestor com as duas quebradas e nenhum caminho de volta.
+
+Mostrar o **dono** não é enfeite: colar o token da pessoa errada deixa o cartão verde com o
+escopo menor, e a falta só aparece semanas depois como usina sumida na tela de um cliente.
+
+`gs_integracao_eventos` guarda o histórico por ponte. O estado diz se funciona agora; o
+histórico diz desde quando parou — que é o que separa "trocaram o token na quinta" de "o
+produto saiu do ar", dois cartões vermelhos idênticos.
+
+### Desconectar ≠ revogar
+
+Remover o token no painel só faz o Gestão Solar parar de usá-lo. Ele **continua válido** no
+produto de origem, e é lá que precisa ser revogado de verdade — por quem o emitiu. A tela
+diz isso, porque a diferença é a que importa quando alguém desconfia de um vazamento.
+
 ### O que o BFF guarda
 
 ```
@@ -251,20 +334,24 @@ autorizando do seu jeito; o Gestão Solar apenas se conecta aos dois.
 
 ## 5. Ordem de execução
 
-| Ordem | O quê | Onde | Por quê |
+| Ordem | O quê | Onde | Estado |
 |---|---|---|---|
-| 1 | Corrigir a escalação de privilégio | mw-api | Segurança ativa, independe de tudo |
-| 2 | Remover a senha mestra de desenvolvimento | meuPlano | Idem |
-| 3 | CNPJ + UC nos dois cadastros, preenchidos à mão | os dois | Uma tarde de trabalho; muda o que a tela de conciliação precisa adivinhar |
-| 4 | `gs_users` + `gs_conexoes` + login próprio | BFF | Base do Gestão Solar |
-| 5 | Conexão pelo caminho A (conta existente) | BFF + meuPlano | O fluxo do meuPlano já existe; é registrar mais um aplicativo |
-| 6 | Fluxo equivalente no meuWatt | mw-api | Adaptar o device flow para emitir token renovável |
-| 7 | Conexão pelo caminho B (provisionar conta) | BFF + os dois | Depende de decidir como a organização/usinas são atribuídas |
-| 8 | Tela de conexões + conciliação de usinas | app + BFF | Fecha o primeiro acesso |
+| 1 | Corrigir a escalação de privilégio | mw-api | **pendente** — segurança ativa, independe de tudo |
+| 2 | Remover a senha mestra de desenvolvimento | meuPlano | **pendente** — idem |
+| 3 | CNPJ + UC nos dois cadastros, preenchidos à mão | os dois | pendente — uma tarde de trabalho; muda o que a conciliação precisa adivinhar |
+| 4 | `gs_users` + login próprio | BFF | feito |
+| 5 | Token pessoal no meuPlano | meuPlano | **feito** (13/08/2026) — ver seção 2b |
+| 6 | Token pessoal no meuWatt | mw-api | **feito** (13/08/2026) — ver seção 2b |
+| 7 | Conexão pelo caminho B (provisionar conta) | BFF + os dois | pendente — depende de decidir como organização/usinas são atribuídas |
+| 8 | Tela de conexões (gestor) + conciliação de usinas | painel + BFF | conexões **feito**; conciliação feita |
+| 9 | Conexão pelo CLIENTE, no app | app + os dois | pendente — reusa a máquina de tokens do item 5/6 |
 
-Os itens 1 e 2 são independentes e podem ser feitos hoje. O item 3 vem antes da tela de
-conciliação de propósito: com CNPJ e UC preenchidos, a tela sugere com confiança em vez de
-adivinhar por nome.
+Os itens 1 e 2 continuam sendo os mais urgentes do documento e **não foram tocados** pelo
+trabalho de tokens. Vale reler a seção 4: os dois são falhas ativas, não dívidas de estilo.
 
-O caminho A (item 5) entrega o produto funcionando; o caminho B (item 7) é conforto para
-cliente novo e pode esperar.
+O item 3 vem antes da conciliação de propósito: com CNPJ e UC preenchidos, a tela sugere
+com confiança em vez de adivinhar por nome.
+
+O item 9 é o que fecha o desenho original desta decisão — hoje quem conecta é o gestor,
+colando o token pelo painel; o cliente conectar as próprias contas pelo app é o passo
+seguinte, e a emissão/validação/revogação de que ele precisa já existe.

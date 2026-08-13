@@ -32,14 +32,19 @@ Idioma do produto e da UI: **português do Brasil**.
 
 ## 2. Estrutura
 
-Monorepo com dois aplicativos:
+Monorepo com três aplicativos:
 
 ```
 Gestao Solar/
-├── app/          Expo / React Native — o app do dono
-├── bff/          FastAPI — agrega mw-api + meuPlano, gera PDF, hospeda mensalidades
-└── docs/         ARQUITETURA · CONTRATO_API · TELAS · PROMPT_DESIGNER
+├── app/          Expo / React Native — o app do dono da usina
+├── painel/       React + Vite — o painel do gestor (time interno)
+├── bff/          FastAPI — agrega mw-api + meuPlano, serve o painel, gera PDF
+└── docs/         ARQUITETURA · CONTRATO_API · TELAS · DECISAO_IDENTIDADE · PROMPT_DESIGNER
 ```
+
+**O painel é onde o cliente nasce.** Cadastrar, vincular as contas dele no meuWatt e no
+meuPlano, conceder usinas, entregar a senha provisória e conferir no diagnóstico que o dado
+chega dos dois lados. Sem ele, o app não tem a quem servir.
 
 Leia [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) antes de mexer em qualquer coisa — é lá
 que está o desenho, o modelo de autenticação e o mapa de qual dado vem de onde.
@@ -91,9 +96,30 @@ BFF → cliente do upstream em `bff/app/clients/` → tela.
 
 ### Autorização é do BFF, não do app
 
-O BFF usa credenciais de serviço nos upstreams e filtra pelo escopo capturado no login
-(`gs_user_plant_access`). Nunca confie num `plant_id` que veio do cliente sem checar contra
-o escopo do usuário.
+O BFF lê os upstreams com um **token pessoal** por produto — alguém gera um token na
+própria conta do meuWatt/meuPlano e cola em Painel → Conexões — e filtra pelo escopo
+capturado no login (`gs_user_plant_access`). Nunca confie num `plant_id` que veio do
+cliente sem checar contra o escopo do usuário.
+
+O token vale exatamente o que a conta de quem o gerou vale: se aquela pessoa não enxerga
+uma usina no produto de origem, o Gestão Solar também não. Detalhe do desenho — formato,
+validação, revogação — em [`docs/DECISAO_IDENTIDADE.md`](docs/DECISAO_IDENTIDADE.md) § 2b;
+contrato das rotas em [`docs/CONTRATO_API.md`](docs/CONTRATO_API.md).
+
+Três coisas a respeitar ao mexer nisso:
+
+- **O formato é acordo de três repositórios** (`bff/app/core/tokens_produto.py` e os dois
+  produtos). Mudá-lo em um lado exige mudar nos outros — os testes falham em vermelho se
+  divergir, e é para isso que existem.
+- **Verificar antes de gravar.** `integracoes.salvar_token` só persiste depois de o token
+  passar por formato, identidade e alcance. Gravar primeiro e testar depois deixaria o
+  gestor com a conexão nova quebrada *e* a antiga perdida.
+- **Desconectar não é revogar.** Remover o token no painel só faz o BFF parar de usá-lo;
+  ele continua válido no produto de origem, e é lá que a porta se fecha.
+
+A conta de serviço com senha (`usuario_servico`/`senha_cifrada`) é o caminho **antigo**:
+segue funcionando para o que já está gravado, mas a tela não oferece mais criar assim, e
+conectar por token apaga a senha guardada.
 
 ### Nada de "chips" para selecionar opção
 
@@ -156,12 +182,15 @@ A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev
 
 Trabalho que precisa acontecer no meuWatt e no meuPlano:
 
-| Onde | O quê | Bloqueia |
+| Onde | O quê | Estado |
 |---|---|---|
-| `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | PDF sob demanda |
-| `mw-api` | Conta de serviço para o BFF | Tudo do meuWatt |
-| `meuPlano` | Conta de serviço equivalente | Tudo do meuPlano |
-| `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | L2 no assistente |
+| `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | pendente — bloqueia o PDF sob demanda |
+| `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito** (13/08/2026) |
+| `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito** (13/08/2026) |
+| `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | pendente — bloqueia L2 no assistente |
+
+As duas migrations de token **ainda não foram aplicadas**: rodar `alembic upgrade head` em
+cada produto é o que falta para a tela de Conexões funcionar contra eles.
 
 ---
 

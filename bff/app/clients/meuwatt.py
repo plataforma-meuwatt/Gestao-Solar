@@ -36,16 +36,27 @@ class MeuWattClient:
         base_url: str | None = None,
         usuario: str | None = None,
         senha: str | None = None,
+        token: str | None = None,
         timeout: float = 30.0,
     ) -> None:
         s = get_settings()
         self.base_url = (base_url or s.meuwatt_api_url).rstrip("/")
         self._usuario = usuario
         self._senha = senha
+        # Token pessoal (`mw_pat_…`) que alguém gerou no meuWatt e colou no painel. Quando
+        # existe, dispensa o login: não há senha guardada nem sessão a renovar, e o acesso
+        # é revogável do outro lado sem passar por aqui.
+        self._token_fixo = token
         self._timeout = timeout
         self._service_token: str | None = None
 
     # ------------------------------------------------------------------ auth
+
+    async def quem_sou_eu(self, token: str | None = None) -> dict[str, Any]:
+        """De quem é a credencial em uso. É o que faz a tela de Conexões dizer "token de
+        Fulano" em vez de só "conectado" — sem isso, ninguém percebe que colou o token da
+        pessoa errada, e o escopo de usinas vem calado junto."""
+        return await self._get("/auth/me", token=token)
 
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
         """Valida a credencial do usuário. Devolve o payload do login ou None se recusada.
@@ -62,6 +73,8 @@ class MeuWattClient:
         return r.json()
 
     async def _token_servico(self) -> str:
+        if self._token_fixo:
+            return self._token_fixo
         if self._service_token:
             return self._service_token
         if not self._usuario or not self._senha:
