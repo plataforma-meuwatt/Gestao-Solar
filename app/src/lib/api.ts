@@ -13,35 +13,45 @@
 import axios from 'axios'
 import Constants from 'expo-constants'
 
-const configurado =
-  // `EXPO_PUBLIC_*` é lida do ambiente na hora do bundle. Existe para apontar o app a
-  // outro servidor sem editar o `app.json` — testar contra produção, contra a máquina de
-  // outra pessoa, ou desviar de uma porta 8100 já ocupada por outro projeto. Sem ela,
-  // trocar de servidor exigiria mexer num arquivo versionado e lembrar de desfazer.
-  process.env.EXPO_PUBLIC_API_URL ||
-  (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl ||
-  'http://localhost:8100'
+/** Porta do BFF quando ele roda na máquina de quem desenvolve. */
+const PORTA_LOCAL = 8100
 
 /**
- * Em desenvolvimento, `localhost` é uma armadilha: no celular com Expo Go ele aponta para
- * o próprio aparelho, não para a máquina que roda o BFF — e o sintoma é "sem conexão com a
- * internet" numa rede que está perfeita.
+ * Onde fica a API.
  *
- * O endereço certo é o mesmo que serve o bundle. O Expo o publica em `hostUri`
- * (`192.168.0.12:8081`), então basta trocar a porta pela do BFF. Assim ninguém precisa
- * descobrir e digitar o IP da máquina — e ele continua funcionando quando o roteador
- * distribuir outro amanhã.
+ * A ordem de decisão é por **ambiente**, e não por "qual valor não está vazio" — e a
+ * diferença custou uma tarde. A versão anterior partia de `EXPO_PUBLIC_API_URL` com
+ * `localhost` como último recurso, e trocava `localhost` pelo IP da máquina **só quando
+ * `__DEV__`**. Isso funciona no APK, porque `eas build` injeta a variável a partir de
+ * `eas.json`; mas **`eas update` não injeta nada**: o bundle publicado por OTA sai com
+ * `process.env.EXPO_PUBLIC_API_URL === undefined`, cai no `localhost`, e a guarda que
+ * salvaria está trancada atrás de `__DEV__` — desligado justamente ali.
  *
- * Em produção vale o que está no `app.json`, sem adivinhação.
+ * O resultado é o pior tipo de falha: no celular, `localhost` é o próprio celular. A
+ * conexão é recusada sem resposta HTTP, e a tela diz "sem conexão com a internet" numa
+ * rede perfeita. Pior ainda, some pela metade — a tela que tem cache continua desenhando
+ * o que já sabia, e só a tela sem cache conta a verdade.
+ *
+ * Agora o endereço de produção vem do `app.json`, que é embutido em **todo** bundle —
+ * `eas build` e `eas update` —, e a adivinhação de rede local só acontece onde faz
+ * sentido.
  */
 function resolverBaseURL(): string {
-  if (!__DEV__ || !/\/\/(localhost|127\.0\.0\.1)/.test(configurado)) return configurado
+  // Override explícito vence sempre: é assim que se aponta o app para o servidor de outra
+  // pessoa, ou para produção a partir da máquina de quem desenvolve.
+  const escolhido = process.env.EXPO_PUBLIC_API_URL
+  if (escolhido) return escolhido
 
+  const doAppJson = (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl
+
+  // Aplicativo instalado (APK ou OTA): vale o `app.json`, sem adivinhar.
+  if (!__DEV__) return doAppJson ?? 'https://gestao-solar-production.up.railway.app'
+
+  // Desenvolvimento: o BFF roda na mesma máquina que serve o bundle. O Expo publica esse
+  // endereço em `hostUri` (`192.168.0.12:8081`), então basta trocar a porta — ninguém
+  // precisa descobrir e digitar o IP, e continua valendo quando o roteador mudar amanhã.
   const anfitriao = Constants.expoConfig?.hostUri?.split(':')[0]
-  if (!anfitriao) return configurado
-
-  const porta = configurado.split(':').pop()
-  return `http://${anfitriao}:${porta}`
+  return `http://${anfitriao ?? 'localhost'}:${PORTA_LOCAL}`
 }
 
 export const baseURL = resolverBaseURL()

@@ -54,6 +54,10 @@ export function useFinanceiro(): Leitura<FinanceiroOut> {
   return fetchWithCache<FinanceiroOut>('billing')
 }
 
+export function useFatura(id: string | undefined): Leitura<Fatura> {
+  return fetchWithCache<Fatura>(`billing/invoices/${id ?? ''}`, { ativo: Boolean(id) })
+}
+
 /** `2026-08` → `agosto de 2026`. O servidor manda a competência crua, de propósito. */
 export function competenciaPorExtenso(competencia: string): string {
   const [ano, mes] = competencia.split('-').map(Number)

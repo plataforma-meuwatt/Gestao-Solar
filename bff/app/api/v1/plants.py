@@ -135,6 +135,31 @@ PARADO = {"fault", "communication_error"}
 DORMINDO = "bedtime"
 
 
+def _numero_inteiro(total: Any, lista: Any) -> int | None:
+    """O `total` do envelope, com a lista como segunda opinião."""
+    if isinstance(total, int):
+        return total
+    return len(lista) if isinstance(lista, list) else None
+
+
+def _capacidade_kwp(agora: dict[str, Any]) -> float | None:
+    """Capacidade instalada somada dos inversores, quando o vínculo não a tem.
+
+    `PlantLink.kwp` só é preenchido à mão no painel, e está NULO em todas as usinas —
+    então `pct_capacidade` nunca era calculado, a barra ficava vazia e o topo da aba
+    Usinas anunciava "0,0 MWp". O número existe do outro lado o tempo todo:
+    `InverterMonitoring.capacity_kwp`.
+
+    O valor do vínculo continua tendo precedência: se o gestor digitou a capacidade de
+    projeto, é ela que vale — a soma dos inversores é o que sobra quando ninguém digitou.
+    """
+    inversores = agora.get("inverters")
+    if not isinstance(inversores, list):
+        return None
+    total = sum(_numero(i.get("capacity_kwp")) or 0 for i in inversores)
+    return round(total, 2) or None
+
+
 def _potencia_da_usina(agora: dict[str, Any]) -> float | None:
     """Potência instantânea da usina, em kW, somada dos inversores.
 
@@ -181,6 +206,7 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         if isinstance(inversores, list):
             saida["inversores"] = len(inversores)
             saida["inversores_parados"] = _parados(inversores)
+        saida["capacidade_kwp"] = _capacidade_kwp(agora)
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo assim
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
 
@@ -241,7 +267,9 @@ async def listar_usinas(
             nome=link.nome,
             cidade=link.cidade,
             uf=link.uf,
-            capacidade_kwp=link.kwp,
+            # O cadastro do painel tem precedência; a soma dos inversores é o que vale
+            # quando ninguém digitou a capacidade — que é o caso de todas as usinas hoje.
+            capacidade_kwp=link.kwp or d.get("capacidade_kwp"),
             potencia_kw=d.get("potencia_kw"),
             energia_hoje_kwh=d.get("energia_hoje_kwh"),
             disponibilidade_pct=d.get("disponibilidade_pct"),
@@ -251,8 +279,8 @@ async def listar_usinas(
             tem_meuplano=link.tem_meuplano,
             aviso=d.get("aviso"),
         )
-        if u.potencia_kw is not None and link.kwp:
-            u.pct_capacidade = max(0, min(100, round(u.potencia_kw / link.kwp * 100)))
+        if u.potencia_kw is not None and u.capacidade_kwp:
+            u.pct_capacidade = max(0, min(100, round(u.potencia_kw / u.capacidade_kwp * 100)))
         u.tom, u.situacao = _tom(u)
         saida.append(u)
 
@@ -261,7 +289,7 @@ async def listar_usinas(
 
     return UsinasOut(
         usinas=saida,
-        total_kwp=round(sum(l.kwp or 0 for l in links), 2),
+        total_kwp=round(sum(u.capacidade_kwp or 0 for u in saida), 2),
         potencia_agora_kw=round(sum(medidas), 2) if medidas else None,
         energia_hoje_kwh=round(sum(energias), 2) if energias else None,
         atualizado_em=datetime.now(UTC),
@@ -314,7 +342,17 @@ async def detalhe_usina(
             )
             if not isinstance(dados, dict):
                 dados = {"aviso": "Dados de geração indisponíveis."}
-            if isinstance(alertas, list):
+
+            # `/plants/{slug}/alerts` devolve um ENVELOPE, não uma lista:
+            # `AlertListResponse{plant, total, alerts[]}` (mw-api, alerts/schemas.py).
+            # Contar `len()` de um dict daria o número de chaves, e testar `isinstance(_,
+            # list)` fazia o campo ficar nulo para sempre — a tela dizia "não consultamos"
+            # com a resposta na mão.
+            if isinstance(alertas, dict):
+                equipamentos["alertas_ativos"] = _numero_inteiro(
+                    alertas.get("total"), alertas.get("alerts")
+                )
+            elif isinstance(alertas, list):
                 equipamentos["alertas_ativos"] = len(alertas)
         except Exception as exc:  # noqa: BLE001
             dados = {"aviso": f"meuWatt indisponível: {exc}"}
@@ -324,7 +362,7 @@ async def detalhe_usina(
         nome=link.nome,
         cidade=link.cidade,
         uf=link.uf,
-        capacidade_kwp=link.kwp,
+        capacidade_kwp=link.kwp or dados.get("capacidade_kwp"),
         potencia_kw=dados.get("potencia_kw"),
         energia_hoje_kwh=dados.get("energia_hoje_kwh"),
         disponibilidade_pct=dados.get("disponibilidade_pct"),
@@ -337,8 +375,10 @@ async def detalhe_usina(
         inversores_parados=dados.get("inversores_parados"),
         alertas_ativos=equipamentos.get("alertas_ativos"),
     )
-    if detalhe.potencia_kw is not None and link.kwp:
-        detalhe.pct_capacidade = max(0, min(100, round(detalhe.potencia_kw / link.kwp * 100)))
+    if detalhe.potencia_kw is not None and detalhe.capacidade_kwp:
+        detalhe.pct_capacidade = max(
+            0, min(100, round(detalhe.potencia_kw / detalhe.capacidade_kwp * 100))
+        )
     detalhe.tom, detalhe.situacao = _tom(detalhe)
 
     if link.mp_usina_id:

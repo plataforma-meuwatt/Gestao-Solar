@@ -28,7 +28,8 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://localhost:8100",
+      "_apiUrl": "O endereço de produção mora AQUI porque o app.json é embutido em todo bundle — build e update. Deixá-lo em localhost fazia o OTA sair apontando para o próprio celular, já que `eas update` não injeta EXPO_PUBLIC_API_URL. Em desenvolvimento este valor é ignorado: lá o app usa o IP de quem serve o bundle, na porta 8100.",
+      "apiUrl": "https://gestao-solar-production.up.railway.app",
       "router": {},
       "eas": {
         "projectId": "b29e156d-c235-4323-91d2-e96a952fd363"
@@ -39,7 +40,10 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/b29e156d-c235-4323-91d2-e96a952fd363"
+      "url": "https://u.expo.dev/b29e156d-c235-4323-91d2-e96a952fd363",
+      "checkAutomatically": "ON_LOAD",
+      "_comentario": "fallbackToCacheTimeout: o app espera até 12 s pelo conteúdo novo ANTES de desenhar. Com o padrão (0) ele abre no conteúdo antigo e aplica a atualização só na abertura seguinte — o que na prática exige fechar o app de verdade duas vezes, e quem está testando conclui que o OTA não funciona.",
+      "fallbackToCacheTimeout": 12000
     }
   }
 }

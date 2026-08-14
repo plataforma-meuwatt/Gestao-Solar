@@ -166,9 +166,14 @@ class MeuWattClient:
         """UC no meuWatt é o TRANSFORMADOR — cada fatura pertence a um transformer.id."""
         return await self._get(f"/plants/{slug}/utility-bills")
 
-    async def portal_relatorios(self, token: str) -> dict[str, Any]:
-        """Portal do Cliente: relatórios publicados. Exige o token do usuário (é gated a
-        `plant_owner`), não a credencial de serviço."""
+    async def portal_relatorios(self, token: str | None = None) -> dict[str, Any]:
+        """Portal do Cliente: relatórios publicados.
+
+        A rota é fechada a `plant_owner` **ou** administrador. Com o token de serviço — que
+        costuma ser de administrador — ela devolve as usinas **todas**, porque é também a
+        pré-visualização que o gestor usa. Quem chama daqui é obrigado a filtrar pelo
+        escopo do cliente antes de mostrar qualquer coisa; ver `api/v1/documents.py`.
+        """
         return await self._get("/reports/portal", token=token)
 
     async def arquivo_relatorio(self, report_id: int, kind: str) -> bytes:

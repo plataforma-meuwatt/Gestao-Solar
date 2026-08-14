@@ -254,6 +254,46 @@ def test_estados_conferem_com_a_lista_do_mw_api():
     assert DORMINDO in conhecidos
 
 
+def test_alertas_vem_em_envelope_e_nao_em_lista():
+    """`/plants/{slug}/alerts` devolve `AlertListResponse{plant, total, alerts[]}`.
+
+    Testar `isinstance(resposta, list)` fazia `alertas_ativos` ficar nulo para sempre — a
+    tela dizia "não consultamos" com a resposta na mão, e a chamada acontecia à toa.
+    """
+    from app.api.v1.plants import _numero_inteiro
+
+    envelope = {"plant": "Ibitinga", "total": 3, "alerts": [{}, {}, {}]}
+
+    assert _numero_inteiro(envelope.get("total"), envelope.get("alerts")) == 3
+
+
+def test_alertas_sem_total_caem_no_tamanho_da_lista():
+    from app.api.v1.plants import _numero_inteiro
+
+    assert _numero_inteiro(None, [{}, {}]) == 2
+    assert _numero_inteiro(None, None) is None
+
+
+def test_capacidade_sai_dos_inversores_quando_ninguem_cadastrou():
+    """`PlantLink.kwp` só é preenchido à mão no painel e está nulo em todas as usinas.
+
+    Sem esta soma, `pct_capacidade` nunca era calculado (a barra ficava vazia) e o topo da
+    aba anunciava "0,0 MWp" — com a capacidade disponível no meuWatt o tempo todo.
+    """
+    from app.api.v1.plants import _capacidade_kwp
+
+    agora = {"inverters": [{"capacity_kwp": 100.0}, {"capacity_kwp": 55.5}]}
+
+    assert _capacidade_kwp(agora) == 155.5
+
+
+def test_sem_inversor_a_capacidade_e_nula_e_nao_zero():
+    from app.api.v1.plants import _capacidade_kwp
+
+    assert _capacidade_kwp({"inverters": []}) is None
+    assert _capacidade_kwp({}) is None
+
+
 # ── pelo HTTP, como o aplicativo chama ──────────────────────────────────────
 
 
