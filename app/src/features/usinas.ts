@@ -28,6 +28,13 @@ export type Usina = {
   tom: Tom
   situacao: string
 
+  /** Todos os inversores mudos — vem do estado deles, não da potência. */
+  sem_comunicacao: boolean
+  /** Quantos estão mudos, mesmo sem serem todos. Sem isto, mudez parcial fica invisível. */
+  inversores_mudos: number | null
+  /** Fora da janela solar: nada é defeito, e a tela não deve alarmar. */
+  fora_da_janela_solar: boolean
+
   tem_meuwatt: boolean
   tem_meuplano: boolean
   aviso: string | null

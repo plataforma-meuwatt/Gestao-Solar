@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.integracao import Produto
@@ -235,7 +236,25 @@ def _sem_comunicacao(agora: dict[str, Any]) -> bool:
     )
 
 
-def _capacidade_kwp(agora: dict[str, Any]) -> float | None:
+def _capacidade_declarada(diario: Any) -> float | None:
+    """A capacidade instalada da usina, como o meuWatt a declara.
+
+    `DailyGenerationReport.total_capacity_kwp` é o valor autoritativo, e vem na MESMA
+    resposta que já se lê para a energia do dia — não custa uma chamada a mais.
+
+    A versão anterior somava `capacity_kwp` dos inversores que estavam falando, e isso
+    **fabricava** o número: a capacidade da usina encolhia quando um inversor emudecia.
+    Rodando o código, uma usina de 3 × 600 kWp com um inversor mudo publicava 1200 kWp; com
+    todos mudos, "capacidade não informada". Capacidade instalada é característica física
+    da usina — não muda com o estado do Modbus. E ela é a manchete de quatro superfícies:
+    o MWp da usina, o "de N kWp" do card, o total do topo da aba e a capacidade do início.
+    """
+    if not isinstance(diario, dict):
+        return None
+    return _numero(diario.get("total_capacity_kwp")) or None
+
+
+def _capacidade_dos_inversores(agora: dict[str, Any]) -> float | None:
     """Capacidade instalada somada dos inversores, quando o vínculo não a tem.
 
     `PlantLink.kwp` só é preenchido à mão no painel, e está NULO em todas as usinas —
@@ -317,7 +336,9 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
             saida["inversores"] = len(considerados)
             saida["inversores_parados"] = _parados(considerados)
             saida["inversores_mudos"] = sum(1 for i in considerados if _esta_mudo(i))
-        saida["capacidade_kwp"] = _capacidade_kwp(agora)
+        # Guardado para o caso de o relatório diário não responder; o valor declarado
+        # tem precedência e é preenchido logo abaixo.
+        saida["capacidade_dos_inversores"] = _capacidade_dos_inversores(agora)
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo assim
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
 
@@ -327,6 +348,7 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # que de fato gerou 0 kWh viraria "não sabemos". Aqui zero é informação.
         saida["energia_hoje_kwh"] = _numero(diario.get("total_generation_kwh"))
         saida["disponibilidade_pct"] = _numero(diario.get("plant_availability_pct"))
+        saida["capacidade_kwp"] = _capacidade_declarada(diario)
     except Exception as exc:  # noqa: BLE001
         erros.append(f"geração do dia indisponível ({type(exc).__name__})")
 
@@ -359,7 +381,7 @@ async def listar_usinas(
         try:
             cliente = await integracoes.cliente_meuwatt(db)
             resultados = await asyncio.gather(
-                *(_dados_meuwatt(cliente, l, date.today()) for l in com_mw),
+                *(_dados_meuwatt(cliente, l, hoje_na_usina()) for l in com_mw),
                 return_exceptions=True,
             )
             for link, r in zip(com_mw, resultados, strict=True):
@@ -377,7 +399,9 @@ async def listar_usinas(
             uf=link.uf,
             # O cadastro do painel tem precedência; a soma dos inversores é o que vale
             # quando ninguém digitou a capacidade — que é o caso de todas as usinas hoje.
-            capacidade_kwp=link.kwp or d.get("capacidade_kwp"),
+            capacidade_kwp=(
+                d.get("capacidade_kwp") or link.kwp or d.get("capacidade_dos_inversores")
+            ),
             potencia_kw=d.get("potencia_kw"),
             energia_hoje_kwh=d.get("energia_hoje_kwh"),
             disponibilidade_pct=d.get("disponibilidade_pct"),
@@ -472,7 +496,7 @@ async def detalhe_usina(
             # Os inversores já vêm de `_dados_meuwatt`, do mesmo `monitoring/current`.
             # Só os alertas exigem uma rota a mais.
             dados, alertas = await asyncio.gather(
-                _dados_meuwatt(cliente, link, date.today()),
+                _dados_meuwatt(cliente, link, hoje_na_usina()),
                 cliente.alertas(link.mw_plant_slug),
                 return_exceptions=True,
             )
@@ -498,7 +522,11 @@ async def detalhe_usina(
         nome=link.nome,
         cidade=link.cidade,
         uf=link.uf,
-        capacidade_kwp=link.kwp or dados.get("capacidade_kwp"),
+        capacidade_kwp=(
+            dados.get("capacidade_kwp")
+            or link.kwp
+            or dados.get("capacidade_dos_inversores")
+        ),
         potencia_kw=dados.get("potencia_kw"),
         energia_hoje_kwh=dados.get("energia_hoje_kwh"),
         disponibilidade_pct=dados.get("disponibilidade_pct"),

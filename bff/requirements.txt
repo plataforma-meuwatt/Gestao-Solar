@@ -20,3 +20,7 @@ playwright==1.55.0
 pytest==8.4.2
 pytest-asyncio==1.2.0
 respx==0.22.0
+
+# Base de fusos IANA. A imagem `python:slim` não a traz, e sem ela `ZoneInfo` falha —
+# o BFF precisa saber que dia é na usina (BRT), não no contêiner (UTC).
+tzdata>=2024.1

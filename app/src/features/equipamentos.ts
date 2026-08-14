@@ -37,6 +37,8 @@ export type EquipamentosOut = {
   parados: number | null
   alerta: number | null
   sem_dados: number | null
+  /** Fora da janela solar. Estado esperado — de madrugada é a usina inteira. */
+  dormindo: number | null
   ignorados: number | null
   /** Quando foi MEDIDO, não quando o servidor respondeu. */
   atualizado_em: string | null

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.apelido import ApelidoInvalido
 from app.core.apelido import normalizar as normalizar_apelido
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha, gestor_atual
 from app.models.integracao import Produto
@@ -434,7 +435,7 @@ async def _diagnostico_meuwatt(db: Session, usinas: list[PlantLink]) -> BlocoDia
     except Exception as exc:  # noqa: BLE001
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 
-    hoje = date.today()
+    hoje = hoje_na_usina()
     itens = []
     for u in alvos:
         try:

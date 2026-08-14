@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.v1.plants import _numero, _usina_no_escopo
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.user import User
@@ -88,10 +89,25 @@ class EquipamentosOut(BaseModel):
     equipamentos: list[EquipamentoOut] = []
 
 
-def _situacao(estado: str, ignorado: bool, parado_ha_min: int | None) -> tuple[str, str]:
-    """A cor e a frase, decididas aqui para as duas telas dizerem a mesma coisa."""
+def _situacao(
+    estado: str, ignorado: bool, parado_ha_min: int | None, em_falha: bool | None = None
+) -> tuple[str, str]:
+    """A cor e a frase, decididas aqui para as duas telas dizerem a mesma coisa.
+
+    `em_falha` é o `down` do mw-api, o estado canônico de parada. Sem ele, esta tela lia
+    só o `status` enquanto a lista de usinas já consultava `down` — e o resultado era o
+    pior padrão possível: a faixa vermelha "1 inversor parado" abria numa lista onde o
+    MESMO inversor aparecia verde, "Gerando". Faixa vermelha que abre em tela verde
+    destrói a confiança nas duas.
+    """
     if ignorado:
         return "semDados", "Ignorado no monitoramento"
+
+    # `down` vence o status: é o detector afirmando parada material aberta, e o status
+    # Modbus pode ainda dizer `normal`. Tri-estado — `None` é "não sei", e aí vale o
+    # status.
+    if em_falha is True and estado != "bedtime":
+        estado = "fault"
 
     tom = TOM_POR_ESTADO.get(estado, "semDados")
     if estado == "fault":
@@ -232,7 +248,7 @@ async def detalhe_do_equipamento(
         cliente = await integracoes.cliente_meuwatt(db)
         agora_resp, diario = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
-            cliente.geracao_diaria(link.mw_plant_slug, date.today()),
+            cliente.geracao_diaria(link.mw_plant_slug, hoje_na_usina()),
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
@@ -255,7 +271,7 @@ async def detalhe_do_equipamento(
     estado = str(inv.get("status") or "").strip().lower()
     ignorado = bool(inv.get("ignored"))
     desde, minutos = _minutos_parado(inv.get("down_since"), agora)
-    tom, situacao = _situacao(estado, ignorado, minutos)
+    tom, situacao = _situacao(estado, ignorado, minutos, inv.get("down"))
 
     serie = inv.get("serial_number")
     watts = _numero(inv.get("active_power"))
@@ -327,7 +343,7 @@ async def equipamentos_da_usina(
         cliente = await integracoes.cliente_meuwatt(db)
         agora_resp, diario = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
-            cliente.geracao_diaria(link.mw_plant_slug, date.today()),
+            cliente.geracao_diaria(link.mw_plant_slug, hoje_na_usina()),
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001 — a tela abre com o aviso
@@ -351,7 +367,7 @@ async def equipamentos_da_usina(
         estado = str(inv.get("status") or "").strip().lower()
         ignorado = bool(inv.get("ignored"))
         desde, minutos = _minutos_parado(inv.get("down_since"), agora)
-        tom, situacao = _situacao(estado, ignorado, minutos)
+        tom, situacao = _situacao(estado, ignorado, minutos, inv.get("down"))
 
         serie = inv.get("serial_number")
         watts = _numero(inv.get("active_power"))

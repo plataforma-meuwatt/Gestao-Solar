@@ -99,6 +99,18 @@ export default function UsinaDetalhe() {
         />
       ) : null}
 
+      {/* Mudez PARCIAL: alguns inversores calados, não todos. Sem esta faixa, a usina
+          parecia inteira — a potência exibida é a soma de quem está falando, e nada na
+          tela dizia que faltava gente na conta. */}
+      {u.inversores_mudos && !u.sem_comunicacao ? (
+        <FaixaAtencao
+          tom="semDados"
+          titulo={`${u.inversores_mudos} ${u.inversores_mudos === 1 ? 'inversor sem comunicação' : 'inversores sem comunicação'}`}
+          detalhe="Os números abaixo não incluem esses aparelhos."
+          onPress={() => router.push(`/usina/${id}/equipamentos`)}
+        />
+      ) : null}
+
       {u.aviso ? <FaixaAtencao tom="alerta" titulo={u.aviso} /> : null}
 
       <Card>

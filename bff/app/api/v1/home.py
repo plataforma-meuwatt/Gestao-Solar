@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.billing import _assinaturas_do_usuario
 from app.api.v1.plants import UsinaOut, listar_usinas
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.billing import SituacaoFatura
@@ -139,7 +140,7 @@ async def inicio(
     financeiro = None
     assinaturas = _assinaturas_do_usuario(db, usuario)
     if assinaturas:
-        hoje = date.today()
+        hoje = hoje_na_usina()
         abertas = [
             f
             for a in assinaturas

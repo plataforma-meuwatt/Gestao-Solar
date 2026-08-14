@@ -87,7 +87,20 @@ export default function Equipamentos() {
                 <Text style={tipo.legenda}>sem dados</Text>
               </>
             ) : null}
-            {!dados.parados && !dados.alerta && !dados.sem_dados ? (
+            {/* "Todos gerando" só quando estão MESMO gerando. De madrugada os três
+                contadores de problema ficam em zero — todo inversor é `dormindo` — e a
+                versão anterior afirmava "Todos gerando" no topo de uma lista em que cada
+                card dizia "Fora da janela solar". */}
+            {dados.dormindo ? (
+              <>
+                <View style={[estilos.ponto, { backgroundColor: tons.semDados }]} />
+                <Text style={tipo.legenda}>
+                  {dados.dormindo === dados.total
+                    ? 'Fora da janela solar'
+                    : `${dados.dormindo} fora da janela solar`}
+                </Text>
+              </>
+            ) : !dados.parados && !dados.alerta && !dados.sem_dados ? (
               <>
                 <View style={[estilos.ponto, { backgroundColor: tons.ok }]} />
                 <Text style={tipo.legenda}>Todos gerando</Text>

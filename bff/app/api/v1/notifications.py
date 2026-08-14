@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.billing import _assinaturas_do_usuario
 from app.api.v1.equipamentos import _instante
 from app.api.v1.plants import usinas_do_usuario
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.billing import SituacaoFatura
@@ -195,7 +196,7 @@ async def minhas_notificacoes(
 
     # Mensalidade é do próprio BFF: não depende de ponte nenhuma, e por isso aparece
     # mesmo quando os dois upstreams estão fora.
-    hoje = date.today()
+    hoje = hoje_na_usina()
     for a in _assinaturas_do_usuario(db, usuario):
         produto = a.produto.value if hasattr(a.produto, "value") else str(a.produto)
         for f in a.faturas:

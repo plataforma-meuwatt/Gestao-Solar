@@ -258,7 +258,7 @@ def test_capacidade_e_potencia_excluem_os_mesmos_inversores():
     inversores calados mostraria a potência de um sobre a capacidade de três — uma
     porcentagem sistematicamente subestimada, rotulada "% da capacidade instalada".
     """
-    from app.api.v1.plants import _capacidade_kwp, _potencia_da_usina
+    from app.api.v1.plants import _capacidade_dos_inversores, _potencia_da_usina
 
     agora = {
         "inverters": [
@@ -268,7 +268,7 @@ def test_capacidade_e_potencia_excluem_os_mesmos_inversores():
     }
 
     potencia = _potencia_da_usina(agora)
-    capacidade = _capacidade_kwp(agora)
+    capacidade = _capacidade_dos_inversores(agora)
 
     assert potencia == 80.0, "o mudo não soma potência (o mw-api mantém o valor velho)"
     assert capacidade == 100.0, "nem capacidade — senão o percentual sai subestimado"
@@ -316,7 +316,12 @@ def test_inversor_silenciado_fica_fora_das_somas():
     """O meuWatt exclui `ignored` da potência da usina
     (`mw-fe/src/pages/home/inicioData.ts`). Divergir faz a mesma usina mostrar número
     diferente nos dois produtos, e o dono não tem como saber em qual acreditar."""
-    from app.api.v1.plants import _capacidade_kwp, _parados, _potencia_da_usina, _contam
+    from app.api.v1.plants import (
+        _capacidade_dos_inversores,
+        _contam,
+        _parados,
+        _potencia_da_usina,
+    )
 
     agora = {
         "inverters": [
@@ -326,7 +331,7 @@ def test_inversor_silenciado_fica_fora_das_somas():
     }
 
     assert _potencia_da_usina(agora) == 100.0, "o silenciado não soma potência"
-    assert _capacidade_kwp(agora) == 100.0, "nem capacidade, que é o denominador do %"
+    assert _capacidade_dos_inversores(agora) == 100.0, "nem na soma de recurso"
     assert _parados(_contam(agora)) == 0, "nem aparece como parada — foi decisão de quem opera"
 
 
@@ -455,24 +460,44 @@ def test_alertas_sem_total_caem_no_tamanho_da_lista():
     assert _numero_inteiro(None, None) is None
 
 
-def test_capacidade_sai_dos_inversores_quando_ninguem_cadastrou():
-    """`PlantLink.kwp` só é preenchido à mão no painel e está nulo em todas as usinas.
+def test_capacidade_vem_declarada_pelo_meuwatt():
+    """Capacidade instalada é característica FÍSICA da usina, e o meuWatt a declara em
+    `DailyGenerationReport.total_capacity_kwp` — na mesma resposta que já se lê.
 
-    Sem esta soma, `pct_capacidade` nunca era calculado (a barra ficava vazia) e o topo da
-    aba anunciava "0,0 MWp" — com a capacidade disponível no meuWatt o tempo todo.
+    Somá-la dos inversores que estão falando **fabricava** o número: a capacidade da usina
+    encolhia quando um inversor emudecia. Uma usina de 3 × 600 kWp com um mudo publicava
+    1200 kWp; com todos mudos, "capacidade não informada". E esse valor é a manchete de
+    quatro superfícies do aplicativo.
     """
-    from app.api.v1.plants import _capacidade_kwp
+    from app.api.v1.plants import _capacidade_declarada
 
-    agora = {"inverters": [{"capacity_kwp": 100.0}, {"capacity_kwp": 55.5}]}
+    diario = {"total_capacity_kwp": 1800.0}
 
-    assert _capacidade_kwp(agora) == 155.5
+    assert _capacidade_declarada(diario) == 1800.0
 
 
-def test_sem_inversor_a_capacidade_e_nula_e_nao_zero():
-    from app.api.v1.plants import _capacidade_kwp
+def test_capacidade_declarada_nao_encolhe_com_inversor_mudo():
+    """O caso que a auditoria reproduziu rodando o código."""
+    from app.api.v1.plants import _capacidade_declarada, _capacidade_dos_inversores
 
-    assert _capacidade_kwp({"inverters": []}) is None
-    assert _capacidade_kwp({}) is None
+    diario = {"total_capacity_kwp": 1800.0}
+    agora = {
+        "inverters": [
+            {"capacity_kwp": 600.0, "status": "normal"},
+            {"capacity_kwp": 600.0, "status": "normal"},
+            {"capacity_kwp": 600.0, "status": "communication_error"},
+        ]
+    }
+
+    assert _capacidade_dos_inversores(agora) == 1200.0, "a soma encolhe — por isso não vale"
+    assert _capacidade_declarada(diario) == 1800.0, "a declarada é a verdade da usina"
+
+
+def test_sem_relatorio_a_capacidade_e_nula_e_nao_zero():
+    from app.api.v1.plants import _capacidade_declarada
+
+    assert _capacidade_declarada({}) is None
+    assert _capacidade_declarada(None) is None
 
 
 # ── pelo HTTP, como o aplicativo chama ──────────────────────────────────────

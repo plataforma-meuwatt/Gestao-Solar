@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.billing import Invoice, SituacaoFatura, Subscription
@@ -139,7 +140,7 @@ def meu_financeiro(
     O que o dono quer saber, nesta ordem: devo alguma coisa, quanto e quando vence. O
     resumo do topo responde as três antes de ele rolar a tela.
     """
-    hoje = date.today()
+    hoje = hoje_na_usina()
     assinaturas = _assinaturas_do_usuario(db, usuario)
 
     if not assinaturas:
@@ -245,4 +246,4 @@ def minha_fatura(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mensalidade não encontrada.")
 
     produto = fatura.assinatura.produto
-    return _fatura_out(fatura, produto.value if hasattr(produto, "value") else str(produto), date.today())
+    return _fatura_out(fatura, produto.value if hasattr(produto, "value") else str(produto), hoje_na_usina())
