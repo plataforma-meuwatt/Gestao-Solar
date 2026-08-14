@@ -11,16 +11,24 @@
 
 import { useFonts } from 'expo-font'
 import { Stack } from 'expo-router'
+import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect } from 'react'
 import { View } from 'react-native'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
+import { Barreira } from '@/components/Barreira'
 import { MolduraCelular } from '@/components/MolduraCelular'
 import { aoDeslogar } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { cores } from '@/theme/tokens'
+
+// A splash fica de pé até a sessão e as fontes estarem prontas — e quem a esconde é o
+// código, não a plataforma. Sem isto o fim da abertura é uma corrida: se o React demora
+// mais que o sistema, o que se vê é o fundo `#02061A` sem nada em cima, que se lê como
+// "app travado". O `catch` cobre o caso de a splash já ter sido escondida.
+void SplashScreen.preventAutoHideAsync().catch(() => {})
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,8 +59,14 @@ export default function LayoutRaiz() {
     aoDeslogar(() => void sair())
   }, [hidratar, sair])
 
+  const pronto = hidratado && fontesProntas
+
+  useEffect(() => {
+    if (pronto) void SplashScreen.hideAsync().catch(() => {})
+  }, [pronto])
+
   // Fundo liso enquanto espera: é a splash continuando, não uma tela vazia.
-  if (!hidratado || !fontesProntas) {
+  if (!pronto) {
     return <View style={{ flex: 1, backgroundColor: cores.fundo }} />
   }
 
@@ -61,17 +75,21 @@ export default function LayoutRaiz() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              animation: 'slide_from_right',
-              contentStyle: { backgroundColor: cores.fundo },
-            }}
-          >
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="login" options={{ animation: 'fade' }} />
-            <Stack.Screen name="perfil" options={{ animation: 'slide_from_left' }} />
-          </Stack>
+          {/* A barreira fica DENTRO dos provedores e por fora do Stack: uma tela que
+              quebra não pode levar junto a navegação nem o cliente de dados. */}
+          <Barreira nome="o aplicativo">
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                animation: 'slide_from_right',
+                contentStyle: { backgroundColor: cores.fundo },
+              }}
+            >
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="login" options={{ animation: 'fade' }} />
+              <Stack.Screen name="perfil" options={{ animation: 'slide_from_left' }} />
+            </Stack>
+          </Barreira>
         </QueryClientProvider>
       </SafeAreaProvider>
     </MolduraCelular>

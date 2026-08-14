@@ -5,11 +5,18 @@
 import { router } from 'expo-router'
 import { StyleSheet, Text, View } from 'react-native'
 
+import { Atualizacao } from '@/components/Atualizacao'
 import { Card, LinhaNavegacao } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { usuario } from '@/features/exemplo'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tons } from '@/theme/tokens'
+
+/** Iniciais do primeiro e do último nome — o mesmo cálculo da lista de usinas. */
+function iniciaisDe(nome: string | undefined): string {
+  const partes = (nome ?? '').trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return '·'
+  return (partes[0][0] + (partes.length > 1 ? partes[partes.length - 1][0] : '')).toUpperCase()
+}
 
 export default function Perfil() {
   const dados = useAuth((s) => s.usuario)
@@ -24,19 +31,25 @@ export default function Perfil() {
     <Tela titulo="Perfil" voltar>
       <View style={estilos.cabecalho}>
         <View style={estilos.avatar}>
-          <Text style={estilos.avatarTexto}>{usuario.iniciais}</Text>
+          <Text style={estilos.avatarTexto}>{iniciaisDe(dados?.nome)}</Text>
         </View>
-        <Text style={estilos.nome}>{dados?.nome ?? 'Renan Moraes'}</Text>
-        <Text style={estilos.email}>{dados?.email ?? 'renan.moraes@solaris.com.br'}</Text>
+        <Text style={estilos.nome}>{dados?.nome ?? '—'}</Text>
+        {/* Quem entra é o apelido; o e-mail é contato e pode não existir. */}
+        <Text style={estilos.email}>{dados?.apelido ?? '—'}</Text>
+        {dados?.email ? <Text style={estilos.empresa}>{dados.email}</Text> : null}
         {dados?.empresa ? <Text style={estilos.empresa}>{dados.empresa}</Text> : null}
       </View>
 
       <Card semPadding>
         <LinhaNavegacao titulo="Notificações" primeiro onPress={() => router.push('/notificacoes')} />
-        <LinhaNavegacao titulo="Novidades" />
-        <LinhaNavegacao titulo="Configurações" />
-        <LinhaNavegacao titulo="Ajuda" />
+        <LinhaNavegacao
+          titulo="Usinas"
+          valor={dados ? String(dados.usinas) : '—'}
+          onPress={() => router.push('/(tabs)/usinas')}
+        />
       </Card>
+
+      <Atualizacao />
 
       <Text style={estilos.sair} onPress={() => void aoSair()}>
         Sair

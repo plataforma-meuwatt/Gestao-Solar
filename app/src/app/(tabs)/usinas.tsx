@@ -5,45 +5,92 @@
  * capacidade instalada, com a barra dando a proporção de relance. A usina sem
  * comunicação mostra travessão e barra vazia — nunca zero, que se leria como
  * "gerou nada" em vez de "não sabemos".
+ *
+ * A cor e a frase de status vêm prontas do BFF. A tela não decide se uma usina está bem:
+ * essa régua é a mesma no meuWatt e mudaria com a loja no meio do caminho.
  */
 
 import { router } from 'expo-router'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 
-import { Barra, Card, Chevron, Num, StatusChip } from '@/components/base'
+import { Barra, Card, Chevron, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { totalUsinas, usinas, usuario, type Usina } from '@/features/exemplo'
+import { useUsinas, type Usina } from '@/features/usinas'
+import { energia, inteiro, numero, potencia } from '@/lib/format'
+import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function Usinas() {
+  const { dados, carregando, erro, offlineDesde, recarregar } = useUsinas()
+  const usuario = useAuth((s) => s.usuario)
+
+  const lista = dados?.usinas ?? []
+
   return (
     <Tela
       titulo="Usinas"
       subtitulo={
-        <Text style={tipo.secundario}>
-          <Num style={estilos.subNum}>{totalUsinas.quantidade}</Num> usinas ·{' '}
-          <Num style={estilos.subNum}>{totalUsinas.capacidade}</Num> MWp
-        </Text>
+        dados ? (
+          <Text style={tipo.secundario}>
+            <Num style={estilos.subNum}>{lista.length}</Num> usinas ·{' '}
+            <Num style={estilos.subNum}>{numero(dados.total_kwp / 1000, 1)}</Num> MWp
+          </Text>
+        ) : undefined
       }
-      avatar={{ iniciais: usuario.iniciais, temAviso: true, onPress: () => router.push('/perfil') }}
+      avatar={{
+        iniciais: iniciaisDe(usuario?.nome),
+        temAviso: Boolean(dados?.aviso),
+        onPress: () => router.push('/perfil'),
+      }}
+      offlineDesde={offlineDesde}
       paraTabBar
     >
-      {usinas.map((u) => (
-        <CardUsina key={u.id} usina={u} />
-      ))}
+      {carregando ? (
+        <CardsFantasma />
+      ) : erro ? (
+        <EstadoVazio
+          tom="parado"
+          titulo="Não deu para carregar"
+          descricao={erro}
+          acao={{ titulo: 'Tentar de novo', onPress: recarregar }}
+        />
+      ) : lista.length === 0 ? (
+        <EstadoVazio
+          titulo="Nenhuma usina ainda"
+          descricao={
+            dados?.aviso ??
+            'Assim que uma usina for liberada para a sua conta, ela aparece aqui.'
+          }
+        />
+      ) : (
+        lista.map((u) => <CardUsina key={u.id} usina={u} />)
+      )}
     </Tela>
   )
 }
 
+/** Iniciais para o avatar: as do primeiro e do último nome. */
+function iniciaisDe(nome: string | undefined): string {
+  const partes = (nome ?? '').trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return '·'
+  const primeira = partes[0][0]
+  const ultima = partes.length > 1 ? partes[partes.length - 1][0] : ''
+  return (primeira + ultima).toUpperCase()
+}
+
 function CardUsina({ usina }: { usina: Usina }) {
-  const semDados = usina.potenciaKw === null
+  const semDados = usina.potencia_kw === null
+  // `potencia()` escolhe kW ou MW pela ordem de grandeza e formata em pt-BR; o design
+  // pede o número grande e a unidade pequena ao lado, daí a separação.
+  const [valor, unidade] = potencia(usina.potencia_kw).split(' ')
+  const local = [usina.cidade, usina.uf].filter(Boolean).join(', ')
 
   return (
     <Pressable onPress={() => router.push(`/usina/${usina.id}`)}>
       <Card>
         <View style={estilos.topo}>
           <Text style={estilos.nome}>{usina.nome}</Text>
-          <StatusChip tom={usina.tom} texto={usina.status} />
+          <StatusChip tom={usina.tom} texto={usina.situacao} />
           <View style={estilos.espacador} />
           <Chevron />
         </View>
@@ -53,35 +100,62 @@ function CardUsina({ usina }: { usina: Usina }) {
             <Num style={[estilos.potencia, { color: tons.semDados }]}>—</Num>
           ) : (
             <>
-              <Num style={estilos.potencia}>{usina.potenciaKw}</Num>
-              <Text style={estilos.unidade}>kW</Text>
+              <Num style={estilos.potencia}>{valor}</Num>
+              <Text style={estilos.unidade}>{unidade}</Text>
             </>
           )}
-          <Text style={estilos.capacidade}>
-            de <Num style={estilos.capacidadeNum}>{usina.capacidadeKwp}</Num> kWp
-          </Text>
+          {usina.capacidade_kwp ? (
+            <Text style={estilos.capacidade}>
+              de <Num style={estilos.capacidadeNum}>{inteiro(usina.capacidade_kwp)}</Num> kWp
+            </Text>
+          ) : null}
         </View>
 
         <View style={estilos.barra}>
-          <Barra pct={usina.pct} />
+          <Barra pct={usina.pct_capacidade ?? 0} />
         </View>
 
         <View style={estilos.rodape}>
-          <Text style={tipo.legenda}>
-            {usina.cidade}, {usina.uf}
-          </Text>
-          <Text style={tipo.legenda}>
-            {usina.energiaHoje ? (
+          <Text style={tipo.legenda}>{local || '—'}</Text>
+          <Text style={tipo.legenda} numberOfLines={1}>
+            {usina.energia_hoje_kwh !== null ? (
               <>
-                hoje <Num style={estilos.energia}>{usina.energiaHoje}</Num> MWh
+                hoje <Num style={estilos.energia}>{energia(usina.energia_hoje_kwh)}</Num>
               </>
             ) : (
-              usina.rodape
+              (usina.aviso ?? 'sem dados do dia')
             )}
           </Text>
         </View>
       </Card>
     </Pressable>
+  )
+}
+
+/** Skeleton, nunca spinner solto: três cards com o desenho do que vem. */
+function CardsFantasma() {
+  return (
+    <>
+      {[0, 1, 2].map((i) => (
+        <Card key={i}>
+          <View style={estilos.topo}>
+            <Esqueleto largura="45%" altura={16} forte />
+            <View style={estilos.espacador} />
+            <Esqueleto largura={64} altura={18} />
+          </View>
+          <View style={estilos.linhaPotencia}>
+            <Esqueleto largura="35%" altura={28} forte />
+          </View>
+          <View style={estilos.barra}>
+            <Esqueleto altura={6} />
+          </View>
+          <View style={estilos.rodape}>
+            <Esqueleto largura={110} altura={12} />
+            <Esqueleto largura={80} altura={12} />
+          </View>
+        </Card>
+      ))}
+    </>
   )
 }
 
@@ -99,6 +173,6 @@ const estilos = StyleSheet.create({
   capacidadeNum: { fontSize: 12, color: cores.textoCorpo },
 
   barra: { marginTop: 12 },
-  rodape: { flexDirection: 'row', justifyContent: 'space-between', marginTop: espaco.sm },
+  rodape: { flexDirection: 'row', justifyContent: 'space-between', marginTop: espaco.sm, gap: 12 },
   energia: { fontSize: 12, color: cores.textoForte },
 })

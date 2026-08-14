@@ -1,9 +1,13 @@
 /**
- * Usina — geração do dia e do mês.
+ * Usina — o estado de agora e o que ela produziu hoje.
  *
- * O segmentado Dia/Mês/Ano troca o recorte do card de geração; o gráfico do mês fica
- * sempre visível abaixo porque responde uma pergunta diferente ("o mês está indo bem?"),
- * e as duas linhas de navegação ao pé levam para equipamentos e manutenção.
+ * Tudo vem de `GET /api/v1/plants/{id}`, e o `id` é o da rota: antes esta tela procurava
+ * a usina numa lista de exemplo e, quando não achava, desenhava um objeto fixo — de modo
+ * que **qualquer** usina abria como Porto Ferreira. O sintoma parecia navegação; a causa
+ * era não ter fonte de dado.
+ *
+ * Os recortes Mês e Ano ainda não têm endpoint (`generation/range` no BFF), e a tela diz
+ * isso em vez de fingir número.
  */
 
 import { router, useLocalSearchParams } from 'expo-router'
@@ -13,45 +17,99 @@ import { StyleSheet, Text, View } from 'react-native'
 import {
   CabecalhoCard,
   Card,
+  Esqueleto,
+  EstadoVazio,
   FaixaAtencao,
   Kpi,
   LinhaNavegacao,
   Num,
   Segmentado,
+  StatusChip,
 } from '@/components/base'
-import { BarrasDia, BarrasMes } from '@/components/graficos'
 import { Tela } from '@/components/Tela'
-import { usinaDetalhe, usinas } from '@/features/exemplo'
-import { cores, espaco, fontes, tipo } from '@/theme/tokens'
+import { useUsina } from '@/features/usinas'
+import { energia, inteiro, numero, porcento, potencia } from '@/lib/format'
+import { cores, espaco, tipo } from '@/theme/tokens'
 
 const RECORTES = ['Dia', 'Mês', 'Ano']
 
 export default function UsinaDetalhe() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const [recorte, setRecorte] = useState(0)
+  const { dados: u, carregando, erro, offlineDesde, recarregar } = useUsina(id)
 
-  const usina = usinas.find((u) => u.id === id)
-  const d = usinaDetalhe
+  if (carregando || !u) {
+    return (
+      <Tela titulo="Usina" voltar paraTabBar>
+        {erro ? (
+          <EstadoVazio
+            tom="parado"
+            titulo="Não deu para carregar"
+            descricao={erro}
+            acao={{ titulo: 'Tentar de novo', onPress: recarregar }}
+          />
+        ) : (
+          <>
+            <Card>
+              <Esqueleto largura="55%" altura={18} forte />
+              <View style={estilos.espacoKpi}>
+                <Esqueleto largura="40%" altura={30} forte />
+              </View>
+            </Card>
+            <Card>
+              <Esqueleto altura={90} />
+            </Card>
+          </>
+        )}
+      </Tela>
+    )
+  }
+
+  const parados = u.inversores_parados ?? 0
 
   return (
     <Tela
-      titulo={usina?.nome ?? d.nome}
+      titulo={u.nome}
       subtitulo={
         <Text style={tipo.secundario}>
-          <Num style={estilos.subNum}>{d.capacidadeMwp}</Num> MWp ·{' '}
-          <Num style={estilos.subNum}>{d.inversores}</Num> inversores
+          {u.capacidade_kwp ? (
+            <>
+              <Num style={estilos.subNum}>{numero(u.capacidade_kwp / 1000, 2)}</Num> MWp
+            </>
+          ) : (
+            'capacidade não informada'
+          )}
+          {u.inversores !== null ? (
+            <>
+              {' · '}
+              <Num style={estilos.subNum}>{inteiro(u.inversores)}</Num> inversores
+            </>
+          ) : null}
         </Text>
       }
       voltar
+      offlineDesde={offlineDesde}
       paraTabBar
     >
-      <FaixaAtencao
-        tom="parado"
-        titulo="2 inversores parados"
-        onPress={() => router.push(`/usina/${id}/equipamentos`)}
-      />
+      {parados > 0 ? (
+        <FaixaAtencao
+          tom="parado"
+          titulo={`${parados} ${parados === 1 ? 'inversor parado' : 'inversores parados'}`}
+          onPress={() => router.push(`/usina/${id}/equipamentos`)}
+        />
+      ) : null}
+
+      {u.aviso ? <FaixaAtencao tom="alerta" titulo={u.aviso} /> : null}
 
       <Card>
+        <View style={estilos.topo}>
+          <StatusChip tom={u.tom} texto={u.situacao} />
+          <View style={estilos.espacador} />
+          <Text style={tipo.legenda}>
+            agora <Num style={estilos.agora}>{potencia(u.potencia_kw)}</Num>
+          </Text>
+        </View>
+
         <Segmentado opcoes={RECORTES} ativo={recorte} onEscolher={setRecorte} />
 
         {recorte === 0 ? (
@@ -59,26 +117,30 @@ export default function UsinaDetalhe() {
             <Text style={tipo.rotuloCard}>Energia hoje</Text>
             <View style={estilos.espacoKpi}>
               <Kpi
-                valor={d.dia.energiaMwh}
-                unidade="MWh"
+                valor={u.energia_hoje_kwh !== null ? energia(u.energia_hoje_kwh) : '—'}
                 tamanho="grande"
                 direita={
-                  <Text style={tipo.legenda}>
-                    previsto <Num style={estilos.previsto}>{d.dia.previstoMwh}</Num>
-                  </Text>
+                  u.disponibilidade_pct !== null ? (
+                    <Text style={tipo.legenda}>
+                      disponibilidade{' '}
+                      <Num style={estilos.previsto}>{porcento(u.disponibilidade_pct)}</Num>
+                    </Text>
+                  ) : undefined
                 }
               />
             </View>
-            <View style={estilos.espacoGrafico}>
-              <BarrasDia valores={d.dia.curva} destaque={d.dia.indicePico} />
-            </View>
-            <RodapeDia />
+            {u.pct_capacidade !== null ? (
+              <Text style={tipo.legenda}>
+                <Num style={estilos.previsto}>{u.pct_capacidade}%</Num> da capacidade
+                instalada neste momento
+              </Text>
+            ) : null}
           </View>
         ) : (
           <View style={estilos.miolo}>
             <Text style={tipo.fraco}>
-              O recorte {RECORTES[recorte]} entra na Fase 2, com
-              GET /api/v1/plants/{'{id}'}/generation/range.
+              O recorte {RECORTES[recorte]} depende de
+              GET /api/v1/plants/{'{id}'}/generation/range, que ainda não existe no BFF.
             </Text>
           </View>
         )}
@@ -86,50 +148,45 @@ export default function UsinaDetalhe() {
 
       <Card>
         <CabecalhoCard
-          rotulo={d.mes.rotulo}
+          rotulo="De onde vem"
           direita={
             <Text style={tipo.legenda}>
-              <Num style={estilos.totalMes}>{d.mes.totalMwh}</Num> MWh
+              {[u.tem_meuwatt && 'meuWatt', u.tem_meuplano && 'meuPlano']
+                .filter(Boolean)
+                .join(' · ') || '—'}
             </Text>
           }
         />
-        <View style={estilos.espacoGrafico}>
-          <BarrasMes valores={d.mes.dias} limiarTempoRuim={d.mes.limiarTempoRuim} />
+        <View style={estilos.linhas}>
+          <Linha rotulo="Local" valor={[u.cidade, u.uf].filter(Boolean).join(', ') || '—'} />
+          {u.alertas_ativos !== null ? (
+            <Linha rotulo="Alertas ativos" valor={inteiro(u.alertas_ativos)} />
+          ) : null}
         </View>
       </Card>
 
       <Card semPadding>
         <LinhaNavegacao
           titulo="Equipamentos"
-          valor={String(d.inversores)}
+          valor={u.inversores !== null ? inteiro(u.inversores) : '—'}
           primeiro
           onPress={() => router.push(`/usina/${id}/equipamentos`)}
         />
-        <LinhaNavegacao titulo="Manutenção" valor={d.manutencao} tomValor="ok" />
+        <LinhaNavegacao
+          titulo="Manutenção"
+          valor={u.ordens_abertas !== null ? `${inteiro(u.ordens_abertas)} em aberto` : '—'}
+          tomValor={u.ordens_abertas ? 'alerta' : 'ok'}
+        />
       </Card>
     </Tela>
   )
 }
 
-function RodapeDia() {
-  const { dia } = usinaDetalhe
+function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
-    <View style={estilos.rodape}>
-      <Coluna rotulo="pico" valor={dia.picoKw} unidade="kW" />
-      <Coluna rotulo="às" valor={dia.picoHora} />
-      <Coluna rotulo="PR do dia" valor={dia.pr} />
-    </View>
-  )
-}
-
-function Coluna({ rotulo, valor, unidade }: { rotulo: string; valor: string; unidade?: string }) {
-  return (
-    <View>
-      <Text style={tipo.fraco}>{rotulo}</Text>
-      <View style={estilos.colunaValor}>
-        <Num style={estilos.colunaNum}>{valor}</Num>
-        {unidade ? <Text style={estilos.colunaUnidade}>{unidade}</Text> : null}
-      </View>
+    <View style={estilos.linha}>
+      <Text style={tipo.legenda}>{rotulo}</Text>
+      <Num style={estilos.linhaValor}>{valor}</Num>
     </View>
   )
 }
@@ -137,22 +194,15 @@ function Coluna({ rotulo, valor, unidade }: { rotulo: string; valor: string; uni
 const estilos = StyleSheet.create({
   subNum: { fontSize: 13, color: cores.textoRotulo },
 
-  miolo: { marginTop: espaco.md },
-  espacoKpi: { marginTop: espaco.sm },
-  espacoGrafico: { marginTop: 18 },
+  topo: { flexDirection: 'row', alignItems: 'center', marginBottom: espaco.sm },
+  espacador: { flex: 1 },
+  agora: { fontSize: 12, color: cores.textoForte },
 
+  miolo: { marginTop: espaco.md, gap: espaco.xs },
+  espacoKpi: { marginVertical: espaco.xs },
   previsto: { fontSize: 12, color: cores.textoCorpo },
-  totalMes: { fontSize: 12, color: cores.textoForte },
 
-  rodape: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: cores.bordaFraca,
-  },
-  colunaValor: { flexDirection: 'row', alignItems: 'baseline', gap: espaco.xs, marginTop: 3 },
-  colunaNum: { fontFamily: fontes.monoSemi, fontSize: 16, color: cores.textoForte },
-  colunaUnidade: { fontFamily: fontes.uiMedio, fontSize: 11, color: cores.textoCorpo },
+  linhas: { marginTop: espaco.sm, gap: espaco.xs },
+  linha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  linhaValor: { fontSize: 13, color: cores.textoForte },
 })

@@ -14,7 +14,12 @@ import axios from 'axios'
 import Constants from 'expo-constants'
 
 const configurado =
-  (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl ??
+  // `EXPO_PUBLIC_*` é lida do ambiente na hora do bundle. Existe para apontar o app a
+  // outro servidor sem editar o `app.json` — testar contra produção, contra a máquina de
+  // outra pessoa, ou desviar de uma porta 8100 já ocupada por outro projeto. Sem ela,
+  // trocar de servidor exigiria mexer num arquivo versionado e lembrar de desfazer.
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl ||
   'http://localhost:8100'
 
 /**
