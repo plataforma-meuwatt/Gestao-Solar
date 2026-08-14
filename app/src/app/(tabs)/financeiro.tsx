@@ -7,123 +7,196 @@
  * de agregação no BFF — a tela apenas exibe.
  *
  * Não há pagamento pelo app: a baixa é feita pela administração. A tela informa, não
- * cobra — nada de botão "Pagar agora".
+ * cobra — nada de botão "Pagar agora". O rodapé que diz isso vem do servidor, porque é
+ * regra de negócio: mudaria junto com o produto, não com o aplicativo.
+ *
+ * Qual card aparece no topo é decisão do BFF (`situacao`), não da tela. Uma parcela
+ * vencida entre três pagas tem de pintar de vermelho, e essa é a espécie de regra que
+ * não pode viver em dois lugares.
  */
 
 import { router } from 'expo-router'
-import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 
-import { Card, Chevron, Num, Rotulo, StatusChip } from '@/components/base'
+import { Card, Chevron, Esqueleto, EstadoVazio, Num, Rotulo, StatusChip } from '@/components/base'
 import { Tela } from '@/components/Tela'
 import {
-  assinaturas,
-  financeiro,
-  historicoFaturas,
-  situacaoRotulo,
-  situacaoTom,
-  usuario,
-  type LinhaHistorico,
-} from '@/features/exemplo'
+  competenciaPorExtenso,
+  diaEMes,
+  useFinanceiro,
+  type Assinatura,
+  type Fatura,
+  type FinanceiroOut,
+} from '@/features/financeiro'
+import { moeda } from '@/lib/format'
+import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tipo, tomAlpha, tons, TOQUE_MIN } from '@/theme/tokens'
 
+const ROTULO_SITUACAO: Record<Fatura['situacao'], string> = {
+  pago: 'Pago',
+  a_vencer: 'A vencer',
+  em_aberto: 'Em aberto',
+  vencido: 'Vencido',
+}
+
+function iniciaisDe(nome: string | undefined): string {
+  const partes = (nome ?? '').trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return '·'
+  return (partes[0][0] + (partes.length > 1 ? partes[partes.length - 1][0] : '')).toUpperCase()
+}
+
 export default function Financeiro() {
-  // Fase 6: sai de GET /api/v1/billing — `situacao` no topo do payload decide o card.
-  const [temPendencia] = useState(false)
+  const { dados, carregando, erro, offlineDesde, recarregar } = useFinanceiro()
+  const usuario = useAuth((s) => s.usuario)
+
+  const competencia = new Date().toISOString().slice(0, 7)
 
   return (
     <Tela
       titulo="Financeiro"
-      subtitulo={financeiro.competenciaAtual}
-      avatar={{ iniciais: usuario.iniciais, onPress: () => router.push('/perfil') }}
+      subtitulo={competenciaPorExtenso(competencia)}
+      avatar={{ iniciais: iniciaisDe(usuario?.nome), onPress: () => router.push('/perfil') }}
+      offlineDesde={offlineDesde}
       paraTabBar
     >
-      {temPendencia ? <CardVencida /> : <CardEmDia />}
+      {carregando ? (
+        <Fantasma />
+      ) : erro ? (
+        <EstadoVazio
+          tom="parado"
+          titulo="Não deu para carregar"
+          descricao={erro}
+          acao={{ titulo: 'Tentar de novo', onPress: recarregar }}
+        />
+      ) : !dados || dados.assinaturas.length === 0 ? (
+        <EstadoVazio
+          titulo="Nenhuma assinatura"
+          descricao={dados?.resumo ?? 'Ainda não há mensalidade cadastrada para esta conta.'}
+        />
+      ) : (
+        <Conteudo dados={dados} />
+      )}
+    </Tela>
+  )
+}
+
+function Conteudo({ dados }: { dados: FinanceiroOut }) {
+  return (
+    <>
+      <CardSituacao dados={dados} />
 
       <Card semPadding>
         <View style={estilos.tituloBloco}>
           <Rotulo>O que compõe o total</Rotulo>
         </View>
-        {assinaturas.map((a) => (
-          <View key={a.id} style={estilos.linhaProduto}>
-            <View style={estilos.produtoMiolo}>
-              <Text style={estilos.produtoNome}>{a.produto}</Text>
-              <Text style={estilos.produtoDescricao}>
-                {a.descricao} · vence dia <Num style={estilos.diaVencimento}>{a.diaVencimento}</Num>
-              </Text>
-            </View>
-            <View style={estilos.produtoDireita}>
-              <Num style={estilos.produtoValor}>{a.valor}</Num>
-              <View style={estilos.chipPequeno}>
-                <StatusChip tom={situacaoTom[a.situacao]} texto={situacaoRotulo[a.situacao]} />
-              </View>
-            </View>
-          </View>
+        {dados.assinaturas.map((a) => (
+          <LinhaProduto key={a.id} assinatura={a} />
         ))}
         <View style={estilos.linhaTotal}>
           <Text style={estilos.totalRotulo}>Uma cobrança só</Text>
-          <Num style={estilos.totalValor}>{financeiro.total}</Num>
+          <Num style={estilos.totalValor}>{moeda(dados.total_mensal)}</Num>
         </View>
       </Card>
 
-      <Card semPadding>
-        <View style={estilos.tituloBloco}>
-          <Rotulo>Histórico</Rotulo>
-        </View>
-        {historicoFaturas.map((h) => (
-          <LinhaFatura key={h.id} fatura={h} />
-        ))}
-      </Card>
+      {dados.historico.length > 0 ? (
+        <Card semPadding>
+          <View style={estilos.tituloBloco}>
+            <Rotulo>Histórico</Rotulo>
+          </View>
+          {dados.historico.map((f) => (
+            <LinhaFatura key={f.id} fatura={f} />
+          ))}
+        </Card>
+      ) : null}
 
-      <Text style={estilos.rodape}>{financeiro.rodape}</Text>
-    </Tela>
+      <Text style={estilos.rodape}>{dados.rodape}</Text>
+    </>
   )
 }
 
-function CardEmDia() {
+/**
+ * O card do topo. Em dia mostra o total e o vencimento; com atraso, troca de cor e passa
+ * a falar da parcela vencida — que é o que a pessoa precisa resolver.
+ */
+function CardSituacao({ dados }: { dados: FinanceiroOut }) {
+  const vencida = dados.situacao === 'vencido'
+  const cor = tons[dados.tom] ?? tons.semDados
+
   return (
-    <View style={[estilos.cardSituacao, estilos.cardOk]}>
+    <View
+      style={[
+        estilos.cardSituacao,
+        {
+          backgroundColor: tomAlpha(dados.tom, 0.1),
+          borderColor: tomAlpha(dados.tom, 0.33),
+        },
+      ]}
+    >
       <View style={estilos.linhaSituacao}>
-        <View style={[estilos.pontoSituacao, { backgroundColor: tons.ok }]} />
-        <Text style={[estilos.tituloSituacao, { color: tons.ok }]}>Tudo em dia</Text>
+        <View style={[estilos.pontoSituacao, { backgroundColor: cor }]} />
+        <Text style={[estilos.tituloSituacao, { color: cor }]}>{dados.resumo}</Text>
       </View>
-      <Num style={estilos.valorSituacao}>{financeiro.total}</Num>
+
+      <Num style={estilos.valorSituacao}>
+        {moeda(vencida ? dados.total_vencido : dados.total_mensal)}
+      </Num>
+
       <Text style={estilos.detalheSituacao}>
-        total de {financeiro.competenciaAtual.split(' ')[0]} · vence em{' '}
-        <Num style={estilos.detalheNum}>{financeiro.vencimento}</Num>
+        {vencida ? (
+          'em mensalidades vencidas'
+        ) : (
+          <>
+            total do mês · vence em{' '}
+            <Num style={estilos.detalheNum}>{diaEMes(dados.proximo_vencimento)}</Num>
+          </>
+        )}
       </Text>
+
+      {vencida ? (
+        <Text style={[estilos.orientacao, { borderTopColor: tomAlpha('parado', 0.2) }]}>
+          Fale com a administração para regularizar.
+        </Text>
+      ) : null}
     </View>
   )
 }
 
-function CardVencida() {
-  const p = financeiro.pendencia
+function LinhaProduto({ assinatura: a }: { assinatura: Assinatura }) {
+  const atual = a.competencia_atual
   return (
-    <View style={[estilos.cardSituacao, estilos.cardVencida]}>
-      <View style={estilos.linhaSituacao}>
-        <View style={[estilos.pontoSituacao, { backgroundColor: tons.parado }]} />
-        <Text style={[estilos.tituloSituacao, { color: tons.parado }]}>{p.titulo}</Text>
+    <View style={estilos.linhaProduto}>
+      <View style={estilos.produtoMiolo}>
+        <Text style={estilos.produtoNome}>{a.produto_nome}</Text>
+        <Text style={estilos.produtoDescricao}>
+          {a.fornece} · vence dia <Num style={estilos.diaVencimento}>{a.dia_vencimento}</Num>
+        </Text>
       </View>
-      <Num style={estilos.valorSituacao}>{p.valor}</Num>
-      <Text style={estilos.detalheSituacao}>
-        {p.detalhe} <Num style={estilos.detalheNum}>{p.diasAtraso}</Num>
-      </Text>
-      <Text style={estilos.orientacao}>{p.orientacao}</Text>
+      <View style={estilos.produtoDireita}>
+        <Num style={estilos.produtoValor}>{moeda(a.valor_mensal)}</Num>
+        {atual ? (
+          <View style={estilos.chipPequeno}>
+            <StatusChip tom={atual.tom} texto={ROTULO_SITUACAO[atual.situacao]} />
+          </View>
+        ) : null}
+      </View>
     </View>
   )
 }
 
-function LinhaFatura({ fatura }: { fatura: LinhaHistorico }) {
+function LinhaFatura({ fatura }: { fatura: Fatura }) {
   return (
     <Pressable style={estilos.linhaHistorico} onPress={() => router.push(`/fatura/${fatura.id}`)}>
       <View style={estilos.historicoMiolo}>
-        <Text style={estilos.historicoMes}>{fatura.mes}</Text>
-        <Text style={estilos.historicoProduto}>{fatura.produto}</Text>
+        <Text style={estilos.historicoMes}>{competenciaPorExtenso(fatura.competencia)}</Text>
+        <Text style={estilos.historicoProduto}>
+          {fatura.produto_nome}
+          {fatura.dias_atraso ? ` · vencida há ${fatura.dias_atraso} dias` : ''}
+        </Text>
       </View>
       <View style={estilos.produtoDireita}>
-        <Num style={estilos.historicoValor}>{fatura.valor}</Num>
+        <Num style={estilos.historicoValor}>{moeda(fatura.valor)}</Num>
         <View style={estilos.chipPequeno}>
-          <StatusChip tom={situacaoTom[fatura.situacao]} texto={situacaoRotulo[fatura.situacao]} />
+          <StatusChip tom={fatura.tom} texto={ROTULO_SITUACAO[fatura.situacao]} />
         </View>
       </View>
       <Chevron />
@@ -131,14 +204,35 @@ function LinhaFatura({ fatura }: { fatura: LinhaHistorico }) {
   )
 }
 
+function Fantasma() {
+  return (
+    <>
+      <View style={[estilos.cardSituacao, { borderColor: cores.borda }]}>
+        <Esqueleto largura="45%" altura={16} forte />
+        <View style={{ marginTop: 14 }}>
+          <Esqueleto largura="55%" altura={30} forte />
+        </View>
+        <View style={{ marginTop: 12 }}>
+          <Esqueleto largura="40%" altura={12} />
+        </View>
+      </View>
+      <Card>
+        <Esqueleto altura={14} largura="35%" />
+        <View style={{ marginTop: 14, gap: 10 }}>
+          <Esqueleto altura={16} />
+          <Esqueleto altura={16} />
+        </View>
+      </Card>
+    </>
+  )
+}
+
 const estilos = StyleSheet.create({
   cardSituacao: { borderWidth: 1, borderRadius: 16, padding: espaco.md },
-  cardOk: { backgroundColor: tomAlpha('ok', 0.1), borderColor: tomAlpha('ok', 0.33) },
-  cardVencida: { backgroundColor: tomAlpha('parado', 0.1), borderColor: tomAlpha('parado', 0.33) },
 
   linhaSituacao: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   pontoSituacao: { width: 10, height: 10, borderRadius: 5 },
-  tituloSituacao: { fontFamily: fontes.uiSemi, fontSize: 16 },
+  tituloSituacao: { fontFamily: fontes.uiSemi, fontSize: 16, flexShrink: 1 },
   valorSituacao: {
     fontFamily: fontes.monoSemi,
     fontSize: 34,
@@ -146,7 +240,12 @@ const estilos = StyleSheet.create({
     color: cores.textoForte,
     marginTop: 12,
   },
-  detalheSituacao: { fontFamily: fontes.ui, fontSize: 12.5, color: cores.textoRotulo, marginTop: espaco.sm },
+  detalheSituacao: {
+    fontFamily: fontes.ui,
+    fontSize: 12.5,
+    color: cores.textoRotulo,
+    marginTop: espaco.sm,
+  },
   detalheNum: { fontSize: 12.5, color: cores.textoCorpo },
   orientacao: {
     fontFamily: fontes.ui,
@@ -155,7 +254,6 @@ const estilos = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: tomAlpha('parado', 0.2),
   },
 
   tituloBloco: { paddingHorizontal: espaco.md, paddingTop: 14, paddingBottom: espaco.xs },
