@@ -240,15 +240,33 @@ Carregando (skeleton, nunca spinner solto), vazio, erro, offline com selo de hor
 
 ## 6. Pendências conhecidas
 
-**`react-native-screens` duplicado.** O `expo-doctor` aponta duas versões na árvore: a
-direta (`~4.26.0`, que o SDK 57 valida) e a `4.27.0` que o `expo-router` traz aninhada.
-Existe um `overrides` no `package.json` que resolve numa instalação limpa. Não afeta o
-Expo Go — lá os módulos nativos vêm do próprio app — mas **precisa estar resolvido antes
-do primeiro build nativo** (Fase 8), porque um build só admite uma versão de cada módulo
-nativo.
-
 **Expo Go exige a build do SDK 57.** Cada build do Expo Go embute uma única versão de SDK.
 A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev/go).
+
+**O endereço de produção é o do Railway, não o domínio próprio.** O que está no ar é
+`https://gestao-solar-production.up.railway.app` (API) e `https://gestaosolar.up.railway.app`
+(painel). O `api-gestaosolar.meuwatt.com.br` que o `eas.json` trazia responde **404** — é um
+domínio que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
+
+Duas armadilhas do deploy pelo CLI, ambas já pagas:
+
+- **`railway up` roda da raiz do repositório**, nunca de dentro de `bff/`. O serviço tem
+  *Root Directory* em `bff/`, então subir de lá faz o Railway procurar `bff/bff/Dockerfile`
+  e o deploy falha — sem derrubar o que está no ar, o que torna a falha fácil de não notar:
+  o `/health` continua respondendo 200 pela versão antiga.
+- **O token do `.env.txt` é de projeto, não de conta.** Vai em `RAILWAY_TOKEN`; com
+  `RAILWAY_API_TOKEN` ou em `railway whoami` responde `Unauthorized`.
+
+**Testar contra o BFF local a partir do celular não funciona sem preparo.** O firewall do
+Windows não tem regra para a porta 8100 — o `python.exe` do venv não é o `node.exe`, que já
+tem permissão e por isso o Metro na 8081 funciona —, e o Android recusa HTTP em claro num
+build release.
+
+**O aplicativo é quase todo maquete.** Uma tela lê do BFF — a lista de Usinas
+(`GET /api/v1/plants`) — e o login. As outras dez (Início, Financeiro, Documentos,
+Assistente, Notificações, Perfil, Fatura, Equipamentos, detalhe da Usina) desenham
+`src/features/exemplo.ts`, e os endpoints correspondentes não existem no servidor. Ao
+ligar uma delas, o caminho é o da §5: endpoint no BFF → cliente do upstream → tela.
 
 ---
 

@@ -18,10 +18,28 @@
       "expo-router",
       "expo-secure-store",
       "expo-font",
-      ["expo-splash-screen", { "backgroundColor": "#02061A", "resizeMode": "contain" }]
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#02061A",
+          "image": "./assets/imagens/splash.png",
+          "imageWidth": 180
+        }
+      ]
     ],
     "extra": {
-      "apiUrl": "http://localhost:8100"
+      "apiUrl": "http://localhost:8100",
+      "router": {},
+      "eas": {
+        "projectId": "b29e156d-c235-4323-91d2-e96a952fd363"
+      }
+    },
+    "owner": "prnmarchesini",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b29e156d-c235-4323-91d2-e96a952fd363"
     }
   }
 }

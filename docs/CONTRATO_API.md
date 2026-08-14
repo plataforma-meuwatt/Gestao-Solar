@@ -92,20 +92,54 @@ Tudo que a tela inicial precisa, numa chamada só.
 
 ## Usinas
 
-### `GET /plants`
+### `GET /plants`  — *no ar*
 
 ```json
-[
-  { "id": 3, "nome": "Porto Ferreira", "cidade": "Porto Ferreira", "uf": "SP",
-    "kwp": 2400.0, "status": "ok",
-    "energia_hoje_mwh": 12.8, "potencia_agora_kw": 1980.0,
-    "curva_dia": [0, 12, 340, 890, 1450, 1980, 1870, 1200, 410, 0],
-    "tem_meuwatt": true, "tem_meuplano": true }
-]
+{
+  "usinas": [
+    { "id": 3, "nome": "Porto Ferreira", "cidade": "Porto Ferreira", "uf": "SP",
+      "capacidade_kwp": 2400.0,
+      "potencia_kw": 1980.0, "energia_hoje_kwh": 12800.0,
+      "disponibilidade_pct": 98.2, "pct_capacidade": 82,
+      "tom": "ok", "situacao": "Gerando",
+      "tem_meuwatt": true, "tem_meuplano": true, "aviso": null }
+  ],
+  "total_kwp": 2400.0,
+  "potencia_agora_kw": 1980.0,
+  "energia_hoje_kwh": 12800.0,
+  "atualizado_em": "2026-08-13T14:32:00Z",
+  "aviso": null
+}
 ```
 
-`status` é sempre um dos seis tons: `parado` · `alerta` · `multiplos` · `tempo_ruim` ·
-`ok` · `sem_dados`.
+Envelope, e não lista crua: os totais são somados no servidor sobre as usinas que
+responderam, e `atualizado_em` é o que a tela carimba no selo de horário do modo offline.
+
+`tom` é sempre uma **chave de `tons`** em `app/src/theme/tokens.ts` — `parado` · `alerta` ·
+`multiplos` · `tempoRuim` · `ok` · `semDados`, em camelCase. A tela faz `tons[tom]`; nome
+que não existe lá não pinta cor errada, não pinta cor nenhuma. `situacao` é a frase que
+acompanha a cor, já em português.
+
+Nulo é "não sabemos", e a tela mostra travessão: `potencia_kw: null` é usina sem
+comunicação, que é diferente de `0` (não gerou — de noite, o esperado). Vale para os
+totais também.
+
+`aviso` explica o que faltou, por usina e no topo. Uma ponte fora do ar não derruba a
+resposta: vem o que deu para buscar, com o motivo escrito.
+
+### `GET /plants/{id}`  — *no ar*
+
+Mesma usina do envelope acima, mais o que veio do meuPlano:
+
+```json
+{ "id": 3, "nome": "Porto Ferreira", "tom": "ok", "situacao": "Gerando",
+  "ordens_abertas": 2, "ordens_recentes": ["Limpeza trimestral", "Troca de string box"] }
+```
+
+`ordens_abertas: null` é "não foi possível consultar", não "nenhuma ordem".
+
+Usina fora do escopo do usuário responde **404**, nunca 403 — responder "proibido"
+confirmaria que aquela usina existe.
 
 ### `GET /plants/{id}/overview`
 
@@ -295,6 +329,34 @@ não alcança o nível do acesso.
 ```json
 { "token": "ExponentPushToken[...]" }
 ```
+
+---
+
+## Conexões, vistas de dentro do aplicativo
+
+### `GET /conexoes`  — *no ar*
+
+Não confundir com `/api/painel/integracoes`: aqui não há token, endereço nem nome de quem
+o gerou. Isso é assunto do gestor. Esta rota responde à pergunta que o **dono da usina**
+faz quando uma aba aparece vazia — "está quebrado ou eu não contratei isso?" —, porque as
+duas situações se parecem na tela e só uma delas justifica ligar reclamando.
+
+```json
+{
+  "plataformas": [
+    { "produto": "meuwatt", "nome": "meuWatt",
+      "fornece": "Geração, inversores e disponibilidade",
+      "tom": "ok", "situacao": "Conectado", "detalhe": null,
+      "minhas_usinas": 4, "verificado_em": "2026-08-13T12:50:00Z" }
+  ],
+  "todas_ok": true,
+  "resumo": "Tudo certo. 4 usina(s) recebendo dados."
+}
+```
+
+`minhas_usinas` conta as usinas **desta pessoa** que vêm de cada plataforma — o total que a
+credencial enxerga é número do painel. Quando a ponte falha, `detalhe` diz que a equipe já
+enxerga a falha; a frase técnica do upstream fica no painel, não aqui.
 
 ---
 
