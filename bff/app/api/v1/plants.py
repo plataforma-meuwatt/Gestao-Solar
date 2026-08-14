@@ -87,6 +87,11 @@ class UsinaOut(BaseModel):
     tom: str
     situacao: str
 
+    #: Todos os inversores mudos. Vem do ESTADO deles, nunca da potência: o mw-api coage
+    #: potência ausente para zero, então "sem leitura" e "não está gerando" chegariam com
+    #: o mesmo número — e só o estado os separa.
+    sem_comunicacao: bool = False
+
     tem_meuwatt: bool
     tem_meuplano: bool
     #: O que não deu para buscar, em português, para a tela poder dizer por quê.
@@ -105,11 +110,20 @@ class UsinasOut(BaseModel):
 def _tom(usina: UsinaOut) -> tuple[str, str]:
     """A cor e a frase que a acompanha.
 
-    Deliberadamente conservador: sem dado do meuWatt a resposta é "sem dados", nunca "ok".
-    Uma usina que parou de comunicar não pode aparecer verde.
+    A comunicação é decidida pelo **estado dos inversores**, não pela potência ser nula, e
+    isso é o oposto do que estava aqui. O motivo é concreto: o mw-api coage
+    `active_power` para `0` quando não há leitura (`monitoring/service.py`) e o campo é
+    obrigatório no schema — então a potência **nunca** chega nula, e o ramo "Sem
+    comunicação" era inalcançável.
+
+    O efeito era o pior possível: uma usina inteiramente muda ao meio-dia caía em "Sem
+    geração agora" — indistinguível de usina dormindo — e não acendia faixa nenhuma. A
+    falha era silenciosa e tranquilizadora.
     """
-    if usina.potencia_kw is None:
+    if usina.sem_comunicacao:
         return "semDados", "Sem comunicação"
+    if usina.potencia_kw is None:
+        return "semDados", "Sem dados de geração"
     if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 50:
         return "parado", "Disponibilidade baixa"
     if usina.potencia_kw <= 0:
@@ -142,6 +156,36 @@ def _numero_inteiro(total: Any, lista: Any) -> int | None:
     return len(lista) if isinstance(lista, list) else None
 
 
+def _contam(agora: dict[str, Any]) -> list[dict[str, Any]]:
+    """Os inversores que entram nas somas.
+
+    Silenciado pelo operador (`ignored`) fica de fora — é a mesma regra do meuWatt
+    (`mw-fe/src/pages/home/inicioData.ts`, que soma `i.ignored ? 0 : i.active_power`).
+    Divergir disso faz a mesma usina mostrar potência diferente nos dois produtos, e o
+    dono não tem como saber qual acreditar.
+    """
+    inversores = agora.get("inverters")
+    if not isinstance(inversores, list):
+        return []
+    return [i for i in inversores if isinstance(i, dict) and not i.get("ignored")]
+
+
+def _sem_comunicacao(agora: dict[str, Any]) -> bool:
+    """Todos os inversores que contam estão mudos.
+
+    Não dá para inferir isso da potência: o mw-api entrega `active_power = 0` para quem
+    não tem leitura, então o número é o mesmo de uma usina dormindo. O estado é o único
+    lugar onde a diferença sobrevive.
+    """
+    considerados = _contam(agora)
+    if not considerados:
+        return False
+    return all(
+        str(i.get("status") or "").strip().lower() == "communication_error"
+        for i in considerados
+    )
+
+
 def _capacidade_kwp(agora: dict[str, Any]) -> float | None:
     """Capacidade instalada somada dos inversores, quando o vínculo não a tem.
 
@@ -153,36 +197,30 @@ def _capacidade_kwp(agora: dict[str, Any]) -> float | None:
     O valor do vínculo continua tendo precedência: se o gestor digitou a capacidade de
     projeto, é ela que vale — a soma dos inversores é o que sobra quando ninguém digitou.
     """
-    inversores = agora.get("inverters")
-    if not isinstance(inversores, list):
+    considerados = _contam(agora)
+    if not considerados:
         return None
-    total = sum(_numero(i.get("capacity_kwp")) or 0 for i in inversores)
+    total = sum(_numero(i.get("capacity_kwp")) or 0 for i in considerados)
     return round(total, 2) or None
 
 
 def _potencia_da_usina(agora: dict[str, Any]) -> float | None:
-    """Potência instantânea da usina, em kW, somada dos inversores.
+    """Potência instantânea da usina, em kW, somada dos inversores que contam.
 
-    O `monitoring/current` **não traz um total da usina** — traz `inverters[]`, e cada um
-    com `active_power` em **watts**. Somar aqui e dividir por mil é o que transforma isso
-    no número que a tela mostra.
+    O `monitoring/current` **não traz um total da usina** — traz `inverters[]`, cada um
+    com `active_power` em **watts**. Somar e dividir por mil é o que produz o número da
+    tela, e é a mesma conta do meuWatt.
 
-    Nulo quando não veio inversor nenhum, e não zero: sem leitura a resposta certa é "não
-    sabemos", que a tela desenha como travessão. Zero se leria como "não gerou".
+    Nulo só quando não há inversor a considerar. Zero aqui é um zero honesto: significa que
+    os inversores reportaram e não estão gerando. Quem separa "não gerou" de "não falou" é
+    `_sem_comunicacao`, pelo estado — não por este número.
     """
-    inversores = agora.get("inverters")
-    if not isinstance(inversores, list) or not inversores:
+    considerados = _contam(agora)
+    if not considerados:
         return None
 
-    watts = 0.0
-    vistos = 0
-    for inv in inversores:
-        p = _numero(inv.get("active_power"))
-        if p is not None:
-            watts += p
-            vistos += 1
-
-    return round(watts / 1000, 2) if vistos else None
+    watts = sum(_numero(i.get("active_power")) or 0 for i in considerados)
+    return round(watts / 1000, 2)
 
 
 async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
@@ -198,27 +236,28 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
     try:
         agora = await cliente.monitoramento_atual(link.mw_plant_slug)
         saida["potencia_kw"] = _potencia_da_usina(agora)
+        saida["sem_comunicacao"] = _sem_comunicacao(agora)
 
         # A contagem de inversores sai da MESMA resposta: são as posições que estão
         # reportando agora. Buscá-la em `/slots` daria o cadastro — quantos deveriam
         # existir —, que é outra pergunta e não diz quantos estão de pé.
-        inversores = agora.get("inverters")
-        if isinstance(inversores, list):
-            saida["inversores"] = len(inversores)
-            saida["inversores_parados"] = _parados(inversores)
+        #
+        # Silenciado não entra em nenhuma das duas contagens, pela mesma razão de sempre:
+        # a tela de Equipamentos também o exclui, e as duas telas têm de concordar.
+        considerados = _contam(agora)
+        if considerados:
+            saida["inversores"] = len(considerados)
+            saida["inversores_parados"] = _parados(considerados)
         saida["capacidade_kwp"] = _capacidade_kwp(agora)
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo assim
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
 
     try:
         diario = await cliente.geracao_diaria(link.mw_plant_slug, dia)
-        saida["energia_hoje_kwh"] = _numero(
-            diario.get("total_generation_kwh") or diario.get("generation_kwh")
-        )
-        saida["disponibilidade_pct"] = _numero(
-            diario.get("plant_availability_pct")
-            or diario.get("availability_real_pct")
-        )
+        # `or` mataria o zero: `total_generation_kwh` é obrigatório no schema, e uma usina
+        # que de fato gerou 0 kWh viraria "não sabemos". Aqui zero é informação.
+        saida["energia_hoje_kwh"] = _numero(diario.get("total_generation_kwh"))
+        saida["disponibilidade_pct"] = _numero(diario.get("plant_availability_pct"))
     except Exception as exc:  # noqa: BLE001
         erros.append(f"geração do dia indisponível ({type(exc).__name__})")
 
@@ -275,6 +314,7 @@ async def listar_usinas(
             disponibilidade_pct=d.get("disponibilidade_pct"),
             tom="semDados",
             situacao="",
+            sem_comunicacao=bool(d.get("sem_comunicacao")),
             tem_meuwatt=link.tem_meuwatt,
             tem_meuplano=link.tem_meuplano,
             aviso=d.get("aviso"),
@@ -368,6 +408,7 @@ async def detalhe_usina(
         disponibilidade_pct=dados.get("disponibilidade_pct"),
         tom="semDados",
         situacao="",
+        sem_comunicacao=bool(dados.get("sem_comunicacao")),
         tem_meuwatt=link.tem_meuwatt,
         tem_meuplano=link.tem_meuplano,
         aviso=dados.get("aviso"),
@@ -385,9 +426,20 @@ async def detalhe_usina(
         try:
             mp = await integracoes.cliente_meuplano(db)
             ordens = await mp.ordens_servico(link.mp_usina_id)
-            detalhe.ordens_abertas = len(ordens)
+
+            # `len(ordens)` contava CANCELADA e CONCLUÍDA como "em aberto" — a mesma
+            # usina dizia "8 em aberto" aqui e listava 1 em Notificações, que filtra
+            # certo. Duas telas discordando sobre o mesmo fato é pior do que o número
+            # errado: destrói a confiança nas duas.
+            #
+            # O filtro é importado de `notifications`, e não copiado, justamente para não
+            # tornar a divergência possível de novo.
+            from app.api.v1.notifications import _esta_aberta
+
+            abertas = [o for o in ordens if _esta_aberta(o)]
+            detalhe.ordens_abertas = len(abertas)
             detalhe.ordens_recentes = [
-                str(o.get("titulo") or o.get("numero") or o.get("id")) for o in ordens[:3]
+                str(o.get("objetivo") or f"OS {o.get('id')}") for o in abertas[:3]
             ]
         except Exception as exc:  # noqa: BLE001
             juntos = [detalhe.aviso, f"manutenção indisponível ({type(exc).__name__})"]

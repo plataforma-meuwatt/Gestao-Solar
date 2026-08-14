@@ -149,12 +149,16 @@ export default function Login() {
               : 'Use o apelido e a senha que a Gestão Solar enviou. Não é o login do meuWatt nem do meuPlano.'}
         </Text>
 
-        {!carregando ? (
-          <Botao titulo="Entrar com Google" variante="secundario" />
-        ) : null}
-
+        {/* "Entrar com Google" e "Esqueci minha senha" saíram daqui: os dois eram botões
+            sem ação — o primeiro não tinha `onPress`, o segundo não tem fluxo no BFF. Um
+            controle que não faz nada é pior do que a sua ausência: a pessoa toca, não
+            acontece nada, e ela conclui que o aplicativo está quebrado. Voltam quando os
+            fluxos existirem. A senha, hoje, é reposta pelo gestor no painel — e é isso
+            que a linha abaixo diz. */}
         <View style={estilos.espacador} />
-        <Text style={estilos.esqueci}>Esqueci minha senha</Text>
+        <Text style={estilos.esqueci}>
+          Esqueceu a senha? Peça uma nova a quem administra a sua conta.
+        </Text>
       </View>
     </KeyboardAvoidingView>
   )

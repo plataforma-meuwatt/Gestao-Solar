@@ -1,26 +1,49 @@
 /**
  * Visualizador de PDF.
  *
- * Uma barra fina de 48 pt e nada mais por cima do papel — o documento é o conteúdo, não
- * uma prévia dentro do app.
+ * Uma barra fina e nada mais por cima do papel — o documento é o conteúdo, não uma prévia
+ * dentro do app.
  *
- * O miolo aqui é uma **maquete das páginas**. O visualizador de verdade entra na Fase 5:
- * pdf.js dentro de uma WebView, com a biblioteca cacheada em disco para continuar
- * funcionando offline. Não se entrega o arquivo a um app externo — no Android isso dá
- * tela preta silenciosa, e foi por isso que o app de campo do meuPlano passou a renderizar
- * PDF por conta própria.
+ * O que estava aqui era uma **maquete**: duas folhas brancas desenhadas com blocos de
+ * texto falsos, o título fixo "Relatório de Geração" para qualquer documento e um
+ * contador "3 de 13" idêntico para todo cliente — o único número literal que sobreviveu
+ * no aplicativo, e logo acima do aviso que confessava a encenação. O PDF real nunca era
+ * buscado, embora o endpoint (`/api/v1/documents/{id}/file`) já estivesse pronto e
+ * autorizado.
+ *
+ * Agora o arquivo é carregado de verdade, por uma `WebView` apontando para o BFF. Ela não
+ * passa pelos interceptadores do axios, então a sessão vai em **cabeçalho** — nunca na
+ * URL, que entra em log de servidor, histórico e relatório de erro. A rota confere o
+ * escopo antes de servir os bytes.
+ *
+ * Nada de entregar o arquivo a um app externo: no Android isso dá tela preta silenciosa.
+ * "Compartilhar" abre o share sheet nativo, que é outra coisa.
  */
 
 import { router, useLocalSearchParams } from 'expo-router'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useState } from 'react'
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { WebView } from 'react-native-webview'
 
-import { Num } from '@/components/base'
-import { cores, espaco, fontes, papel, TOQUE_MIN } from '@/theme/tokens'
+import { EstadoVazio } from '@/components/base'
+import { urlDoArquivo } from '@/features/documentos'
+import { tokenDaSessao } from '@/lib/api'
+import { cores, espaco, fontes, TOQUE_MIN } from '@/theme/tokens'
+
+const NOME_DA_PECA: Record<string, string> = {
+  geracao: 'Relatório de Geração',
+  paradas: 'Anexo de Paradas',
+}
 
 export default function Documento() {
-  const { id } = useLocalSearchParams<{ id: string }>()
+  const { id, tipo } = useLocalSearchParams<{ id: string; tipo?: string }>()
   const insets = useSafeAreaInsets()
+  const [carregando, setCarregando] = useState(true)
+  const [erro, setErro] = useState<string | null>(null)
+
+  const peca = tipo ?? 'geracao'
+  const url = id ? urlDoArquivo(Number(id), peca) : null
 
   return (
     <View style={[estilos.raiz, { paddingTop: insets.top }]}>
@@ -29,69 +52,75 @@ export default function Documento() {
           <View style={estilos.seta} />
         </Pressable>
         <View style={estilos.miolo}>
+          {/* O título é a peça que se pediu, não um rótulo fixo: abrir o Anexo de
+              Paradas mostrava "Relatório de Geração". */}
           <Text style={estilos.titulo} numberOfLines={1}>
-            Relatório de Geração
+            {NOME_DA_PECA[peca] ?? 'Documento'}
           </Text>
-          <Num style={estilos.pagina}>3 de 13</Num>
         </View>
-        <Pressable hitSlop={10}>
-          <Text style={estilos.compartilhar}>Compartilhar</Text>
-        </Pressable>
       </View>
 
-      <ScrollView
-        style={estilos.papelArea}
-        contentContainerStyle={estilos.papelConteudo}
-        showsVerticalScrollIndicator={false}
-      >
-        <PaginaMaquete grande />
-        <PaginaMaquete />
-        <Text style={estilos.aviso}>
-          Maquete das páginas ({id}). O documento real é renderizado na Fase 5, por pdf.js
-          dentro de uma WebView.
-        </Text>
-      </ScrollView>
-    </View>
-  )
-}
-
-/** Uma folha branca com blocos de texto e figura, na proporção de um A4. */
-function PaginaMaquete({ grande }: { grande?: boolean }) {
-  return (
-    <View style={estilos.pagina1}>
-      <View style={[estilos.blocoTitulo, grande ? estilos.tituloLargo : estilos.tituloCurto]} />
-      {grande ? <View style={estilos.blocoSubtitulo} /> : null}
-      <View style={[estilos.linha, { width: '100%' }]} />
-      <View style={[estilos.linha, { width: '96%' }]} />
-      {grande ? <View style={[estilos.linha, { width: '88%' }]} /> : null}
-      <View style={[estilos.figura, { height: grande ? 96 : 150 }]} />
-      {grande ? (
+      {!url || erro ? (
+        <View style={estilos.centro}>
+          <EstadoVazio
+            tom="parado"
+            titulo="Não deu para abrir"
+            descricao={erro ?? 'Documento não encontrado.'}
+            acao={{ titulo: 'Voltar', onPress: () => router.back() }}
+          />
+        </View>
+      ) : (
         <>
-          <View style={[estilos.linha, { width: '100%' }]} />
-          <View style={[estilos.linha, { width: '72%' }]} />
-          <View style={[estilos.linha, { width: '100%' }]} />
-          <View style={[estilos.linha, { width: '64%' }]} />
-          <View style={[estilos.figura, { height: 120 }]} />
+          {/* No navegador a WebView vira um iframe, e alguns visualizadores de PDF do
+              desktop o bloqueiam. O aplicativo, que é o alvo, usa a WebView nativa. */}
+          <WebView
+            source={{
+              uri: url,
+              headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
+            }}
+            style={estilos.papel}
+            originWhitelist={['*']}
+            onLoadEnd={() => setCarregando(false)}
+            onError={() => {
+              setCarregando(false)
+              setErro('O arquivo não pôde ser carregado.')
+            }}
+            onHttpError={(e) => {
+              setCarregando(false)
+              const s = e.nativeEvent.statusCode
+              setErro(
+                s === 404
+                  ? 'Este documento não está disponível para a sua conta.'
+                  : `O servidor respondeu ${s}.`,
+              )
+            }}
+          />
+          {carregando ? (
+            <View style={estilos.carregando} pointerEvents="none">
+              <ActivityIndicator color={cores.ambar} />
+              <Text style={estilos.carregandoTexto}>
+                Abrindo o documento{Platform.OS === 'web' ? ' (melhor no aplicativo)' : ''}…
+              </Text>
+            </View>
+          ) : null}
         </>
-      ) : null}
+      )}
     </View>
   )
 }
 
 const estilos = StyleSheet.create({
-  raiz: { flex: 1, backgroundColor: cores.painelFlutuante },
-
+  raiz: { flex: 1, backgroundColor: cores.fundo },
   barra: {
     height: 48,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
     paddingHorizontal: espaco.md,
-    backgroundColor: cores.painelFlutuante,
+    gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: cores.borda,
+    borderBottomColor: cores.bordaFraca,
   },
-  voltar: { width: 26, height: TOQUE_MIN, alignItems: 'flex-start', justifyContent: 'center' },
+  voltar: { width: 26, height: TOQUE_MIN, justifyContent: 'center' },
   seta: {
     width: 11,
     height: 11,
@@ -101,41 +130,21 @@ const estilos = StyleSheet.create({
     transform: [{ rotate: '45deg' }],
     marginLeft: 4,
   },
-  miolo: { flex: 1, minWidth: 0 },
-  titulo: { fontFamily: fontes.uiSemi, fontSize: 14, color: cores.textoForte },
-  pagina: { fontSize: 11, color: cores.textoFraco },
-  compartilhar: { fontFamily: fontes.uiSemi, fontSize: 13, color: cores.textoAmbar },
+  miolo: { flex: 1 },
+  titulo: { fontFamily: fontes.uiSemi, fontSize: 14.5, color: cores.textoForte },
 
-  // Fundo mais claro que o app: papel branco sobre preto puro cansa a vista.
-  papelArea: { flex: 1, backgroundColor: cores.fundoPapel },
-  papelConteudo: { padding: 12, paddingHorizontal: 14, gap: 12 },
-
-  pagina1: {
-    backgroundColor: papel.folha,
-    borderRadius: 2,
-    paddingVertical: 28,
-    paddingHorizontal: 26,
-    gap: 9,
+  papel: { flex: 1, backgroundColor: cores.fundo },
+  centro: { flex: 1, justifyContent: 'center' },
+  carregando: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    top: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: cores.fundo,
   },
-  blocoTitulo: { height: 14, borderRadius: 2, backgroundColor: papel.titulo },
-  tituloLargo: { width: '58%' },
-  tituloCurto: { width: '44%', height: 11, marginBottom: 8 },
-  blocoSubtitulo: {
-    width: '34%',
-    height: 8,
-    borderRadius: 2,
-    backgroundColor: papel.subtitulo,
-    marginBottom: 10,
-  },
-  linha: { height: 7, borderRadius: 2, backgroundColor: papel.texto },
-  figura: { borderRadius: 3, backgroundColor: papel.figura, marginVertical: 10 },
-
-  aviso: {
-    fontFamily: fontes.ui,
-    fontSize: 11.5,
-    lineHeight: 17,
-    color: cores.textoFraco,
-    textAlign: 'center',
-    paddingVertical: espaco.md,
-  },
+  carregandoTexto: { fontFamily: fontes.ui, fontSize: 12.5, color: cores.textoRotulo },
 })

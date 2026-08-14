@@ -66,6 +66,16 @@ export function definirToken(token: string | null) {
   tokenAtual = token
 }
 
+/**
+ * O token da sessão, para quem não passa pelos interceptadores do axios — hoje só a
+ * `WebView` que abre PDF. Ela recebe o valor em **cabeçalho**, nunca na URL: endereço
+ * entra em log de servidor, em histórico e em relatório de erro, e um token vazado ali
+ * vale tanto quanto a senha.
+ */
+export function tokenDaSessao(): string | null {
+  return tokenAtual
+}
+
 export function aoDeslogar(cb: () => void) {
   aoPerderSessao = cb
 }

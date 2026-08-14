@@ -105,17 +105,26 @@ def test_usina_concedida_passa_pelo_escopo(db, dono, usinas):
 
 
 def _usina(**campos) -> UsinaOut:
-    base = dict(id=1, nome="Teste", tom="", situacao="", tem_meuwatt=True, tem_meuplano=True)
+    base = dict(
+        id=1, nome="Teste", tom="", situacao="", tem_meuwatt=True, tem_meuplano=True
+    )
     return UsinaOut(**{**base, **campos})
 
 
-def test_sem_comunicacao_nunca_fica_verde():
-    """A regressão que importa: potência nula é "não sabemos", e "não sabemos" não pode
-    ser desenhado como usina saudável."""
+def test_sem_dado_de_geracao_nunca_fica_verde():
+    """Potência nula é "não sabemos", e "não sabemos" não pode ser desenhado como usina
+    saudável.
+
+    A frase mudou de "Sem comunicação" para "Sem dados de geração", e a diferença é o
+    conserto: potência nula significa que a consulta ao meuWatt não trouxe número — não
+    que a usina esteja muda. Quem responde por mudez é `sem_comunicacao`, que lê o estado
+    dos inversores, porque o mw-api entrega potência zero (nunca nula) para quem não tem
+    leitura. Este teste chegou a afirmar o contrário, e afirmava algo inalcançável.
+    """
     tom, situacao = _tom(_usina(potencia_kw=None))
 
     assert tom == "semDados"
-    assert situacao == "Sem comunicação"
+    assert situacao == "Sem dados de geração"
 
 
 def test_disponibilidade_baixa_fica_vermelha_mesmo_gerando():
@@ -179,6 +188,70 @@ def test_todo_tom_existe_nos_tokens_do_aplicativo():
     emitidos = {_tom(u)[0] for u in casos}
 
     assert emitidos <= conhecidos, f"tons sem cor no app: {sorted(emitidos - conhecidos)}"
+
+
+# ── o que separa "mudo" de "dormindo" ───────────────────────────────────────
+
+
+def test_usina_muda_nao_se_confunde_com_usina_dormindo():
+    """A regressão mais cara que este arquivo protege.
+
+    O mw-api coage `active_power` para 0 quando não há leitura, e o campo é obrigatório no
+    schema. Logo a potência NUNCA chega nula, e a versão anterior — que inferia "sem
+    comunicação" de `potencia_kw is None` — tinha esse ramo inalcançável: uma usina
+    inteiramente muda ao meio-dia caía em "Sem geração agora", indistinguível de usina
+    dormindo, e não acendia faixa nenhuma na tela inicial.
+    """
+    from app.api.v1.plants import _sem_comunicacao
+
+    muda = {"inverters": [{"status": "communication_error"}, {"status": "communication_error"}]}
+    dormindo = {"inverters": [{"status": "bedtime"}, {"status": "bedtime"}]}
+
+    assert _sem_comunicacao(muda) is True
+    assert _sem_comunicacao(dormindo) is False
+
+
+def test_uma_usina_com_um_inversor_falando_nao_esta_muda():
+    from app.api.v1.plants import _sem_comunicacao
+
+    parcial = {"inverters": [{"status": "communication_error"}, {"status": "normal"}]}
+
+    assert _sem_comunicacao(parcial) is False
+
+
+def test_tom_de_usina_muda_e_sem_comunicacao():
+    """Fecha o circuito: o campo tem de chegar ao tom, senão a correção não vale nada."""
+    tom, situacao = _tom(_usina(potencia_kw=0.0, sem_comunicacao=True))
+
+    assert tom == "semDados"
+    assert situacao == "Sem comunicação"
+
+
+def test_inversor_silenciado_fica_fora_das_somas():
+    """O meuWatt exclui `ignored` da potência da usina
+    (`mw-fe/src/pages/home/inicioData.ts`). Divergir faz a mesma usina mostrar número
+    diferente nos dois produtos, e o dono não tem como saber em qual acreditar."""
+    from app.api.v1.plants import _capacidade_kwp, _parados, _potencia_da_usina, _contam
+
+    agora = {
+        "inverters": [
+            {"active_power": 100000.0, "capacity_kwp": 100.0, "status": "normal"},
+            {"active_power": 50000.0, "capacity_kwp": 50.0, "status": "fault", "ignored": True},
+        ]
+    }
+
+    assert _potencia_da_usina(agora) == 100.0, "o silenciado não soma potência"
+    assert _capacidade_kwp(agora) == 100.0, "nem capacidade, que é o denominador do %"
+    assert _parados(_contam(agora)) == 0, "nem aparece como parada — foi decisão de quem opera"
+
+
+def test_zero_de_geracao_continua_zero():
+    """`or` mataria o zero: uma usina que de fato gerou 0 kWh viraria "não sabemos". Aqui
+    zero é informação — e é o que distingue "não gerou" de "não medimos"."""
+    from app.api.v1.plants import _numero
+
+    assert _numero(0.0) == 0.0
+    assert _numero(None) is None
 
 
 # ── o formato que o meuWatt manda ───────────────────────────────────────────

@@ -49,14 +49,17 @@ type EstadoAuth = {
  */
 const USUARIO_DEMO: Usuario = {
   id: 0,
-  nome: 'Renan Moraes',
+  // Nome e empresa deliberadamente autoexplicativos. Antes eram "Renan Moraes" e
+  // "Solaris Energia" — plausíveis a ponto de, numa captura de tela ou num vídeo de
+  // demonstração, passarem por cliente real.
+  nome: 'Conta de demonstração',
   apelido: 'demonstracao',
-  email: 'demonstracao@gestaosolar.app',
-  empresa: 'Solaris Energia',
+  email: null,
+  empresa: null,
   tem_meuwatt: true,
   tem_meuplano: true,
   nivel_acesso: 2,
-  usinas: 2,
+  usinas: 0,
   trocar_senha: false,
 }
 
