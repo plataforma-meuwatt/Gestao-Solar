@@ -171,7 +171,8 @@ async def inicio(
     return InicioOut(
         saudacao=_saudacao(agora),
         primeiro_nome=nome.split(" ")[0] if nome else "",
-        atualizado_em=lista.atualizado_em,
+        # O horário do DADO, não o da resposta: é ele que a tela carimba no selo.
+        atualizado_em=lista.medido_em or lista.atualizado_em,
         potencia_agora_kw=lista.potencia_agora_kw,
         capacidade_total_kwp=capacidade,
         pct_capacidade=pct,

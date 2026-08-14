@@ -32,8 +32,17 @@ export default function Usinas() {
       subtitulo={
         dados ? (
           <Text style={tipo.secundario}>
-            <Num style={estilos.subNum}>{lista.length}</Num> usinas ·{' '}
-            <Num style={estilos.subNum}>{numero(dados.total_kwp / 1000, 1)}</Num> MWp
+            <Num style={estilos.subNum}>{lista.length}</Num> usinas
+            {/* A capacidade só aparece quando existe. Sem ela `total_kwp` é 0 — a
+                capacidade vem dos inversores, e uma ponte fora do ar zera a soma. Exibir
+                "0,0 MWp" seria fabricar um número para um desconhecido, e logo no
+                subtítulo da tela. */}
+            {dados.total_kwp > 0 ? (
+              <>
+                {' · '}
+                <Num style={estilos.subNum}>{numero(dados.total_kwp / 1000, 1)}</Num> MWp
+              </>
+            ) : null}
           </Text>
         ) : undefined
       }

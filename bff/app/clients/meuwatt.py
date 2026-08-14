@@ -176,11 +176,21 @@ class MeuWattClient:
         """
         return await self._get("/reports/portal", token=token)
 
+    #: As duas peças de um fechamento. É lista fechada porque `kind` entra na URL do
+    #: upstream, e a chamada usa o token de serviço — que costuma ser de administrador.
+    #: Com texto livre, `../../../admin/users` normaliza para outra rota da mw-api e o
+    #: cliente recebe os bytes. A validação existe aqui **além** da rota que chama, para
+    #: que um chamador futuro não reabra o buraco por descuido.
+    PECAS = ("geracao", "paradas")
+
     async def arquivo_relatorio(self, report_id: int, kind: str) -> bytes:
+        if kind not in self.PECAS:
+            raise MeuWattError(f"peça de relatório desconhecida: {kind!r}")
+
         jwt = await self._token_servico()
         async with httpx.AsyncClient(timeout=60.0) as c:
             r = await c.get(
-                f"{self.base_url}/reports/{report_id}/files/{kind}",
+                f"{self.base_url}/reports/{int(report_id)}/files/{kind}",
                 headers={"Authorization": f"Bearer {jwt}"},
             )
         r.raise_for_status()

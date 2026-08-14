@@ -89,6 +89,29 @@ export async function apagarCache(chave: string): Promise<void> {
   }
 }
 
+/**
+ * Apaga tudo o que foi lido.
+ *
+ * Chamado no logout. Sem isto, a troca de conta no mesmo aparelho — cenário previsto no
+ * CLAUDE.md, em que a mesma pessoa tem uma conta de gestor e uma de dono — mostraria a
+ * quem entra as usinas de quem saiu, até a rede responder. Em usina, a rede demora.
+ */
+export async function limparCache(): Promise<void> {
+  try {
+    if (naWeb) {
+      const chaves = Object.keys(globalThis.localStorage ?? {})
+      for (const k of chaves) {
+        if (k.startsWith('leitura:')) globalThis.localStorage?.removeItem(k)
+      }
+      return
+    }
+    const destino = pasta()
+    if (destino.exists) destino.delete()
+  } catch {
+    // Falhar aqui não pode impedir o logout: sair tem de funcionar sempre.
+  }
+}
+
 const ehSessao = (erro: unknown) =>
   axios.isAxiosError(erro) && (erro.response?.status === 401 || erro.response?.status === 403)
 

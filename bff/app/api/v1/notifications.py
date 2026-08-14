@@ -97,10 +97,16 @@ async def _alertas_da_usina(cliente, link: PlantLink) -> list[NotificacaoOut]:
     return saida
 
 
-#: Uma OS cancelada não está em aberto, e uma fechada muito menos. Sem este filtro a lista
-#: anunciava "Serviço em aberto · CANCELADA" — contradição na mesma linha, e o tipo de
-#: coisa que faz o dono desconfiar de tudo o mais que a tela diz.
-STATUS_FECHADO = {"CANCELADA", "CANCELADO", "CONCLUIDA", "CONCLUÍDA", "FINALIZADA", "REPROVADA"}
+#: Os estados terminais de `ServiceOrderStatus` no meuPlano
+#: (`backend/app/models/tasks.py`). O enum é fechado: ABERTA · PROGRAMADA · EM_EXECUCAO ·
+#: FECHADA · APROVADA · CANCELADA.
+#:
+#: A primeira versão desta lista foi escrita de memória e continha quatro nomes que não
+#: existem em lugar nenhum (CONCLUIDA, FINALIZADA, REPROVADA, CANCELADO), enquanto omitia
+#: os dois terminais que existem de fato — FECHADA e APROVADA. Funcionava por acidente,
+#: porque `closed_at` é testado antes; teria falhado na primeira OS terminal sem data de
+#: fechamento. Adivinhar nome de estado é o mesmo erro que adivinhar nome de campo.
+STATUS_FECHADO = {"FECHADA", "APROVADA", "CANCELADA"}
 
 
 def _esta_aberta(o: dict[str, Any]) -> bool:

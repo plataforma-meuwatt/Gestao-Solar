@@ -103,7 +103,14 @@ class UsinasOut(BaseModel):
     total_kwp: float
     potencia_agora_kw: float | None = None
     energia_hoje_kwh: float | None = None
+
+    #: Quando o BFF respondeu. Serve para depuração, não para a tela.
     atualizado_em: datetime
+    #: Quando o dado foi MEDIDO na usina — a leitura mais recente entre as que
+    #: responderam. É este que vira o selo de horário; `atualizado_em` diria a hora da
+    #: resposta, o que faz o selo do modo offline mentir exatamente onde ele existe para
+    #: não mentir. Nulo quando nenhuma usina respondeu.
+    medido_em: datetime | None = None
     aviso: str | None = None
 
 
@@ -144,7 +151,11 @@ def _numero(valor: Any) -> float | None:
 #: Estados de inversor no `MonitoringSnapshot` do mw-api
 #: (`src/monitoring/schemas.py`, campo `InverterMonitoring.status`). A lista é fechada, e
 #: ler dela — em vez de adivinhar nomes plausíveis — é o que evita contar parada errada.
-PARADO = {"fault", "communication_error"}
+PARADO = {"fault"}
+#: Mudo NÃO é parado. O mw-fe o classifica em âmbar, não vermelho, e `equipamentos.py` o
+#: trata como `semDados` — três lugares davam três respostas para o mesmo inversor, e a
+#: faixa "1 inversor parado" levava a uma tela que contava zero.
+MUDO = "communication_error"
 #: `bedtime` é noite, não defeito: contar como parada acenderia alarme todo fim de tarde.
 DORMINDO = "bedtime"
 
@@ -168,6 +179,23 @@ def _contam(agora: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(inversores, list):
         return []
     return [i for i in inversores if isinstance(i, dict) and not i.get("ignored")]
+
+
+def _instante_medida(valor: Any) -> datetime | None:
+    """A data do upstream chega como texto ISO, não como `datetime`."""
+    if isinstance(valor, datetime):
+        return valor if valor.tzinfo else valor.replace(tzinfo=UTC)
+    if not valor:
+        return None
+    try:
+        d = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def _esta_mudo(inv: dict[str, Any]) -> bool:
+    return str(inv.get("status") or "").strip().lower() == "communication_error"
 
 
 def _sem_comunicacao(agora: dict[str, Any]) -> bool:
@@ -214,8 +242,14 @@ def _potencia_da_usina(agora: dict[str, Any]) -> float | None:
     Nulo só quando não há inversor a considerar. Zero aqui é um zero honesto: significa que
     os inversores reportaram e não estão gerando. Quem separa "não gerou" de "não falou" é
     `_sem_comunicacao`, pelo estado — não por este número.
+
+    **Inversor mudo não soma.** Quando o snapshot fica velho (mais de dez minutos, ver
+    `STALE_SNAPSHOT_THRESHOLD` no mw-api), o upstream marca `communication_error` mas
+    **mantém o `active_power` da última leitura**. Somá-lo publicaria a potência de horas
+    atrás sob o título "AGORA" — um número verdadeiro de outro momento, que é pior do que
+    um número inventado: nada na tela dá motivo para desconfiar dele.
     """
-    considerados = _contam(agora)
+    considerados = [i for i in _contam(agora) if not _esta_mudo(i)]
     if not considerados:
         return None
 
@@ -237,6 +271,11 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         agora = await cliente.monitoramento_atual(link.mw_plant_slug)
         saida["potencia_kw"] = _potencia_da_usina(agora)
         saida["sem_comunicacao"] = _sem_comunicacao(agora)
+        # Quando o dado foi MEDIDO. `datetime.now()` seria a hora da resposta — e é esse
+        # valor que vira o selo do modo offline, o mecanismo que deveria tornar o cache
+        # honesto. Publicar a hora da resposta como hora do dado faz o selo mentir por
+        # construção, e mentir justamente onde ele existe para não mentir.
+        saida["medido_em"] = agora.get("timestamp")
 
         # A contagem de inversores sai da MESMA resposta: são as posições que estão
         # reportando agora. Buscá-la em `/slots` daria o cadastro — quantos deveriam
@@ -324,6 +363,11 @@ async def listar_usinas(
         u.tom, u.situacao = _tom(u)
         saida.append(u)
 
+    medidos = [
+        m
+        for m in (_instante_medida(d.get("medido_em")) for d in dados_por_usina.values())
+        if m is not None
+    ]
     medidas = [u.potencia_kw for u in saida if u.potencia_kw is not None]
     energias = [u.energia_hoje_kwh for u in saida if u.energia_hoje_kwh is not None]
 
@@ -333,6 +377,7 @@ async def listar_usinas(
         potencia_agora_kw=round(sum(medidas), 2) if medidas else None,
         energia_hoje_kwh=round(sum(energias), 2) if energias else None,
         atualizado_em=datetime.now(UTC),
+        medido_em=max(medidos) if medidos else None,
         aviso=aviso_geral,
     )
 

@@ -106,7 +106,14 @@ def _situacao(estado: str, ignorado: bool, parado_ha_min: int | None) -> tuple[s
         return tom, "Fora da janela solar"
     if estado == "alert":
         return tom, "Em alerta"
-    return tom, "Gerando"
+    if estado == "normal":
+        return tom, "Gerando"
+
+    # Estado que o mw-api passou a emitir e este mapa ainda não conhece. O tom já é
+    # `semDados` pelo `.get` acima; a frase precisa acompanhar. Dizer "Gerando" aqui
+    # entregaria cinza de "não sei" com texto de "está tudo bem" — exatamente o else
+    # otimista que o comentário de `TOM_POR_ESTADO` promete evitar.
+    return tom, "Estado desconhecido"
 
 
 def _instante(valor: Any) -> datetime | None:
@@ -384,7 +391,10 @@ async def equipamentos_da_usina(
 
     return EquipamentosOut(
         usina=link.nome,
-        total=len(saida),
+        # `len(ativos)`, e não `len(saida)`: a tela da usina conta sem os silenciados
+        # (plants.py, via `_contam`). Contar diferente fazia "3 inversores" numa tela e
+        # "2" na outra, para a mesma usina.
+        total=len(ativos),
         parados=sum(1 for e in ativos if e.tom == "parado"),
         alerta=sum(1 for e in ativos if e.tom == "alerta"),
         sem_dados=max(0, mudos),

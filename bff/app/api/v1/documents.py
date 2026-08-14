@@ -12,6 +12,7 @@ outras rotas — a autorização é do BFF, nunca do upstream.
 """
 
 from datetime import date, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
@@ -105,7 +106,7 @@ async def meus_documentos(
 @router.get("/documents/{documento_id}/file")
 async def arquivo_do_documento(
     documento_id: int,
-    tipo: str = "geracao",
+    tipo: Literal["geracao", "paradas"] = "geracao",
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
 ) -> Response:
@@ -114,9 +115,22 @@ async def arquivo_do_documento(
     A autorização é refeita aqui, e não herdada da listagem: sem isto, trocar o número na
     URL baixaria o relatório de outro cliente — e um PDF de geração carrega o nome da
     usina, a produção e a perda do mês.
+
+    **O `tipo` é `Literal`, e isso é defesa, não estilo.** Ele acabava interpolado na URL
+    do upstream (`/reports/{id}/files/{kind}`), numa chamada feita com o token de serviço —
+    que costuma ser de administrador. Como texto livre, `../../../admin/users` normalizava
+    para outra rota da mw-api e devolvia os bytes: qualquer cliente com um único documento
+    lia a plataforma inteira com credencial de admin. Uma linha anulava toda a disciplina
+    de escopo do resto do BFF.
+
+    A segunda tranca é o cruzamento com os arquivos daquele documento: mesmo entre os dois
+    valores válidos, só se baixa a peça que o relatório realmente tem.
     """
     docs = await meus_documentos(db=db, usuario=usuario)
-    if not any(d.id == documento_id for d in docs.documentos):
+    alvo = next((d for d in docs.documentos if d.id == documento_id), None)
+    if alvo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Documento não encontrado.")
+    if alvo.arquivos and not any(a.tipo == tipo for a in alvo.arquivos):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Documento não encontrado.")
 
     try:

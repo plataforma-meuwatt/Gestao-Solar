@@ -10,6 +10,7 @@
 import { create } from 'zustand'
 
 import { api, definirToken } from '@/lib/api'
+import { limparCache } from '@/lib/cache'
 import { apagar, gravar, ler } from '@/lib/cofre'
 
 const CHAVE = 'gestaosolar.sessao.v1'
@@ -103,6 +104,12 @@ export const useAuth = create<EstadoAuth>((set) => ({
 
   sair: async () => {
     await apagar(CHAVE)
+    // O cache de leitura vai junto, e não é zelo: o CLAUDE.md descreve a mesma pessoa com
+    // DUAS contas no mesmo aparelho — `renanmarquezini` gestor e `renan.marquezini` dono.
+    // Sem esta limpeza, quem entra depois vê as usinas de quem saiu, com nome e geração,
+    // até a rede responder. E se a rede estiver ruim — que é o caso de usina — vê por
+    // bastante tempo.
+    await limparCache()
     definirToken(null)
     set({ token: null, usuario: null })
   },

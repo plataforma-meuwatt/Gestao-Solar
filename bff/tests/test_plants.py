@@ -288,9 +288,16 @@ def test_inversor_sem_leitura_nao_derruba_a_soma():
     assert _potencia_da_usina(resposta) == 50.0
 
 
-def test_apenas_falha_e_comunicacao_contam_como_parado():
-    """`bedtime` é a usina dormindo, e `alert` é aviso com o inversor gerando. Contar
-    qualquer um dos dois pintaria a tela de vermelho todo fim de tarde."""
+def test_so_falha_conta_como_parado():
+    """Parado é `fault`, e só.
+
+    `bedtime` é a usina dormindo; `alert` é aviso com o inversor gerando; e
+    `communication_error` é **mudo, não parado** — o mw-fe o pinta de âmbar, não de
+    vermelho, e `equipamentos.py` o classifica como `semDados`. Enquanto este arquivo
+    contava mudo como parada, a faixa vermelha "1 inversor parado" no detalhe da usina
+    levava a uma tela de Equipamentos que contava zero: duas telas discordando sobre o
+    mesmo aparelho.
+    """
     from app.api.v1.plants import _parados
 
     inversores = [
@@ -301,7 +308,22 @@ def test_apenas_falha_e_comunicacao_contam_como_parado():
         {"status": "communication_error"},
     ]
 
-    assert _parados(inversores) == 2
+    assert _parados(inversores) == 1
+
+
+def test_as_duas_telas_classificam_o_mesmo_inversor_igual():
+    """A régua da lista de usinas e a da tela de equipamentos têm de coincidir.
+
+    São arquivos diferentes com mapas próprios, e foi assim que a divergência nasceu.
+    Este teste compara os dois diretamente.
+    """
+    from app.api.v1.equipamentos import TOM_POR_ESTADO
+    from app.api.v1.plants import MUDO, PARADO
+
+    for estado in PARADO:
+        assert TOM_POR_ESTADO.get(estado) == "parado", f"{estado} deveria ser parado nas duas"
+
+    assert TOM_POR_ESTADO.get(MUDO) == "semDados", "mudo é semDados nas duas telas"
 
 
 def test_estados_conferem_com_a_lista_do_mw_api():
@@ -313,7 +335,7 @@ def test_estados_conferem_com_a_lista_do_mw_api():
     import re
     from pathlib import Path
 
-    from app.api.v1.plants import DORMINDO, PARADO
+    from app.api.v1.plants import DORMINDO, MUDO, PARADO
 
     schema = Path("C:/dev/meuWatt/mw-api/src/monitoring/schemas.py")
     if not schema.exists():
@@ -325,6 +347,7 @@ def test_estados_conferem_com_a_lista_do_mw_api():
 
     assert PARADO <= conhecidos, f"estado que o mw-api não conhece: {sorted(PARADO - conhecidos)}"
     assert DORMINDO in conhecidos
+    assert MUDO in conhecidos
 
 
 def test_alertas_vem_em_envelope_e_nao_em_lista():
