@@ -17,7 +17,7 @@ Contrato completo em `docs/CONTRATO_API.md`.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import auth, painel, painel_clientes
+from app.api.v1 import auth, billing, painel, painel_clientes, plants
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -50,6 +50,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
+app.include_router(plants.router)
+app.include_router(billing.router)
 
 
 @app.get("/health", tags=["infra"])
