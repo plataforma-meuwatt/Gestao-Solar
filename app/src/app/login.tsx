@@ -145,7 +145,7 @@ export default function Login() {
           {carregando
             ? 'Entrando…'
             : __DEV__ && !preenchido
-              ? 'Modo desenvolvimento: entra com dados de exemplo, sem servidor.'
+              ? 'Modo desenvolvimento: entra sem servidor. As telas ficam vazias — não há mais dados de exemplo.'
               : 'Use o apelido e a senha que a Gestão Solar enviou. Não é o login do meuWatt nem do meuPlano.'}
         </Text>
 

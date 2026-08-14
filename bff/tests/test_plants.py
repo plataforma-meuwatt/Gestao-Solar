@@ -190,6 +190,91 @@ def test_todo_tom_existe_nos_tokens_do_aplicativo():
     assert emitidos <= conhecidos, f"tons sem cor no app: {sorted(emitidos - conhecidos)}"
 
 
+def test_de_madrugada_nao_acende_faixa_vermelha():
+    """O alarme falso que rodava oito horas por dia.
+
+    O mw-api calcula `avail_pct = 100 if measured > 0 else 0` quando não há geração
+    esperada — ou seja, **zero para toda usina da meia-noite até começar a gerar**. Com o
+    teste de disponibilidade antes do de janela solar, a tela inicial anunciava "usina com
+    problema · Disponibilidade baixa" todas as noites.
+
+    Faixa vermelha que não corresponde a problema real é pior do que faixa nenhuma: da
+    segunda vez que o dono abre e não encontra nada errado, ele para de olhar — e é o que
+    o docstring de `_atencao` diz, com todas as letras.
+    """
+    tom, situacao = _tom(
+        _usina(potencia_kw=0.0, disponibilidade_pct=0.0, fora_da_janela_solar=True)
+    )
+
+    assert tom == "semDados"
+    assert situacao == "Fora da janela solar"
+
+
+def test_amanhecendo_com_pouca_geracao_tambem_nao_alarma():
+    """O mesmo zero de disponibilidade sobrevive aos primeiros minutos de sol."""
+    tom, _ = _tom(
+        _usina(potencia_kw=0.5, disponibilidade_pct=0.0, fora_da_janela_solar=True)
+    )
+
+    assert tom != "parado"
+
+
+def test_disponibilidade_baixa_ainda_alarma_durante_o_dia():
+    """A correção não pode ter desligado o alarme de verdade: com sol e gerando, 40% de
+    disponibilidade continua vermelho."""
+    tom, situacao = _tom(
+        _usina(potencia_kw=120.0, disponibilidade_pct=40.0, fora_da_janela_solar=False)
+    )
+
+    assert tom == "parado"
+    assert situacao == "Disponibilidade baixa"
+
+
+def test_inversor_em_falha_declarada_conta_mesmo_com_status_normal():
+    """`down` é o estado canônico, e ignorá-lo deixava passar o pior caso.
+
+    O schema do mw-api diz no comentário do campo que é o flag que o front deve consumir
+    para o vermelho "em falha", em vez de re-derivar da potência; o mw-fe faz
+    `i.down || i.status === 'fault'`. Sem ele, um inversor com parada material aberta e
+    status Modbus ainda `normal` saía VERDE no aplicativo enquanto o meuWatt o mostrava em
+    falha — mesma usina, mesmo minuto, duas respostas.
+    """
+    from app.api.v1.plants import _parados
+
+    inversores = [
+        {"status": "normal", "down": True},   # parada aberta que o status ainda não reflete
+        {"status": "normal", "down": False},
+        {"status": "normal", "down": None},   # detector não sabe: vale o status
+        {"status": "fault", "down": None},
+    ]
+
+    assert _parados(inversores) == 2
+
+
+def test_capacidade_e_potencia_excluem_os_mesmos_inversores():
+    """Numerador e denominador têm de concordar sobre quem conta.
+
+    O mudo já saía da potência; se ficasse na capacidade, a usina com dois de três
+    inversores calados mostraria a potência de um sobre a capacidade de três — uma
+    porcentagem sistematicamente subestimada, rotulada "% da capacidade instalada".
+    """
+    from app.api.v1.plants import _capacidade_kwp, _potencia_da_usina
+
+    agora = {
+        "inverters": [
+            {"active_power": 80000.0, "capacity_kwp": 100.0, "status": "normal"},
+            {"active_power": 99000.0, "capacity_kwp": 100.0, "status": "communication_error"},
+        ]
+    }
+
+    potencia = _potencia_da_usina(agora)
+    capacidade = _capacidade_kwp(agora)
+
+    assert potencia == 80.0, "o mudo não soma potência (o mw-api mantém o valor velho)"
+    assert capacidade == 100.0, "nem capacidade — senão o percentual sai subestimado"
+    assert round(potencia / capacidade * 100) == 80
+
+
 # ── o que separa "mudo" de "dormindo" ───────────────────────────────────────
 
 

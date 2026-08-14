@@ -101,7 +101,7 @@ export function NovoCliente() {
               rotulo="Nome"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
-              placeholder="Renan Moraes"
+              placeholder="Nome completo do cliente"
               required
               autoFocus
               disabled={!!clienteId}
@@ -114,7 +114,7 @@ export function NovoCliente() {
                 setEmail(e.target.value)
                 if (!apelidoManual) setApelido(sugerirApelido(e.target.value))
               }}
-              placeholder="renan@solaris.com.br"
+              placeholder="email@empresa.com.br"
               nota="Serve para achar a conta dele no meuWatt e no meuPlano. Não é com ele que entra."
               disabled={!!clienteId}
             />
@@ -136,7 +136,7 @@ export function NovoCliente() {
               rotulo="Empresa"
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value)}
-              placeholder="Solaris Energia (opcional)"
+              placeholder="Empresa (opcional)"
               disabled={!!clienteId}
             />
             <div className="flex gap-2">

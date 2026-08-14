@@ -91,6 +91,12 @@ class UsinaOut(BaseModel):
     #: potência ausente para zero, então "sem leitura" e "não está gerando" chegariam com
     #: o mesmo número — e só o estado os separa.
     sem_comunicacao: bool = False
+    #: Quantos estão mudos, mesmo que não sejam todos. Sem isto, uma usina com dois de
+    #: três inversores calados parecia inteira.
+    inversores_mudos: int | None = None
+    #: `MonitoringSnapshot.in_solar_window` do mw-api. Fora dela, nada é defeito — e é o
+    #: campo que o próprio upstream recomenda ao front, em vez de derivar de potência.
+    fora_da_janela_solar: bool = False
 
     tem_meuwatt: bool
     tem_meuplano: bool
@@ -129,13 +135,28 @@ def _tom(usina: UsinaOut) -> tuple[str, str]:
     """
     if usina.sem_comunicacao:
         return "semDados", "Sem comunicação"
+
+    # Fora da janela solar NADA é defeito, e este ramo tem de vir antes de qualquer
+    # julgamento de desempenho. O mw-api calcula `avail_pct = 100 if measured > 0 else 0`
+    # quando não há geração esperada — ou seja, **zero para toda usina da meia-noite até
+    # começar a gerar**. Com o teste de disponibilidade à frente, a tela inicial acendia
+    # "usina com problema · Disponibilidade baixa" todas as noites, oito horas por dia.
+    #
+    # O docstring de `_atencao` diz que faixa vermelha falsa faz o dono parar de olhar. O
+    # código violava diariamente o princípio que ele mesmo escreveu.
+    if usina.fora_da_janela_solar:
+        return "semDados", "Fora da janela solar"
+
     if usina.potencia_kw is None:
         return "semDados", "Sem dados de geração"
+    if usina.potencia_kw <= 0:
+        # Sem sol declarado pelo upstream, mas também sem geração: pode ser começo de
+        # manhã ou dia muito fechado. Cinza, nunca vermelho.
+        return "semDados", "Sem geração agora"
+
+    # Só com a usina gerando é que disponibilidade quer dizer alguma coisa.
     if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 50:
         return "parado", "Disponibilidade baixa"
-    if usina.potencia_kw <= 0:
-        # Fora da janela solar isto é o esperado; a tela mostra o horário do dado ao lado.
-        return "semDados", "Sem geração agora"
     if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 90:
         return "alerta", "Gerando parcialmente"
     return "ok", "Gerando"
@@ -225,7 +246,11 @@ def _capacidade_kwp(agora: dict[str, Any]) -> float | None:
     O valor do vínculo continua tendo precedência: se o gestor digitou a capacidade de
     projeto, é ela que vale — a soma dos inversores é o que sobra quando ninguém digitou.
     """
-    considerados = _contam(agora)
+    # Mudo fica de fora TAMBÉM aqui. O numerador (`_potencia_da_usina`) já o exclui; se o
+    # denominador o mantivesse, uma usina com dois de três inversores calados mostraria a
+    # potência de um sobre a capacidade de três, rotulada "% da capacidade instalada" —
+    # uma porcentagem sistematicamente subestimada, sem aviso nenhum.
+    considerados = [i for i in _contam(agora) if not _esta_mudo(i)]
     if not considerados:
         return None
     total = sum(_numero(i.get("capacity_kwp")) or 0 for i in considerados)
@@ -276,6 +301,10 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # honesto. Publicar a hora da resposta como hora do dado faz o selo mentir por
         # construção, e mentir justamente onde ele existe para não mentir.
         saida["medido_em"] = agora.get("timestamp")
+        # `in_solar_window` é o campo que o próprio mw-api recomenda ao front para saber
+        # se é hora de haver geração — melhor do que derivar de potência zero, que também
+        # acontece em parada diurna.
+        saida["fora_da_janela_solar"] = agora.get("in_solar_window") is False
 
         # A contagem de inversores sai da MESMA resposta: são as posições que estão
         # reportando agora. Buscá-la em `/slots` daria o cadastro — quantos deveriam
@@ -287,6 +316,7 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         if considerados:
             saida["inversores"] = len(considerados)
             saida["inversores_parados"] = _parados(considerados)
+            saida["inversores_mudos"] = sum(1 for i in considerados if _esta_mudo(i))
         saida["capacidade_kwp"] = _capacidade_kwp(agora)
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo assim
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
@@ -354,6 +384,8 @@ async def listar_usinas(
             tom="semDados",
             situacao="",
             sem_comunicacao=bool(d.get("sem_comunicacao")),
+            inversores_mudos=d.get("inversores_mudos"),
+            fora_da_janela_solar=bool(d.get("fora_da_janela_solar")),
             tem_meuwatt=link.tem_meuwatt,
             tem_meuplano=link.tem_meuplano,
             aviso=d.get("aviso"),
@@ -395,14 +427,33 @@ class UsinaDetalheOut(UsinaOut):
     alertas_ativos: int | None = None
 
 
-def _parados(inversores: list[dict[str, Any]]) -> int:
-    """Quantos inversores estão parados agora.
+def _em_falha(inv: dict[str, Any]) -> bool:
+    """Se este inversor está em falha, pela régua do produto de origem.
 
-    Os estados vêm da lista fechada de `InverterMonitoring.status` no mw-api, e só `fault`
-    e `communication_error` contam. `bedtime` é a usina dormindo — contá-lo encheria a
-    tela de vermelho todo fim de tarde —, e `alert` é aviso com o inversor gerando.
+    `down` é o **estado canônico**: o schema do mw-api diz, no comentário do campo, que é
+    o flag que o front deve consumir para o vermelho "em falha" em vez de re-derivar da
+    potência ao vivo. O mw-fe faz `i.down || i.status === 'fault'` em seis lugares.
+
+    Ignorá-lo, como era feito aqui, deixava passar o pior caso: inversor com parada
+    material aberta e status Modbus ainda `normal` saía **verde "Gerando"** no aplicativo
+    enquanto o meuWatt o mostrava em falha — a mesma usina, no mesmo minuto, com duas
+    respostas.
+
+    `down` é tri-estado de propósito: `None` significa que o detector não sabe (sinal
+    velho ou ausente), e nesse caso vale a derivação legada pelo `status`.
     """
-    return sum(1 for i in inversores if str(i.get("status") or "").strip().lower() in PARADO)
+    if inv.get("down") is True:
+        return True
+    return str(inv.get("status") or "").strip().lower() in PARADO
+
+
+def _parados(inversores: list[dict[str, Any]]) -> int:
+    """Quantos inversores estão em falha agora.
+
+    `bedtime` é a usina dormindo — contá-lo encheria a tela de vermelho todo fim de tarde
+    —, `alert` é aviso com o inversor gerando, e `communication_error` é mudo, não parado.
+    """
+    return sum(1 for i in inversores if _em_falha(i))
 
 
 @router.get("/plants/{plant_link_id}", response_model=UsinaDetalheOut)
@@ -454,6 +505,8 @@ async def detalhe_usina(
         tom="semDados",
         situacao="",
         sem_comunicacao=bool(dados.get("sem_comunicacao")),
+        inversores_mudos=dados.get("inversores_mudos"),
+        fora_da_janela_solar=bool(dados.get("fora_da_janela_solar")),
         tem_meuwatt=link.tem_meuwatt,
         tem_meuplano=link.tem_meuplano,
         aviso=dados.get("aviso"),
