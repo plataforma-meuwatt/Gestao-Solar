@@ -146,6 +146,22 @@ export default function Equipamentos() {
 
           <Segmentado opcoes={TIPOS} ativo={tipo_} onEscolher={setTipo} />
 
+          {/*
+           * O que a usina TEM, dito em números, logo abaixo do seletor.
+           *
+           * Sem isto, "não vejo relé" é ambíguo entre três causas muito diferentes: a
+           * usina não tem o aparelho cadastrado, o monitoramento não o devolveu, ou a
+           * seção está lá embaixo depois de doze cards de inversor. A contagem separa
+           * as três na hora — e um zero aqui é uma afirmação, não um silêncio.
+           */}
+          <Text style={estilos.inventario}>
+            <Num style={estilos.inventarioNum}>{dados.equipamentos.length}</Num> inversores ·{' '}
+            <Num style={estilos.inventarioNum}>{(dados.reles_temperatura ?? []).length}</Num>{' '}
+            de temperatura ·{' '}
+            <Num style={estilos.inventarioNum}>{(dados.reles_protecao ?? []).length}</Num>{' '}
+            de proteção
+          </Text>
+
           {tipo_ === 0 || tipo_ === 1 ? (
             <SecaoInversores lista={dados.equipamentos} usinaId={id} comTitulo={tipo_ === 0} />
           ) : null}
@@ -273,7 +289,9 @@ function SecaoInversores({
 
   return (
     <>
-      {comTitulo ? <Text style={estilos.tituloSecao}>Inversores</Text> : null}
+      {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Inversores · {lista.length}</Text>
+      ) : null}
       {[...grupos.entries()].map(([skid, itens]) => (
         <View key={skid || 'sem-skid'}>
           {porSkid ? (
@@ -305,7 +323,9 @@ function SecaoTemperatura({
   if (lista.length === 0) {
     return (
       <>
-        {comTitulo ? <Text style={estilos.tituloSecao}>Relé de temperatura</Text> : null}
+        {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Relé de temperatura · {lista.length}</Text>
+      ) : null}
         <Card>
           <Text style={tipo.fraco}>
             Esta usina não tem relé de temperatura no monitoramento.
@@ -317,7 +337,9 @@ function SecaoTemperatura({
 
   return (
     <>
-      {comTitulo ? <Text style={estilos.tituloSecao}>Relé de temperatura</Text> : null}
+      {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Relé de temperatura · {lista.length}</Text>
+      ) : null}
       {lista.map((t) => (
         <Card key={t.id}>
           <View style={estilos.cabecaEquip}>
@@ -393,7 +415,9 @@ function SecaoProtecao({
   if (lista.length === 0) {
     return (
       <>
-        {comTitulo ? <Text style={estilos.tituloSecao}>Relé de proteção</Text> : null}
+        {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Relé de proteção · {lista.length}</Text>
+      ) : null}
         <Card>
           <Text style={tipo.fraco}>Esta usina não tem relé de proteção no monitoramento.</Text>
         </Card>
@@ -403,7 +427,9 @@ function SecaoProtecao({
 
   return (
     <>
-      {comTitulo ? <Text style={estilos.tituloSecao}>Relé de proteção</Text> : null}
+      {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Relé de proteção · {lista.length}</Text>
+      ) : null}
       {lista.map((r) => (
         <Card key={r.id}>
           <View style={estilos.cabecaEquip}>
@@ -783,6 +809,8 @@ function DetalheProtecao({ releId, usinaId }: { releId: string; usinaId?: string
 }
 
 const estilos = StyleSheet.create({
+  inventario: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco, marginTop: espaco.xs },
+  inventarioNum: { fontSize: 11, color: cores.textoCorpo },
   abrir: { fontFamily: fontes.ui, fontSize: 12, color: cores.ambar, marginTop: espaco.xs },
   detalhe: { marginTop: espaco.sm, gap: espaco.xs },
   detalheSeletor: { marginTop: espaco.xs },
