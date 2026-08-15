@@ -31,6 +31,7 @@ import {
   StatusChip,
 } from '@/components/base'
 import { hojeIso, SeletorPeriodo, type Recorte } from '@/components/periodo'
+import { GraficoExpansivel } from '@/components/grafico-cheio'
 import { Tela } from '@/components/Tela'
 import { useComparativo, useCurva, useGeracao, useUsina } from '@/features/usinas'
 import { energia, inteiro, numero, porcento, potencia } from '@/lib/format'
@@ -300,7 +301,9 @@ function Periodo({
         />
       </View>
       {dados.pontos.length > 0 ? (
-        <GraficoBarras pontos={dados.pontos} />
+        <GraficoExpansivel titulo={rotulo}>
+          {(altura) => <GraficoBarras pontos={dados.pontos} altura={altura ?? 120} />}
+        </GraficoExpansivel>
       ) : (
         <Text style={tipo.fraco}>Ainda não há leitura diária neste período.</Text>
       )}
@@ -344,7 +347,9 @@ function CurvaDoDia({ leitura }: { leitura: ReturnType<typeof useCurva> }) {
           </Text>
         }
       />
-      <GraficoLinha pontos={dados.pontos} />
+      <GraficoExpansivel titulo="Potência ao longo do dia">
+        {(altura) => <GraficoLinha pontos={dados.pontos} altura={altura ?? 150} />}
+      </GraficoExpansivel>
       {!dados.tem_estacao ? (
         <Text style={tipo.fraco}>
           Esta usina não tem estação solarimétrica — sem irradiação para comparar.

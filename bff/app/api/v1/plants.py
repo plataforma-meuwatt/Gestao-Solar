@@ -1020,6 +1020,34 @@ class CurvaUsinaOut(BaseModel):
     aviso: str | None = None
 
 
+def _cortar_janela_solar(curva: list[PontoCurvaUsina]) -> list[PontoCurvaUsina]:
+    """Remove as PONTAS mortas do dia — antes do nascer e depois do pôr do sol.
+
+    A curva bruta começa à meia-noite e termina à meia-noite, então quase metade do
+    eixo é noite: horas de linha rasteira que espremem o dia útil no meio do gráfico e
+    não respondem pergunta nenhuma. Nenhuma usina gera às 3 da manhã, e mostrar isso
+    como "zero" convida a interpretar como parada.
+
+    **Só as pontas.** Um zero no MEIO do dia é a informação mais importante que este
+    gráfico carrega — é o inversor que caiu às 11h — e cortá-lo esconderia justamente
+    o defeito. O corte anda de fora para dentro e para no primeiro ponto com leitura.
+
+    Ponto com irradiação conta como leitura mesmo com potência zero: sol nascendo com
+    a usina ainda parada é exatamente o caso que o dono precisa ver.
+    """
+
+    def vivo(p: PontoCurvaUsina) -> bool:
+        return p.kw > 0 or (p.poa is not None and p.poa > 0)
+
+    primeiro = next((i for i, p in enumerate(curva) if vivo(p)), None)
+    if primeiro is None:
+        # Dia inteiro sem geração nem sol: não há janela para recortar, e devolver
+        # vazio faria a tela dizer "sem leitura" quando houve leitura — de zero.
+        return curva
+    ultimo = len(curva) - 1 - next(i for i, p in enumerate(reversed(curva)) if vivo(p))
+    return curva[primeiro : ultimo + 1]
+
+
 def _curva_da_usina(intraday: Any) -> tuple[list[PontoCurvaUsina], bool]:
     """`points[]` do intraday → curva somada da usina + se há estação.
 
@@ -1072,7 +1100,7 @@ def _curva_da_usina(intraday: Any) -> tuple[list[PontoCurvaUsina], bool]:
         for ponto in curva:
             ponto.poa = None
 
-    return curva, tem_estacao
+    return _cortar_janela_solar(curva), tem_estacao
 
 
 @router.get("/plants/{plant_link_id}/curva", response_model=CurvaUsinaOut)

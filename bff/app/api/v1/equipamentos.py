@@ -333,6 +333,20 @@ class EquipamentoDetalheOut(EquipamentoOut):
     aviso: str | None = None
 
 
+def _so_janela_solar(curva: list[PontoCurva]) -> list[PontoCurva]:
+    """Corta as pontas mortas da curva de potência — madrugada e noite.
+
+    Mesma regra da curva da usina: só as PONTAS. Um zero no meio do dia é o inversor
+    que caiu, que é o achado mais importante deste gráfico; cortá-lo esconderia o
+    defeito. Curva inteira em zero volta como está — houve leitura, de zero.
+    """
+    primeiro = next((i for i, p in enumerate(curva) if p.kw > 0), None)
+    if primeiro is None:
+        return curva
+    ultimo = len(curva) - 1 - next(i for i, p in enumerate(reversed(curva)) if p.kw > 0)
+    return curva[primeiro : ultimo + 1]
+
+
 def _curva_do_serial(intraday: Any, serial: str | None) -> list[PontoCurva]:
     """`points[].inverters[]` → curva deste inversor.
 
@@ -456,7 +470,7 @@ async def detalhe_do_equipamento(
         desvio_mediana=_numero(inv.get("median_deviation")),
         medido_em=_instante(inv.get("timestamp")),
         transformador=inv.get("meter_name"),
-        curva=_curva_do_serial(intraday, str(serie) if serie else None),
+        curva=_so_janela_solar(_curva_do_serial(intraday, str(serie) if serie else None)),
         entradas=[
             EntradaOut(
                 numero=int(m.get("mppt") or 0),
@@ -1312,6 +1326,19 @@ async def curva_das_strings(
     if not horas:
         saida.aviso = "O monitoramento não devolveu corrente de string deste inversor neste dia."
         return saida
+
+    # Fora da janela solar não há corrente de string: as pontas do dia são zeros que
+    # espremem o gráfico útil no meio. O corte é nas PONTAS — string que zera ao
+    # meio-dia é o achado, e continua na série.
+    def _tem_corrente(h: str) -> bool:
+        return any(v is not None and v > 0 for v in por_hora[h])
+
+    inicio_util = next((i for i, h in enumerate(horas) if _tem_corrente(h)), None)
+    if inicio_util is not None:
+        fim_util = len(horas) - 1 - next(
+            i for i, h in enumerate(reversed(horas)) if _tem_corrente(h)
+        )
+        horas = horas[inicio_util : fim_util + 1]
 
     saida.horas = horas
     for indice in range(largura):

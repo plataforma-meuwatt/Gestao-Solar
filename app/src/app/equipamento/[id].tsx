@@ -29,6 +29,7 @@ import {
   Num,
   StatusChip,
 } from '@/components/base'
+import { GraficoExpansivel } from '@/components/grafico-cheio'
 import { Tela } from '@/components/Tela'
 import { useCurvaStrings, useEquipamento } from '@/features/equipamentos'
 import { hojeIso, SeletorPeriodo } from '@/components/periodo'
@@ -174,9 +175,16 @@ export default function Equipamento() {
           }
         />
         {e.curva.length > 0 ? (
-          <GraficoBarras
-            pontos={e.curva.map((c) => ({ chave: c.hora, rotulo: c.hora, kwh: c.kw }))}
-          />
+          <GraficoExpansivel titulo="Potência hoje">
+            {(altura) => (
+              <GraficoBarras
+                pontos={e.curva.map((c) => ({ chave: c.hora, rotulo: c.hora, kwh: c.kw }))}
+                altura={altura ?? 120}
+                unidade="kW"
+                casas={1}
+              />
+            )}
+          </GraficoExpansivel>
         ) : (
           <Text style={tipo.fraco}>
             O monitoramento não devolveu leitura deste inversor hoje.
@@ -227,12 +235,17 @@ export default function Equipamento() {
               ?? 'O monitoramento não devolveu corrente de string deste inversor neste dia.'}
           </Text>
         ) : (
-          <GraficoSeries
-            horas={strings.dados.horas}
-            series={strings.dados.series}
-            unidade="A"
-            casas={1}
-          />
+          <GraficoExpansivel titulo="Corrente por string">
+            {(altura) => (
+              <GraficoSeries
+                horas={strings.dados!.horas}
+                series={strings.dados!.series}
+                altura={altura ?? 150}
+                unidade="A"
+                casas={1}
+              />
+            )}
+          </GraficoExpansivel>
         )}
       </Card>
 

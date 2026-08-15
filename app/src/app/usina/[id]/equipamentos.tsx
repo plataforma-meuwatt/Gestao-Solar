@@ -37,6 +37,7 @@ import {
   type ReleTemperatura,
 } from '@/features/equipamentos'
 import { GraficoBarras, GraficoSeries } from '@/components/base'
+import { GraficoExpansivel } from '@/components/grafico-cheio'
 import { hojeIso, SeletorPeriodo } from '@/components/periodo'
 import { dataHora, duracao, energia, hora, inteiro, numero, potencia } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
@@ -658,12 +659,17 @@ function DetalheTemperatura({ sensorId, usinaId }: { sensorId: string; usinaId?:
               {curva.erro ?? curva.dados?.aviso ?? 'Sem leitura deste sensor neste dia.'}
             </Text>
           ) : (
-            <GraficoSeries
-              horas={curva.dados.horas}
-              series={curva.dados.series}
-              unidade="°C"
-              casas={1}
-            />
+            <GraficoExpansivel titulo="Temperatura ao longo do dia">
+              {(altura) => (
+                <GraficoSeries
+                  horas={curva.dados!.horas}
+                  series={curva.dados!.series}
+                  altura={altura ?? 150}
+                  unidade="°C"
+                  casas={1}
+                />
+              )}
+            </GraficoExpansivel>
           )}
         </>
       ) : (
@@ -695,13 +701,22 @@ function DetalheTemperatura({ sensorId, usinaId }: { sensorId: string; usinaId?:
                * desenhado como barra rasteira — uma barra no chão diria que a bobina
                * esfriou, quando o que houve foi o monitoramento não medir.
                */}
-              <GraficoBarras
-                pontos={maximas.dados.dias
-                  .filter((d) => d.maxima !== null)
-                  .map((d) => ({ chave: d.dia, rotulo: d.dia.slice(8, 10), kwh: d.maxima as number }))}
-                unidade="°C"
-                casas={1}
-              />
+              <GraficoExpansivel titulo="Máxima de cada dia">
+                {(altura) => (
+                  <GraficoBarras
+                    pontos={maximas.dados!.dias
+                      .filter((d) => d.maxima !== null)
+                      .map((d) => ({
+                        chave: d.dia,
+                        rotulo: d.dia.slice(8, 10),
+                        kwh: d.maxima as number,
+                      }))}
+                    altura={altura ?? 120}
+                    unidade="°C"
+                    casas={1}
+                  />
+                )}
+              </GraficoExpansivel>
               {maximas.dados.dias.some((d) => d.maxima === null) ? (
                 <Text style={tipo.fraco}>
                   {maximas.dados.dias.filter((d) => d.maxima === null).length} dia(s) sem leitura
@@ -771,12 +786,17 @@ function DetalheProtecao({ releId, usinaId }: { releId: string; usinaId?: string
               {curva.erro ?? curva.dados?.aviso ?? 'Sem leitura deste relé neste dia.'}
             </Text>
           ) : (
-            <GraficoSeries
-              horas={curva.dados.horas}
-              series={curva.dados.series}
-              unidade={unidades[grandeza]}
-              casas={grandeza === 1 ? 2 : 1}
-            />
+            <GraficoExpansivel titulo={`${['Tensão', 'Corrente', 'Potência'][grandeza]} por fase`}>
+              {(altura) => (
+                <GraficoSeries
+                  horas={curva.dados!.horas}
+                  series={curva.dados!.series}
+                  altura={altura ?? 150}
+                  unidade={unidades[grandeza]}
+                  casas={grandeza === 1 ? 2 : 1}
+                />
+              )}
+            </GraficoExpansivel>
           )}
         </>
       ) : flags.carregando && !flags.dados ? (

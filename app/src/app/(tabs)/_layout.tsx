@@ -50,7 +50,7 @@ export default function LayoutAbas() {
       <Tabs.Screen name="index" options={{ title: 'Início' }} />
       <Tabs.Screen name="usinas" options={{ title: 'Usinas' }} />
       <Tabs.Screen name="documentos" options={{ title: 'Documentos' }} />
-      <Tabs.Screen name="financeiro" options={{ title: 'Financeiro' }} />
+      <Tabs.Screen name="manutencao" options={{ title: 'Manutenção' }} />
       <Tabs.Screen name="assistente" options={{ title: 'Assistente' }} />
     </Tabs>
   )
