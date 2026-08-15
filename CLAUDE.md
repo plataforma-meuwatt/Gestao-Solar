@@ -10,6 +10,37 @@ código vence — e este arquivo deve ser atualizado.
 
 ---
 
+## REGRA 0 — todo dado vem da API ou do banco. Sem exceção.
+
+**É explicitamente PROIBIDO** exibir qualquer dado que não tenha vindo (a) de uma resposta
+da API — meuWatt ou meuPlano, via BFF — ou (b) do banco do Gestão Solar, que é a fonte das
+partes que só existem aqui, como o financeiro.
+
+Está proibido, e não há caso de uso que justifique:
+
+- array de exemplo, fixture, seed ou `MOCK_*` alimentando tela;
+- valor literal de negócio no JSX (nome de usina, potência, tensão, coordenada, percentual
+  de referência, tarifa, contagem de equipamento);
+- série, curva ou barra gerada em código (`Math.random`, senoide, LCG, "distribuir o total");
+- número derivado de outro e apresentado como medição independente (`medido × 0,98x`
+  rotulado como leitura de medidor);
+- default de configuração exibido como se fosse propriedade do equipamento;
+- **`?? 0` / `|| 0` num campo que vai à tela.**
+
+**Ausência não é zero.** Zero é medição — usina parada gerou 0 kWh, e isso é verdade. Campo
+que a API não devolveu é `null`, e a tela mostra **"—"** ou **"sem dados"**. Trocar um pelo
+outro faz o dono da usina ler "não medimos" como "não gerou", que é o erro mais caro que
+este app pode cometer.
+
+**Ponto sem leitura não vira barra rasteira.** Ele não entra na série; o espaço fica vazio.
+
+**Corolário do dado morto:** linha no banco que aponta para upstream inexistente é fantasma
+— a usina aparece na lista e todas as telas dela vêm vazias. Vínculo em `gs_plant_links`
+tem de casar com uma usina real (`mw_plant_slug` no meuWatt, `mp_usina_id` no meuPlano); ter
+só um dos dois é legítimo, ter nenhum não é.
+
+---
+
 ## 1. O que é
 
 App mobile para o **proprietário de usina solar fotovoltaica**. É a camada simples por cima

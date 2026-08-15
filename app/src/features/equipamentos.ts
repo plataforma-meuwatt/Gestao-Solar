@@ -60,6 +60,14 @@ export type EquipamentoDetalhe = Equipamento & {
   medido_em: string | null
   transformador: string | null
   entradas: Entrada[]
+
+  /**
+   * Curva de potência do dia, em buckets de 5 min, vinda de `charts/intraday`.
+   * Lista vazia = o monitoramento não devolveu leitura deste inversor hoje. Bucket em
+   * que o aparelho não mediu NÃO está aqui — a lacuna é dado, e preenchê-la com zero
+   * diria "estava gerando nada" quando a verdade é "não sabemos".
+   */
+  curva: { hora: string; kw: number }[]
   strings_a: (number | null)[]
   aviso: string | null
 }

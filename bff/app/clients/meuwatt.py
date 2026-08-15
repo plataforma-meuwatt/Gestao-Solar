@@ -146,6 +146,16 @@ class MeuWattClient:
             f"/plants/{slug}/generation/range", start=inicio.isoformat(), end=fim.isoformat()
         )
 
+    async def intraday(self, slug: str, dia: date | None = None) -> dict[str, Any]:
+        """Curva do dia em buckets de 5 min: `points[].{time, inverters[]}`.
+
+        Cada ponto traz a lista de inversores QUE MEDIRAM naquele bucket — quem não
+        mediu simplesmente não aparece, e é assim que a lacuna chega até a tela em vez
+        de virar zero.
+        """
+        params = {"date": dia.isoformat()} if dia else {}
+        return await self._get(f"/plants/{slug}/charts/intraday", **params)
+
     async def alertas(self, slug: str, status: str = "active") -> list[dict[str, Any]]:
         return await self._get(f"/plants/{slug}/alerts", status=status)
 

@@ -73,3 +73,41 @@ export function useUsina(id: string | undefined): Leitura<UsinaDetalhe> {
   // consulta fica desligada, senão a rota viraria `/plants/undefined`.
   return fetchWithCache<UsinaDetalhe>(`plants/${id ?? ''}`, { ativo: Boolean(id) })
 }
+
+/**
+ * Geração por recorte — `Mês` (um ponto por dia) e `Ano` (um ponto por mês).
+ *
+ * Vem de `GET /api/v1/plants/{id}/geracao?recorte=`, que por sua vez soma a série
+ * `chart_data.daily_generation` do meuWatt. `total_kwh` nulo significa que o
+ * monitoramento não respondeu — a tela mostra "sem dados", nunca zero, porque zero
+ * é uma medição legítima (usina parada o período inteiro) e confundir as duas
+ * coisas é o que faz o dono achar que perdeu geração.
+ */
+export type PontoGeracao = {
+  /** `YYYY-MM-DD` no recorte mês, `YYYY-MM` no ano. */
+  chave: string
+  /** Rótulo curto do eixo ("07", "Jul"). */
+  rotulo: string
+  kwh: number
+}
+
+export type Geracao = {
+  recorte: 'mes' | 'ano'
+  inicio: string
+  fim: string
+  total_kwh: number | null
+  pontos: PontoGeracao[]
+  aviso: string | null
+}
+
+export function useGeracao(
+  id: string | undefined,
+  recorte: 'mes' | 'ano',
+  ativo: boolean,
+): Leitura<Geracao> {
+  // `ativo` desliga a consulta enquanto o recorte não está na tela: abrir a usina
+  // não deve disparar três chamadas para o usuário ver uma.
+  return fetchWithCache<Geracao>(`plants/${id ?? ''}/geracao?recorte=${recorte}`, {
+    ativo: Boolean(id) && ativo,
+  })
+}

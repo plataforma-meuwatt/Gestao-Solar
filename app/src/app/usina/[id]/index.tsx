@@ -6,8 +6,10 @@
  * que **qualquer** usina abria como Porto Ferreira. O sintoma parecia navegação; a causa
  * era não ter fonte de dado.
  *
- * Os recortes Mês e Ano ainda não têm endpoint (`generation/range` no BFF), e a tela diz
- * isso em vez de fingir número.
+ * Os três recortes vêm da API: `Dia` de `monitoring/current` (já no detalhe) e
+ * `Mês`/`Ano` de `GET /plants/{id}/geracao`, que soma a série diária do meuWatt.
+ * Período sem leitura NÃO vira zero — o total mostra "—" e a barra não existe,
+ * porque zero é medição (usina parada) e ausência é outra coisa.
  */
 
 import { router, useLocalSearchParams } from 'expo-router'
@@ -19,6 +21,7 @@ import {
   Card,
   Esqueleto,
   EstadoVazio,
+  GraficoBarras,
   FaixaAtencao,
   Kpi,
   LinhaNavegacao,
@@ -27,7 +30,7 @@ import {
   StatusChip,
 } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { useUsina } from '@/features/usinas'
+import { useGeracao, useUsina } from '@/features/usinas'
 import { energia, inteiro, numero, porcento, potencia } from '@/lib/format'
 import { cores, espaco, tipo } from '@/theme/tokens'
 
@@ -37,6 +40,9 @@ export default function UsinaDetalhe() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const [recorte, setRecorte] = useState(0)
   const { dados: u, carregando, erro, offlineDesde, recarregar } = useUsina(id)
+  // `recorte` 1 = Mês, 2 = Ano. Cada hook só dispara quando seu recorte está visível.
+  const mes = useGeracao(id, 'mes', recorte === 1)
+  const ano = useGeracao(id, 'ano', recorte === 2)
 
   if (carregando || !u) {
     return (
@@ -149,14 +155,11 @@ export default function UsinaDetalhe() {
             ) : null}
           </View>
         ) : (
-          <View style={estilos.miolo}>
-            {/* O dono da usina não precisa saber o nome da rota que falta. Ele precisa
-                saber que aquilo ainda não está pronto e que não é culpa dele. */}
-            <Text style={tipo.fraco}>
-              O acompanhamento por {RECORTES[recorte].toLowerCase()} ainda não está
-              disponível. Por enquanto, o aplicativo mostra o dia de hoje.
-            </Text>
-          </View>
+          <Periodo
+            leitura={recorte === 1 ? mes : ano}
+            rotulo={recorte === 1 ? 'Energia no mês' : 'Energia no ano'}
+            detalhe={recorte === 1 ? 'por dia' : 'por mês'}
+          />
         )}
       </Card>
 
@@ -201,6 +204,68 @@ export default function UsinaDetalhe() {
         />
       </Card>
     </Tela>
+  )
+}
+
+/**
+ * O miolo dos recortes Mês e Ano. Três estados, e nenhum deles inventa número:
+ * carregando (esqueleto), sem resposta do monitoramento (o aviso que a própria API
+ * mandou) e com dado (total + barras).
+ */
+function Periodo({
+  leitura,
+  rotulo,
+  detalhe,
+}: {
+  leitura: ReturnType<typeof useGeracao>
+  rotulo: string
+  detalhe: string
+}) {
+  const { dados, carregando, erro } = leitura
+
+  if (carregando && !dados) {
+    return (
+      <View style={estilos.miolo}>
+        <Text style={tipo.rotuloCard}>{rotulo}</Text>
+        <View style={estilos.espacoKpi}>
+          <Esqueleto largura="45%" altura={30} forte />
+        </View>
+        <Esqueleto altura={120} />
+      </View>
+    )
+  }
+
+  // `total_kwh` nulo = o monitoramento não respondeu. Some o KPI e mostra o motivo.
+  if (erro || !dados || dados.total_kwh === null) {
+    return (
+      <View style={estilos.miolo}>
+        <Text style={tipo.rotuloCard}>{rotulo}</Text>
+        <View style={estilos.espacoKpi}>
+          <Kpi valor="—" tamanho="grande" />
+        </View>
+        <Text style={tipo.fraco}>
+          {erro ?? dados?.aviso ?? 'O monitoramento não devolveu geração para este período.'}
+        </Text>
+      </View>
+    )
+  }
+
+  return (
+    <View style={estilos.miolo}>
+      <Text style={tipo.rotuloCard}>{rotulo}</Text>
+      <View style={estilos.espacoKpi}>
+        <Kpi
+          valor={energia(dados.total_kwh)}
+          tamanho="grande"
+          direita={<Text style={tipo.legenda}>{detalhe}</Text>}
+        />
+      </View>
+      {dados.pontos.length > 0 ? (
+        <GraficoBarras pontos={dados.pontos} />
+      ) : (
+        <Text style={tipo.fraco}>Ainda não há leitura diária neste período.</Text>
+      )}
+    </View>
   )
 }
 

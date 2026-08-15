@@ -224,9 +224,21 @@ class EntradaOut(BaseModel):
     corrente_a: float | None = None
 
 
+class PontoCurva(BaseModel):
+    """Um bucket de 5 min da curva do dia. `kw` nunca é estimado."""
+
+    hora: str
+    kw: float
+
+
 class EquipamentoDetalheOut(EquipamentoOut):
     usina: str
     plant_id: int
+
+    #: Curva de potência do dia, do `charts/intraday`. Lista vazia = o upstream não
+    #: devolveu leitura para ESTE inversor hoje — a tela diz isso, não desenha reta no
+    #: zero. Bucket em que o aparelho não mediu não vira ponto.
+    curva: list[PontoCurva] = []
 
     #: Do próprio aparelho, quando o upstream souber.
     fabricante_alerta: str | None = None
@@ -245,6 +257,36 @@ class EquipamentoDetalheOut(EquipamentoOut):
     strings_a: list[float | None] = []
 
     aviso: str | None = None
+
+
+def _curva_do_serial(intraday: Any, serial: str | None) -> list[PontoCurva]:
+    """`points[].inverters[]` → curva deste inversor.
+
+    O upstream só inclui no ponto os inversores que MEDIRAM naquele bucket. Quem não
+    mediu fica de fora aqui também: a lacuna é informação, e preenchê-la com zero diria
+    "estava gerando nada" quando a verdade é "não sabemos".
+    """
+    if not serial or not isinstance(intraday, dict):
+        return []
+    pontos = intraday.get("points")
+    if not isinstance(pontos, list):
+        return []
+    curva: list[PontoCurva] = []
+    for ponto in pontos:
+        if not isinstance(ponto, dict):
+            continue
+        hora = ponto.get("time")
+        inversores = ponto.get("inverters")
+        if not isinstance(hora, str) or not isinstance(inversores, list):
+            continue
+        for i in inversores:
+            if not isinstance(i, dict) or str(i.get("serial_number")) != str(serial):
+                continue
+            kw = i.get("power_kw")
+            if isinstance(kw, (int, float)):
+                curva.append(PontoCurva(hora=hora, kw=round(float(kw), 2)))
+            break
+    return curva
 
 
 @router.get(
@@ -276,9 +318,12 @@ async def detalhe_do_equipamento(
 
     try:
         cliente = await integracoes.cliente_meuwatt(db)
-        agora_resp, diario = await asyncio.gather(
+        agora_resp, diario, intraday = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
             cliente.geracao_diaria(link.mw_plant_slug, hoje_na_usina()),
+            # A curva entra na MESMA viagem: em paralelo não custa latência, e sem ela
+            # a tela do inversor abre sem gráfico.
+            cliente.intraday(link.mw_plant_slug),
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
@@ -337,6 +382,7 @@ async def detalhe_do_equipamento(
         desvio_mediana=_numero(inv.get("median_deviation")),
         medido_em=_instante(inv.get("timestamp")),
         transformador=inv.get("meter_name"),
+        curva=_curva_do_serial(intraday, str(serie) if serie else None),
         entradas=[
             EntradaOut(
                 numero=int(m.get("mppt") or 0),

@@ -81,6 +81,8 @@ MEUWATT: list[Rota] = [
          "Geração do dia e disponibilidade", params={"date": "{hoje}"}),
     Rota("mw.range", "GET", "/plants/{slug}/generation/range",
          "Gráfico do mês e do ano", params={"start": "{semana_passada}", "end": "{hoje}"}),
+    Rota("mw.intraday", "GET", "/plants/{slug}/charts/intraday",
+         "Curva de potência do dia, no detalhe do inversor", params={"date": "{hoje}"}),
     Rota("mw.alerts", "GET", "/plants/{slug}/alerts", "Alertas ativos da usina",
          params={"status": "active"}),
     Rota("mw.breakdowns", "GET", "/plants/{slug}/breakdowns/range",

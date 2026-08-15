@@ -22,6 +22,7 @@ import {
   Esqueleto,
   EstadoVazio,
   FaixaAtencao,
+  GraficoBarras,
   Kpi,
   Num,
   StatusChip,
@@ -152,6 +153,30 @@ export default function Equipamento() {
             />
           ) : null}
         </View>
+      </Card>
+
+      {/* Curva do dia. Barra por bucket de 5 min; bucket em que o inversor não mediu
+          não está na série, então a lacuna aparece como espaço — não como queda a zero. */}
+      <Card>
+        <CabecalhoCard
+          rotulo="Potência hoje"
+          direita={
+            e.curva.length > 0 ? (
+              <Text style={tipo.legenda}>
+                pico <Num>{potencia(Math.max(...e.curva.map((c) => c.kw)))}</Num>
+              </Text>
+            ) : undefined
+          }
+        />
+        {e.curva.length > 0 ? (
+          <GraficoBarras
+            pontos={e.curva.map((c) => ({ chave: c.hora, rotulo: c.hora, kwh: c.kw }))}
+          />
+        ) : (
+          <Text style={tipo.fraco}>
+            O monitoramento não devolveu leitura deste inversor hoje.
+          </Text>
+        )}
       </Card>
 
       {e.entradas.length > 0 ? (

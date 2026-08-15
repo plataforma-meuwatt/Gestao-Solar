@@ -15,7 +15,7 @@ erro — e muito melhor do que uma tela de zeros, que se lê como "não gerou na
 """
 
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -831,3 +831,132 @@ def minhas_conexoes(
         resumo = f"Com problema: {', '.join(ruins)}. Os demais dados seguem atualizando."
 
     return ConexoesOut(plataformas=plataformas, todas_ok=todas_ok, resumo=resumo)
+
+
+# ── geração por recorte (Dia / Mês / Ano) ───────────────────────────────────
+#
+# O app abre a usina e oferece três recortes. `Dia` já vinha de
+# `/plants/{id}` (monitoring/current). `Mês` e `Ano` não tinham endpoint e a
+# tela dizia "ainda não está disponível" — que é honesto, mas não é o produto.
+#
+# Os dois saem de UMA chamada a `generation/range` do meuWatt: o total vem de
+# `total_generation_kwh` e a série de `chart_data.daily_generation`, que é
+# `{serial: [{t, y}]}`. Somar os seriais por data dá a energia do DIA; agrupar
+# essas datas por mês dá a energia do MÊS. Nada é estimado: data sem leitura
+# simplesmente não vira ponto, e o app desenha a lacuna em vez de um zero.
+
+
+class PontoGeracao(BaseModel):
+    #: `YYYY-MM-DD` no recorte mês, `YYYY-MM` no recorte ano.
+    chave: str
+    #: Rótulo curto já pronto para o eixo ("07", "Jul").
+    rotulo: str
+    kwh: float
+
+
+class GeracaoOut(BaseModel):
+    recorte: str
+    inicio: str
+    fim: str
+    #: `None` = o upstream não respondeu. Zero é medição; ausência não é.
+    total_kwh: float | None = None
+    pontos: list[PontoGeracao] = []
+    aviso: str | None = None
+
+
+_MESES_CURTOS = [
+    "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+]
+
+
+def _somar_por_data(chart_data: Any) -> dict[str, float]:
+    """`{serial: [{t, y}]}` → `{'YYYY-MM-DD': kwh}`, somando os seriais.
+
+    A energia da usina no dia é a soma dos inversores naquele dia. Serial que
+    não reportou não entra — não é zero, é ausência.
+    """
+    por_data: dict[str, float] = {}
+    if not isinstance(chart_data, dict):
+        return por_data
+    series = chart_data.get("daily_generation")
+    if not isinstance(series, dict):
+        return por_data
+    for pontos in series.values():
+        if not isinstance(pontos, list):
+            continue
+        for p in pontos:
+            if not isinstance(p, dict):
+                continue
+            t, y = p.get("t"), p.get("y")
+            if not isinstance(t, str) or not isinstance(y, (int, float)):
+                continue
+            por_data[t[:10]] = por_data.get(t[:10], 0.0) + float(y)
+    return por_data
+
+
+def _janela(recorte: str, referencia: date) -> tuple[date, date]:
+    if recorte == "ano":
+        return date(referencia.year, 1, 1), date(referencia.year, 12, 31)
+    primeiro = referencia.replace(day=1)
+    if primeiro.month == 12:
+        ultimo = date(primeiro.year, 12, 31)
+    else:
+        ultimo = date(primeiro.year, primeiro.month + 1, 1) - timedelta(days=1)
+    return primeiro, ultimo
+
+
+@router.get("/plants/{plant_link_id}/geracao", response_model=GeracaoOut)
+async def geracao_da_usina(
+    plant_link_id: int,
+    recorte: str = "mes",
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> GeracaoOut:
+    """Energia do mês (um ponto por dia) ou do ano (um ponto por mês)."""
+    if recorte not in ("mes", "ano"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "recorte deve ser 'mes' ou 'ano'.")
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    inicio, fim = _janela(recorte, hoje_na_usina())
+    saida = GeracaoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        relatorio = await cliente.geracao_periodo(link.mw_plant_slug, inicio, fim)
+    except Exception as exc:  # noqa: BLE001
+        # Sem inventar número: total fica `None` e o app mostra "sem dados".
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    if not isinstance(relatorio, dict):
+        saida.aviso = "Dados de geração indisponíveis."
+        return saida
+
+    total = relatorio.get("total_generation_kwh")
+    saida.total_kwh = float(total) if isinstance(total, (int, float)) else None
+
+    por_data = _somar_por_data(relatorio.get("chart_data"))
+    if recorte == "mes":
+        saida.pontos = [
+            PontoGeracao(chave=d, rotulo=d[8:10], kwh=round(kwh, 2))
+            for d, kwh in sorted(por_data.items())
+        ]
+    else:
+        por_mes: dict[str, float] = {}
+        for d, kwh in por_data.items():
+            por_mes[d[:7]] = por_mes.get(d[:7], 0.0) + kwh
+        saida.pontos = [
+            PontoGeracao(
+                chave=m, rotulo=_MESES_CURTOS[int(m[5:7]) - 1], kwh=round(kwh, 2)
+            )
+            for m, kwh in sorted(por_mes.items())
+        ]
+
+    if not saida.pontos and saida.total_kwh is None:
+        saida.aviso = "O monitoramento não devolveu geração para este período."
+    return saida

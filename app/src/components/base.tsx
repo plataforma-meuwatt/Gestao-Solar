@@ -493,6 +493,12 @@ export function EstadoVazio({
 /* ---------------------------------------------------------------- estilos */
 
 const estilos = StyleSheet.create({
+  grafBarras: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  grafColuna: { flex: 1, alignItems: 'center' },
+  grafBarra: { width: '100%', borderRadius: 2, backgroundColor: cores.ambar },
+  grafEixo: { flexDirection: 'row', gap: 2, marginTop: 4 },
+  grafRotulo: { fontSize: 8, color: cores.textoFraco },
+
   halo: { position: 'absolute', left: '50%', top: -200, marginLeft: -280 },
 
   num: { fontFamily: fontes.mono, fontSize: 13, color: cores.textoCorpo },
@@ -698,3 +704,58 @@ const estilos = StyleSheet.create({
 
 /** Exportado para telas que precisam da mesma receita de âmbar translúcido. */
 export { ambarAlpha }
+
+/* ------------------------------------------------------- gráfico de barras */
+
+/**
+ * Barras verticais para a geração por dia (recorte Mês) ou por mês (Ano).
+ *
+ * Sem biblioteca de gráfico: são `View`s com altura proporcional, no mesmo
+ * vocabulário visual da `Barra`. Duas decisões que não devem ser "simplificadas":
+ *
+ * - **Dia sem leitura não vira barra zero.** Ele simplesmente não está em
+ *   `pontos`, e o espaço fica vazio. Barra rasteira no zero se lê como "a usina
+ *   não gerou", que é uma afirmação diferente de "não medimos".
+ * - **O rótulo do eixo é ralo de propósito.** O passo se ajusta ao tamanho da série
+ *   para caber ~6 marcas: 12 meses saem todos, 31 dias saem de 5 em 5, e a curva do dia
+ *   (≈120 buckets de 5 min) sai de 20 em 20. Rótulo de 8px empilhado vira sujeira.
+ */
+export function GraficoBarras({
+  pontos,
+  altura = 120,
+}: {
+  pontos: { chave: string; rotulo: string; kwh: number }[]
+  altura?: number
+}) {
+  if (pontos.length === 0) return null
+  const maximo = Math.max(...pontos.map((p) => p.kwh), 0)
+  const passo = Math.max(1, Math.ceil(pontos.length / 6))
+
+  return (
+    <View>
+      <View style={[estilos.grafBarras, { height: altura }]}>
+        {pontos.map((p) => (
+          <View key={p.chave} style={estilos.grafColuna}>
+            <View
+              style={[
+                estilos.grafBarra,
+                {
+                  // `maximo` zero acontece quando todo o período mediu zero: as
+                  // barras somem, e é isso mesmo — não há o que desenhar.
+                  height: maximo > 0 ? Math.max(2, (p.kwh / maximo) * altura) : 0,
+                },
+              ]}
+            />
+          </View>
+        ))}
+      </View>
+      <View style={estilos.grafEixo}>
+        {pontos.map((p, i) => (
+          <View key={p.chave} style={estilos.grafColuna}>
+            {i % passo === 0 ? <Text style={estilos.grafRotulo}>{p.rotulo}</Text> : null}
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
