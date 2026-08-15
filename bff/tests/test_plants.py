@@ -190,6 +190,63 @@ def test_todo_tom_existe_nos_tokens_do_aplicativo():
     assert emitidos <= conhecidos, f"tons sem cor no app: {sorted(emitidos - conhecidos)}"
 
 
+def test_inversor_parado_pinta_a_usina_de_vermelho():
+    """O buraco central da régua de cor, e o que o app existe para responder.
+
+    `_tom` julgava só desempenho e **nunca consultava falha**: uma usina com inversor em
+    parada material aberta e disponibilidade de 95% saía verde "Gerando". No mesmo minuto,
+    o meuWatt mostrava falha — e a aba Notificações deste próprio aplicativo já dizia
+    "Inversor parado". O app se desmentia sozinho.
+
+    A ordem correta é a de `plantStatusOf` no mw-fe: dormindo → sem dados → FALHA →
+    alerta → gerando. Fato antes de média, porque média esconde fato.
+    """
+    tom, situacao = _tom(
+        _usina(potencia_kw=800.0, disponibilidade_pct=95.0, inversores_parados=1)
+    )
+
+    assert tom == "parado"
+    assert situacao == "1 inversor parado"
+
+
+def test_falha_vence_disponibilidade_alta():
+    """Três de quatro inversores parados com disponibilidade em 100% — o caso que os
+    auditores reproduziram e que saía verde."""
+    tom, _ = _tom(
+        _usina(potencia_kw=200.0, disponibilidade_pct=100.0, inversores_parados=3)
+    )
+
+    assert tom == "parado"
+
+
+def test_mudez_parcial_e_ambar_e_nao_verde():
+    """Inversor calado não é parada, mas também não é normalidade."""
+    tom, situacao = _tom(
+        _usina(potencia_kw=500.0, disponibilidade_pct=98.0, inversores_mudos=1)
+    )
+
+    assert tom == "alerta"
+    assert "sem comunicação" in situacao
+
+
+def test_a_ordem_bate_com_a_do_meuwatt():
+    """A régua é do produto de origem, não desta casa: dormindo vence tudo, e falha vence
+    desempenho. Se as duas se invertessem de novo, a usina apagada ficaria vermelha toda
+    noite ou a usina quebrada ficaria verde o dia todo."""
+    dormindo = _usina(
+        potencia_kw=0.0,
+        disponibilidade_pct=0.0,
+        inversores_parados=2,
+        fora_da_janela_solar=True,
+    )
+
+    assert _tom(dormindo)[0] == "semDados", "dormindo vence falha"
+
+    quebrada = _usina(potencia_kw=800.0, disponibilidade_pct=99.0, inversores_parados=1)
+
+    assert _tom(quebrada)[0] == "parado", "falha vence desempenho"
+
+
 def test_de_madrugada_nao_acende_faixa_vermelha():
     """O alarme falso que rodava oito horas por dia.
 

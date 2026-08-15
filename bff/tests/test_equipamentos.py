@@ -47,11 +47,23 @@ def test_detector_sem_sinal_cai_na_derivacao_pelo_status():
 
 def test_dormindo_nao_vira_falha_nem_com_down():
     """De madrugada o detector pode manter uma parada aberta da tarde. `bedtime` vence:
-    pintar de vermelho a usina inteira toda noite é o alarme que faz o dono desinstalar."""
-    tom, situacao = _situacao("bedtime", False, None, True)
+    pintar de vermelho a usina inteira toda noite é o alarme que faz o dono desinstalar.
 
+    **Os DOIS lados são verificados aqui.** A primeira versão deste teste checava só
+    `_situacao`, e por isso não pegou a divergência que existia: `_parados` contava o
+    mesmo inversor como parada, e a tela da usina desenhava faixa vermelha "1 inversor
+    parado" logo acima de um chip cinza "Fora da janela solar" — com o toque abrindo uma
+    lista que contava zero. Três afirmações contraditórias sobre o mesmo aparelho, na
+    mesma navegação. Um teste que exercita um lado só dá impressão de cobertura.
+    """
+    dormindo_com_parada_aberta = {"status": "bedtime", "down": True}
+
+    tom, situacao = _situacao("bedtime", False, None, True)
     assert tom == "semDados"
     assert situacao == "Fora da janela solar"
+
+    assert _em_falha(dormindo_com_parada_aberta) is False, "o outro lado tem de concordar"
+    assert _parados([dormindo_com_parada_aberta]) == 0, "senão a faixa vermelha volta"
 
 
 def test_silenciado_vence_tudo():

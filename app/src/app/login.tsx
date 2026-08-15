@@ -24,7 +24,7 @@ import {
 import { Botao, Halo } from '@/components/base'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
-import { ambarAlpha, cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme/tokens'
+import { cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme/tokens'
 
 export default function Login() {
   const entrar = useAuth((s) => s.entrar)
@@ -130,9 +130,10 @@ export default function Login() {
         </View>
 
         {carregando ? (
-          <View style={estilos.progresso}>
-            <View style={estilos.progressoPreenchido} />
-          </View>
+          /* Botão desabilitado com "Entrando…", e não barra de progresso: a barra estava
+             congelada em 40% — um número que nada media, encenando avanço. É a mesma
+             espécie do "etapa 2 de 3" que saiu de Documentos. */
+          <Botao titulo="Entrando…" desabilitado />
         ) : (
           <Botao
             titulo={__DEV__ && !preenchido ? 'Entrar sem senha' : 'Entrar'}
@@ -228,17 +229,6 @@ const estilos = StyleSheet.create({
   },
   mostrar: { fontFamily: fontes.uiSemi, fontSize: 12.5, color: cores.textoAmbar },
 
-  progresso: {
-    height: 52,
-    borderRadius: raio.campo,
-    marginTop: espaco.md,
-    backgroundColor: ambarAlpha(0.18),
-    borderWidth: 1,
-    borderColor: ambarAlpha(0.33),
-    overflow: 'hidden',
-    justifyContent: 'center',
-  },
-  progressoPreenchido: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '40%', backgroundColor: cores.ambar },
 
   apoio: {
     fontFamily: fontes.ui,
