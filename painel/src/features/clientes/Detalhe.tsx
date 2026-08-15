@@ -15,10 +15,12 @@ import {
   type Tom,
 } from '@/components/base'
 import {
+  definirPermissoes,
   definirUsinas,
   desvincular,
   editarCliente,
   obterCliente,
+  permissoesDoCliente,
   regenerarSenha,
   type ClienteDetalhe as TipoCliente,
   type Produto,
@@ -230,6 +232,8 @@ export function DetalheCliente() {
             ))
           )}
         </Cartao>
+
+        <CartaoPermissoes clienteId={cliente.id} nome={cliente.nome} />
       </div>
 
       {senha ? (
@@ -309,6 +313,122 @@ function ModalUsinas({
         </button>
       </div>
     </Modal>
+  )
+}
+
+
+/**
+ * Permissões do aplicativo.
+ *
+ * Fica no detalhe do cliente, ao lado das usinas, porque é a mesma decisão em duas
+ * dimensões: as usinas dizem O QUE ele vê, as permissões dizem O QUE ele recebe. Separar
+ * em outra página faria o gestor conceder uma e esquecer a outra.
+ *
+ * O estado é local enquanto ele mexe e só vai ao servidor no Salvar — assim marcar três
+ * chaves é uma requisição, e não três, e ele pode desistir sem ter alterado nada.
+ */
+function CartaoPermissoes({ clienteId, nome }: { clienteId: number; nome: string }) {
+  const qc = useQueryClient()
+  const [erro, setErro] = useState('')
+  const [rascunho, setRascunho] = useState<Set<string> | null>(null)
+
+  const { data: itens, isLoading } = useQuery({
+    queryKey: ['permissoes', clienteId],
+    queryFn: () => permissoesDoCliente(clienteId),
+  })
+
+  // O rascunho nasce do servidor na primeira renderização com dados. Depois disso ele é
+  // a verdade da tela — recalcular a cada render desfaria o clique do gestor.
+  const concedidas =
+    rascunho ??
+    new Set((itens ?? []).filter((i) => i.concedida).map((i) => `${i.categoria}.${i.subcategoria}`))
+
+  const sujo =
+    rascunho !== null &&
+    (itens ?? []).some(
+      (i) => Boolean(i.concedida) !== concedidas.has(`${i.categoria}.${i.subcategoria}`),
+    )
+
+  const salvar = useMutation({
+    mutationFn: () => definirPermissoes(clienteId, [...concedidas]),
+    onSuccess: () => {
+      setRascunho(null)
+      setErro('')
+      qc.invalidateQueries({ queryKey: ['permissoes', clienteId] })
+    },
+    onError: (e) => setErro(mensagemDeErro(e)),
+  })
+
+  function alternar(chave: string) {
+    const proximo = new Set(concedidas)
+    if (proximo.has(chave)) proximo.delete(chave)
+    else proximo.add(chave)
+    setRascunho(proximo)
+  }
+
+  return (
+    <Cartao titulo={`Permissões · ${concedidas.size}`} className="lg:col-span-2">
+      {isLoading ? (
+        <p className="px-5 py-4 text-sm text-fraco">Carregando…</p>
+      ) : (itens ?? []).length === 0 ? (
+        <Vazio
+          titulo="Nenhuma permissão disponível"
+          descricao="O catálogo de permissões está vazio."
+        />
+      ) : (
+        <>
+          <p className="px-5 pt-4 text-sm text-rotulo">
+            O que {nome} recebe no aplicativo. Sem marcar, ele não recebe nada — e o
+            aparelho dele ainda precisa autorizar os avisos no Android.
+          </p>
+
+          {(itens ?? []).map((i, idx) => {
+            const chave = `${i.categoria}.${i.subcategoria}`
+            const ligada = concedidas.has(chave)
+            return (
+              <label
+                key={chave}
+                className={`flex items-start gap-4 px-5 py-3.5 cursor-pointer ${idx ? 'border-t border-borda' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={ligada}
+                  onChange={() => alternar(chave)}
+                  className="mt-1"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-forte">
+                    {i.categoria_rotulo} · {i.rotulo}
+                  </p>
+                  <p className="text-xs text-fraco">{i.descricao}</p>
+                </div>
+              </label>
+            )
+          })}
+
+          {erro ? (
+            <div className="px-5 pb-3">
+              <Erro>{erro}</Erro>
+            </div>
+          ) : null}
+
+          <div className="flex gap-2 px-5 py-4 border-t border-borda">
+            <button
+              onClick={() => salvar.mutate()}
+              className="btn-primario"
+              disabled={!sujo || salvar.isPending}
+            >
+              {salvar.isPending ? 'Salvando…' : 'Salvar permissões'}
+            </button>
+            {sujo ? (
+              <button onClick={() => setRascunho(null)} className="btn-secundario">
+                Descartar
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
+    </Cartao>
   )
 }
 

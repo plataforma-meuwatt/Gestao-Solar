@@ -227,6 +227,31 @@ export const usinasSugeridas = (clienteId: number) =>
 export const definirUsinas = (clienteId: number, plant_link_ids: number[]) =>
   api.put(`/clientes/${clienteId}/usinas`, { plant_link_ids })
 
+/* ------------------------------------------------------------ permissões */
+
+/**
+ * O que o cliente pode receber no aplicativo.
+ *
+ * A rota devolve o CATÁLOGO inteiro com `concedida` marcada, e não só o concedido: é o
+ * que permite desenhar as chaves desligadas. Uma lista só do concedido não teria como
+ * mostrar o que ainda falta conceder.
+ */
+export type PermissaoDoCliente = {
+  categoria: string
+  categoria_rotulo: string
+  subcategoria: string
+  rotulo: string
+  descricao: string
+  concedida: boolean | null
+}
+
+export const permissoesDoCliente = (clienteId: number) =>
+  api.get<PermissaoDoCliente[]>(`/clientes/${clienteId}/permissoes`).then((r) => r.data)
+
+/** Substituição, não acréscimo: manda a lista COMPLETA de `categoria.subcategoria`. */
+export const definirPermissoes = (clienteId: number, permissoes: string[]) =>
+  api.put(`/clientes/${clienteId}/permissoes`, { permissoes })
+
 /* ------------------------------------------------------------- conciliação */
 
 export const carregarConciliacao = () =>

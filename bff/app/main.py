@@ -22,8 +22,10 @@ from app.api.v1 import (
     billing,
     documents,
     equipamentos,
+    avisos,
     home,
     manutencao,
+    permissoes,
     notifications,
     painel,
     painel_clientes,
@@ -67,6 +69,8 @@ app.include_router(home.router)
 app.include_router(equipamentos.router)
 app.include_router(notifications.router)
 app.include_router(manutencao.router)
+app.include_router(permissoes.router)
+app.include_router(avisos.router)
 app.include_router(documents.router)
 
 

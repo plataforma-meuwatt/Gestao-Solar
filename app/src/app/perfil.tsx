@@ -6,8 +6,10 @@ import { router } from 'expo-router'
 import { StyleSheet, Text, View } from 'react-native'
 
 import { Atualizacao } from '@/components/Atualizacao'
+import { Notificacoes } from '@/components/Notificacoes'
 import { Card, LinhaNavegacao } from '@/components/base'
 import { Tela } from '@/components/Tela'
+import { esquecerAparelho } from '@/features/permissoes'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tons } from '@/theme/tokens'
 
@@ -23,6 +25,10 @@ export default function Perfil() {
   const sair = useAuth((s) => s.sair)
 
   async function aoSair() {
+    // Antes de `sair()`: a chamada precisa do token da sessão, que `sair()` apaga.
+    // Sem isto o aparelho seguiria recebendo avisos de uma conta que já saiu — e
+    // depois de outra pessoa entrar nele, os avisos seriam de usinas alheias.
+    await esquecerAparelho()
     await sair()
     router.replace('/login')
   }
@@ -48,6 +54,8 @@ export default function Perfil() {
           onPress={() => router.push('/(tabs)/usinas')}
         />
       </Card>
+
+      <Notificacoes />
 
       <Atualizacao />
 

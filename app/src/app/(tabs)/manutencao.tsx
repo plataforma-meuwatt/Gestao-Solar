@@ -10,7 +10,8 @@
  */
 
 import { router } from 'expo-router'
-import { StyleSheet, Text, View } from 'react-native'
+import { useState } from 'react'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 
 import { Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
 import { Tela } from '@/components/Tela'
@@ -54,13 +55,27 @@ function iniciaisDe(nome: string | undefined): string {
 
 export default function Manutencao() {
   const usuario = useAuth((s) => s.usuario)
+  const [usina, setUsina] = useState<string | null>(null)
   const { dados, carregando, erro, offlineDesde, recarregar } = useManutencao()
+
+  /*
+   * O filtro sai das PRÓPRIAS ordens, e não da lista de usinas do usuário.
+   *
+   * Quem tem sete usinas mas serviço concluído em três só quer escolher entre essas
+   * três — as outras quatro seriam botões que levam a uma tela vazia. A lista de
+   * opções acompanha o dado, então ela encolhe e cresce sozinha.
+   */
+  const usinasComOs = [...new Set((dados?.ordens ?? []).map((o) => o.usina))].sort()
+  // Filtro que aponta para usina que sumiu do histórico é ignorado, em vez de
+  // esvaziar a tela sem explicação.
+  const filtro = usina && usinasComOs.includes(usina) ? usina : null
+  const visiveis = (dados?.ordens ?? []).filter((o) => !filtro || o.usina === filtro)
 
   // Agrupa por mês de fechamento, preservando a ordem que o servidor já garantiu
   // (mais recente primeiro). Um `Map` mantém a ordem de inserção — reordenar aqui
   // desfaria o trabalho do BFF e abriria espaço para as duas telas discordarem.
   const meses = new Map<string, OrdemAtendida[]>()
-  for (const o of dados?.ordens ?? []) {
+  for (const o of visiveis) {
     const chave = o.fechada_em ? o.fechada_em.slice(0, 7) : 'sem-data'
     const atual = meses.get(chave)
     if (atual) atual.push(o)
@@ -75,15 +90,20 @@ export default function Manutencao() {
           <Text style={tipo.secundario}>
             {dados.total !== null ? (
               <>
-                <Num style={estilos.subNum}>{inteiro(dados.total)}</Num>{' '}
-                {dados.total === 1 ? 'serviço concluído' : 'serviços concluídos'}
+                <Num style={estilos.subNum}>{inteiro(visiveis.length)}</Num>{' '}
+                {visiveis.length === 1 ? 'serviço concluído' : 'serviços concluídos'}
               </>
             ) : (
               'histórico indisponível'
             )}
             {' · '}
-            <Num style={estilos.subNum}>{inteiro(dados.usinas_com_manutencao)}</Num>{' '}
-            {dados.usinas_com_manutencao === 1 ? 'usina' : 'usinas'}
+            {/* Com filtro, o nome da usina; sem filtro, quantas usinas o histórico cobre. */}
+            {filtro ?? (
+              <>
+                <Num style={estilos.subNum}>{inteiro(dados.usinas_com_manutencao)}</Num>{' '}
+                {dados.usinas_com_manutencao === 1 ? 'usina' : 'usinas'}
+              </>
+            )}
           </Text>
         ) : undefined
       }
@@ -122,6 +142,31 @@ export default function Manutencao() {
         <>
           {dados.aviso ? <Text style={estilos.aviso}>{dados.aviso}</Text> : null}
 
+          {/* Só com mais de uma usina no histórico: um filtro de uma opção é enfeite. */}
+          {usinasComOs.length > 1 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={estilos.filtros}
+            >
+              <Filtro rotulo="Todas" ativo={filtro === null} onPress={() => setUsina(null)} />
+              {usinasComOs.map((u) => (
+                <Filtro
+                  key={u}
+                  rotulo={u}
+                  ativo={filtro === u}
+                  onPress={() => setUsina(filtro === u ? null : u)}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+
+          {visiveis.length === 0 ? (
+            <Card>
+              <Text style={tipo.fraco}>Nenhum serviço concluído nesta usina.</Text>
+            </Card>
+          ) : null}
+
           {[...meses.entries()].map(([chave, ordens]) => (
             <View key={chave}>
               <Text style={estilos.mes}>
@@ -135,6 +180,24 @@ export default function Manutencao() {
         </>
       )}
     </Tela>
+  )
+}
+
+function Filtro({
+  rotulo,
+  ativo,
+  onPress,
+}: {
+  rotulo: string
+  ativo: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable onPress={onPress} style={[estilos.filtro, ativo && estilos.filtroAtivo]}>
+      <Text style={[estilos.filtroTexto, ativo && estilos.filtroTextoAtivo]} numberOfLines={1}>
+        {rotulo}
+      </Text>
+    </Pressable>
   )
 }
 
@@ -180,6 +243,20 @@ function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
 
 const estilos = StyleSheet.create({
   subNum: { fontSize: 13, color: cores.textoRotulo },
+
+  filtros: { gap: espaco.xs, paddingHorizontal: espaco.xs, paddingVertical: 2 },
+  filtro: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: cores.borda,
+    backgroundColor: cores.superficie,
+    maxWidth: 200,
+  },
+  filtroAtivo: { backgroundColor: cores.ambar, borderColor: cores.ambar },
+  filtroTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoCorpo },
+  filtroTextoAtivo: { color: cores.fundo },
   espaco: { marginTop: espaco.sm },
   aviso: { ...tipo.fraco, paddingHorizontal: espaco.xs },
 
