@@ -178,11 +178,13 @@ def _tom(usina: UsinaOut) -> tuple[str, str]:
     if usina.inversores_mudos:
         n = usina.inversores_mudos
         return "alerta", f"{n} {'inversor sem comunicação' if n == 1 else 'inversores sem comunicação'}"
-    # Disponibilidade vira âmbar, nunca vermelho, e só quando é baixa a ponto de não ser
-    # explicável pelo relatório ainda incompleto. Continua sendo uma média — o número
-    # exato aparece na tela da usina, onde há espaço para o contexto.
-    if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 50:
-        return "alerta", "Gerando abaixo do esperado"
+    # Disponibilidade NÃO decide cor, em nenhum tom. `plantStatusOf` (mw-fe), a fonte da
+    # verdade declarada no CLAUDE.md, nunca a consulta — a cor sai de fato: parada,
+    # alerta do fabricante, mudez. O critério nasceu deste lado e voltou uma vez depois de
+    # eu mesmo escrever, quinze linhas acima, que era invenção.
+    #
+    # O número continua sendo publicado quando tem lastro, e a tela da usina o imprime com
+    # o contexto ao lado. O que ele não faz é acender faixa na tela inicial.
 
     # 5. Sem sol declarado e sem geração: começo de manhã ou dia muito fechado.
     if usina.potencia_kw <= 0:
@@ -208,6 +210,27 @@ PARADO = {"fault"}
 MUDO = "communication_error"
 #: `bedtime` é noite, não defeito: contar como parada acenderia alarme todo fim de tarde.
 DORMINDO = "bedtime"
+
+
+def _energia_de_hoje(agora: dict[str, Any]) -> float | None:
+    """A geração do dia, somada dos inversores — ao vivo.
+
+    O caminho anterior lia `DailyGenerationReport.total_generation_kwh`, e esse número
+    agrega **só** `plant_inverter_daily_reports`, tabela populada pelo push de relatório
+    DIÁRIO do mw-core. Enquanto o push do dia não chega, o campo é `0.0` por construção — e
+    o aplicativo afirmava "hoje 0,0 kWh" com a usina gerando 8 kW no cartão de cima.
+
+    O próprio meuWatt não usa aquela fonte para o dia corrente: `portfolio/service.py`
+    soma `daily_generation_kwh` dos snapshots ao vivo e reserva os relatórios diários para
+    "ontem". Aqui se faz o mesmo, com o campo que já vem na resposta de monitoramento.
+
+    `daily_generation` é `None` quando vale zero (o schema diz isso), então ausência conta
+    como zero. Nulo mesmo só quando não há inversor comunicando — e aí é "não sabemos".
+    """
+    falando = [i for i in _contam(agora) if not _esta_mudo(i)]
+    if not falando:
+        return None
+    return round(sum(_numero(i.get("daily_generation")) or 0 for i in falando), 2)
 
 
 def _disponibilidade_com_base(diario: Any) -> float | None:
@@ -237,14 +260,23 @@ def _disponibilidade_com_base(diario: Any) -> float | None:
     if not isinstance(inversores, list) or not inversores:
         return None
 
-    com_lastro = [
+    # TODA linha que entra na média precisa ter lastro, não apenas uma. O upstream soma a
+    # média ponderada sobre todas as linhas comunicando — e a linha sintetizada de um slot
+    # que ainda não enviou o relatório sai com `expected_yield_kwh: None` e `measured: 0`,
+    # o que vira `avail = 0` com PESO CHEIO de capacidade.
+    #
+    # Reproduzido pela auditoria: usina de 4 × 600 kWp com os quatro gerando 90 kW — 360 kW
+    # reais — publicava disponibilidade de 49%, porque dois slots ainda não tinham enviado.
+    # A guarda anterior exigia que UMA linha tivesse lastro: granularidade diferente da do
+    # número que ela protegia. Este é o caso misto, que é justamente o caso do amanhecer.
+    entram_na_media = [
         i
         for i in inversores
-        if isinstance(i, dict)
-        and i.get("is_communicating") is not False
-        and (_numero(i.get("expected_yield_kwh")) or 0) > 0
+        if isinstance(i, dict) and i.get("is_communicating") is not False
     ]
-    if not com_lastro:
+    if not entram_na_media:
+        return None
+    if any((_numero(i.get("expected_yield_kwh")) or 0) <= 0 for i in entram_na_media):
         return None
 
     return _numero(diario.get("plant_availability_pct"))
@@ -436,6 +468,7 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # Guardado para o caso de o relatório diário não responder; o valor declarado
         # tem precedência e é preenchido logo abaixo.
         saida["capacidade_dos_inversores"] = _capacidade_dos_inversores(agora)
+        saida["energia_hoje_kwh"] = _energia_de_hoje(agora)
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo assim
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
 
@@ -443,7 +476,9 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         diario = await cliente.geracao_diaria(link.mw_plant_slug, dia)
         # `or` mataria o zero: `total_generation_kwh` é obrigatório no schema, e uma usina
         # que de fato gerou 0 kWh viraria "não sabemos". Aqui zero é informação.
-        saida["energia_hoje_kwh"] = _numero(diario.get("total_generation_kwh"))
+        # A energia do dia NÃO vem daqui — ver `_energia_de_hoje`. O relatório diário só
+        # agrega o push do mw-core, e enquanto ele não chega o total é zero por
+        # construção.
         # O mw-api calcula `avail = soma_ponderada / peso if peso > 0 else 100.0`. Com
         # TODO inversor sem comunicar, o laço não acumula peso e o campo sai **100.0
         # fabricado** — a usina muda apareceria como "disponibilidade 100%" ao lado de

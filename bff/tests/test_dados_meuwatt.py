@@ -168,7 +168,10 @@ def test_dia_normal_publica_tudo():
         "in_solar_window": True,
         "inverters": [
             {"id": "slot-1", "status": "normal", "active_power": 500_000.0,
-             "capacity_kwp": 600.0, "timestamp": "2026-08-14T13:00:00Z", "down": False},
+             "capacity_kwp": 600.0, "timestamp": "2026-08-14T13:00:00Z", "down": False,
+             # A energia do dia sai DAQUI (ao vivo), não do relatório diário: aquele só
+             # agrega o push do mw-core, que ainda não chegou no dia corrente.
+             "daily_generation": 3_200.0},
         ],
     }
     diario = {
@@ -196,7 +199,9 @@ def test_zero_de_geracao_com_expectativa_e_zero_honesto():
         "in_solar_window": True,
         "inverters": [
             {"id": "slot-1", "status": "normal", "active_power": 0.0,
-             "capacity_kwp": 600.0, "timestamp": "2026-08-14T13:00:00Z", "down": False},
+             "capacity_kwp": 600.0, "timestamp": "2026-08-14T13:00:00Z", "down": False,
+             # `daily_generation` é None quando vale zero — o schema diz isso.
+             "daily_generation": None},
         ],
     }
     diario = {
@@ -213,3 +218,87 @@ def test_zero_de_geracao_com_expectativa_e_zero_honesto():
 
     assert dados["energia_hoje_kwh"] == 0.0, "zero medido é zero"
     assert dados["disponibilidade_pct"] == 0.0, "com expectativa real, o zero tem lastro"
+
+
+# ── o caso MISTO: alguns slots já enviaram o relatório, outros não ──────────
+
+
+def test_disponibilidade_no_caso_misto_nao_e_publicada():
+    """O caso real do amanhecer, e o que a correção anterior deixou passar.
+
+    Quatro inversores de 600 kWp, TODOS gerando 90 kW — 360 kW reais. Dois já enviaram o
+    relatório do dia; dois ainda não, e saem com `expected_yield_kwh: None` e
+    `is_communicating: True`. O upstream calcula a média ponderada sobre os quatro, e os
+    dois sem expectativa entram como zero **com peso cheio de capacidade**: o campo
+    publicado vira ~49%.
+
+    A guarda anterior exigia que UMA linha tivesse lastro — granularidade diferente da do
+    número que ela protegia. Usina intacta acabava com o nome na faixa da tela inicial.
+    """
+    agora = {
+        "in_solar_window": True,
+        "inverters": [
+            {"id": f"slot-{n}", "status": "normal", "active_power": 90_000.0,
+             "capacity_kwp": 600.0, "timestamp": "2026-08-14T09:30:00Z",
+             "down": False, "daily_generation": 120.0}
+            for n in range(1, 5)
+        ],
+    }
+    diario = {
+        "total_generation_kwh": 480.0,
+        "total_capacity_kwp": 2400.0,
+        # A média que o upstream produz com dois slots sem expectativa.
+        "plant_availability_pct": 49.0,
+        "inverters": [
+            {"sn": "A1", "daily_yield_kwh": 240.0, "expected_yield_kwh": 245.0,
+             "is_communicating": True},
+            {"sn": "A2", "daily_yield_kwh": 240.0, "expected_yield_kwh": 245.0,
+             "is_communicating": True},
+            {"sn": "A3", "daily_yield_kwh": 0.0, "expected_yield_kwh": None,
+             "is_communicating": True, "diagnosis": "NO_REPORT"},
+            {"sn": "A4", "daily_yield_kwh": 0.0, "expected_yield_kwh": None,
+             "is_communicating": True, "diagnosis": "NO_REPORT"},
+        ],
+    }
+
+    dados = _colher(agora, diario)
+
+    assert dados["disponibilidade_pct"] is None, (
+        "média contaminada por linhas sem expectativa não pode sair como fato"
+    )
+    assert _como_usina(dados).tom == "ok", "usina com os quatro gerando não é problema"
+
+
+def test_energia_do_dia_vem_dos_inversores_ao_vivo():
+    """"Hoje 0,0 kWh" com a usina gerando era o cartão se desmentindo sozinho.
+
+    `total_generation_kwh` agrega só `plant_inverter_daily_reports`, populada pelo push
+    diário do mw-core — zero por construção até o push chegar. O próprio meuWatt usa
+    snapshots ao vivo para o dia corrente (`portfolio/service.py`) e reserva o relatório
+    diário para "ontem".
+    """
+    agora = {
+        "in_solar_window": True,
+        "inverters": [
+            {"id": "slot-1", "status": "normal", "active_power": 4_000.0,
+             "capacity_kwp": 600.0, "daily_generation": 61.5,
+             "timestamp": "2026-08-14T09:10:00Z", "down": False},
+            {"id": "slot-2", "status": "normal", "active_power": 4_100.0,
+             "capacity_kwp": 600.0, "daily_generation": 62.0,
+             "timestamp": "2026-08-14T09:10:00Z", "down": False},
+        ],
+    }
+    # O relatório diário ainda não chegou: zero por construção.
+    diario = {"total_generation_kwh": 0.0, "total_capacity_kwp": 1200.0, "inverters": []}
+
+    dados = _colher(agora, diario)
+
+    assert dados["energia_hoje_kwh"] == 123.5, "a soma ao vivo, não o relatório vazio"
+    assert dados["potencia_kw"] == 8.1
+
+
+def test_usina_muda_nao_afirma_energia_do_dia():
+    """Sem ninguém comunicando, a energia é desconhecida — não zero."""
+    dados = _colher(MUDA_AGORA, MUDA_DIARIO)
+
+    assert dados["energia_hoje_kwh"] is None

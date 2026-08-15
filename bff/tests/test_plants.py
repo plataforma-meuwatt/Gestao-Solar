@@ -127,17 +127,19 @@ def test_sem_dado_de_geracao_nunca_fica_verde():
     assert situacao == "Sem dados de geração"
 
 
-def test_disponibilidade_baixa_fica_ambar_e_nao_vermelha():
-    """Gerar não é estar bem — mas média baixa é âmbar, não vermelho.
+def test_disponibilidade_nao_decide_cor_em_valor_nenhum():
+    """A régua da cor é `plantStatusOf` (mw-fe), e ela NUNCA consulta disponibilidade.
 
-    Este teste exigia vermelho, e era ele que sustentava a régua inventada. O campo vale
-    0.0 por construção até o relatório do dia chegar, e o `plantStatusOf` do meuWatt nunca
-    o consulta para o vermelho. Fato (inversor parado) pinta vermelho; média pinta âmbar.
+    Este teste já exigiu vermelho e depois âmbar — nas duas versões sustentava um critério
+    que a fonte da verdade não tem. A disponibilidade é média sobre um relatório que se
+    completa ao longo do dia; a cor sai de fato: parada, alerta do fabricante, mudez.
+
+    O número continua publicado quando tem lastro, e a tela da usina o mostra com contexto.
+    O que ele não faz é acender faixa na tela inicial.
     """
-    tom, situacao = _tom(_usina(potencia_kw=120.0, disponibilidade_pct=40.0))
+    tom, _ = _tom(_usina(potencia_kw=120.0, disponibilidade_pct=40.0))
 
-    assert tom == "alerta"
-    assert situacao == "Gerando abaixo do esperado"
+    assert tom == "ok", "média baixa não pinta a usina; só fato pinta"
 
 
 def test_potencia_zero_e_sem_geracao_e_nao_falha():
@@ -301,19 +303,14 @@ def test_amanhecendo_com_pouca_geracao_tambem_nao_alarma():
     )
 
 
-def test_disponibilidade_zero_com_lastro_e_ambar_e_nunca_vermelha():
-    """Quando o zero é REAL — houve expectativa e a usina não entregou —, âmbar é o teto.
+def test_disponibilidade_zero_com_lastro_tambem_nao_pinta():
+    """Mesmo o zero com lastro não decide cor — ele informa, na tela da usina.
 
-    O vermelho é para fato (inversor parado); média fica em âmbar. A régua da fonte da
-    verdade (`plantStatusOf`, mw-fe) nem consulta disponibilidade para o vermelho.
-
-    O zero SEM lastro nem chega aqui: `_disponibilidade_com_base` o anula antes, e quem
-    prova isso é `tests/test_dados_meuwatt.py`, que roda o payload real do upstream em vez
-    de montar o valor à mão como este teste faz.
+    Quem responde "esta usina está bem?" é o estado dos aparelhos, não a média do dia.
     """
     tom, _ = _tom(_usina(potencia_kw=10.0, disponibilidade_pct=0.0))
 
-    assert tom == "alerta", "âmbar é o teto para média baixa; vermelho é para fato"
+    assert tom == "ok"
 
 
 def test_disponibilidade_nunca_produz_vermelho_em_nenhum_valor():
