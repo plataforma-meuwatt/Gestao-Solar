@@ -13,6 +13,7 @@
  */
 
 import { useLocalSearchParams } from 'expo-router'
+import { useState } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 
 import {
@@ -23,18 +24,22 @@ import {
   EstadoVazio,
   FaixaAtencao,
   GraficoBarras,
+  GraficoSeries,
   Kpi,
   Num,
   StatusChip,
 } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { useEquipamento } from '@/features/equipamentos'
+import { useCurvaStrings, useEquipamento } from '@/features/equipamentos'
+import { hojeIso, SeletorPeriodo } from '@/components/periodo'
 import { duracao, energia, hora, numero, porcento, potencia } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function Equipamento() {
   const { id, usina } = useLocalSearchParams<{ id: string; usina?: string }>()
   const { dados: e, carregando, erro, offlineDesde, recarregar } = useEquipamento(usina, id)
+  const [dia, setDia] = useState(hojeIso())
+  const strings = useCurvaStrings(usina, id, dia, true)
 
   if (carregando || !e) {
     return (
@@ -201,6 +206,36 @@ export default function Equipamento() {
         </Card>
       ) : null}
 
+      {/*
+        * Corrente de cada string do inversor, sobreposta no mesmo eixo.
+        *
+        * As Entradas acima mostram o AGORA; aqui é o dia inteiro. A pergunta muda junto:
+        * lá é "quanto está entrando", aqui é "alguma string está descolando das irmãs?",
+        * que é como sombreamento, sujeira e string desconectada aparecem.
+        */}
+      <Card>
+        <CabecalhoCard rotulo="Corrente por string" />
+        <View style={estilos.seletorStrings}>
+          <SeletorPeriodo valor={dia} recorte="dia" onEscolher={setDia} />
+        </View>
+        {strings.carregando && !strings.dados ? (
+          <Esqueleto altura={150} />
+        ) : strings.erro || !strings.dados || strings.dados.series.length === 0 ? (
+          <Text style={tipo.fraco}>
+            {strings.erro
+              ?? strings.dados?.aviso
+              ?? 'O monitoramento não devolveu corrente de string deste inversor neste dia.'}
+          </Text>
+        ) : (
+          <GraficoSeries
+            horas={strings.dados.horas}
+            series={strings.dados.series}
+            unidade="A"
+            casas={1}
+          />
+        )}
+      </Card>
+
       {e.aviso ? <Text style={estilos.aviso}>{e.aviso}</Text> : null}
     </Tela>
   )
@@ -216,6 +251,7 @@ function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
 }
 
 const estilos = StyleSheet.create({
+  seletorStrings: { marginTop: espaco.xs, marginBottom: espaco.xs },
   topo: { flexDirection: 'row', alignItems: 'center' },
   espacador: { flex: 1 },
   legendaNum: { fontSize: 12, color: cores.textoRotulo },

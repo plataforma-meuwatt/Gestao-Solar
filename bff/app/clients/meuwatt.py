@@ -156,6 +156,35 @@ class MeuWattClient:
         params = {"date": dia.isoformat()} if dia else {}
         return await self._get(f"/plants/{slug}/charts/intraday", **params)
 
+    async def intraday_strings(self, slug: str, dia: date | None = None) -> dict[str, Any]:
+        """Corrente por string (PV1..PV32) e MPPT, em buckets de 5 min.
+
+        Mesma estrutura da curva de potência — `points[].inverters[]` —, mas cada
+        inversor traz `strings` e `mppts` em vez de potência.
+        """
+        params = {"date": dia.isoformat()} if dia else {}
+        return await self._get(f"/plants/{slug}/charts/intraday/strings", **params)
+
+    async def intraday_rele(self, slug: str, dia: date | None = None) -> dict[str, Any]:
+        """Tensão, corrente e potência por fase de cada relé de proteção, em 5 min."""
+        params = {"date": dia.isoformat()} if dia else {}
+        return await self._get(f"/plants/{slug}/charts/intraday/relay", **params)
+
+    async def intraday_temperatura(self, slug: str, dia: date | None = None) -> dict[str, Any]:
+        """Temperatura de cada sensor (S1/S2/S3 + ambiente), em buckets de 5 min."""
+        params = {"date": dia.isoformat()} if dia else {}
+        return await self._get(f"/plants/{slug}/charts/intraday/temperature", **params)
+
+    async def eventos_de_trip(
+        self, slug: str, relay_id: int, limite: int = 50
+    ) -> dict[str, Any]:
+        """Histórico de flags de um relé de proteção, mais recente primeiro.
+
+        `relay_id` é o id NUMÉRICO do relé no meuWatt — o `monitoring/current` publica
+        `relay-{id}`, e o prefixo precisa sair antes de chegar aqui.
+        """
+        return await self._get(f"/plants/{slug}/relays/{relay_id}/trip-events", limit=limite)
+
     async def alertas(self, slug: str, status: str = "active") -> list[dict[str, Any]]:
         return await self._get(f"/plants/{slug}/alerts", status=status)
 

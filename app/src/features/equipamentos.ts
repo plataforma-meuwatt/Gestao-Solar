@@ -136,3 +136,104 @@ export function useEquipamento(
     { ativo: Boolean(plantId && equipamentoId) },
   )
 }
+
+/**
+ * Séries do dia de um equipamento — correntes de string, fases do relé, bobinas do trafo.
+ *
+ * `valores` vem alinhado a `horas`, com `null` onde o aparelho não mediu. O alinhamento é
+ * o que permite ao gráfico interromper a linha na posição certa; encurtar a lista faria
+ * as séries escorregarem no eixo.
+ */
+export type Serie = { rotulo: string; valores: (number | null)[] }
+
+export type CurvaEquipamento = {
+  dia: string
+  horas: string[]
+  series: Serie[]
+  aviso: string | null
+}
+
+export function useCurvaStrings(
+  usinaId: string | undefined,
+  equipamentoId: string | undefined,
+  dia: string,
+  ativo: boolean,
+): Leitura<CurvaEquipamento> {
+  return fetchWithCache<CurvaEquipamento>(
+    `plants/${usinaId ?? ''}/equipamentos/${equipamentoId ?? ''}/strings?dia=${dia}`,
+    { ativo: Boolean(usinaId && equipamentoId) && ativo },
+  )
+}
+
+export function useCurvaTemperatura(
+  usinaId: string | undefined,
+  sensorId: string,
+  dia: string,
+  ativo: boolean,
+): Leitura<CurvaEquipamento> {
+  return fetchWithCache<CurvaEquipamento>(
+    `plants/${usinaId ?? ''}/reles/temperatura/${encodeURIComponent(sensorId)}/curva?dia=${dia}`,
+    { ativo: Boolean(usinaId) && ativo },
+  )
+}
+
+export function useCurvaProtecao(
+  usinaId: string | undefined,
+  releId: string,
+  dia: string,
+  grandeza: 'tensao' | 'corrente' | 'potencia',
+  ativo: boolean,
+): Leitura<CurvaEquipamento> {
+  return fetchWithCache<CurvaEquipamento>(
+    `plants/${usinaId ?? ''}/reles/protecao/${encodeURIComponent(releId)}/curva?dia=${dia}&grandeza=${grandeza}`,
+    { ativo: Boolean(usinaId) && ativo },
+  )
+}
+
+/** A máxima de cada dia num intervalo, para ver se a bobina vem esquentando. */
+export type Maximas = {
+  inicio: string
+  fim: string
+  dias: { dia: string; maxima: number | null }[]
+  pico: number | null
+  pico_em: string | null
+  aviso: string | null
+}
+
+export function useMaximas(
+  usinaId: string | undefined,
+  sensorId: string,
+  dias: number,
+  ativo: boolean,
+): Leitura<Maximas> {
+  return fetchWithCache<Maximas>(
+    `plants/${usinaId ?? ''}/reles/temperatura/${encodeURIComponent(sensorId)}/maximas?dias=${dias}`,
+    { ativo: Boolean(usinaId) && ativo },
+  )
+}
+
+/** Histórico de flags do relé de proteção, mais recente primeiro. */
+export type EventoDeTrip = {
+  quando: string | null
+  codigo: string | null
+  evento: string | null
+  de: string | null
+  para: string | null
+}
+
+export type HistoricoDeFlags = {
+  rele: string | null
+  eventos: EventoDeTrip[]
+  aviso: string | null
+}
+
+export function useHistoricoDeFlags(
+  usinaId: string | undefined,
+  releId: string,
+  ativo: boolean,
+): Leitura<HistoricoDeFlags> {
+  return fetchWithCache<HistoricoDeFlags>(
+    `plants/${usinaId ?? ''}/reles/protecao/${encodeURIComponent(releId)}/flags`,
+    { ativo: Boolean(usinaId) && ativo },
+  )
+}

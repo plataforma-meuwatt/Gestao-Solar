@@ -508,6 +508,8 @@ const estilos = StyleSheet.create({
   grafLeituraVazia: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco },
 
   grafEixoLinha: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  grafLegendaChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  grafLegendaCor: { width: 8, height: 2, borderRadius: 1 },
   grafToque: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
   grafLegenda: { flexDirection: 'row', gap: espaco.md, marginTop: 2 },
   grafLegendaItem: { fontFamily: fontes.ui, fontSize: 10, color: cores.textoFraco },
@@ -958,6 +960,148 @@ export function GraficoLinha({
           <Text style={estilos.grafLegendaItem}>- - irradiação POA</Text>
         </View>
       ) : null}
+    </View>
+  )
+}
+
+/** Paleta das séries. Cores de identificação, não de estado — por isso não vêm de `tons`. */
+const CORES_SERIE = ['#F2A81D', '#4EA8DE', '#8FD694', '#E86A6A', '#C084FC', '#F4D35E']
+
+/**
+ * Várias séries no mesmo eixo — correntes de string, fases do relé, bobinas do trafo.
+ *
+ * Todas as séries compartilham a escala vertical, e é isso que dá sentido ao gráfico:
+ * a pergunta aqui nunca é "quanto", é "alguma está diferente das outras?". Uma string
+ * que descola das irmãs, uma fase desequilibrada, uma bobina mais quente — tudo isso
+ * aparece como uma linha fora do feixe, e some se cada série tiver escala própria.
+ *
+ * `valores` vem alinhado a `horas`, com `null` onde não houve leitura. A linha se
+ * interrompe no buraco em vez de atravessá-lo.
+ */
+export function GraficoSeries({
+  horas,
+  series,
+  altura = 150,
+  unidade = '',
+  casas = 1,
+}: {
+  horas: string[]
+  series: { rotulo: string; valores: (number | null)[] }[]
+  altura?: number
+  unidade?: string
+  casas?: number
+}) {
+  const [largura, setLargura] = useState(0)
+  const [marcado, setMarcado] = useState<number | null>(null)
+
+  if (horas.length < 2 || series.length === 0) return null
+
+  const todos = series.flatMap((s) => s.valores).filter((v): v is number => typeof v === 'number')
+  if (todos.length === 0) return null
+
+  /*
+   * A escala parte do MENOR valor, não de zero — ao contrário da curva de potência.
+   * Tensão de fase vive perto de 13 800 V: começar do zero espremeria as três fases
+   * numa linha só, escondendo exatamente o desequilíbrio que se quer enxergar.
+   */
+  const menor = Math.min(...todos)
+  const maior = Math.max(...todos)
+  const faixa = maior - menor || 1
+
+  const x = (i: number) => (i / (horas.length - 1)) * largura
+  const y = (v: number) => altura - ((v - menor) / faixa) * altura
+
+  const caminho = (valores: (number | null)[]) => {
+    let d = ''
+    let aberto = false
+    valores.forEach((v, i) => {
+      if (typeof v !== 'number') {
+        aberto = false
+        return
+      }
+      d += `${aberto ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)} `
+      aberto = true
+    })
+    return d.trim()
+  }
+
+  return (
+    <View>
+      <View style={estilos.grafLeitura}>
+        {marcado !== null ? (
+          <Text style={estilos.grafLeituraTexto} numberOfLines={1}>
+            {horas[marcado]} ·{' '}
+            {series
+              .map((s) => {
+                const v = s.valores[marcado]
+                return `${s.rotulo} ${typeof v === 'number' ? v.toFixed(casas) : '—'}`
+              })
+              .join('   ')}
+            {unidade ? ` ${unidade}` : ''}
+          </Text>
+        ) : (
+          <Text style={estilos.grafLeituraVazia}>toque para ver os valores</Text>
+        )}
+      </View>
+
+      <View style={{ height: altura }} onLayout={(e) => setLargura(e.nativeEvent.layout.width)}>
+        {largura > 0 ? (
+          <>
+            <Svg width={largura} height={altura}>
+              {series.map((s, i) => (
+                <Path
+                  key={s.rotulo}
+                  d={caminho(s.valores)}
+                  stroke={CORES_SERIE[i % CORES_SERIE.length]}
+                  strokeWidth={1.5}
+                  fill="none"
+                />
+              ))}
+              {marcado !== null ? (
+                <Line
+                  x1={x(marcado)}
+                  y1={0}
+                  x2={x(marcado)}
+                  y2={altura}
+                  stroke={cores.textoFraco}
+                  strokeWidth={1}
+                />
+              ) : null}
+            </Svg>
+            <Pressable
+              style={estilos.grafToque}
+              onPress={(e) => {
+                const i = Math.round((e.nativeEvent.locationX / largura) * (horas.length - 1))
+                const limitado = Math.min(horas.length - 1, Math.max(0, i))
+                setMarcado((atual) => (atual === limitado ? null : limitado))
+              }}
+            />
+          </>
+        ) : null}
+      </View>
+
+      <View style={estilos.grafEixoLinha}>
+        <Text style={estilos.grafRotulo}>{horas[0]}</Text>
+        <Text style={estilos.grafRotulo}>{horas[horas.length - 1]}</Text>
+      </View>
+
+      {/* A legenda só cabe até um punhado de séries. Com 24 strings ela viraria uma
+          parede de texto — e ali a pergunta é "alguma descola?", que se responde
+          tocando na linha fora do feixe, não lendo nome por nome. */}
+      {series.length <= 6 ? (
+        <View style={estilos.grafLegenda}>
+          {series.map((s, i) => (
+            <View key={s.rotulo} style={estilos.grafLegendaChip}>
+              <View
+                style={[estilos.grafLegendaCor, { backgroundColor: CORES_SERIE[i % CORES_SERIE.length] }]}
+              />
+              <Text style={estilos.grafLegendaItem}>{s.rotulo}</Text>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={estilos.grafLegendaItem}>{series.length} séries</Text>
+      )}
     </View>
   )
 }

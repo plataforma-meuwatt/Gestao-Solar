@@ -74,6 +74,19 @@ export function hora(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+/**
+ * Dia e hora curtos, para históricos onde a data importa tanto quanto o horário.
+ *
+ * O histórico de flags de um relé pode atravessar semanas: só a hora faria dois eventos
+ * de dias diferentes parecerem o mesmo minuto.
+ */
+export function dataHora(iso: string): string {
+  const d = new Date(iso)
+  const dia = String(d.getDate()).padStart(2, '0')
+  const mes = String(d.getMonth() + 1).padStart(2, '0')
+  return `${dia}/${mes} ${hora(iso)}`
+}
+
 /** Tempo relativo curto, para a lista de notificações. */
 export function quando(iso: string, agora = new Date()): string {
   const min = Math.floor((agora.getTime() - new Date(iso).getTime()) / 60000)

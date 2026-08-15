@@ -27,12 +27,18 @@ import {
 } from '@/components/base'
 import { Tela } from '@/components/Tela'
 import {
+  useCurvaProtecao,
+  useCurvaTemperatura,
   useEquipamentos,
+  useHistoricoDeFlags,
+  useMaximas,
   type Equipamento,
   type ReleProtecao,
   type ReleTemperatura,
 } from '@/features/equipamentos'
-import { duracao, energia, hora, inteiro, numero, potencia } from '@/lib/format'
+import { GraficoBarras, GraficoSeries } from '@/components/base'
+import { hojeIso, SeletorPeriodo } from '@/components/periodo'
+import { dataHora, duracao, energia, hora, inteiro, numero, potencia } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 /**
@@ -145,11 +151,19 @@ export default function Equipamentos() {
           ) : null}
 
           {tipo_ === 0 || tipo_ === 2 ? (
-            <SecaoTemperatura lista={dados.reles_temperatura ?? []} comTitulo={tipo_ === 0} />
+            <SecaoTemperatura
+              lista={dados.reles_temperatura ?? []}
+              comTitulo={tipo_ === 0}
+              usinaId={id}
+            />
           ) : null}
 
           {tipo_ === 0 || tipo_ === 3 ? (
-            <SecaoProtecao lista={dados.reles_protecao ?? []} comTitulo={tipo_ === 0} />
+            <SecaoProtecao
+              lista={dados.reles_protecao ?? []}
+              comTitulo={tipo_ === 0}
+              usinaId={id}
+            />
           ) : null}
         </>
       )}
@@ -279,7 +293,15 @@ function SecaoInversores({
   )
 }
 
-function SecaoTemperatura({ lista, comTitulo }: { lista: ReleTemperatura[]; comTitulo: boolean }) {
+function SecaoTemperatura({
+  lista,
+  comTitulo,
+  usinaId,
+}: {
+  lista: ReleTemperatura[]
+  comTitulo: boolean
+  usinaId?: string
+}) {
   if (lista.length === 0) {
     return (
       <>
@@ -325,6 +347,8 @@ function SecaoTemperatura({ lista, comTitulo }: { lista: ReleTemperatura[]; comT
           {t.medido_em ? (
             <Text style={estilos.medido}>medido às {hora(t.medido_em)}</Text>
           ) : null}
+
+          <DetalheTemperatura sensorId={t.id} usinaId={usinaId} />
         </Card>
       ))}
     </>
@@ -357,7 +381,15 @@ function Bobina({
   )
 }
 
-function SecaoProtecao({ lista, comTitulo }: { lista: ReleProtecao[]; comTitulo: boolean }) {
+function SecaoProtecao({
+  lista,
+  comTitulo,
+  usinaId,
+}: {
+  lista: ReleProtecao[]
+  comTitulo: boolean
+  usinaId?: string
+}) {
   if (lista.length === 0) {
     return (
       <>
@@ -419,6 +451,8 @@ function SecaoProtecao({ lista, comTitulo }: { lista: ReleProtecao[]; comTitulo:
             <Text style={estilos.medido}>proteções: {r.funcoes.join(', ')}</Text>
           ) : null}
           {r.medido_em ? <Text style={estilos.medido}>medido às {hora(r.medido_em)}</Text> : null}
+
+          <DetalheProtecao releId={r.id} usinaId={usinaId} />
         </Card>
       ))}
     </>
@@ -553,7 +587,212 @@ function Fantasma() {
   )
 }
 
+
+/**
+ * O detalhe do relé de temperatura: a curva do dia e a máxima de cada dia do intervalo.
+ *
+ * Fica fechado por padrão. Numa usina com seis trafos, seis gráficos abertos de uma vez
+ * transformariam a tela numa rolagem infinita — e o caso comum é olhar a lista, não
+ * mergulhar em cada aparelho.
+ *
+ * As duas perguntas são diferentes e por isso são dois modos: "como foi hoje" é a curva
+ * de 5 em 5 minutos; "está esquentando com o tempo" é a máxima diária ao longo de dias,
+ * que a curva de um dia não responde.
+ */
+function DetalheTemperatura({ sensorId, usinaId }: { sensorId: string; usinaId?: string }) {
+  const [aberto, setAberto] = useState(false)
+  const [modo, setModo] = useState(0)
+  const [dia, setDia] = useState(hojeIso())
+  const [janela, setJanela] = useState(7)
+
+  const curva = useCurvaTemperatura(usinaId, sensorId, dia, aberto && modo === 0)
+  const maximas = useMaximas(usinaId, sensorId, janela, aberto && modo === 1)
+
+  if (!aberto) {
+    return (
+      <Text style={estilos.abrir} onPress={() => setAberto(true)}>
+        ver gráfico e máximas
+      </Text>
+    )
+  }
+
+  return (
+    <View style={estilos.detalhe}>
+      <Segmentado opcoes={['Hoje', 'Máximas']} ativo={modo} onEscolher={setModo} />
+
+      {modo === 0 ? (
+        <>
+          <View style={estilos.detalheSeletor}>
+            <SeletorPeriodo valor={dia} recorte="dia" onEscolher={setDia} />
+          </View>
+          {curva.carregando && !curva.dados ? (
+            <Esqueleto altura={150} />
+          ) : curva.erro || !curva.dados || curva.dados.series.length === 0 ? (
+            <Text style={tipo.fraco}>
+              {curva.erro ?? curva.dados?.aviso ?? 'Sem leitura deste sensor neste dia.'}
+            </Text>
+          ) : (
+            <GraficoSeries
+              horas={curva.dados.horas}
+              series={curva.dados.series}
+              unidade="°C"
+              casas={1}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <View style={estilos.detalheSeletor}>
+            <Segmentado
+              opcoes={['7 dias', '15 dias', '30 dias']}
+              ativo={janela === 7 ? 0 : janela === 15 ? 1 : 2}
+              onEscolher={(i) => setJanela([7, 15, 30][i])}
+            />
+          </View>
+          {maximas.carregando && !maximas.dados ? (
+            <Esqueleto altura={150} />
+          ) : maximas.erro || !maximas.dados || maximas.dados.dias.length === 0 ? (
+            <Text style={tipo.fraco}>
+              {maximas.erro ?? maximas.dados?.aviso ?? 'Sem leitura deste sensor no intervalo.'}
+            </Text>
+          ) : (
+            <>
+              {maximas.dados.pico !== null ? (
+                <Text style={tipo.fraco}>
+                  pico de <Num style={estilos.picoNum}>{numero(maximas.dados.pico, 1)}°</Num> em{' '}
+                  {(maximas.dados.pico_em ?? '').slice(8, 10)}/
+                  {(maximas.dados.pico_em ?? '').slice(5, 7)}
+                </Text>
+              ) : null}
+              {/*
+               * Dia sem leitura vem com `maxima` nula e é DESCARTADO do gráfico, não
+               * desenhado como barra rasteira — uma barra no chão diria que a bobina
+               * esfriou, quando o que houve foi o monitoramento não medir.
+               */}
+              <GraficoBarras
+                pontos={maximas.dados.dias
+                  .filter((d) => d.maxima !== null)
+                  .map((d) => ({ chave: d.dia, rotulo: d.dia.slice(8, 10), kwh: d.maxima as number }))}
+                unidade="°C"
+                casas={1}
+              />
+              {maximas.dados.dias.some((d) => d.maxima === null) ? (
+                <Text style={tipo.fraco}>
+                  {maximas.dados.dias.filter((d) => d.maxima === null).length} dia(s) sem leitura
+                  não aparecem no gráfico.
+                </Text>
+              ) : null}
+            </>
+          )}
+        </>
+      )}
+
+      <Text style={estilos.abrir} onPress={() => setAberto(false)}>
+        fechar
+      </Text>
+    </View>
+  )
+}
+
+/**
+ * O detalhe do relé de proteção: as três fases ao longo do dia e o histórico de flags.
+ *
+ * A grandeza é escolhida porque as três respondem perguntas diferentes: tensão mostra
+ * afundamento da rede, corrente mostra desequilíbrio de carga, potência mostra o que o
+ * trafo entregou. Sobrepor todas num eixo só não compararia nada — as ordens de grandeza
+ * são incompatíveis.
+ */
+function DetalheProtecao({ releId, usinaId }: { releId: string; usinaId?: string }) {
+  const [aberto, setAberto] = useState(false)
+  const [modo, setModo] = useState(0)
+  const [dia, setDia] = useState(hojeIso())
+  const [grandeza, setGrandeza] = useState(0)
+
+  const grandezas = ['tensao', 'corrente', 'potencia'] as const
+  const unidades = ['V', 'A', 'kW']
+
+  const curva = useCurvaProtecao(usinaId, releId, dia, grandezas[grandeza], aberto && modo === 0)
+  const flags = useHistoricoDeFlags(usinaId, releId, aberto && modo === 1)
+
+  if (!aberto) {
+    return (
+      <Text style={estilos.abrir} onPress={() => setAberto(true)}>
+        ver gráfico e histórico
+      </Text>
+    )
+  }
+
+  return (
+    <View style={estilos.detalhe}>
+      <Segmentado opcoes={['Curvas', 'Histórico']} ativo={modo} onEscolher={setModo} />
+
+      {modo === 0 ? (
+        <>
+          <View style={estilos.detalheSeletor}>
+            <Segmentado
+              opcoes={['Tensão', 'Corrente', 'Potência']}
+              ativo={grandeza}
+              onEscolher={setGrandeza}
+            />
+          </View>
+          <View style={estilos.detalheSeletor}>
+            <SeletorPeriodo valor={dia} recorte="dia" onEscolher={setDia} />
+          </View>
+          {curva.carregando && !curva.dados ? (
+            <Esqueleto altura={150} />
+          ) : curva.erro || !curva.dados || curva.dados.series.length === 0 ? (
+            <Text style={tipo.fraco}>
+              {curva.erro ?? curva.dados?.aviso ?? 'Sem leitura deste relé neste dia.'}
+            </Text>
+          ) : (
+            <GraficoSeries
+              horas={curva.dados.horas}
+              series={curva.dados.series}
+              unidade={unidades[grandeza]}
+              casas={grandeza === 1 ? 2 : 1}
+            />
+          )}
+        </>
+      ) : flags.carregando && !flags.dados ? (
+        <Esqueleto altura={120} />
+      ) : flags.erro || !flags.dados || flags.dados.eventos.length === 0 ? (
+        <Text style={tipo.fraco}>
+          {flags.erro ?? flags.dados?.aviso ?? 'Este relé não tem histórico de flags.'}
+        </Text>
+      ) : (
+        <View style={estilos.eventos}>
+          {flags.dados.eventos.map((e, i) => (
+            <View key={`${e.quando ?? ''}-${e.codigo ?? ''}-${i}`} style={estilos.evento}>
+              <Text style={estilos.eventoQuando}>
+                {e.quando ? `${dataHora(e.quando)}` : '—'}
+              </Text>
+              <Text style={estilos.eventoTexto} numberOfLines={2}>
+                {[e.codigo, e.evento].filter(Boolean).join(' · ') || '—'}
+                {e.de || e.para ? ` (${e.de ?? '—'} → ${e.para ?? '—'})` : ''}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <Text style={estilos.abrir} onPress={() => setAberto(false)}>
+        fechar
+      </Text>
+    </View>
+  )
+}
+
 const estilos = StyleSheet.create({
+  abrir: { fontFamily: fontes.ui, fontSize: 12, color: cores.ambar, marginTop: espaco.xs },
+  detalhe: { marginTop: espaco.sm, gap: espaco.xs },
+  detalheSeletor: { marginTop: espaco.xs },
+  picoNum: { fontSize: 12, color: cores.textoForte },
+
+  eventos: { gap: espaco.xs, marginTop: espaco.xs },
+  evento: { flexDirection: 'row', gap: espaco.xs, alignItems: 'flex-start' },
+  eventoQuando: { fontFamily: fontes.mono, fontSize: 11, color: cores.textoRotulo, width: 78 },
+  eventoTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoCorpo, flex: 1 },
+
   tituloSecao: {
     fontFamily: fontes.ui,
     fontSize: 13,

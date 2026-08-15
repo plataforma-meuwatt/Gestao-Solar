@@ -16,7 +16,7 @@ comunicação com `potencia_kw = 0` se lê como "está lá, parado, sem gerar"; 
 """
 
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -890,4 +890,437 @@ async def comparativo_da_usina(
     # capacidade não há comparação, e fingir desvio zero o esconderia no meio da lista.
     linhas.sort(key=lambda linha: (linha.desvio_pct is None, linha.desvio_pct or 0))
     saida.inversores = linhas
+    return saida
+
+
+# ── Curvas dos relés e histórico de flags ───────────────────────────────────
+#
+# Três rotas, todas com a mesma forma: a série do dia escolhido, vinda dos
+# `charts/intraday/*` do meuWatt, mais o que só faz sentido em cada aparelho —
+# a máxima no relé de temperatura, as flags no de proteção.
+#
+# `serie` é sempre `list[float | None]` alinhada a `horas`: bucket em que o
+# aparelho não mediu vira `None` na posição, e a linha do gráfico se interrompe
+# ali. Encolher a lista tiraria o alinhamento com o eixo; preencher com zero
+# diria que a bobina esfriou de repente.
+
+
+class SerieOut(BaseModel):
+    rotulo: str
+    #: Alinhada a `horas`; `None` = sem leitura naquele bucket.
+    valores: list[float | None] = []
+
+
+class CurvaEquipamentoOut(BaseModel):
+    dia: str
+    horas: list[str] = []
+    series: list[SerieOut] = []
+    aviso: str | None = None
+
+
+def _serie_alinhada(
+    pontos: list[dict[str, Any]], horas: list[str], campo: str
+) -> list[float | None]:
+    """Extrai um campo dos pontos e alinha ao eixo de horas."""
+    por_hora = {
+        str(p.get("time")): _numero(p.get(campo))
+        for p in pontos
+        if isinstance(p, dict) and p.get("time")
+    }
+    return [por_hora.get(h) for h in horas]
+
+
+@router.get(
+    "/plants/{plant_link_id}/reles/temperatura/{sensor_id}/curva",
+    response_model=CurvaEquipamentoOut,
+)
+async def curva_do_rele_de_temperatura(
+    plant_link_id: int,
+    sensor_id: str,
+    dia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> CurvaEquipamentoOut:
+    """Temperatura das bobinas e do ambiente ao longo do dia escolhido."""
+    from app.api.v1.plants import _referencia_pedida  # noqa: PLC0415
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    alvo = _referencia_pedida(dia)
+    saida = CurvaEquipamentoOut(dia=alvo.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        bruto = await cliente.intraday_temperatura(link.mw_plant_slug, alvo)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    sensores = bruto.get("sensors") if isinstance(bruto, dict) else None
+    alvo_sensor = next(
+        (s for s in sensores or [] if isinstance(s, dict) and str(s.get("id")) == sensor_id),
+        None,
+    )
+    if alvo_sensor is None:
+        saida.aviso = "O monitoramento não devolveu leitura deste sensor neste dia."
+        return saida
+
+    pontos = [p for p in (alvo_sensor.get("points") or []) if isinstance(p, dict)]
+    saida.horas = [str(p["time"]) for p in pontos if p.get("time")]
+    if not saida.horas:
+        saida.aviso = "O monitoramento não devolveu leitura deste sensor neste dia."
+        return saida
+
+    for campo, rotulo in (
+        ("temp_s1", "Bobina 1"),
+        ("temp_s2", "Bobina 2"),
+        ("temp_s3", "Bobina 3"),
+        ("temp_ambient", "Ambiente"),
+    ):
+        valores = _serie_alinhada(pontos, saida.horas, campo)
+        # Sensor de três bobinas numa usina que só tem duas devolve S3 nulo o dia
+        # inteiro. Publicar a série vazia criaria uma legenda para uma linha que não
+        # existe — e o dono procuraria o defeito numa bobina que não está instalada.
+        if any(v is not None for v in valores):
+            saida.series.append(SerieOut(rotulo=rotulo, valores=valores))
+
+    return saida
+
+
+class MaximaDoDiaOut(BaseModel):
+    dia: str
+    #: Maior temperatura entre as bobinas naquele dia. `None` = sem leitura no dia.
+    maxima: float | None = None
+
+
+class MaximasOut(BaseModel):
+    inicio: str
+    fim: str
+    dias: list[MaximaDoDiaOut] = []
+    #: A maior de todas no intervalo, e em que dia ela aconteceu.
+    pico: float | None = None
+    pico_em: str | None = None
+    aviso: str | None = None
+
+
+@router.get(
+    "/plants/{plant_link_id}/reles/temperatura/{sensor_id}/maximas",
+    response_model=MaximasOut,
+)
+async def maximas_do_rele_de_temperatura(
+    plant_link_id: int,
+    sensor_id: str,
+    dias: int = 7,
+    ate: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> MaximasOut:
+    """A temperatura mais alta de cada dia, num intervalo escolhido.
+
+    Uma chamada de intraday por dia. O teto de 31 é o que segura a conta: cada dia é
+    uma viagem ao meuWatt, e um pedido de "último ano" viraria 365 chamadas em série
+    numa tela de celular.
+    """
+    from app.api.v1.plants import _referencia_pedida  # noqa: PLC0415
+
+    if dias < 1 or dias > 31:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "dias deve estar entre 1 e 31.")
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    fim = _referencia_pedida(ate)
+    inicio = fim - timedelta(days=dias - 1)
+    saida = MaximasOut(inicio=inicio.isoformat(), fim=fim.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        # Em paralelo: 31 dias em série seriam 31 latências somadas.
+        respostas = await asyncio.gather(
+            *[
+                cliente.intraday_temperatura(link.mw_plant_slug, inicio + timedelta(days=i))
+                for i in range(dias)
+            ],
+            return_exceptions=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    for i, resposta in enumerate(respostas):
+        d = inicio + timedelta(days=i)
+        maxima: float | None = None
+        if isinstance(resposta, dict):
+            sensores = resposta.get("sensors") or []
+            alvo_sensor = next(
+                (s for s in sensores if isinstance(s, dict) and str(s.get("id")) == sensor_id),
+                None,
+            )
+            for p in (alvo_sensor or {}).get("points") or []:
+                if not isinstance(p, dict):
+                    continue
+                for campo in ("temp_s1", "temp_s2", "temp_s3"):
+                    v = _numero(p.get(campo))
+                    if v is not None and (maxima is None or v > maxima):
+                        maxima = v
+        # Dia sem leitura entra com `None`, e não some da lista: a falha de um dia é
+        # informação, e omiti-lo faria o eixo mentir sobre o intervalo pedido.
+        saida.dias.append(MaximaDoDiaOut(dia=d.isoformat(), maxima=maxima))
+
+    com_leitura = [d for d in saida.dias if d.maxima is not None]
+    if com_leitura:
+        melhor = max(com_leitura, key=lambda d: d.maxima or 0)
+        saida.pico, saida.pico_em = melhor.maxima, melhor.dia
+    else:
+        saida.aviso = "Nenhum dia do intervalo tem leitura deste sensor."
+    return saida
+
+
+@router.get(
+    "/plants/{plant_link_id}/reles/protecao/{rele_id}/curva",
+    response_model=CurvaEquipamentoOut,
+)
+async def curva_do_rele_de_protecao(
+    plant_link_id: int,
+    rele_id: str,
+    dia: str | None = None,
+    grandeza: str = "tensao",
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> CurvaEquipamentoOut:
+    """Tensão, corrente ou potência das três fases ao longo do dia."""
+    from app.api.v1.plants import _referencia_pedida  # noqa: PLC0415
+
+    campos = {
+        "tensao": (("voltage_a", "Fase A"), ("voltage_b", "Fase B"), ("voltage_c", "Fase C")),
+        "corrente": (("current_a", "Fase A"), ("current_b", "Fase B"), ("current_c", "Fase C")),
+        "potencia": (
+            ("active_power_a", "Fase A"),
+            ("active_power_b", "Fase B"),
+            ("active_power_c", "Fase C"),
+            ("total_active_power", "Total"),
+        ),
+    }
+    if grandeza not in campos:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "grandeza deve ser 'tensao', 'corrente' ou 'potencia'."
+        )
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    alvo = _referencia_pedida(dia)
+    saida = CurvaEquipamentoOut(dia=alvo.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        bruto = await cliente.intraday_rele(link.mw_plant_slug, alvo)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    reles = bruto.get("relays") if isinstance(bruto, dict) else None
+    # O app conhece o relé como `relay-{id}` (é assim que o monitoring publica); a série
+    # intraday o identifica pelo id cru. Aceitar as duas formas evita obrigar a tela a
+    # saber dessa diferença.
+    cru = rele_id.removeprefix("relay-")
+    alvo_rele = next(
+        (
+            r
+            for r in reles or []
+            if isinstance(r, dict) and str(r.get("id")) in (rele_id, cru)
+        ),
+        None,
+    )
+    if alvo_rele is None:
+        saida.aviso = "O monitoramento não devolveu leitura deste relé neste dia."
+        return saida
+
+    pontos = [p for p in (alvo_rele.get("points") or []) if isinstance(p, dict)]
+    saida.horas = [str(p["time"]) for p in pontos if p.get("time")]
+    if not saida.horas:
+        saida.aviso = "O monitoramento não devolveu leitura deste relé neste dia."
+        return saida
+
+    for campo, rotulo in campos[grandeza]:
+        valores = _serie_alinhada(pontos, saida.horas, campo)
+        if any(v is not None for v in valores):
+            saida.series.append(SerieOut(rotulo=rotulo, valores=valores))
+
+    return saida
+
+
+class EventoDeTripOut(BaseModel):
+    quando: datetime | None = None
+    codigo: str | None = None
+    evento: str | None = None
+    de: str | None = None
+    para: str | None = None
+
+
+class HistoricoDeFlagsOut(BaseModel):
+    rele: str | None = None
+    eventos: list[EventoDeTripOut] = []
+    aviso: str | None = None
+
+
+@router.get(
+    "/plants/{plant_link_id}/reles/protecao/{rele_id}/flags",
+    response_model=HistoricoDeFlagsOut,
+)
+async def historico_de_flags(
+    plant_link_id: int,
+    rele_id: str,
+    limite: int = 50,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> HistoricoDeFlagsOut:
+    """Histórico de flags do relé, mais recente primeiro."""
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    saida = HistoricoDeFlagsOut()
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    # A rota do upstream exige o id NUMÉRICO; o app carrega `relay-{id}`.
+    cru = rele_id.removeprefix("relay-")
+    if not cru.isdigit():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Identificador de relé inválido.")
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        bruto = await cliente.eventos_de_trip(link.mw_plant_slug, int(cru), max(1, min(limite, 200)))
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    if not isinstance(bruto, dict):
+        saida.aviso = "Histórico de flags indisponível."
+        return saida
+
+    saida.rele = _texto(bruto.get("relay_name"))
+    for e in bruto.get("events") or []:
+        if not isinstance(e, dict):
+            continue
+        saida.eventos.append(
+            EventoDeTripOut(
+                quando=_instante(e.get("timestamp")),
+                codigo=_texto(e.get("trip_code")),
+                evento=_texto(e.get("event")),
+                de=_texto(e.get("previous_value")),
+                para=_texto(e.get("current_value")),
+            )
+        )
+
+    if not saida.eventos:
+        saida.aviso = "Este relé não tem histórico de flags registrado."
+    return saida
+
+
+# ── Corrente por string ─────────────────────────────────────────────────────
+
+
+@router.get(
+    "/plants/{plant_link_id}/equipamentos/{equipamento_id}/strings",
+    response_model=CurvaEquipamentoOut,
+)
+async def curva_das_strings(
+    plant_link_id: int,
+    equipamento_id: str,
+    dia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> CurvaEquipamentoOut:
+    """Corrente de cada string do inversor ao longo do dia.
+
+    O eixo é o mesmo para todas as strings, o que é justamente a graça: string com
+    problema descola das irmãs na mesma hora do dia, e isso só se vê sobrepondo.
+    """
+    from app.api.v1.plants import _referencia_pedida  # noqa: PLC0415
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    alvo = _referencia_pedida(dia)
+    saida = CurvaEquipamentoOut(dia=alvo.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        # O serial é o que identifica o inversor na série intraday; o app carrega o
+        # `slot-N`. A tradução exige o estado de agora, então as duas vão juntas.
+        agora_resp, bruto = await asyncio.gather(
+            cliente.monitoramento_atual(link.mw_plant_slug),
+            cliente.intraday_strings(link.mw_plant_slug, alvo),
+            return_exceptions=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    if not isinstance(agora_resp, dict) or not isinstance(bruto, dict):
+        saida.aviso = "Não foi possível ler as strings agora."
+        return saida
+
+    inv = next(
+        (
+            i
+            for i in agora_resp.get("inverters") or []
+            if isinstance(i, dict) and str(i.get("id")) == equipamento_id
+        ),
+        None,
+    )
+    serial = str(inv.get("serial_number")) if inv and inv.get("serial_number") else None
+    if not serial:
+        saida.aviso = "Este inversor não tem número de série no monitoramento."
+        return saida
+
+    # `points[].inverters[]` → `{hora: [correntes]}` só deste inversor.
+    horas: list[str] = []
+    por_hora: dict[str, list[float | None]] = {}
+    largura = 0
+    for p in bruto.get("points") or []:
+        if not isinstance(p, dict) or not p.get("time"):
+            continue
+        alvo_inv = next(
+            (
+                i
+                for i in p.get("inverters") or []
+                if isinstance(i, dict) and str(i.get("serial_number")) == serial
+            ),
+            None,
+        )
+        if alvo_inv is None:
+            continue
+        correntes = [_numero(c) for c in (alvo_inv.get("strings") or [])]
+        if not correntes:
+            continue
+        hora = str(p["time"])
+        horas.append(hora)
+        por_hora[hora] = correntes
+        largura = max(largura, len(correntes))
+
+    if not horas:
+        saida.aviso = "O monitoramento não devolveu corrente de string deste inversor neste dia."
+        return saida
+
+    saida.horas = horas
+    for indice in range(largura):
+        valores = [
+            (por_hora[h][indice] if indice < len(por_hora[h]) else None) for h in horas
+        ]
+        # String que não mediu o dia inteiro não vira legenda: o inversor publica a
+        # lista no tamanho do modelo, e entradas não usadas chegam nulas sempre.
+        if any(v is not None for v in valores):
+            saida.series.append(SerieOut(rotulo=f"PV{indice + 1}", valores=valores))
+
     return saida
