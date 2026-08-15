@@ -301,13 +301,15 @@ def test_amanhecendo_com_pouca_geracao_tambem_nao_alarma():
     )
 
 
-def test_disponibilidade_zero_com_sol_nao_e_vermelho():
-    """O zero fabricado não pode virar faixa de problema na tela inicial.
+def test_disponibilidade_zero_com_lastro_e_ambar_e_nunca_vermelha():
+    """Quando o zero é REAL — houve expectativa e a usina não entregou —, âmbar é o teto.
 
-    A régua da fonte da verdade (`plantStatusOf`, mw-fe) nunca consulta disponibilidade
-    para o vermelho: ele sai de `down || status === 'fault'`. O critério
-    `disponibilidade < 50 -> parado` era invenção deste lado, e acendia sobre usina
-    saudável todo amanhecer.
+    O vermelho é para fato (inversor parado); média fica em âmbar. A régua da fonte da
+    verdade (`plantStatusOf`, mw-fe) nem consulta disponibilidade para o vermelho.
+
+    O zero SEM lastro nem chega aqui: `_disponibilidade_com_base` o anula antes, e quem
+    prova isso é `tests/test_dados_meuwatt.py`, que roda o payload real do upstream em vez
+    de montar o valor à mão como este teste faz.
     """
     tom, _ = _tom(_usina(potencia_kw=10.0, disponibilidade_pct=0.0))
 
@@ -675,23 +677,20 @@ def test_detalhe_de_usina_alheia_responde_404(cliente_http, db, dono, usinas):
     assert cliente.get(f"/api/v1/plants/{b.id}").status_code == 404
 
 
-def test_disponibilidade_de_usina_muda_e_nula_e_nao_cem():
-    """O 100% fabricado pelo denominador vazio.
+def test_usina_muda_e_sem_comunicacao_no_tom():
+    """A régua de cor, com o campo já resolvido.
 
-    O mw-api calcula `avail = soma_ponderada / peso if peso > 0 else 100.0`, e o laço pula
-    inversor que não está comunicando. Com a usina inteira muda, o peso fica zero e o
-    campo sai **100.0** — a tela mostraria "energia hoje 0 kWh · disponibilidade 100%",
-    que é uma contradição apresentada com a maior tranquilidade possível.
+    A versão anterior deste teste construía `disponibilidade_pct=None` à mão e depois
+    afirmava que era `None` — tautologia. Quem decide anular é `_dados_meuwatt`, e é
+    `tests/test_dados_meuwatt.py` que exercita essa decisão com o payload real. Aqui se
+    verifica só o que cabe aqui: dado o campo, qual cor sai.
     """
-    from app.api.v1.plants import _tom
-
-    muda = _usina(potencia_kw=0.0, disponibilidade_pct=None, sem_comunicacao=True)
-
-    tom, situacao = _tom(muda)
+    tom, situacao = _tom(
+        _usina(potencia_kw=0.0, disponibilidade_pct=None, sem_comunicacao=True)
+    )
 
     assert tom == "semDados"
     assert situacao == "Sem comunicação"
-    assert muda.disponibilidade_pct is None, "100% com ninguém falando é número fabricado"
 
 
 def test_capacidade_nao_cai_para_a_soma_que_encolhe():

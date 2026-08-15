@@ -187,10 +187,28 @@ def _modelos_por_serial(diario: Any) -> dict[str, str]:
 
 
 def _energia_por_serial(diario: Any) -> dict[str, float]:
+    """Energia do dia por inversor, pulando quem não mediu.
+
+    `build_daily_report` sintetiza `daily_yield_kwh = 0.0` para o slot que ainda não
+    reportou ou que está sem comunicação, e marca a linha com `is_communicating: False` /
+    `diagnosis` justamente para o front distinguir. Repassar esse zero produzia o card
+    mais contraditório do aplicativo: potência em travessão — porque ali a mudez É
+    respeitada — e, na linha de baixo, "hoje 0,0 kWh". O app admitia não saber a potência
+    e afirmava a energia, sobre o mesmo aparelho, no mesmo cartão.
+
+    É a disciplina que já existe um nível acima (`_potencia_da_usina`, `sem_comunicacao`)
+    descendo para o inversor.
+    """
     if not isinstance(diario, dict):
         return {}
+
     saida: dict[str, float] = {}
     for i in diario.get("inverters") or []:
+        if not isinstance(i, dict) or i.get("is_communicating") is False:
+            continue
+        diagnostico = str(i.get("diagnosis") or "").strip().upper()
+        if diagnostico in {"NO_COMMUNICATION", "NO_REPORT"}:
+            continue
         serie = i.get("sn") or i.get("serial_number")
         valor = _numero(i.get("daily_yield_kwh"))
         if serie and valor is not None:

@@ -210,6 +210,46 @@ MUDO = "communication_error"
 DORMINDO = "bedtime"
 
 
+def _disponibilidade_com_base(diario: Any) -> float | None:
+    """A disponibilidade do dia, ou nulo quando o número não tem lastro.
+
+    O mw-api produz DOIS valores sem base, e nenhum deles é erro dele — são consequências
+    de um denominador vazio, lidas fora de contexto:
+
+    - **0.0 ao amanhecer.** `build_daily_report` sintetiza uma linha por slot que ainda não
+      reportou hoje, com `daily_yield_kwh = 0.0` e `expected_yield_kwh` ausente. No cálculo
+      isso cai em `avail = 100.0 if measured > 0 else 0.0` → **zero**, com o peso cheio da
+      capacidade. Até o primeiro envio do dia, toda usina saudável pontua zero.
+    - **100.0 sem ninguém medindo.** Linhas com `is_communicating: False` são puladas do
+      denominador; se forem todas, `avail_weight_total` fica zero e o campo sai `100.0`.
+
+    A condição de lastro é a mesma que o upstream usa para somar: existir ao menos um
+    inversor **comunicando** e com **expectativa** de geração. Sem isso, nulo — e a tela
+    simplesmente não desenha a linha, em vez de imprimir 0% ou 100% como fato.
+
+    A guarda anterior olhava se a lista estava vazia. Ao amanhecer ela não está: está
+    cheia de linhas sintetizadas. Foi por isso que a correção anterior não corrigiu.
+    """
+    if not isinstance(diario, dict):
+        return None
+
+    inversores = diario.get("inverters")
+    if not isinstance(inversores, list) or not inversores:
+        return None
+
+    com_lastro = [
+        i
+        for i in inversores
+        if isinstance(i, dict)
+        and i.get("is_communicating") is not False
+        and (_numero(i.get("expected_yield_kwh")) or 0) > 0
+    ]
+    if not com_lastro:
+        return None
+
+    return _numero(diario.get("plant_availability_pct"))
+
+
 def _numero_inteiro(total: Any, lista: Any) -> int | None:
     """O `total` do envelope, com a lista como segunda opinião."""
     if isinstance(total, int):
@@ -409,16 +449,8 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # fabricado** — a usina muda apareceria como "disponibilidade 100%" ao lado de
         # "energia hoje 0 kWh". O número não é do upstream mentindo: é o denominador
         # vazio. Aqui ele vira nulo, que é o que de fato se sabe.
-        # O upstream devolve 100.0 quando o peso total é zero — isto é, quando não há
-        # linha de inversor nenhuma no dia — e 0.0 quando as linhas existem mas foram
-        # sintetizadas sem rendimento. Nos dois casos o número não tem base, e nulo é a
-        # resposta honesta.
-        inversores_no_dia = diario.get("inverters")
-        sem_base = saida.get("sem_comunicacao") or not (
-            isinstance(inversores_no_dia, list) and inversores_no_dia
-        )
         saida["disponibilidade_pct"] = (
-            None if sem_base else _numero(diario.get("plant_availability_pct"))
+            None if saida.get("sem_comunicacao") else _disponibilidade_com_base(diario)
         )
         saida["capacidade_kwp"] = _capacidade_declarada(diario)
     except Exception as exc:  # noqa: BLE001

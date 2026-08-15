@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.v1.plants import usinas_do_usuario
 from app.core.db import get_db
 from app.core.security import (
     conferir_senha,
@@ -69,11 +70,12 @@ def _perfil(db: Session, usuario: User) -> UsuarioOut:
             select(VinculoProduto).where(VinculoProduto.gs_user_id == usuario.id)
         ).all()
     }
-    usinas = len(
-        db.scalars(
-            select(UserPlantAccess).where(UserPlantAccess.user_id == usuario.id)
-        ).all()
-    )
+    # A MESMA contagem que a aba Usinas faz. Sem o filtro de `PlantLink.ativo`, o Perfil
+    # dizia "Usinas 4" e a lista mostrava 3: desligar uma usina no painel preserva a
+    # concessão de propósito (para religar sem refazer nada), então a concessão continua
+    # existindo enquanto a usina some do aplicativo. Contar as duas coisas com réguas
+    # diferentes fazia o app se contradizer sobre um número que o dono confere de relance.
+    usinas = len(usinas_do_usuario(db, usuario))
     return UsuarioOut(
         id=usuario.id,
         nome=usuario.nome,
