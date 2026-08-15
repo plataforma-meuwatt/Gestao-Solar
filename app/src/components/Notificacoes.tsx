@@ -29,6 +29,16 @@ export function Notificacoes() {
   const { dados, carregando } = usePermissoes()
   const [sistema, setSistema] = useState<EstadoDoSistema | null>(null)
   const [pedindo, setPedindo] = useState(false)
+  /*
+   * `null` = ainda não tentamos registrar; `false` = tentamos e não deu.
+   *
+   * Este terceiro estado existe porque as duas permissões podem estar concedidas e o
+   * aparelho AINDA não receber: sem a credencial do Firebase no projeto, ou em
+   * emulador, o `getExpoPushTokenAsync` falha. Sem distinguir, o card diria "Ativo"
+   * sobre um aparelho que não está registrado em lugar nenhum — o pior tipo de
+   * mentira, porque some a única pista de que algo falta.
+   */
+  const [registrado, setRegistrado] = useState<boolean | null>(null)
 
   const concedidaPeloGestor = temPermissao(dados, PERMISSAO_USINA_PARADA)
 
@@ -50,19 +60,30 @@ export function Notificacoes() {
    * dono pararia de receber sem nada na tela indicar por quê.
    */
   useEffect(() => {
-    if (sistema === 'concedida' && concedidaPeloGestor) void registrarAparelho()
+    if (sistema !== 'concedida' || !concedidaPeloGestor) return
+    let vivo = true
+    void registrarAparelho().then((token) => {
+      if (vivo) setRegistrado(token !== null)
+    })
+    return () => {
+      vivo = false
+    }
   }, [sistema, concedidaPeloGestor])
 
   const pedir = useCallback(async () => {
     setPedindo(true)
     try {
-      setSistema(await pedirERegistrar())
+      const estado = await pedirERegistrar()
+      setSistema(estado)
+      // Força nova tentativa de registro: o efeito acima só dispara se as duas
+      // permissões mudarem, e aqui só o sistema mudou.
+      if (estado === 'concedida') setRegistrado(await registrarAparelho().then((t) => t !== null))
     } finally {
       setPedindo(false)
     }
   }, [])
 
-  const ativo = sistema === 'concedida' && concedidaPeloGestor
+  const ativo = sistema === 'concedida' && concedidaPeloGestor && registrado === true
 
   return (
     <Card>
@@ -120,6 +141,19 @@ export function Notificacoes() {
                 onPress={() => void Linking.openSettings()}
               />
             </View>
+          ) : null}
+
+          {sistema === 'concedida' && concedidaPeloGestor ? (
+            <Item
+              titulo="Aparelho registrado"
+              descricao="Este celular está na lista de quem recebe."
+              liberado={registrado === true}
+              pendente={
+                registrado === null
+                  ? 'Registrando…'
+                  : 'Não foi possível registrar este aparelho. Ele não vai receber avisos.'
+              }
+            />
           ) : null}
 
           {ativo ? (
