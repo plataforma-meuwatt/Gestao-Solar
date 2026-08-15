@@ -18,7 +18,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native'
-import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
+import Svg, { Circle, Defs, Line, Path, RadialGradient, Rect, Stop } from 'react-native-svg'
 
 import {
   ambarAlpha,
@@ -507,6 +507,11 @@ const estilos = StyleSheet.create({
   grafLeituraTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoForte },
   grafLeituraVazia: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco },
 
+  grafEixoLinha: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  grafToque: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
+  grafLegenda: { flexDirection: 'row', gap: espaco.md, marginTop: 2 },
+  grafLegendaItem: { fontFamily: fontes.ui, fontSize: 10, color: cores.textoFraco },
+
   halo: { position: 'absolute', left: '50%', top: -200, marginLeft: -280 },
 
   num: { fontFamily: fontes.mono, fontSize: 13, color: cores.textoCorpo },
@@ -811,6 +816,148 @@ export function GraficoBarras({
           </View>
         ))}
       </View>
+    </View>
+  )
+}
+
+/**
+ * Curva do dia — potência e, quando a usina tem estação, irradiação junto.
+ *
+ * As duas grandezas têm unidades e ordens de grandeza diferentes (kW e W/m²), então cada
+ * uma tem a sua escala vertical. Sobrepô-las na mesma escala não compara nada: a irradiação
+ * some contra uma usina de 3 MW, ou a potência some contra 1200 W/m².
+ *
+ * O que a sobreposição mostra — e é o motivo de existir — é o DESCOLAMENTO. Sol firme com
+ * potência caindo é inversor com problema; as duas caindo juntas é nuvem. Uma curva sozinha
+ * não distingue os dois casos.
+ *
+ * Não há eixo Y desenhado de propósito: o número exato vem do toque, e dois eixos numéricos
+ * numa tela de celular gastam largura sem responder pergunta nenhuma.
+ */
+export function GraficoLinha({
+  pontos,
+  altura = 150,
+}: {
+  pontos: { hora: string; kw: number; poa?: number | null }[]
+  altura?: number
+}) {
+  const [largura, setLargura] = useState(0)
+  const [marcado, setMarcado] = useState<number | null>(null)
+
+  if (pontos.length < 2) return null
+
+  const kws = pontos.map((p) => p.kw)
+  const poas = pontos.map((p) => p.poa).filter((v): v is number => typeof v === 'number')
+  const temPoa = poas.length > 0
+
+  // Escalas partem do zero: uma curva de potência que começasse no mínimo do dia
+  // exageraria variações pequenas e faria manhã tranquila parecer despencada.
+  const kwMax = Math.max(...kws, 0.001)
+  const poaMax = temPoa ? Math.max(...poas, 0.001) : 1
+
+  const x = (i: number) => (i / (pontos.length - 1)) * largura
+  const yKw = (v: number) => altura - (v / kwMax) * altura
+  const yPoa = (v: number) => altura - (v / poaMax) * altura
+
+  const caminho = (valor: (p: (typeof pontos)[number]) => number | null | undefined,
+                   escala: (v: number) => number) => {
+    let d = ''
+    let aberto = false
+    pontos.forEach((p, i) => {
+      const v = valor(p)
+      if (typeof v !== 'number') {
+        // Lacuna: a linha para e recomeça. Ligar os dois lados desenharia uma
+        // reta atravessando o buraco, que é interpolação inventada.
+        aberto = false
+        return
+      }
+      d += `${aberto ? 'L' : 'M'}${x(i).toFixed(1)} ${escala(v).toFixed(1)} `
+      aberto = true
+    })
+    return d.trim()
+  }
+
+  const lido = marcado !== null ? pontos[marcado] : null
+
+  return (
+    <View>
+      <View style={estilos.grafLeitura}>
+        {lido ? (
+          <Text style={estilos.grafLeituraTexto}>
+            {lido.hora} · <Num>{lido.kw.toFixed(1)}</Num> kW
+            {typeof lido.poa === 'number' ? (
+              <>
+                {'  ·  '}
+                <Num>{lido.poa.toFixed(0)}</Num> W/m²
+              </>
+            ) : null}
+          </Text>
+        ) : (
+          <Text style={estilos.grafLeituraVazia}>toque na curva para ver o valor</Text>
+        )}
+      </View>
+
+      <View
+        style={{ height: altura }}
+        onLayout={(e) => setLargura(e.nativeEvent.layout.width)}
+      >
+        {largura > 0 ? (
+          <>
+            <Svg width={largura} height={altura}>
+              {temPoa ? (
+                <Path
+                  d={caminho((p) => p.poa, yPoa)}
+                  stroke={cores.textoFraco}
+                  strokeWidth={1}
+                  strokeDasharray="3 3"
+                  fill="none"
+                />
+              ) : null}
+              <Path d={caminho((p) => p.kw, yKw)} stroke={cores.ambar} strokeWidth={2} fill="none" />
+              {lido ? (
+                <>
+                  <Line
+                    x1={x(marcado as number)}
+                    y1={0}
+                    x2={x(marcado as number)}
+                    y2={altura}
+                    stroke={cores.textoFraco}
+                    strokeWidth={1}
+                  />
+                  <Circle cx={x(marcado as number)} cy={yKw(lido.kw)} r={3} fill={cores.ambar} />
+                </>
+              ) : null}
+            </Svg>
+
+            {/*
+             * O alvo do toque é a faixa inteira, não a linha: acertar um traço de 2 px com
+             * o dedo é impossível. O índice sai da posição horizontal — em série de 5 em 5
+             * minutos, o erro máximo é meio bucket.
+             */}
+            <Pressable
+              style={estilos.grafToque}
+              onPress={(e) => {
+                const razao = e.nativeEvent.locationX / largura
+                const i = Math.round(razao * (pontos.length - 1))
+                const limitado = Math.min(pontos.length - 1, Math.max(0, i))
+                setMarcado((atual) => (atual === limitado ? null : limitado))
+              }}
+            />
+          </>
+        ) : null}
+      </View>
+
+      <View style={estilos.grafEixoLinha}>
+        <Text style={estilos.grafRotulo}>{pontos[0].hora}</Text>
+        <Text style={estilos.grafRotulo}>{pontos[pontos.length - 1].hora}</Text>
+      </View>
+
+      {temPoa ? (
+        <View style={estilos.grafLegenda}>
+          <Text style={estilos.grafLegendaItem}>— potência</Text>
+          <Text style={estilos.grafLegendaItem}>- - irradiação POA</Text>
+        </View>
+      ) : null}
     </View>
   )
 }

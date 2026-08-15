@@ -104,10 +104,46 @@ export function useGeracao(
   id: string | undefined,
   recorte: 'mes' | 'ano',
   ativo: boolean,
+  /** Qualquer dia dentro do período desejado; o BFF deriva o mês ou o ano dela. */
+  referencia?: string,
 ): Leitura<Geracao> {
   // `ativo` desliga a consulta enquanto o recorte não está na tela: abrir a usina
   // não deve disparar três chamadas para o usuário ver uma.
-  return fetchWithCache<Geracao>(`plants/${id ?? ''}/geracao?recorte=${recorte}`, {
+  const ref = referencia ? `&referencia=${referencia}` : ''
+  return fetchWithCache<Geracao>(`plants/${id ?? ''}/geracao?recorte=${recorte}${ref}`, {
+    ativo: Boolean(id) && ativo,
+  })
+}
+
+/**
+ * Curva do dia: potência da usina a cada 5 minutos e, quando há estação, a irradiação
+ * no plano dos módulos.
+ *
+ * `tem_estacao` vem do servidor porque só lá dá para decidir com honestidade: o upstream
+ * devolve `poa: 0` tanto para usina sem sensor quanto para meia-noite, e o app sozinho
+ * desenharia uma linha rasteira que parece medição de um sensor que não existe.
+ */
+export type PontoCurva = {
+  hora: string
+  kw: number
+  poa: number | null
+}
+
+export type CurvaUsina = {
+  dia: string
+  pontos: PontoCurva[]
+  pico_kw: number | null
+  pico_poa: number | null
+  tem_estacao: boolean
+  aviso: string | null
+}
+
+export function useCurva(
+  id: string | undefined,
+  dia: string,
+  ativo: boolean,
+): Leitura<CurvaUsina> {
+  return fetchWithCache<CurvaUsina>(`plants/${id ?? ''}/curva?dia=${dia}`, {
     ativo: Boolean(id) && ativo,
   })
 }

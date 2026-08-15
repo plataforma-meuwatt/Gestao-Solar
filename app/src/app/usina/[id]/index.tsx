@@ -21,28 +21,43 @@ import {
   Card,
   Esqueleto,
   EstadoVazio,
-  GraficoBarras,
   FaixaAtencao,
+  GraficoBarras,
+  GraficoLinha,
   Kpi,
   LinhaNavegacao,
   Num,
   Segmentado,
   StatusChip,
 } from '@/components/base'
+import { hojeIso, SeletorPeriodo, type Recorte } from '@/components/periodo'
 import { Tela } from '@/components/Tela'
-import { useGeracao, useUsina } from '@/features/usinas'
+import { useCurva, useGeracao, useUsina } from '@/features/usinas'
 import { energia, inteiro, numero, porcento, potencia } from '@/lib/format'
 import { cores, espaco, tipo } from '@/theme/tokens'
 
 const RECORTES = ['Dia', 'Mês', 'Ano']
+const CHAVE_RECORTE: Recorte[] = ['dia', 'mes', 'ano']
 
 export default function UsinaDetalhe() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const [recorte, setRecorte] = useState(0)
+  /*
+   * Uma data de referência para os três recortes, e não uma por recorte.
+   *
+   * Quem está olhando 12 de março no Dia e passa para Mês quer março — não o mês
+   * corrente. Guardar separado quebraria exatamente essa continuidade, que é o motivo
+   * de existir o seletor.
+   */
+  const [referencia, setReferencia] = useState(hojeIso())
+  const ehHoje = referencia === hojeIso()
+
   const { dados: u, carregando, erro, offlineDesde, recarregar } = useUsina(id)
-  // `recorte` 1 = Mês, 2 = Ano. Cada hook só dispara quando seu recorte está visível.
-  const mes = useGeracao(id, 'mes', recorte === 1)
-  const ano = useGeracao(id, 'ano', recorte === 2)
+  // Cada hook só dispara quando seu recorte está visível: abrir a usina não deve
+  // disparar três chamadas para o usuário ver uma.
+  const mes = useGeracao(id, 'mes', recorte === 1, referencia)
+  const ano = useGeracao(id, 'ano', recorte === 2, referencia)
+  const curva = useCurva(id, referencia, recorte === 0)
 
   if (carregando || !u) {
     return (
@@ -130,29 +145,48 @@ export default function UsinaDetalhe() {
 
         <Segmentado opcoes={RECORTES} ativo={recorte} onEscolher={setRecorte} />
 
+        <View style={estilos.seletor}>
+          <SeletorPeriodo
+            valor={referencia}
+            recorte={CHAVE_RECORTE[recorte]}
+            onEscolher={setReferencia}
+          />
+        </View>
+
         {recorte === 0 ? (
           <View style={estilos.miolo}>
-            <Text style={tipo.rotuloCard}>Energia hoje</Text>
-            <View style={estilos.espacoKpi}>
-              <Kpi
-                valor={u.energia_hoje_kwh !== null ? energia(u.energia_hoje_kwh) : '—'}
-                tamanho="grande"
-                direita={
-                  u.disponibilidade_pct !== null ? (
-                    <Text style={tipo.legenda}>
-                      disponibilidade{' '}
-                      <Num style={estilos.previsto}>{porcento(u.disponibilidade_pct)}</Num>
-                    </Text>
-                  ) : undefined
-                }
-              />
-            </View>
-            {u.pct_capacidade !== null ? (
-              <Text style={tipo.legenda}>
-                <Num style={estilos.previsto}>{u.pct_capacidade}%</Num> da capacidade
-                instalada neste momento
-              </Text>
+            {/*
+             * `monitoring/current` responde pelo AGORA — só serve para hoje. Escolhido
+             * outro dia, a energia sai da curva daquele dia, e o rótulo muda junto para
+             * ninguém ler o número de 12 de março como se fosse de hoje.
+             */}
+            <Text style={tipo.rotuloCard}>{ehHoje ? 'Energia hoje' : 'Energia no dia'}</Text>
+            {ehHoje ? (
+              <>
+                <View style={estilos.espacoKpi}>
+                  <Kpi
+                    valor={u.energia_hoje_kwh !== null ? energia(u.energia_hoje_kwh) : '—'}
+                    tamanho="grande"
+                    direita={
+                      u.disponibilidade_pct !== null ? (
+                        <Text style={tipo.legenda}>
+                          disponibilidade{' '}
+                          <Num style={estilos.previsto}>{porcento(u.disponibilidade_pct)}</Num>
+                        </Text>
+                      ) : undefined
+                    }
+                  />
+                </View>
+                {u.pct_capacidade !== null ? (
+                  <Text style={tipo.legenda}>
+                    <Num style={estilos.previsto}>{u.pct_capacidade}%</Num> da capacidade
+                    instalada neste momento
+                  </Text>
+                ) : null}
+              </>
             ) : null}
+
+            <CurvaDoDia leitura={curva} />
           </View>
         ) : (
           <Periodo
@@ -269,6 +303,52 @@ function Periodo({
   )
 }
 
+/**
+ * Potência ao longo do dia, com a irradiação junto quando a usina tem estação.
+ *
+ * Sem estação a tela **diz** que não tem, em vez de simplesmente não desenhar a segunda
+ * curva. A diferença importa: uma curva ausente sem explicação se lê como falha do app,
+ * e o dono fica procurando um botão que não existe.
+ */
+function CurvaDoDia({ leitura }: { leitura: ReturnType<typeof useCurva> }) {
+  const { dados, carregando, erro } = leitura
+
+  if (carregando && !dados) return <Esqueleto altura={150} />
+
+  if (erro || !dados || dados.pontos.length === 0) {
+    return (
+      <Text style={tipo.fraco}>
+        {erro ?? dados?.aviso ?? 'O monitoramento não devolveu leitura para este dia.'}
+      </Text>
+    )
+  }
+
+  return (
+    <View style={estilos.curva}>
+      <CabecalhoCard
+        rotulo="Potência ao longo do dia"
+        direita={
+          <Text style={tipo.legenda}>
+            pico <Num style={estilos.previsto}>{potencia(dados.pico_kw)}</Num>
+            {dados.tem_estacao && dados.pico_poa !== null ? (
+              <>
+                {' · '}
+                <Num style={estilos.previsto}>{numero(dados.pico_poa, 0)}</Num> W/m²
+              </>
+            ) : null}
+          </Text>
+        }
+      />
+      <GraficoLinha pontos={dados.pontos} />
+      {!dados.tem_estacao ? (
+        <Text style={tipo.fraco}>
+          Esta usina não tem estação solarimétrica — sem irradiação para comparar.
+        </Text>
+      ) : null}
+    </View>
+  )
+}
+
 function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <View style={estilos.linha}>
@@ -286,6 +366,8 @@ const estilos = StyleSheet.create({
   agora: { fontSize: 12, color: cores.textoForte },
 
   miolo: { marginTop: espaco.md, gap: espaco.xs },
+  seletor: { marginTop: espaco.sm },
+  curva: { marginTop: espaco.sm },
   espacoKpi: { marginVertical: espaco.xs },
   previsto: { fontSize: 12, color: cores.textoCorpo },
 

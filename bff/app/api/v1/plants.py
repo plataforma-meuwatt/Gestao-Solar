@@ -906,19 +906,44 @@ def _janela(recorte: str, referencia: date) -> tuple[date, date]:
     return primeiro, ultimo
 
 
+def _referencia_pedida(referencia: str | None) -> date:
+    """Data de referência do recorte. Ausente = hoje na usina.
+
+    Recusa data futura: o monitoramento não tem leitura do que não aconteceu, e
+    devolver uma janela vazia disfarçaria o pedido impossível de "sem dados".
+    """
+    if not referencia:
+        return hoje_na_usina()
+    try:
+        pedida = date.fromisoformat(referencia)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "referencia deve estar no formato YYYY-MM-DD."
+        ) from None
+    if pedida > hoje_na_usina():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "referencia não pode ser futura.")
+    return pedida
+
+
 @router.get("/plants/{plant_link_id}/geracao", response_model=GeracaoOut)
 async def geracao_da_usina(
     plant_link_id: int,
     recorte: str = "mes",
+    referencia: str | None = None,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
 ) -> GeracaoOut:
-    """Energia do mês (um ponto por dia) ou do ano (um ponto por mês)."""
+    """Energia do mês (um ponto por dia) ou do ano (um ponto por mês).
+
+    `referencia` é qualquer dia dentro do período desejado — o mês e o ano saem
+    dela. Assim o app manda a data que o usuário escolheu no calendário sem
+    precisar saber onde o mês começa ou termina.
+    """
     if recorte not in ("mes", "ano"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "recorte deve ser 'mes' ou 'ano'.")
 
     link = _usina_no_escopo(db, usuario, plant_link_id)
-    inicio, fim = _janela(recorte, hoje_na_usina())
+    inicio, fim = _janela(recorte, _referencia_pedida(referencia))
     saida = GeracaoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
 
     if not link.mw_plant_slug:
@@ -959,4 +984,126 @@ async def geracao_da_usina(
 
     if not saida.pontos and saida.total_kwh is None:
         saida.aviso = "O monitoramento não devolveu geração para este período."
+    return saida
+
+
+# ── Curva do dia: potência da usina e irradiação ─────────────────────────────
+#
+# `charts/intraday` do meuWatt devolve, a cada 5 minutos, a potência de cada
+# inversor e a irradiação da estação. A potência da usina é a soma dos
+# inversores no bucket — não há campo pronto para ela, e somar é exato porque
+# cada inversor mede a própria saída.
+#
+# A irradiação exige cuidado: o upstream preenche `poa` com 0 quando a usina não
+# tem estação, e zero é indistinguível de meia-noite. Desenhar essa curva daria
+# uma linha rasteira com cara de medição. Por isso a presença da estação é
+# decidida uma vez, olhando o dia inteiro, e devolvida em `tem_estacao`.
+
+
+class PontoCurvaUsina(BaseModel):
+    hora: str
+    #: Soma da potência dos inversores que mediram neste bucket, em kW.
+    kw: float
+    #: Irradiação no plano dos módulos, W/m². `None` quando não há estação.
+    poa: float | None = None
+
+
+class CurvaUsinaOut(BaseModel):
+    dia: str
+    pontos: list[PontoCurvaUsina] = []
+    #: Pico de potência do dia, em kW. `None` = nada medido.
+    pico_kw: float | None = None
+    #: Pico de irradiação do dia, W/m². `None` = sem estação.
+    pico_poa: float | None = None
+    #: `False` faz o app dizer "sem estação" em vez de desenhar curva rasteira.
+    tem_estacao: bool = False
+    aviso: str | None = None
+
+
+def _curva_da_usina(intraday: Any) -> tuple[list[PontoCurvaUsina], bool]:
+    """`points[]` do intraday → curva somada da usina + se há estação.
+
+    Bucket sem nenhum inversor medindo não vira ponto: é lacuna, não zero.
+    """
+    if not isinstance(intraday, dict):
+        return [], False
+    pontos_brutos = intraday.get("points")
+    if not isinstance(pontos_brutos, list):
+        return [], False
+
+    # A estação é considerada presente se em ALGUM instante do dia ela publicou
+    # irradiação acima de zero. Um dia inteiro em zero é ou usina sem sensor ou
+    # sensor mudo — e nos dois casos não há curva honesta para desenhar.
+    tem_estacao = False
+    curva: list[PontoCurvaUsina] = []
+
+    for p in pontos_brutos:
+        if not isinstance(p, dict):
+            continue
+        hora = p.get("time")
+        if not isinstance(hora, str):
+            continue
+
+        inversores = p.get("inverters")
+        if not isinstance(inversores, list) or not inversores:
+            continue
+
+        soma = 0.0
+        mediu = False
+        for inv in inversores:
+            if not isinstance(inv, dict):
+                continue
+            kw = inv.get("power_kw")
+            if isinstance(kw, (int, float)):
+                soma += float(kw)
+                mediu = True
+        if not mediu:
+            continue
+
+        poa = p.get("poa")
+        poa_valor = float(poa) if isinstance(poa, (int, float)) else None
+        if poa_valor is not None and poa_valor > 0:
+            tem_estacao = True
+
+        curva.append(PontoCurvaUsina(hora=hora, kw=round(soma, 2), poa=poa_valor))
+
+    if not tem_estacao:
+        # Sem estação, `poa` some da resposta inteira em vez de viajar como zero.
+        for ponto in curva:
+            ponto.poa = None
+
+    return curva, tem_estacao
+
+
+@router.get("/plants/{plant_link_id}/curva", response_model=CurvaUsinaOut)
+async def curva_do_dia(
+    plant_link_id: int,
+    dia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> CurvaUsinaOut:
+    """Potência da usina ao longo do dia, com irradiação POA quando houver estação."""
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    referencia = _referencia_pedida(dia)
+    saida = CurvaUsinaOut(dia=referencia.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        intraday = await cliente.intraday(link.mw_plant_slug, referencia)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    saida.pontos, saida.tem_estacao = _curva_da_usina(intraday)
+    if saida.pontos:
+        saida.pico_kw = max(p.kw for p in saida.pontos)
+        if saida.tem_estacao:
+            leituras = [p.poa for p in saida.pontos if p.poa is not None]
+            saida.pico_poa = max(leituras) if leituras else None
+    else:
+        saida.aviso = "O monitoramento não devolveu leitura para este dia."
     return saida
