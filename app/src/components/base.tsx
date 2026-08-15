@@ -390,7 +390,9 @@ export function LinhaNavegacao({
           {valor}
         </Text>
       ) : null}
-      <Chevron />
+      {/* A seta é promessa de navegação. Desenhada sem `onPress`, o dono toca e nada
+          acontece — e conclui que o aplicativo travou. */}
+      {onPress ? <Chevron /> : null}
     </Pressable>
   )
 }

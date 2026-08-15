@@ -186,10 +186,18 @@ export default function UsinaDetalhe() {
           primeiro
           onPress={() => router.push(`/usina/${id}/equipamentos`)}
         />
+        {/* Nulo é "não conseguimos consultar o meuPlano", não "está tudo em dia". O verde
+            era o único tom decidido nesta tela em vez de no servidor — e decidia errado:
+            um travessão VERDE se lê como tranquilidade quando o que houve foi a ponte
+            cair. */}
         <LinhaNavegacao
           titulo="Manutenção"
-          valor={u.ordens_abertas !== null ? `${inteiro(u.ordens_abertas)} em aberto` : '—'}
-          tomValor={u.ordens_abertas ? 'alerta' : 'ok'}
+          valor={
+            u.ordens_abertas !== null ? `${inteiro(u.ordens_abertas)} em aberto` : 'não consultado'
+          }
+          tomValor={
+            u.ordens_abertas === null ? 'semDados' : u.ordens_abertas > 0 ? 'alerta' : 'ok'
+          }
         />
       </Card>
     </Tela>

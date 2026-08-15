@@ -15,12 +15,13 @@ import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect } from 'react'
 import { View } from 'react-native'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { Barreira } from '@/components/Barreira'
 import { MolduraCelular } from '@/components/MolduraCelular'
 import { aoDeslogar } from '@/lib/api'
+import { queryClient } from '@/lib/consulta'
 import { useAuth } from '@/store/auth'
 import { cores } from '@/theme/tokens'
 
@@ -29,16 +30,6 @@ import { cores } from '@/theme/tokens'
 // mais que o sistema, o que se vê é o fundo `#02061A` sem nada em cima, que se lê como
 // "app travado". O `catch` cobre o caso de a splash já ter sido escondida.
 void SplashScreen.preventAutoHideAsync().catch(() => {})
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // Dado de geração muda a cada poucos minutos; refazer a cada foco seria ruído.
-      staleTime: 60_000,
-      retry: 1,
-    },
-  },
-})
 
 export default function LayoutRaiz() {
   const hidratar = useAuth((s) => s.hidratar)

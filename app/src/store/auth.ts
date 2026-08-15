@@ -11,6 +11,7 @@ import { create } from 'zustand'
 
 import { api, definirToken } from '@/lib/api'
 import { limparCache } from '@/lib/cache'
+import { esquecerConsultas } from '@/lib/consulta'
 import { apagar, gravar, ler } from '@/lib/cofre'
 
 const CHAVE = 'gestaosolar.sessao.v1'
@@ -110,6 +111,9 @@ export const useAuth = create<EstadoAuth>((set) => ({
     // até a rede responder. E se a rede estiver ruim — que é o caso de usina — vê por
     // bastante tempo.
     await limparCache()
+    // O cache em MEMÓRIA também: apagar só o disco deixava o TanStack devolver os dados
+    // da conta anterior — e, por virem da memória, apresentados como leitura ao vivo.
+    esquecerConsultas()
     definirToken(null)
     set({ token: null, usuario: null })
   },

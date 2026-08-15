@@ -381,7 +381,14 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # `or` mataria o zero: `total_generation_kwh` é obrigatório no schema, e uma usina
         # que de fato gerou 0 kWh viraria "não sabemos". Aqui zero é informação.
         saida["energia_hoje_kwh"] = _numero(diario.get("total_generation_kwh"))
-        saida["disponibilidade_pct"] = _numero(diario.get("plant_availability_pct"))
+        # O mw-api calcula `avail = soma_ponderada / peso if peso > 0 else 100.0`. Com
+        # TODO inversor sem comunicar, o laço não acumula peso e o campo sai **100.0
+        # fabricado** — a usina muda apareceria como "disponibilidade 100%" ao lado de
+        # "energia hoje 0 kWh". O número não é do upstream mentindo: é o denominador
+        # vazio. Aqui ele vira nulo, que é o que de fato se sabe.
+        saida["disponibilidade_pct"] = (
+            None if saida.get("sem_comunicacao") else _numero(diario.get("plant_availability_pct"))
+        )
         saida["capacidade_kwp"] = _capacidade_declarada(diario)
     except Exception as exc:  # noqa: BLE001
         erros.append(f"geração do dia indisponível ({type(exc).__name__})")
@@ -433,9 +440,12 @@ async def listar_usinas(
             uf=link.uf,
             # O cadastro do painel tem precedência; a soma dos inversores é o que vale
             # quando ninguém digitou a capacidade — que é o caso de todas as usinas hoje.
-            capacidade_kwp=(
-                d.get("capacidade_kwp") or link.kwp or d.get("capacidade_dos_inversores")
-            ),
+            # Só a capacidade DECLARADA (do meuWatt) ou a CADASTRADA (pelo gestor). A
+            # soma dos inversores que estão falando saiu daqui: ela encolhe quando um
+            # aparelho emudece, e `_capacidade_declarada` chama isso de fabricar o número
+            # — não pode ser fabricação só porque o relatório diário falhou. Sem nenhuma
+            # das duas, "capacidade não informada", que é a verdade.
+            capacidade_kwp=d.get("capacidade_kwp") or link.kwp,
             potencia_kw=d.get("potencia_kw"),
             energia_hoje_kwh=d.get("energia_hoje_kwh"),
             disponibilidade_pct=d.get("disponibilidade_pct"),
@@ -576,11 +586,7 @@ async def detalhe_usina(
         nome=link.nome,
         cidade=link.cidade,
         uf=link.uf,
-        capacidade_kwp=(
-            dados.get("capacidade_kwp")
-            or link.kwp
-            or dados.get("capacidade_dos_inversores")
-        ),
+        capacidade_kwp=dados.get("capacidade_kwp") or link.kwp,
         potencia_kw=dados.get("potencia_kw"),
         energia_hoje_kwh=dados.get("energia_hoje_kwh"),
         disponibilidade_pct=dados.get("disponibilidade_pct"),

@@ -627,3 +627,41 @@ def test_detalhe_de_usina_alheia_responde_404(cliente_http, db, dono, usinas):
 
     assert cliente.get(f"/api/v1/plants/{a.id}").status_code == 200
     assert cliente.get(f"/api/v1/plants/{b.id}").status_code == 404
+
+
+def test_disponibilidade_de_usina_muda_e_nula_e_nao_cem():
+    """O 100% fabricado pelo denominador vazio.
+
+    O mw-api calcula `avail = soma_ponderada / peso if peso > 0 else 100.0`, e o laço pula
+    inversor que não está comunicando. Com a usina inteira muda, o peso fica zero e o
+    campo sai **100.0** — a tela mostraria "energia hoje 0 kWh · disponibilidade 100%",
+    que é uma contradição apresentada com a maior tranquilidade possível.
+    """
+    from app.api.v1.plants import _tom
+
+    muda = _usina(potencia_kw=0.0, disponibilidade_pct=None, sem_comunicacao=True)
+
+    tom, situacao = _tom(muda)
+
+    assert tom == "semDados"
+    assert situacao == "Sem comunicação"
+    assert muda.disponibilidade_pct is None, "100% com ninguém falando é número fabricado"
+
+
+def test_capacidade_nao_cai_para_a_soma_que_encolhe():
+    """A soma dos inversores foi removida do caminho de produção.
+
+    Ela existe como diagnóstico — `_capacidade_dos_inversores` — mas não serve de recurso
+    quando o relatório diário falha: `_capacidade_declarada` chama essa soma de fabricar o
+    número, e uma fabricação não deixa de ser fabricação porque a outra fonte caiu. Sem
+    capacidade conhecida, a tela diz "capacidade não informada".
+    """
+    import inspect
+
+    from app.api.v1 import plants
+
+    fonte = inspect.getsource(plants.listar_usinas)
+
+    assert "capacidade_dos_inversores" not in fonte, (
+        "a soma que encolhe voltou a alimentar a capacidade exibida"
+    )
