@@ -94,6 +94,10 @@ export const useAuth = create<EstadoAuth>((set) => ({
     const sessao: Sessao = { token: data.token, usuario: data.usuario }
     await gravar(CHAVE, JSON.stringify(sessao))
     definirToken(sessao.token)
+    // A conta identifica o cache. Sem esta linha, TODA sessão aberta por login gravava
+    // como `anonimo` — e a proteção "por construção" que o cache promete existiria só
+    // para quem entrasse pela hidratação, que é o caminho menos usado.
+    identificarCache(sessao.usuario?.id ?? null)
     set({ token: sessao.token, usuario: sessao.usuario })
   },
 
@@ -101,6 +105,7 @@ export const useAuth = create<EstadoAuth>((set) => ({
     const sessao: Sessao = { token: 'demo', usuario: USUARIO_DEMO }
     await gravar(CHAVE, JSON.stringify(sessao))
     definirToken(sessao.token)
+    identificarCache(sessao.usuario?.id ?? null)
     set({ token: sessao.token, usuario: sessao.usuario })
   },
 

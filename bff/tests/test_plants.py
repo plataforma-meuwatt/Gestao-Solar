@@ -127,11 +127,17 @@ def test_sem_dado_de_geracao_nunca_fica_verde():
     assert situacao == "Sem dados de geração"
 
 
-def test_disponibilidade_baixa_fica_vermelha_mesmo_gerando():
-    """Gerar não é estar bem: metade dos inversores fora ainda produz número positivo."""
-    tom, _ = _tom(_usina(potencia_kw=120.0, disponibilidade_pct=40.0))
+def test_disponibilidade_baixa_fica_ambar_e_nao_vermelha():
+    """Gerar não é estar bem — mas média baixa é âmbar, não vermelho.
 
-    assert tom == "parado"
+    Este teste exigia vermelho, e era ele que sustentava a régua inventada. O campo vale
+    0.0 por construção até o relatório do dia chegar, e o `plantStatusOf` do meuWatt nunca
+    o consulta para o vermelho. Fato (inversor parado) pinta vermelho; média pinta âmbar.
+    """
+    tom, situacao = _tom(_usina(potencia_kw=120.0, disponibilidade_pct=40.0))
+
+    assert tom == "alerta"
+    assert situacao == "Gerando abaixo do esperado"
 
 
 def test_potencia_zero_e_sem_geracao_e_nao_falha():
@@ -142,10 +148,12 @@ def test_potencia_zero_e_sem_geracao_e_nao_falha():
     assert situacao == "Sem geração agora"
 
 
-def test_geracao_parcial_alerta():
+def test_disponibilidade_intermediaria_nao_alarma():
+    """75% com a usina gerando não é motivo de aviso: no meio do dia a média ainda está
+    se formando, e o dono não pode receber âmbar por isso."""
     tom, _ = _tom(_usina(potencia_kw=100.0, disponibilidade_pct=75.0))
 
-    assert tom == "alerta"
+    assert tom == "ok"
 
 
 def test_usina_saudavel_fica_verde():
@@ -268,23 +276,61 @@ def test_de_madrugada_nao_acende_faixa_vermelha():
 
 
 def test_amanhecendo_com_pouca_geracao_tambem_nao_alarma():
-    """O mesmo zero de disponibilidade sobrevive aos primeiros minutos de sol."""
-    tom, _ = _tom(
-        _usina(potencia_kw=0.5, disponibilidade_pct=0.0, fora_da_janela_solar=True)
+    """O amanhecer DE VERDADE: dentro da janela solar, com o relatório do dia ainda vazio.
+
+    Este teste passava por engano e por isso o defeito atravessou três auditorias. Ele
+    fixava `fora_da_janela_solar=True`, que sai no primeiro degrau de `_tom` — não
+    exercitava amanhecer nenhum, só o ramo de noite que já tinha teste próprio. Um teste
+    verde com o nome certo é pior do que nenhum: ele afirma cobertura que não existe.
+
+    O cenário real: `in_solar_window` vira verdadeiro trinta minutos após o nascer do sol,
+    e até o primeiro relatório do dia chegar o mw-api devolve disponibilidade 0.0 —
+    fabricada a partir de linhas com rendimento zero. A usina está intacta.
+    """
+    amanhecendo = _usina(
+        potencia_kw=0.5,
+        disponibilidade_pct=0.0,
+        fora_da_janela_solar=False,
+        inversores_parados=0,
     )
 
-    assert tom != "parado"
+    tom, situacao = _tom(amanhecendo)
+
+    assert tom != "parado", (
+        f"usina intacta pintada de vermelho ao amanhecer: {situacao!r}"
+    )
 
 
-def test_disponibilidade_baixa_ainda_alarma_durante_o_dia():
-    """A correção não pode ter desligado o alarme de verdade: com sol e gerando, 40% de
-    disponibilidade continua vermelho."""
+def test_disponibilidade_zero_com_sol_nao_e_vermelho():
+    """O zero fabricado não pode virar faixa de problema na tela inicial.
+
+    A régua da fonte da verdade (`plantStatusOf`, mw-fe) nunca consulta disponibilidade
+    para o vermelho: ele sai de `down || status === 'fault'`. O critério
+    `disponibilidade < 50 -> parado` era invenção deste lado, e acendia sobre usina
+    saudável todo amanhecer.
+    """
+    tom, _ = _tom(_usina(potencia_kw=10.0, disponibilidade_pct=0.0))
+
+    assert tom == "alerta", "âmbar é o teto para média baixa; vermelho é para fato"
+
+
+def test_disponibilidade_nunca_produz_vermelho_em_nenhum_valor():
+    """Varre a faixa inteira: nenhum valor de disponibilidade, sozinho, pinta vermelho."""
+    for pct in (0.0, 10.0, 49.9, 50.0, 75.0, 89.9, 100.0):
+        tom, _ = _tom(_usina(potencia_kw=100.0, disponibilidade_pct=pct))
+
+        assert tom != "parado", f"disponibilidade {pct}% acendeu vermelho sozinha"
+
+
+def test_o_alarme_de_verdade_continua_de_pe():
+    """A correção não pode ter desligado o vermelho legítimo: inversor parado, com sol,
+    continua sendo faixa vermelha."""
     tom, situacao = _tom(
-        _usina(potencia_kw=120.0, disponibilidade_pct=40.0, fora_da_janela_solar=False)
+        _usina(potencia_kw=120.0, inversores_parados=1, fora_da_janela_solar=False)
     )
 
     assert tom == "parado"
-    assert situacao == "Disponibilidade baixa"
+    assert situacao == "1 inversor parado"
 
 
 def test_inversor_em_falha_declarada_conta_mesmo_com_status_normal():

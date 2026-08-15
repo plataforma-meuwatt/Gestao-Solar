@@ -154,13 +154,22 @@ def _tom(usina: UsinaOut) -> tuple[str, str]:
     if usina.potencia_kw is None:
         return "semDados", "Sem dados de geração"
 
-    # 3. FALHA vem antes de desempenho, e é o ponto que estava faltando. Um inversor
-    #    parado é fato; disponibilidade é média, e média esconde fato.
+    # 3. FALHA. E **só** falha: um inversor parado é fato verificável.
+    #
+    #    Disponibilidade NÃO pinta vermelho, e a razão é concreta. O mw-api fabrica uma
+    #    linha com rendimento zero para todo slot que ainda não reportou no dia
+    #    (`build_daily_report`), e essas linhas entram no cálculo com peso — então
+    #    `plant_availability_pct` vale **0.0 por construção** até o primeiro relatório
+    #    chegar. Como `in_solar_window` já é verdadeiro trinta minutos após o nascer do
+    #    sol, a tela inicial estampava "USINA X com problema · Disponibilidade baixa"
+    #    sobre uma usina intacta, todo amanhecer.
+    #
+    #    A régua da fonte da verdade (`plantStatusOf`, mw-fe) nunca consulta
+    #    disponibilidade: o vermelho sai de `down || status === 'fault'`, e nada mais. O
+    #    critério era invenção deste lado.
     if usina.inversores_parados:
         n = usina.inversores_parados
         return "parado", f"{n} {'inversor parado' if n == 1 else 'inversores parados'}"
-    if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 50:
-        return "parado", "Disponibilidade baixa"
 
     # 4. Âmbar: algo a observar, com a usina de pé.
     if usina.inversores_alerta:
@@ -169,8 +178,11 @@ def _tom(usina: UsinaOut) -> tuple[str, str]:
     if usina.inversores_mudos:
         n = usina.inversores_mudos
         return "alerta", f"{n} {'inversor sem comunicação' if n == 1 else 'inversores sem comunicação'}"
-    if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 90:
-        return "alerta", "Gerando parcialmente"
+    # Disponibilidade vira âmbar, nunca vermelho, e só quando é baixa a ponto de não ser
+    # explicável pelo relatório ainda incompleto. Continua sendo uma média — o número
+    # exato aparece na tela da usina, onde há espaço para o contexto.
+    if usina.disponibilidade_pct is not None and usina.disponibilidade_pct < 50:
+        return "alerta", "Gerando abaixo do esperado"
 
     # 5. Sem sol declarado e sem geração: começo de manhã ou dia muito fechado.
     if usina.potencia_kw <= 0:
@@ -397,8 +409,16 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         # fabricado** — a usina muda apareceria como "disponibilidade 100%" ao lado de
         # "energia hoje 0 kWh". O número não é do upstream mentindo: é o denominador
         # vazio. Aqui ele vira nulo, que é o que de fato se sabe.
+        # O upstream devolve 100.0 quando o peso total é zero — isto é, quando não há
+        # linha de inversor nenhuma no dia — e 0.0 quando as linhas existem mas foram
+        # sintetizadas sem rendimento. Nos dois casos o número não tem base, e nulo é a
+        # resposta honesta.
+        inversores_no_dia = diario.get("inverters")
+        sem_base = saida.get("sem_comunicacao") or not (
+            isinstance(inversores_no_dia, list) and inversores_no_dia
+        )
         saida["disponibilidade_pct"] = (
-            None if saida.get("sem_comunicacao") else _numero(diario.get("plant_availability_pct"))
+            None if sem_base else _numero(diario.get("plant_availability_pct"))
         )
         saida["capacidade_kwp"] = _capacidade_declarada(diario)
     except Exception as exc:  # noqa: BLE001

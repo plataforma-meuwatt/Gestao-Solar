@@ -63,6 +63,21 @@ class NotificacoesOut(BaseModel):
 SEM_INVERSOR = "plant"
 
 
+MESES = (
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)
+
+
+def _competencia_legivel(competencia: str) -> str:
+    """`2026-08` é formato de máquina. Quem tem uma usina lê "agosto de 2026"."""
+    try:
+        ano, mes = competencia.split("-")
+        return f"{MESES[int(mes) - 1]} de {ano}"
+    except (ValueError, IndexError):
+        return competencia
+
+
 def _descreve(a: dict[str, Any]) -> tuple[str, str | None]:
     """Título e detalhe de um alerta, em português e no escopo certo.
 
@@ -243,7 +258,7 @@ async def minhas_notificacoes(
                         grupo="acao",
                         tom="parado",
                         titulo=f"Mensalidade vencida · {produto}",
-                        resumo=f"competência {f.competencia} · vencida há {dias} dias",
+                        resumo=f"{_competencia_legivel(f.competencia)} · vencida há {dias} dias",
                         em=datetime.combine(f.vencimento, datetime.min.time(), tzinfo=UTC),
                     )
                 )
@@ -254,7 +269,7 @@ async def minhas_notificacoes(
                         grupo="sistema",
                         tom="alerta",
                         titulo=f"Mensalidade a vencer · {produto}",
-                        resumo=f"competência {f.competencia} · vence em {f.vencimento:%d/%m}",
+                        resumo=f"{_competencia_legivel(f.competencia)} · vence em {f.vencimento:%d/%m}",
                         em=datetime.combine(f.vencimento, datetime.min.time(), tzinfo=UTC),
                     )
                 )
