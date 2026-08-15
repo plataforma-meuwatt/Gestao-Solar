@@ -439,7 +439,13 @@ async def equipamentos_da_usina(
         sem_dados=max(0, mudos),
         dormindo=dormindo,
         ignorados=sum(1 for e in saida if e.ignorado),
-        atualizado_em=_instante(agora_resp.get("timestamp")),
+        # A leitura mais recente entre os inversores. O `timestamp` do envelope é
+        # `datetime.now()` no mw-api, congelado por cache — hora da requisição, não da
+        # medição.
+        atualizado_em=max(
+            (m for m in (_instante(i.get("timestamp")) for i in inversores) if m is not None),
+            default=None,
+        ),
         aviso=None if isinstance(diario, dict) else "Energia do dia indisponível.",
         equipamentos=saida,
     )

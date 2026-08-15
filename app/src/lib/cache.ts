@@ -39,13 +39,28 @@ const naWeb = Platform.OS === 'web'
  */
 const pasta = () => new Directory(Paths.cache, 'leituras')
 
-/** Nome de arquivo a partir da chave: `plants` · `usina:3`. Os dois pontos não passam. */
-const arquivoDe = (chave: string) => new File(pasta(), `${chave.replace(/[^a-z0-9]+/gi, '_')}.json`)
+/**
+ * De quem é o cache que está sendo lido ou escrito.
+ *
+ * O logout apaga tudo, mas isso não basta: se o aplicativo for encerrado no meio da troca
+ * de conta — ou se o `sair()` falhar por qualquer razão —, o arquivo de uma conta ficaria
+ * legível pela seguinte. Com a conta no nome do arquivo, ler o cache alheio deixa de ser
+ * possível por construção, e não por disciplina de limpeza.
+ */
+let donoDoCache = 'anonimo'
+
+export function identificarCache(usuarioId: number | null): void {
+  donoDoCache = usuarioId === null ? 'anonimo' : `u${usuarioId}`
+}
+
+/** Nome de arquivo a partir da chave: `plants` · `plants/3`. Prefixado pela conta. */
+const arquivoDe = (chave: string) =>
+  new File(pasta(), `${donoDoCache}__${chave.replace(/[^a-z0-9]+/gi, '_')}.json`)
 
 export async function lerCache<T>(chave: string): Promise<Envelope<T> | null> {
   try {
     if (naWeb) {
-      const cru = globalThis.localStorage?.getItem(`leitura:${chave}`)
+      const cru = globalThis.localStorage?.getItem(`leitura:${donoDoCache}:${chave}`)
       return cru ? (JSON.parse(cru) as Envelope<T>) : null
     }
     const arquivo = arquivoDe(chave)
@@ -62,7 +77,7 @@ export async function gravarCache<T>(chave: string, dados: T): Promise<void> {
   const envelope: Envelope<T> = { dados, gravadoEm: new Date().toISOString() }
   try {
     if (naWeb) {
-      globalThis.localStorage?.setItem(`leitura:${chave}`, JSON.stringify(envelope))
+      globalThis.localStorage?.setItem(`leitura:${donoDoCache}:${chave}`, JSON.stringify(envelope))
       return
     }
     // `create` explícito, e não confiança em `write` criar o que falta: `intermediates`
@@ -79,7 +94,7 @@ export async function gravarCache<T>(chave: string, dados: T): Promise<void> {
 export async function apagarCache(chave: string): Promise<void> {
   try {
     if (naWeb) {
-      globalThis.localStorage?.removeItem(`leitura:${chave}`)
+      globalThis.localStorage?.removeItem(`leitura:${donoDoCache}:${chave}`)
       return
     }
     const arquivo = arquivoDe(chave)
@@ -158,7 +173,9 @@ export function fetchWithCache<T>(
   }, [chave])
 
   const consulta = useQuery({
-    queryKey: opcoes.queryKey ?? [chave],
+    // A conta entra na chave: sem ela, o cache em memória do TanStack devolveria a
+    // leitura de outro usuário se a limpeza do logout falhasse.
+    queryKey: opcoes.queryKey ?? [donoDoCache, chave],
     enabled: ativo,
     // Sessão morta não se resolve tentando de novo: o retry só atrasa a ida ao login.
     retry: (tentativas, erro) => !ehSessao(erro) && tentativas < 1,

@@ -10,7 +10,7 @@
 import { create } from 'zustand'
 
 import { api, definirToken } from '@/lib/api'
-import { limparCache } from '@/lib/cache'
+import { identificarCache, limparCache } from '@/lib/cache'
 import { esquecerConsultas } from '@/lib/consulta'
 import { apagar, gravar, ler } from '@/lib/cofre'
 
@@ -76,6 +76,7 @@ export const useAuth = create<EstadoAuth>((set) => ({
       if (bruto) {
         const s = JSON.parse(bruto) as Sessao
         definirToken(s.token)
+        identificarCache(s.usuario?.id ?? null)
         set({ token: s.token, usuario: s.usuario })
       }
     } finally {
@@ -114,6 +115,7 @@ export const useAuth = create<EstadoAuth>((set) => ({
     // O cache em MEMÓRIA também: apagar só o disco deixava o TanStack devolver os dados
     // da conta anterior — e, por virem da memória, apresentados como leitura ao vivo.
     esquecerConsultas()
+    identificarCache(null)
     definirToken(null)
     set({ token: null, usuario: null })
   },

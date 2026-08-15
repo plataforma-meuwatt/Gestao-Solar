@@ -133,11 +133,21 @@ async def inicio(
     lista = await listar_usinas(db=db, usuario=usuario)
 
     capacidade = round(sum(u.capacidade_kwp or 0 for u in lista.usinas), 2) or None
-    # Mesma base do card de cada usina: a capacidade impressa. Calculado de outro jeito, o
-    # topo do Início discordaria da aba Usinas sobre o mesmo conjunto de usinas.
+
+    # O percentual soma APENAS as usinas que entram nos dois lados da conta. Uma usina cujo
+    # monitoramento respondeu mas cujo relatório diário falhou tem potência e não tem
+    # capacidade: entrando só no numerador, ela inflava o resultado — e o `min(100)`
+    # escondia o exagero em vez de revelá-lo. É o mesmo cuidado que `_capacidade_dos_
+    # inversores` já tem um nível abaixo, tirando o inversor mudo dos dois lados.
+    comparaveis = [
+        u for u in lista.usinas if u.capacidade_kwp and u.potencia_kw is not None
+    ]
     pct = None
-    if lista.potencia_agora_kw is not None and capacidade:
-        pct = max(0, min(100, round(lista.potencia_agora_kw / capacidade * 100)))
+    if comparaveis:
+        potencia = sum(u.potencia_kw or 0 for u in comparaveis)
+        base = sum(u.capacidade_kwp or 0 for u in comparaveis)
+        if base:
+            pct = max(0, min(100, round(potencia / base * 100)))
 
     financeiro = None
     assinaturas = _assinaturas_do_usuario(db, usuario)
@@ -160,10 +170,16 @@ async def inicio(
             )
         elif abertas:
             proxima = min(abertas, key=lambda f: f.vencimento)
+            # A_VENCER é a janela de sete dias (`Invoice.situacao`). O Início dizia "Em
+            # dia" em verde para ela, enquanto o Financeiro dizia "a vencer" em âmbar —
+            # o MESMO dado, no mesmo instante, com duas cores e duas frases. Contradição
+            # para o lado otimista é a que mais custa: o dono não vai conferir a outra
+            # aba se a primeira o tranquilizou.
+            a_vencer = proxima.situacao(hoje) is SituacaoFatura.A_VENCER
             financeiro = ResumoFinanceiroOut(
-                situacao="em_dia",
-                tom="ok",
-                resumo="Em dia",
+                situacao="a_vencer" if a_vencer else "em_dia",
+                tom="alerta" if a_vencer else "ok",
+                resumo="Mensalidade a vencer" if a_vencer else "Em dia",
                 proximo_vencimento=proxima.vencimento,
                 total=float(proxima.valor),
             )

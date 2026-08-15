@@ -57,49 +57,38 @@ class NotificacoesOut(BaseModel):
     aviso: str | None = None
 
 
-#: As causas do detector, em português. O vocabulário é o mesmo do meuWatt
-#: (`generation/service.py`, `_DETECTOR_CAUSE_LABELS`) — copiado por ser texto de tela, e
-#: não contrato: o BFF não tem rota para lê-lo.
-#:
-#: Sem isto, o que chegava ao dono da usina era `"Breakdown (zero_active_power)"`. E não
-#: era caso de borda: `_row_to_alert` grava `message: None` e
-#: `notification: f"Breakdown ({row.type})"` SEMPRE, então a string técnica em inglês era
-#: o valor único.
-CAUSA_EM_PORTUGUES = {
-    "zero_active_power": "Sem gerar",
-    "communication_failure": "Falha de comunicação",
-    "never_woke_up": "Não acordou hoje",
-    "early_sleep": "Parou antes do fim do dia",
-    "late_wake": "Demorou a acordar",
-    "no_data": "Janela sem dados",
-    "unknown": "Causa não identificada",
-}
-
 #: `_row_to_alert` grava `sn = row.serial_number or "plant"`. O literal marca uma parada
 #: da USINA inteira, não de um inversor — anunciá-la como "Inversor parado · plant" erra
-#: no escopo e ainda entrega uma palavra em inglês.
+#: no escopo e ainda entrega uma palavra em inglês ao dono da usina.
 SEM_INVERSOR = "plant"
 
 
 def _descreve(a: dict[str, Any]) -> tuple[str, str | None]:
-    """Título e detalhe de um alerta, em português e no escopo certo."""
+    """Título e detalhe de um alerta, em português e no escopo certo.
+
+    Duas coisas que **não** dá para tirar daqui, e a auditoria pegou as duas depois de eu
+    tentar:
+
+    - **A etiqueta do slot.** `alerts/service.py` produz `slot_label`, mas `AlertDetail`
+      não o declara e a rota usa `response_model` — o FastAPI descarta o campo antes de
+      ele sair do mw-api. Ler `a["slot_label"]` devolve `None` para sempre. A etiqueta
+      existe em `InverterDailyEntry.slot_label`, do relatório diário; buscá-la custaria
+      uma chamada por alerta, e o número de série já identifica o aparelho.
+    - **A causa da parada.** `notification` é `f"Breakdown ({row.type})"`, e `type` é
+      `equipment | plant` — o escopo, não o motivo. A causa mora na coluna `cause`, que
+      `/alerts` não expõe. Traduzir "equipment" para português seria inventar sentido.
+
+    O que sobra é honesto: dizer QUEM parou e deixar o motivo de fora, em vez de repassar
+    `"Breakdown (equipment)"` — inglês e sem informação — para quem tem uma usina.
+    """
     serie = str(a.get("sn") or "").strip()
-    etiqueta = a.get("slot_label")
     degradacao = str(a.get("kind") or "stop") == "degradation"
 
     if serie == SEM_INVERSOR or not serie:
-        titulo = "Usina parada" if not degradacao else "Usina gerando abaixo do esperado"
-    else:
-        # A etiqueta é o nome que o operador deu ao slot — "INV 3" diz mais ao dono do que
-        # o número de série, e é o que o meuWatt mostra.
-        quem = etiqueta or serie
-        titulo = f"{'Gerando abaixo do esperado' if degradacao else 'Inversor parado'} · {quem}"
+        return ("Usina gerando abaixo do esperado" if degradacao else "Usina parada"), None
 
-    causa = a.get("notification") or ""
-    # "Breakdown (zero_active_power)" -> "zero_active_power"
-    if "(" in causa and causa.endswith(")"):
-        causa = causa[causa.index("(") + 1 : -1]
-    return titulo, CAUSA_EM_PORTUGUES.get(causa.strip())
+    titulo = f"{'Gerando abaixo do esperado' if degradacao else 'Inversor parado'} · {serie}"
+    return titulo, None
 
 
 async def _alertas_da_usina(cliente, link: PlantLink) -> list[NotificacaoOut]:

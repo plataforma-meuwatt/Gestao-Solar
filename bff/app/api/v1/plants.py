@@ -346,11 +346,22 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         agora = await cliente.monitoramento_atual(link.mw_plant_slug)
         saida["potencia_kw"] = _potencia_da_usina(agora)
         saida["sem_comunicacao"] = _sem_comunicacao(agora)
-        # Quando o dado foi MEDIDO. `datetime.now()` seria a hora da resposta — e é esse
-        # valor que vira o selo do modo offline, o mecanismo que deveria tornar o cache
-        # honesto. Publicar a hora da resposta como hora do dado faz o selo mentir por
-        # construção, e mentir justamente onde ele existe para não mentir.
-        saida["medido_em"] = agora.get("timestamp")
+        # Quando o dado foi MEDIDO — e a fonte é o inversor, não o envelope.
+        #
+        # `MonitoringSnapshot.timestamp` parece ser isso e não é: o mw-api o monta com
+        # `datetime.now(UTC)` (`monitoring/service.py`) e ainda o congela por cache na
+        # rota. É a hora da REQUISIÇÃO. Publicá-lo como hora da medição fazia o selo do
+        # modo offline mentir exatamente onde ele existe para não mentir — e o docstring
+        # daqui afirmava o contrário do que o código fazia.
+        #
+        # `InverterMonitoring.timestamp` é a leitura de verdade. A mais recente entre os
+        # inversores é o instante mais novo que se pode afirmar sobre a usina.
+        leituras = [
+            m
+            for m in (_instante_medida(i.get("timestamp")) for i in _contam(agora))
+            if m is not None
+        ]
+        saida["medido_em"] = max(leituras) if leituras else None
         # `in_solar_window` é o campo que o próprio mw-api recomenda ao front para saber
         # se é hora de haver geração — melhor do que derivar de potência zero, que também
         # acontece em parada diurna.

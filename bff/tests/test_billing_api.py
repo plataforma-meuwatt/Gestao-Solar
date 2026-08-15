@@ -189,3 +189,34 @@ def test_todo_tom_da_fatura_existe_nos_tokens_do_aplicativo():
 
     faltando = set(TOM_DA_SITUACAO.values()) - conhecidos
     assert not faltando, f"tons sem cor no app: {sorted(faltando)}"
+
+
+def test_inicio_e_financeiro_concordam_sobre_a_mesma_fatura(cliente_http, db):
+    """As duas telas leem o mesmo dado e precisam dizer a mesma coisa.
+
+    O Início respondia "Em dia" em verde para uma fatura dentro da janela de vencimento,
+    enquanto o Financeiro dizia "a vencer" em âmbar. Contradição para o lado otimista é a
+    pior espécie: quem foi tranquilizado na primeira tela não abre a segunda.
+    """
+    eu = _dono(db, "eu")
+    a = _assina(db, eu)
+    _fatura(db, a, HOJE.strftime("%Y-%m"), HOJE + timedelta(days=3))
+
+    cliente = _como(cliente_http, eu)
+    inicio = cliente.get("/api/v1/home").json()
+    financeiro = cliente.get("/api/v1/billing").json()
+
+    assert inicio["financeiro"]["situacao"] == financeiro["situacao"]
+    assert inicio["financeiro"]["tom"] == financeiro["tom"]
+
+
+def test_as_duas_telas_concordam_tambem_quando_esta_tudo_pago(cliente_http, db):
+    eu = _dono(db, "eu")
+    a = _assina(db, eu)
+    _fatura(db, a, "2026-07", HOJE - timedelta(days=40), pago_em=HOJE - timedelta(days=41))
+
+    cliente = _como(cliente_http, eu)
+    inicio = cliente.get("/api/v1/home").json()
+    financeiro = cliente.get("/api/v1/billing").json()
+
+    assert inicio["financeiro"]["tom"] == financeiro["tom"] == "ok"
