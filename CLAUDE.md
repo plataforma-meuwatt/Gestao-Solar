@@ -334,6 +334,73 @@ montado cruzando `slots` + `breakdowns`. É a única rota vermelha na sonda.
 
 ---
 
-## 9. Git
+## 9. Git e deploy
 
 Trabalhar em `main`. Repositório: `https://github.com/plataforma-meuwatt/Gestao-Solar`.
+
+**Sempre commitar, sempre publicar, sempre mandar o OTA.** Não deixar trabalho parado no
+working tree. Um push que muda o `app/` sem OTA correspondente não chegou em ninguém.
+
+### As credenciais já estão na máquina — não peça login
+
+`C:\dev\Gestao Solar\.env.txt` (fora do git, coberto por `.env.*` no `.gitignore`) guarda o
+**token do Expo** e o **token do Railway**. Não existe motivo para pedir `eas login` ao Renan,
+e `eas whoami` dizendo "Not logged in" **não** significa que falta credencial: significa que
+faltou exportar a variável.
+
+Carregar sem estampar o valor no terminal:
+
+```bash
+export EXPO_TOKEN=$(sed -n 's/^Expo:[[:space:]]*//p' "/c/dev/Gestao Solar/.env.txt" | tr -d '\r')
+```
+
+O arquivo é `.txt` e mora na raiz — é por isso que uma busca por `.env` não acha, e é por isso
+que o `rg`/Grep passa batido: sendo ignorado pelo git, ele fica invisível na busca padrão.
+
+### BFF e painel → Railway, no push
+
+Não há CLI no caminho normal: **o push para `main` já dispara o deploy** dos dois serviços
+(cada um com seu Root Directory). Leva ~1–2 min.
+
+Confirme por probe, nunca pelo push. `/openapi.json` **não serve** — docs está desabilitado em
+produção e a resposta vem vazia. Use o par rota-nova × caminho-irmão-inexistente:
+
+```bash
+B=https://gestao-solar-production.up.railway.app
+curl -s -o /dev/null -w "%{http_code}\n" $B/api/v1/plants/1/xyz-inexistente   # 404 = controle
+curl -s -o /dev/null -w "%{http_code}\n" $B/api/v1/plants/1/<sua-rota-nova>   # 401 = está no ar
+```
+
+401 é a resposta certa e desejada: a rota existe e exigiu token. Se vier 404, o deploy não
+landou — o controle ao lado prova que 404 é mesmo "não existe", e não erro de autenticação.
+
+### app/ → OTA pelo EAS
+
+```bash
+cd "C:\dev\Gestao Solar\app"
+export EXPO_TOKEN=$(sed -n 's/^Expo:[[:space:]]*//p' "/c/dev/Gestao Solar/.env.txt" | tr -d '\r')
+npx eas-cli@latest update --channel production --environment production \
+    --message "<o que mudou>" --non-interactive
+```
+
+`--environment` é **obrigatório** junto com `--non-interactive`; sem ele o comando falha
+reclamando da flag, e não da credencial.
+
+Detalhes que já custaram tempo:
+
+- **O endereço da API mora em `app.json` (`extra.apiUrl`), não em variável de ambiente.**
+  `eas update` não injeta `EXPO_PUBLIC_API_URL` — quem depende só da env var publica OTA
+  apontando para `localhost`, ou seja, para o próprio celular.
+- **`runtimeVersion` é `appVersion`.** O update só alcança builds instalados com a mesma
+  `version` do `app.json`. Subiu a `version`? Então precisa de build novo, não de OTA.
+- OTA cobre **só JS e assets**. Código nativo, permissão nova ou bump de SDK exigem
+  `eas build --profile production`.
+- Para conferir no aparelho, **feche o app de verdade** (fora da lista de recentes) e reabra.
+  O `fallbackToCacheTimeout: 12000` do `app.json` faz ele esperar o conteúdo novo antes de
+  desenhar; com o padrão (`0`) seriam duas aberturas até aparecer.
+
+### Ordem quando a mudança atravessa BFF e app
+
+BFF primeiro, OTA depois. O caminho inverso entrega ao celular uma tela que chama rota que
+ainda não existe — e o usuário lê isso como "sem dados", que é exatamente a mensagem que a
+REGRA 0 reserva para ausência real.
