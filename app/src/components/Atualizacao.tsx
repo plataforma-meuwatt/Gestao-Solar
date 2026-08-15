@@ -82,6 +82,9 @@ export function Atualizacao() {
     situacao.tipo === 'baixando' ||
     situacao.tipo === 'aplicando'
 
+  const canal = currentlyRunning.channel ?? (Updates.isEnabled ? '—' : 'desenvolvimento')
+  const runtime = Updates.runtimeVersion ?? '—'
+
   return (
     <Card>
       <CabecalhoCard
@@ -95,17 +98,12 @@ export function Atualizacao() {
 
       <View style={estilos.miolo}>
         <Linha
-          rotulo="Conteúdo instalado"
-          valor={
-            currentlyRunning.isEmbeddedLaunch
-              ? 'o que veio no aplicativo'
-              : (currentlyRunning.createdAt?.toLocaleString('pt-BR') ?? 'atualizado')
-          }
+          rotulo="Conteúdo rodando"
+          valor={currentlyRunning.isEmbeddedLaunch ? 'o que veio no aplicativo' : 'atualização OTA'}
         />
-        <Linha
-          rotulo="Canal"
-          valor={currentlyRunning.channel ?? (Updates.isEnabled ? '—' : 'desenvolvimento')}
-        />
+        <Linha rotulo="Publicado em" valor={dataDoConteudo(currentlyRunning)} />
+        <Linha rotulo="Identificador" valor={idCurto(currentlyRunning.updateId)} />
+        <Linha rotulo="Canal" valor={canal} />
 
         {isUpdateAvailable || isUpdatePending ? (
           <View style={[estilos.aviso, { borderColor: tons.alerta }]}>
@@ -117,7 +115,15 @@ export function Atualizacao() {
 
         {situacao.tipo === 'emDia' ? (
           <View style={[estilos.aviso, { borderColor: tons.ok }]}>
-            <Text style={estilos.avisoTexto}>Tudo em dia — nada novo para baixar.</Text>
+            {/*
+             * A frase precisa dizer ONDE procurou. "Tudo em dia" sozinho é ambíguo entre
+             * "nada novo mesmo" e "publicaram no canal errado" — e em 15/08/2026 um OTA
+             * publicado em `production` não alcançou este aparelho, que ouve `preview`,
+             * enquanto a tela garantia que estava tudo certo.
+             */}
+            <Text style={estilos.avisoTexto}>
+              Tudo em dia — nada novo no canal {canal}, versão {runtime}.
+            </Text>
           </View>
         ) : null}
 
@@ -159,6 +165,35 @@ export function Atualizacao() {
       </View>
     </Card>
   )
+}
+
+/**
+ * Data de publicação do pacote em execução.
+ *
+ * Quando o app roda o conteúdo embutido, `createdAt` é o instante em que o APK foi
+ * montado — informação verdadeira e útil, então é exibida. Ausência vira "—": não
+ * inventamos "atualizado agora" para um campo que o expo-updates não devolveu.
+ */
+function dataDoConteudo(atual: { createdAt?: Date }): string {
+  const quando = atual.createdAt
+  if (!quando) return '—'
+  return quando.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/**
+ * O `updateId` é um UUID — inteiro não cabe na linha e ninguém lê. Os 8 primeiros
+ * caracteres bastam para casar com o Group ID que o `eas update` imprime ao publicar,
+ * que é exatamente a conferência que se quer fazer daqui.
+ */
+function idCurto(id?: string): string {
+  if (!id) return 'embutido no aplicativo'
+  return id.slice(0, 8)
 }
 
 function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {

@@ -374,17 +374,26 @@ curl -s -o /dev/null -w "%{http_code}\n" $B/api/v1/plants/1/<sua-rota-nova>   # 
 401 é a resposta certa e desejada: a rota existe e exigiu token. Se vier 404, o deploy não
 landou — o controle ao lado prova que 404 é mesmo "não existe", e não erro de autenticação.
 
-### app/ → OTA pelo EAS
+### app/ → OTA pelo EAS, no canal `preview`
+
+> ⚠️ **O canal é `preview`, não `production`.** O aparelho do Renan roda o APK do perfil
+> `preview` (`distribution: internal`) — **nunca houve build do perfil `production`**.
+> Publicar em `production` sobe um update que existe no servidor e não alcança ninguém:
+> o app responde **"Tudo em dia"**, porque para o canal dele isso é verdade. Confira com
+> `eas build:list` antes de escolher o canal; a coluna `Channel` é a resposta.
 
 ```bash
 cd "C:\dev\Gestao Solar\app"
 export EXPO_TOKEN=$(sed -n 's/^Expo:[[:space:]]*//p' "/c/dev/Gestao Solar/.env.txt" | tr -d '\r')
-npx eas-cli@latest update --channel production --environment production \
+npx eas-cli@latest update --channel preview --environment preview \
     --message "<o que mudou>" --non-interactive
 ```
 
 `--environment` é **obrigatório** junto com `--non-interactive`; sem ele o comando falha
 reclamando da flag, e não da credencial.
+
+O dia em que sair build de loja pelo perfil `production`, aí sim o OTA passa a ser duplo —
+um por canal — e este aviso muda.
 
 Detalhes que já custaram tempo:
 
@@ -395,6 +404,10 @@ Detalhes que já custaram tempo:
   `version` do `app.json`. Subiu a `version`? Então precisa de build novo, não de OTA.
 - OTA cobre **só JS e assets**. Código nativo, permissão nova ou bump de SDK exigem
   `eas build --profile production`.
+- **"Tudo em dia" não prova que o OTA foi publicado.** Prova só que não há update *para o
+  canal e a runtime daquele aparelho*. Canal errado, `runtimeVersion` diferente e "nada novo
+  mesmo" produzem a mesma frase. Por isso a tela do avatar mostra canal, runtime, ID e data
+  do update rodando — sem isso o diagnóstico é adivinhação.
 - Para conferir no aparelho, **feche o app de verdade** (fora da lista de recentes) e reabra.
   O `fallbackToCacheTimeout: 12000` do `app.json` faz ele esperar o conteúdo novo antes de
   desenhar; com o padrão (`0`) seriam duas aberturas até aparecer.
