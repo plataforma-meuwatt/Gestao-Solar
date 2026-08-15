@@ -32,6 +32,10 @@ export type Usina = {
   sem_comunicacao: boolean
   /** Quantos estão mudos, mesmo sem serem todos. Sem isto, mudez parcial fica invisível. */
   inversores_mudos: number | null
+  /** Quantos estão em falha — o que decide a faixa vermelha. */
+  inversores_parados: number | null
+  /** Quantos pedem atenção sem estar parados: alarme do fabricante ou código de falha. */
+  inversores_alerta: number | null
   /** Fora da janela solar: nada é defeito, e a tela não deve alarmar. */
   fora_da_janela_solar: boolean
 

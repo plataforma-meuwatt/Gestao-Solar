@@ -90,3 +90,34 @@ def test_estado_desconhecido_nao_diz_gerando():
 
     assert tom == "semDados"
     assert situacao == "Estado desconhecido"
+
+
+def test_codigo_de_falha_ativo_nao_sai_verde():
+    """O caso mais perigoso, e o que passava: registrador de estado em `normal` com
+    alarme do fabricante ou código de falha decodificado.
+
+    O mw-fe considera três sinais — `status === 'alert'`, `alert_text` e `fault`. Lendo só
+    o `status`, o inversor com código de falha ativo saía **verde "Gerando"** no card do
+    equipamento E no card da usina, enquanto o meuWatt o mostrava em alerta no mesmo
+    minuto.
+    """
+    tom, situacao = _situacao("normal", False, None, None, "Grid over-voltage", None)
+
+    assert tom == "alerta"
+    assert situacao == "Grid over-voltage", "o texto do fabricante diz mais que 'em alerta'"
+
+    tom_codigo, situacao_codigo = _situacao("normal", False, None, None, None, 512)
+
+    assert tom_codigo == "alerta"
+    assert situacao_codigo == "Código de falha ativo"
+
+
+def test_alerta_do_upstream_conta_no_rollup_da_usina():
+    """A régua tem de ser a mesma nas duas telas: o que pinta o card do equipamento de
+    âmbar precisa pintar o card da usina também."""
+    from app.api.v1.plants import _em_alerta
+
+    assert _em_alerta({"status": "alert"}) is True
+    assert _em_alerta({"status": "normal", "alert_text": "Grid over-voltage"}) is True
+    assert _em_alerta({"status": "normal", "fault": {"code": 512}}) is True
+    assert _em_alerta({"status": "normal"}) is False

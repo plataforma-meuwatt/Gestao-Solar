@@ -133,6 +133,8 @@ async def inicio(
     lista = await listar_usinas(db=db, usuario=usuario)
 
     capacidade = round(sum(u.capacidade_kwp or 0 for u in lista.usinas), 2) or None
+    # Mesma base do card de cada usina: a capacidade impressa. Calculado de outro jeito, o
+    # topo do Início discordaria da aba Usinas sobre o mesmo conjunto de usinas.
     pct = None
     if lista.potencia_agora_kw is not None and capacidade:
         pct = max(0, min(100, round(lista.potencia_agora_kw / capacidade * 100)))

@@ -90,7 +90,12 @@ class EquipamentosOut(BaseModel):
 
 
 def _situacao(
-    estado: str, ignorado: bool, parado_ha_min: int | None, em_falha: bool | None = None
+    estado: str,
+    ignorado: bool,
+    parado_ha_min: int | None,
+    em_falha: bool | None = None,
+    alarme: str | None = None,
+    codigo_falha: Any = None,
 ) -> tuple[str, str]:
     """A cor e a frase, decididas aqui para as duas telas dizerem a mesma coisa.
 
@@ -108,6 +113,13 @@ def _situacao(
     # status.
     if em_falha is True and estado != "bedtime":
         estado = "fault"
+
+    # Alarme do fabricante e código de falha decodificado são sinais próprios, e o mw-fe
+    # os considera junto com o estado. Lendo só o `status`, um inversor com código de
+    # falha ativo e registrador ainda em `normal` saía VERDE "Gerando" — aqui e no card da
+    # usina — enquanto o meuWatt o mostrava em alerta.
+    if estado == "normal" and (alarme or codigo_falha):
+        return "alerta", (str(alarme).strip() if alarme else "Código de falha ativo")
 
     tom = TOM_POR_ESTADO.get(estado, "semDados")
     if estado == "fault":
@@ -271,7 +283,11 @@ async def detalhe_do_equipamento(
     estado = str(inv.get("status") or "").strip().lower()
     ignorado = bool(inv.get("ignored"))
     desde, minutos = _minutos_parado(inv.get("down_since"), agora)
-    tom, situacao = _situacao(estado, ignorado, minutos, inv.get("down"))
+    tom, situacao = _situacao(
+        estado, ignorado, minutos, inv.get("down"), inv.get("alert_text"), inv.get("fault")
+    )
+    if estado == "bedtime":
+        desde, minutos = None, None
 
     serie = inv.get("serial_number")
     watts = _numero(inv.get("active_power"))
@@ -367,7 +383,14 @@ async def equipamentos_da_usina(
         estado = str(inv.get("status") or "").strip().lower()
         ignorado = bool(inv.get("ignored"))
         desde, minutos = _minutos_parado(inv.get("down_since"), agora)
-        tom, situacao = _situacao(estado, ignorado, minutos, inv.get("down"))
+        tom, situacao = _situacao(
+            estado, ignorado, minutos, inv.get("down"), inv.get("alert_text"), inv.get("fault")
+        )
+        # Dormindo não exibe "parado há N h": o detector mantém aberta a parada da tarde, e
+        # o card acabava com "Parado há 14 h" logo abaixo do chip "Fora da janela solar" —
+        # desmentindo-se a si mesmo, todas as noites.
+        if estado == "bedtime":
+            desde, minutos = None, None
 
         serie = inv.get("serial_number")
         watts = _numero(inv.get("active_power"))

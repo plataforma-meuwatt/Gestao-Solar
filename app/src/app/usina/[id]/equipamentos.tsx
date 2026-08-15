@@ -155,9 +155,12 @@ function CardEquipamento({ equipamento: e, usinaId }: { equipamento: Equipamento
           ) : null}
         </View>
 
-        <View style={estilos.barra}>
-          <Barra pct={e.pct_capacidade ?? 0} tom={e.tom === 'ok' ? undefined : e.tom} />
-        </View>
+        {/* Idem: desconhecido não vira barra vazia. */}
+        {e.pct_capacidade !== null ? (
+          <View style={estilos.barra}>
+            <Barra pct={e.pct_capacidade} tom={e.tom === 'ok' ? undefined : e.tom} />
+          </View>
+        ) : null}
 
         <View style={estilos.rodape}>
           <Text style={tipo.legenda} numberOfLines={1}>

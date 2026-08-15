@@ -81,10 +81,6 @@ class UsinaOut(BaseModel):
     disponibilidade_pct: float | None = None
     #: Quanto da capacidade está sendo usada agora, 0–100. Nulo quando falta um dos dois.
     pct_capacidade: int | None = None
-    #: Capacidade dos inversores que estão reportando. Não é para exibir — é o
-    #: denominador de `pct_capacidade`, para que numerador e denominador falem da mesma
-    #: população de aparelhos.
-    capacidade_operante_kwp: float | None = None
 
     #: A cor já decidida pelo servidor. Os nomes são exatamente as chaves de `tons` em
     #: `app/src/theme/tokens.ts` — a tela faz `tons[tom]`, então um nome que não existe
@@ -99,6 +95,9 @@ class UsinaOut(BaseModel):
     #: Quantos estão mudos, mesmo que não sejam todos. Sem isto, uma usina com dois de
     #: três inversores calados parecia inteira.
     inversores_mudos: int | None = None
+    #: Quantos pedem atenção sem estar parados — alarme do fabricante, código de falha
+    #: ativo ou estado `alert`. Sem este campo a usina em alerta saía verde.
+    inversores_alerta: int | None = None
     #: Quantos estão em falha. Vive AQUI, e não só no detalhe: sem este campo a aba Usinas
     #: e a tela inicial não tinham como saber que havia inversor parado — e `_atencao`,
     #: que só reage ao tom "parado", nunca acendia. Silêncio falso é pior que faixa falsa.
@@ -164,6 +163,9 @@ def _tom(usina: UsinaOut) -> tuple[str, str]:
         return "parado", "Disponibilidade baixa"
 
     # 4. Âmbar: algo a observar, com a usina de pé.
+    if usina.inversores_alerta:
+        n = usina.inversores_alerta
+        return "alerta", f"{n} {'inversor em alerta' if n == 1 else 'inversores em alerta'}"
     if usina.inversores_mudos:
         n = usina.inversores_mudos
         return "alerta", f"{n} {'inversor sem comunicação' if n == 1 else 'inversores sem comunicação'}"
@@ -228,6 +230,21 @@ def _instante_medida(valor: Any) -> datetime | None:
     except ValueError:
         return None
     return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def _em_alerta(inv: dict[str, Any]) -> bool:
+    """Se este inversor pede atenção, sem estar parado.
+
+    São **três** sinais, e o mw-fe considera os três
+    (`inicioData.ts`: `i.status === 'alert' || i.status === 'communication_error' ||
+    i.alert_text || i.fault`). Ler só o `status` deixava passar o caso mais perigoso: o
+    inversor com código de falha decodificado (`fault`) ou texto de alarme do fabricante
+    (`alert_text`) cujo registrador de estado ainda diz `normal` — que saía **verde** aqui
+    e âmbar no meuWatt, no mesmo minuto.
+    """
+    if str(inv.get("status") or "").strip().lower() == "alert":
+        return True
+    return bool(inv.get("alert_text") or inv.get("fault"))
 
 
 def _esta_mudo(inv: dict[str, Any]) -> bool:
@@ -350,6 +367,9 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
             saida["inversores"] = len(considerados)
             saida["inversores_parados"] = _parados(considerados)
             saida["inversores_mudos"] = sum(1 for i in considerados if _esta_mudo(i))
+            saida["inversores_alerta"] = sum(
+                1 for i in considerados if _em_alerta(i) and not _em_falha(i) and not _esta_mudo(i)
+            )
         # Guardado para o caso de o relatório diário não responder; o valor declarado
         # tem precedência e é preenchido logo abaixo.
         saida["capacidade_dos_inversores"] = _capacidade_dos_inversores(agora)
@@ -416,7 +436,6 @@ async def listar_usinas(
             capacidade_kwp=(
                 d.get("capacidade_kwp") or link.kwp or d.get("capacidade_dos_inversores")
             ),
-            capacidade_operante_kwp=d.get("capacidade_dos_inversores"),
             potencia_kw=d.get("potencia_kw"),
             energia_hoje_kwh=d.get("energia_hoje_kwh"),
             disponibilidade_pct=d.get("disponibilidade_pct"),
@@ -425,19 +444,23 @@ async def listar_usinas(
             sem_comunicacao=bool(d.get("sem_comunicacao")),
             inversores_mudos=d.get("inversores_mudos"),
             inversores_parados=d.get("inversores_parados"),
+            inversores_alerta=d.get("inversores_alerta"),
             fora_da_janela_solar=bool(d.get("fora_da_janela_solar")),
             tem_meuwatt=link.tem_meuwatt,
             tem_meuplano=link.tem_meuplano,
             aviso=d.get("aviso"),
         )
-        # O percentual compara populações IGUAIS. A potência exclui os mudos; se o
-        # denominador fosse a capacidade declarada (que inclui todos), uma usina com um
-        # terço dos inversores calados mostraria um percentual sistematicamente
-        # subestimado — e sem nada na tela explicando por quê. A capacidade exibida
-        # continua sendo a declarada: ela é a característica física da usina.
-        base = u.capacidade_operante_kwp or u.capacidade_kwp
-        if u.potencia_kw is not None and base:
-            u.pct_capacidade = max(0, min(100, round(u.potencia_kw / base * 100)))
+        # O denominador é SEMPRE a capacidade que a tela imprime ao lado. Chegou a haver
+        # três bases diferentes sob o mesmo rótulo "% da capacidade instalada" — a lista
+        # usava uma, o detalhe outra, o início uma terceira —, e a barra não correspondia
+        # ao número impresso a dois centímetros dela.
+        #
+        # Quando há inversor mudo, o percentual sai de fato menor: a potência não inclui
+        # esses aparelhos. Isso é correto e é dito na tela pela faixa "N inversores sem
+        # comunicação" — melhor um número honestamente menor com a explicação ao lado do
+        # que dois números que não fecham.
+        if u.potencia_kw is not None and u.capacidade_kwp:
+            u.pct_capacidade = max(0, min(100, round(u.potencia_kw / u.capacidade_kwp * 100)))
         u.tom, u.situacao = _tom(u)
         saida.append(u)
 
@@ -571,6 +594,7 @@ async def detalhe_usina(
         aviso=dados.get("aviso"),
         inversores=dados.get("inversores"),
         inversores_parados=dados.get("inversores_parados"),
+        inversores_alerta=dados.get("inversores_alerta"),
         alertas_ativos=equipamentos.get("alertas_ativos"),
     )
     if detalhe.potencia_kw is not None and detalhe.capacidade_kwp:

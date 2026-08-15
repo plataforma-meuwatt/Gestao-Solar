@@ -120,9 +120,13 @@ function CardUsina({ usina }: { usina: Usina }) {
           ) : null}
         </View>
 
-        <View style={estilos.barra}>
-          <Barra pct={usina.pct_capacidade ?? 0} />
-        </View>
+        {/* Sem percentual, NENHUMA barra. Uma barra vazia se lê como "não está gerando
+            nada", que é uma afirmação — e aqui não se sabe. Mesma regra da tela inicial. */}
+        {usina.pct_capacidade !== null ? (
+          <View style={estilos.barra}>
+            <Barra pct={usina.pct_capacidade} />
+          </View>
+        ) : null}
 
         <View style={estilos.rodape}>
           <Text style={tipo.legenda}>{local || '—'}</Text>

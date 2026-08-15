@@ -150,9 +150,11 @@ export default function UsinaDetalhe() {
           </View>
         ) : (
           <View style={estilos.miolo}>
+            {/* O dono da usina não precisa saber o nome da rota que falta. Ele precisa
+                saber que aquilo ainda não está pronto e que não é culpa dele. */}
             <Text style={tipo.fraco}>
-              O recorte {RECORTES[recorte]} depende de
-              GET /api/v1/plants/{'{id}'}/generation/range, que ainda não existe no BFF.
+              O acompanhamento por {RECORTES[recorte].toLowerCase()} ainda não está
+              disponível. Por enquanto, o aplicativo mostra o dia de hoje.
             </Text>
           </View>
         )}
