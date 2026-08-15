@@ -17,8 +17,6 @@ import {
   StyleSheet,
   Text,
   View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native'
@@ -88,11 +86,28 @@ export function Tela({
   const deslocamentoGrande = progresso.interpolate({ inputRange: [0, 1], outputRange: [0, -10] })
   const opacidadeFaixa = progresso
 
-  const aoRolar = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
-    scroll.setValue(e.nativeEvent.contentOffset.y)
+  // `Animated.event` em vez de `setValue` num handler React: o segundo agenda um render a
+  // cada quadro de rolagem, e o cabeçalho anima `height`, que é layout. Sessenta layouts
+  // por segundo disputando com o gesto é metade do tremor.
+  const aoRolar = Animated.event([{ nativeEvent: { contentOffset: { y: scroll } } }], {
+    // `height` não roda no driver nativo — precisa continuar no JS.
+    useNativeDriver: false,
+  })
 
+  /*
+   * O cabeçalho é sobreposto (`position: absolute`), e não um irmão acima da lista.
+   *
+   * Como irmão, encolher a altura dele aumentava a altura da ScrollView no mesmo quadro;
+   * a ScrollView com mais viewport reajustava o `contentOffset`; o offset novo realimentava
+   * a interpolação e mudava a altura outra vez. O resultado era o tremor ao arrastar — o
+   * cabeçalho e a lista brigando pelo mesmo espaço, quadro a quadro.
+   *
+   * Sobreposto, a altura dele não entra mais no layout de ninguém: a lista tem viewport
+   * constante, o offset só muda por causa do dedo, e o laço deixa de existir. O espaço do
+   * cabeçalho volta como `paddingTop` do conteúdo, que é estático.
+   */
   const cabecalho = (
-    <Animated.View style={[estilos.cabecalho, { height: alturaCabecalho }]}>
+    <Animated.View style={[estilos.cabecalho, estilos.cabecalhoFixo, { height: alturaCabecalho }]}>
       <View style={estilos.barraTopo}>
         {voltar ? (
           <Pressable onPress={() => router.back()} hitSlop={12} style={estilos.alvoCanto}>
@@ -144,10 +159,19 @@ export function Tela({
     <View style={[estilos.raiz, { paddingTop: insets.top }]}>
       <Halo />
       {offlineDesde ? <FaixaOffline desde={offlineDesde} /> : null}
+
+      {/*
+       * `corpo` é o contexto de posicionamento do cabeçalho sobreposto. Sem ele o
+       * `position: absolute` se ancoraria na raiz e cobriria a faixa de offline, que
+       * precisa continuar empurrando o conteúdo para baixo quando aparece.
+       */}
+      <View style={estilos.corpo}>
       {cabecalho}
 
       {semRolagem ? (
-        <View style={[estilos.conteudoFixo, contentStyle]}>{children}</View>
+        <View style={[estilos.conteudoFixo, { paddingTop: CABECALHO.expandido }, contentStyle]}>
+          {children}
+        </View>
       ) : (
         <Animated.ScrollView
           onScroll={aoRolar}
@@ -155,6 +179,9 @@ export function Tela({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
             estilos.conteudo,
+            // Reserva o espaço do cabeçalho sobreposto. Estático de propósito: se
+            // acompanhasse a altura animada, o laço de realimentação voltaria por aqui.
+            { paddingTop: CABECALHO.expandido },
             // A barra de abas cresce pela margem do sistema no Android; a reserva no fim
             // do conteúdo tem de crescer junto, senão o último card fica atrás dela.
             paraTabBar && { paddingBottom: ALTURA_TAB_BAR + espaco.lg + insets.bottom },
@@ -164,6 +191,7 @@ export function Tela({
           {children}
         </Animated.ScrollView>
       )}
+      </View>
     </View>
   )
 }
@@ -171,11 +199,21 @@ export function Tela({
 const estilos = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: cores.fundo },
 
+  corpo: { flex: 1 },
+
   cabecalho: {
     paddingHorizontal: espaco.md,
     overflow: 'hidden',
     borderBottomWidth: 1,
     borderBottomColor: cores.bordaFraca,
+  },
+  cabecalhoFixo: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 2,
+    backgroundColor: cores.fundo,
   },
   barraTopo: {
     height: CABECALHO.faixa,

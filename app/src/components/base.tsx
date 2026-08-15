@@ -8,7 +8,7 @@
  * Nenhum valor literal aqui — tudo vem de `theme/tokens.ts`.
  */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Pressable,
   StyleSheet,
@@ -496,8 +496,16 @@ const estilos = StyleSheet.create({
   grafBarras: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
   grafColuna: { flex: 1, alignItems: 'center' },
   grafBarra: { width: '100%', borderRadius: 2, backgroundColor: cores.ambar },
+  // A barra marcada clareia em vez de trocar de cor: cor significa estado do equipamento,
+  // e uma barra selecionada não mudou de estado — só está sendo lida.
+  grafBarraMarcada: { backgroundColor: cores.textoForte },
   grafEixo: { flexDirection: 'row', gap: 2, marginTop: 4 },
   grafRotulo: { fontSize: 8, color: cores.textoFraco },
+  grafRotuloMarcado: { color: cores.textoForte, fontFamily: fontes.ui },
+
+  grafLeitura: { height: 18, justifyContent: 'center', marginBottom: 4 },
+  grafLeituraTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoForte },
+  grafLeituraVazia: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco },
 
   halo: { position: 'absolute', left: '50%', top: -200, marginLeft: -280 },
 
@@ -723,19 +731,60 @@ export { ambarAlpha }
 export function GraficoBarras({
   pontos,
   altura = 120,
+  unidade = 'kWh',
+  casas = 1,
 }: {
   pontos: { chave: string; rotulo: string; kwh: number }[]
   altura?: number
+  /** Sufixo do valor lido ao tocar numa barra. */
+  unidade?: string
+  /** Casas decimais na leitura. Corrente e temperatura pedem 1; energia diária, 1. */
+  casas?: number
 }) {
+  /*
+   * Tocar numa barra mostra o valor dela.
+   *
+   * O eixo só cabe ~6 rótulos, então numa série de 31 dias a maioria das barras é anônima:
+   * dá para ver que uma é menor que as outras e não dá para saber qual dia é, nem quanto.
+   * O toque resolve as duas perguntas de uma vez, sem gastar espaço permanente na tela.
+   *
+   * Tocar de novo na mesma barra desmarca — sem isso a leitura fica presa na tela e o
+   * usuário fica sem jeito de voltar ao estado limpo.
+   */
+  const [marcada, setMarcada] = useState<string | null>(null)
+
   if (pontos.length === 0) return null
   const maximo = Math.max(...pontos.map((p) => p.kwh), 0)
   const passo = Math.max(1, Math.ceil(pontos.length / 6))
+  const lida = pontos.find((p) => p.chave === marcada) ?? null
 
   return (
     <View>
+      {/*
+       * A leitura ocupa lugar fixo, mesmo vazia. Se aparecesse e sumisse, o gráfico
+       * saltaria alguns pixels a cada toque — que é justamente o tipo de tremor que se
+       * quer evitar.
+       */}
+      <View style={estilos.grafLeitura}>
+        {lida ? (
+          <Text style={estilos.grafLeituraTexto}>
+            {lida.rotulo} · <Num>{lida.kwh.toFixed(casas)}</Num> {unidade}
+          </Text>
+        ) : (
+          <Text style={estilos.grafLeituraVazia}>toque numa barra para ver o valor</Text>
+        )}
+      </View>
+
       <View style={[estilos.grafBarras, { height: altura }]}>
         {pontos.map((p) => (
-          <View key={p.chave} style={estilos.grafColuna}>
+          <Pressable
+            key={p.chave}
+            style={estilos.grafColuna}
+            // A coluna inteira é o alvo, não a barra: uma barra de valor baixo tem poucos
+            // pixels de altura e seria impossível de acertar com o dedo.
+            onPress={() => setMarcada((atual) => (atual === p.chave ? null : p.chave))}
+            hitSlop={4}
+          >
             <View
               style={[
                 estilos.grafBarra,
@@ -744,15 +793,21 @@ export function GraficoBarras({
                   // barras somem, e é isso mesmo — não há o que desenhar.
                   height: maximo > 0 ? Math.max(2, (p.kwh / maximo) * altura) : 0,
                 },
+                p.chave === marcada && estilos.grafBarraMarcada,
               ]}
             />
-          </View>
+          </Pressable>
         ))}
       </View>
       <View style={estilos.grafEixo}>
         {pontos.map((p, i) => (
           <View key={p.chave} style={estilos.grafColuna}>
-            {i % passo === 0 ? <Text style={estilos.grafRotulo}>{p.rotulo}</Text> : null}
+            {/* O rótulo da barra marcada aparece mesmo fora do passo do eixo. */}
+            {i % passo === 0 || p.chave === marcada ? (
+              <Text style={[estilos.grafRotulo, p.chave === marcada && estilos.grafRotuloMarcado]}>
+                {p.rotulo}
+              </Text>
+            ) : null}
           </View>
         ))}
       </View>
