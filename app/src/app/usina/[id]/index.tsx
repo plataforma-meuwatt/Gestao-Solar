@@ -32,9 +32,9 @@ import {
 } from '@/components/base'
 import { hojeIso, SeletorPeriodo, type Recorte } from '@/components/periodo'
 import { Tela } from '@/components/Tela'
-import { useCurva, useGeracao, useUsina } from '@/features/usinas'
+import { useComparativo, useCurva, useGeracao, useUsina } from '@/features/usinas'
 import { energia, inteiro, numero, porcento, potencia } from '@/lib/format'
-import { cores, espaco, tipo } from '@/theme/tokens'
+import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 const RECORTES = ['Dia', 'Mês', 'Ano']
 const CHAVE_RECORTE: Recorte[] = ['dia', 'mes', 'ano']
@@ -58,6 +58,9 @@ export default function UsinaDetalhe() {
   const mes = useGeracao(id, 'mes', recorte === 1, referencia)
   const ano = useGeracao(id, 'ano', recorte === 2, referencia)
   const curva = useCurva(id, referencia, recorte === 0)
+  // A comparação vale nos três recortes — é a mesma pergunta ("quem está fora da
+  // média?") sobre janelas diferentes.
+  const comparativo = useComparativo(id, CHAVE_RECORTE[recorte], referencia, true)
 
   if (carregando || !u) {
     return (
@@ -196,6 +199,8 @@ export default function UsinaDetalhe() {
           />
         )}
       </Card>
+
+      <Comparacao leitura={comparativo} />
 
       <Card>
         <CabecalhoCard
@@ -349,6 +354,122 @@ function CurvaDoDia({ leitura }: { leitura: ReturnType<typeof useCurva> }) {
   )
 }
 
+/**
+ * Quem está fora da média — por skid e por inversor.
+ *
+ * A comparação é em kWh/kWp (energia específica) porque skid grande gera mais sem que isso
+ * seja mérito, e o desvio é contra a MEDIANA: um inversor parado puxaria a média para
+ * baixo e faria os saudáveis parecerem acima do normal.
+ *
+ * Os inversores vêm do servidor já ordenados do pior desvio para o melhor, e a tela mostra
+ * só os primeiros — numa usina de trinta, a lista inteira aqui seria a mesma rolagem que
+ * a tela de equipamentos já oferece. Quem está no topo é quem interessa.
+ */
+function Comparacao({ leitura }: { leitura: ReturnType<typeof useComparativo> }) {
+  const { dados, carregando, erro } = leitura
+  const [tudo, setTudo] = useState(false)
+
+  if (carregando && !dados) {
+    return (
+      <Card>
+        <Esqueleto altura={110} />
+      </Card>
+    )
+  }
+  if (erro || !dados || (dados.skids.length === 0 && dados.inversores.length === 0)) {
+    return (
+      <Card>
+        <CabecalhoCard rotulo="Comparação" />
+        <Text style={tipo.fraco}>
+          {erro ?? dados?.aviso ?? 'Sem energia por inversor neste período para comparar.'}
+        </Text>
+      </Card>
+    )
+  }
+
+  const inversores = tudo ? dados.inversores : dados.inversores.slice(0, 5)
+  const escondidos = dados.inversores.length - inversores.length
+
+  return (
+    <Card>
+      <CabecalhoCard
+        rotulo="Comparação"
+        direita={<Text style={tipo.legenda}>kWh por kWp</Text>}
+      />
+
+      {/* Um skid só não se compara com ninguém — a seção seria uma linha solitária. */}
+      {dados.skids.length > 1 ? (
+        <View style={estilos.bloco}>
+          <Text style={tipo.rotuloCard}>Entre skids</Text>
+          {dados.skids.map((s) => (
+            <LinhaDesvio
+              key={s.nome}
+              nome={s.nome}
+              detalhe={`${s.inversores} ${s.inversores === 1 ? 'inversor' : 'inversores'}`}
+              especifica={s.especifica}
+              desvio={s.desvio_pct}
+            />
+          ))}
+        </View>
+      ) : null}
+
+      <View style={estilos.bloco}>
+        <Text style={tipo.rotuloCard}>Entre inversores</Text>
+        {inversores.map((i) => (
+          <LinhaDesvio
+            key={i.serial ?? i.nome}
+            nome={i.nome}
+            detalhe={i.skid ?? ''}
+            especifica={i.especifica}
+            desvio={i.desvio_pct}
+          />
+        ))}
+        {escondidos > 0 ? (
+          <Text style={estilos.maisTexto} onPress={() => setTudo(true)}>
+            ver os outros {escondidos}
+          </Text>
+        ) : null}
+      </View>
+    </Card>
+  )
+}
+
+/**
+ * Uma linha da comparação. O tom sai da distância da mediana: até 5% é ruído de medição
+ * numa usina saudável, e pintar isso de amarelo faria a tela acender todo dia.
+ */
+function LinhaDesvio({
+  nome,
+  detalhe,
+  especifica,
+  desvio,
+}: {
+  nome: string
+  detalhe: string
+  especifica: number | null
+  desvio: number | null
+}) {
+  const tom = desvio === null ? undefined : desvio <= -15 ? 'parado' : desvio <= -5 ? 'alerta' : 'ok'
+
+  return (
+    <View style={estilos.desvioLinha}>
+      {tom ? <View style={[estilos.pontoDesvio, { backgroundColor: tons[tom] }]} /> : null}
+      <View style={estilos.desvioNomes}>
+        <Text style={estilos.desvioNome} numberOfLines={1}>
+          {nome}
+        </Text>
+        {detalhe ? <Text style={tipo.fraco}>{detalhe}</Text> : null}
+      </View>
+      <Num style={estilos.desvioValor}>{especifica !== null ? numero(especifica, 2) : '—'}</Num>
+      <Num
+        style={[estilos.desvioPct, tom ? { color: tons[tom] } : null]}
+      >
+        {desvio !== null ? `${desvio > 0 ? '+' : ''}${numero(desvio, 1)}%` : '—'}
+      </Num>
+    </View>
+  )
+}
+
 function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <View style={estilos.linha}>
@@ -367,6 +488,15 @@ const estilos = StyleSheet.create({
 
   miolo: { marginTop: espaco.md, gap: espaco.xs },
   seletor: { marginTop: espaco.sm },
+
+  bloco: { marginTop: espaco.sm, gap: 2 },
+  desvioLinha: { flexDirection: 'row', alignItems: 'center', gap: espaco.xs },
+  pontoDesvio: { width: 6, height: 6, borderRadius: 3 },
+  desvioNomes: { flex: 1 },
+  desvioNome: { fontFamily: fontes.ui, fontSize: 13, color: cores.textoForte },
+  desvioValor: { fontSize: 12, color: cores.textoCorpo, minWidth: 44, textAlign: 'right' },
+  desvioPct: { fontSize: 12, minWidth: 52, textAlign: 'right', color: cores.textoCorpo },
+  maisTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.ambar, marginTop: espaco.xs },
   curva: { marginTop: espaco.sm },
   espacoKpi: { marginVertical: espaco.xs },
   previsto: { fontSize: 12, color: cores.textoCorpo },

@@ -147,3 +147,50 @@ export function useCurva(
     ativo: Boolean(id) && ativo,
   })
 }
+
+/**
+ * Comparação entre skids e entre inversores no período.
+ *
+ * A comparação é em kWh/kWp — energia específica —, e não em kWh: um skid maior gera mais
+ * sem que isso seja mérito nem defeito. O desvio é contra a MEDIANA, não a média, porque
+ * um inversor parado puxa a média para baixo e faz os saudáveis parecerem acima do normal;
+ * a mediana ignora o extremo e mantém a régua onde ela deve estar.
+ */
+export type Skid = {
+  nome: string
+  inversores: number
+  capacidade_kwp: number | null
+  energia_kwh: number | null
+  especifica: number | null
+  desvio_pct: number | null
+}
+
+export type InversorNoRanking = {
+  nome: string
+  serial: string | null
+  skid: string | null
+  energia_kwh: number | null
+  especifica: number | null
+  desvio_pct: number | null
+}
+
+export type Comparativo = {
+  recorte: 'dia' | 'mes' | 'ano'
+  inicio: string
+  fim: string
+  skids: Skid[]
+  inversores: InversorNoRanking[]
+  aviso: string | null
+}
+
+export function useComparativo(
+  id: string | undefined,
+  recorte: 'dia' | 'mes' | 'ano',
+  referencia: string,
+  ativo: boolean,
+): Leitura<Comparativo> {
+  return fetchWithCache<Comparativo>(
+    `plants/${id ?? ''}/comparativo?recorte=${recorte}&referencia=${referencia}`,
+    { ativo: Boolean(id) && ativo },
+  )
+}

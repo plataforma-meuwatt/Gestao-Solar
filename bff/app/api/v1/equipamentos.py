@@ -70,6 +70,75 @@ class EquipamentoOut(BaseModel):
     #: quem opera, e contá-lo como problema é discutir com essa decisão toda vez.
     ignorado: bool = False
 
+    #: O trafo/skid a que este inversor pertence (`meter_name` no meuWatt). `None` quando
+    #: a usina não tem a estrutura cadastrada — aí a tela mostra uma seção só.
+    skid: str | None = None
+    #: Quanto este inversor se afasta da mediana dos irmãos, em %. Negativo = produzindo
+    #: menos. Vem pronto do meuWatt (`median_deviation`); não é calculado aqui.
+    desvio_mediana_pct: float | None = None
+
+
+class ReleProtecaoOut(BaseModel):
+    """Relé de proteção: as flags e as três fases.
+
+    Todo campo elétrico é `float | None`. Relé sem comunicação devolve `None`, e `None`
+    vira travessão na tela — nunca zero, que num relé se lê como "sem tensão na fase",
+    que é uma emergência e não uma falha de leitura.
+    """
+
+    id: str
+    nome: str
+    modelo: str | None = None
+    skid: str | None = None
+    comunicando: bool = False
+
+    tensao_a: float | None = None
+    tensao_b: float | None = None
+    tensao_c: float | None = None
+    corrente_a: float | None = None
+    corrente_b: float | None = None
+    corrente_c: float | None = None
+    potencia_a: float | None = None
+    potencia_b: float | None = None
+    potencia_c: float | None = None
+    potencia_total: float | None = None
+    reativo_kvar: float | None = None
+    frequencia_hz: float | None = None
+
+    #: Flags de trip ATIVAS agora. Lista vazia = nenhuma; é o estado bom.
+    flags: list[str] = []
+    #: Funções de proteção habilitadas no aparelho (50, 51, 27, 59…).
+    funcoes: list[str] = []
+    medido_em: datetime | None = None
+
+
+class ReleTemperaturaOut(BaseModel):
+    """Relé/sensor de temperatura: as bobinas e o ambiente.
+
+    `s1`/`s2`/`s3` são os três sensores do aparelho — nas usinas com trafo a seco, as três
+    bobinas. `maxima_*` é a máxima que o próprio aparelho registrou no dia; vem dele, não
+    é o máximo da série que o app viu.
+    """
+
+    id: str
+    nome: str
+    skid: str | None = None
+    comunicando: bool = False
+
+    s1: float | None = None
+    s2: float | None = None
+    s3: float | None = None
+    ambiente: float | None = None
+    maxima_s1: float | None = None
+    maxima_s2: float | None = None
+    maxima_s3: float | None = None
+    maxima_ambiente: float | None = None
+
+    #: O que o aparelho publica sobre cada bobina, do jeito que ele publica. O conteúdo
+    #: varia por modelo, então não é reinterpretado aqui — a tela mostra rótulo e valor.
+    bobinas: list[dict[str, Any]] = []
+    medido_em: datetime | None = None
+
 
 class EquipamentosOut(BaseModel):
     usina: str
@@ -87,6 +156,11 @@ class EquipamentosOut(BaseModel):
     atualizado_em: datetime | None = None
     aviso: str | None = None
     equipamentos: list[EquipamentoOut] = []
+
+    #: Os relés vêm da MESMA resposta de `monitoring/current` que os inversores — não
+    #: custam chamada extra. Lista vazia = a usina não tem esse equipamento cadastrado.
+    reles_protecao: list[ReleProtecaoOut] = []
+    reles_temperatura: list[ReleTemperaturaOut] = []
 
 
 def _situacao(
@@ -400,6 +474,94 @@ async def detalhe_do_equipamento(
     return detalhe
 
 
+def _texto(valor: Any) -> str | None:
+    """Texto do upstream, ou `None`. String vazia é ausência, não conteúdo."""
+    if valor is None:
+        return None
+    limpo = str(valor).strip()
+    return limpo or None
+
+
+def _lista_de_textos(valor: Any) -> list[str]:
+    """Lista de rótulos vinda do upstream, filtrando o que não é texto útil."""
+    if not isinstance(valor, list):
+        return []
+    saida: list[str] = []
+    for item in valor:
+        if isinstance(item, str) and item.strip():
+            saida.append(item.strip())
+        elif isinstance(item, dict):
+            # Algumas funções de proteção chegam como objeto; o rótulo é o que interessa.
+            rotulo = _texto(item.get("name") or item.get("code") or item.get("label"))
+            if rotulo:
+                saida.append(rotulo)
+    return saida
+
+
+def _reles(agora_resp: dict[str, Any]) -> tuple[list[ReleProtecaoOut], list[ReleTemperaturaOut]]:
+    """Separa os relés de proteção dos de temperatura, na resposta de `monitoring/current`.
+
+    O meuWatt publica os dois na mesma lista `relays` e marca a diferença com
+    `is_temperature_relay`; os sensores de temperatura vêm ainda numa segunda lista,
+    `temp_sensors`, que é a que traz bobina e máxima. Um relé de temperatura aparece nas
+    duas — por isso os de proteção são filtrados por `is_temperature_relay` falso, senão
+    ele sairia duplicado, uma vez em cada seção.
+    """
+    protecao: list[ReleProtecaoOut] = []
+    for r in agora_resp.get("relays") or []:
+        if not isinstance(r, dict) or r.get("is_temperature_relay"):
+            continue
+        protecao.append(
+            ReleProtecaoOut(
+                id=str(r.get("id") or "relay"),
+                nome=_texto(r.get("name")) or "Relé",
+                modelo=_texto(r.get("model")),
+                skid=_texto(r.get("transformer_name")),
+                comunicando=bool(r.get("comm")),
+                tensao_a=_numero(r.get("voltage_a")),
+                tensao_b=_numero(r.get("voltage_b")),
+                tensao_c=_numero(r.get("voltage_c")),
+                corrente_a=_numero(r.get("current_a")),
+                corrente_b=_numero(r.get("current_b")),
+                corrente_c=_numero(r.get("current_c")),
+                potencia_a=_numero(r.get("active_power_a")),
+                potencia_b=_numero(r.get("active_power_b")),
+                potencia_c=_numero(r.get("active_power_c")),
+                potencia_total=_numero(r.get("total_active_power")),
+                reativo_kvar=_numero(r.get("reactive_power")),
+                frequencia_hz=_numero(r.get("frequency")),
+                flags=_lista_de_textos(r.get("trip_flags")),
+                funcoes=_lista_de_textos(r.get("protection_functions")),
+                medido_em=_instante(r.get("timestamp")),
+            )
+        )
+
+    temperatura: list[ReleTemperaturaOut] = []
+    for t in agora_resp.get("temp_sensors") or []:
+        if not isinstance(t, dict):
+            continue
+        temperatura.append(
+            ReleTemperaturaOut(
+                id=str(t.get("id") or "temp"),
+                nome=_texto(t.get("name")) or "Sensor de temperatura",
+                skid=_texto(t.get("transformer_name")),
+                comunicando=bool(t.get("comm")),
+                s1=_numero(t.get("temp_s1")),
+                s2=_numero(t.get("temp_s2")),
+                s3=_numero(t.get("temp_s3")),
+                ambiente=_numero(t.get("temp_ambient")),
+                maxima_s1=_numero(t.get("temp_max_s1")),
+                maxima_s2=_numero(t.get("temp_max_s2")),
+                maxima_s3=_numero(t.get("temp_max_s3")),
+                maxima_ambiente=_numero(t.get("temp_max_ambient")),
+                bobinas=[b for b in (t.get("coils") or []) if isinstance(b, dict)],
+                medido_em=_instante(t.get("timestamp")),
+            )
+        )
+
+    return protecao, temperatura
+
+
 @router.get("/plants/{plant_link_id}/equipamentos", response_model=EquipamentosOut)
 async def equipamentos_da_usina(
     plant_link_id: int,
@@ -440,6 +602,7 @@ async def equipamentos_da_usina(
 
     modelos = _modelos_por_serial(diario)
     energias = _energia_por_serial(diario)
+    reles_protecao, reles_temperatura = _reles(agora_resp)
     agora = datetime.now(UTC)
 
     saida: list[EquipamentoOut] = []
@@ -479,6 +642,10 @@ async def equipamentos_da_usina(
             parado_desde=desde,
             parado_ha_min=minutos,
             ignorado=ignorado,
+            # `meter_name` é o nome do transformador no meuWatt — o skid. Vazio vira
+            # `None` para a tela cair na seção única em vez de criar um grupo sem nome.
+            skid=(str(inv.get("meter_name")).strip() or None) if inv.get("meter_name") else None,
+            desvio_mediana_pct=_numero(inv.get("median_deviation")),
         )
         if e.potencia_kw is not None and capacidade:
             e.pct_capacidade = max(0, min(100, round(e.potencia_kw / capacidade * 100)))
@@ -512,4 +679,215 @@ async def equipamentos_da_usina(
         ),
         aviso=None if isinstance(diario, dict) else "Energia do dia indisponível.",
         equipamentos=saida,
+        reles_protecao=reles_protecao,
+        reles_temperatura=reles_temperatura,
     )
+
+
+# ── Comparação entre skids ──────────────────────────────────────────────────
+#
+# A pergunta que esta rota responde é "algum skid está produzindo menos que os
+# outros?", e a resposta honesta exige normalizar por capacidade: um skid de
+# 1,2 MWp gera mais que um de 0,8 MWp sem que isso seja defeito nenhum. O que
+# compara é **kWh por kWp** — energia específica.
+#
+# A junção é por número de série: `monitoring/current` diz a que trafo cada
+# inversor pertence, e `generation/range` diz quanta energia cada série produziu
+# no período. Nenhum dos dois sozinho responde a pergunta.
+
+
+class SkidOut(BaseModel):
+    nome: str
+    inversores: int
+    #: Soma da capacidade dos inversores do skid. `None` = o meuWatt não informou.
+    capacidade_kwp: float | None = None
+    energia_kwh: float | None = None
+    #: kWh por kWp no período. É por aqui que skids de tamanhos diferentes se comparam.
+    especifica: float | None = None
+    #: Afastamento da mediana dos skids, em %. Negativo = produziu menos.
+    desvio_pct: float | None = None
+
+
+class InversorNoRankingOut(BaseModel):
+    nome: str
+    serial: str | None = None
+    skid: str | None = None
+    energia_kwh: float | None = None
+    especifica: float | None = None
+    desvio_pct: float | None = None
+
+
+class ComparativoOut(BaseModel):
+    recorte: str
+    inicio: str
+    fim: str
+    skids: list[SkidOut] = []
+    #: Todos os inversores, ordenados do pior desvio para o melhor — o topo é o que
+    #: pede atenção. Ordenar assim é o que transforma a lista em diagnóstico.
+    inversores: list[InversorNoRankingOut] = []
+    aviso: str | None = None
+
+
+def _mediana(valores: list[float]) -> float | None:
+    if not valores:
+        return None
+    ordenados = sorted(valores)
+    meio = len(ordenados) // 2
+    if len(ordenados) % 2:
+        return ordenados[meio]
+    return (ordenados[meio - 1] + ordenados[meio]) / 2
+
+
+def _desvio(valor: float | None, referencia: float | None) -> float | None:
+    """Afastamento percentual da referência. `None` quando não há o que comparar."""
+    if valor is None or not referencia:
+        return None
+    return round((valor - referencia) / referencia * 100, 1)
+
+
+@router.get("/plants/{plant_link_id}/comparativo", response_model=ComparativoOut)
+async def comparativo_da_usina(
+    plant_link_id: int,
+    recorte: str = "dia",
+    referencia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> ComparativoOut:
+    """Energia por skid e por inversor no período, com o desvio de cada um."""
+    from app.api.v1.plants import _janela, _referencia_pedida  # noqa: PLC0415
+
+    if recorte not in ("dia", "mes", "ano"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "recorte deve ser 'dia', 'mes' ou 'ano'.")
+
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    alvo = _referencia_pedida(referencia)
+    inicio, fim = (alvo, alvo) if recorte == "dia" else _janela(recorte, alvo)
+    saida = ComparativoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
+
+    if not link.mw_plant_slug:
+        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        agora_resp, relatorio = await asyncio.gather(
+            cliente.monitoramento_atual(link.mw_plant_slug),
+            cliente.geracao_periodo(link.mw_plant_slug, inicio, fim),
+            return_exceptions=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuWatt indisponível: {exc}"
+        return saida
+
+    if not isinstance(agora_resp, dict) or not isinstance(relatorio, dict):
+        saida.aviso = "Não foi possível montar a comparação agora."
+        return saida
+
+    # Série → (nome, skid, capacidade). O cadastro vem do estado de agora; a energia,
+    # do relatório do período.
+    cadastro: dict[str, dict[str, Any]] = {}
+    for inv in agora_resp.get("inverters") or []:
+        if not isinstance(inv, dict) or inv.get("ignored"):
+            continue
+        serie = inv.get("serial_number")
+        if not serie:
+            continue
+        cadastro[str(serie)] = {
+            "nome": _texto(inv.get("name")) or str(serie),
+            "skid": _texto(inv.get("meter_name")),
+            "capacidade": _numero(inv.get("capacity_kwp")) or None,
+        }
+
+    if not cadastro:
+        saida.aviso = "O meuWatt não devolveu inversores para comparar."
+        return saida
+
+    # Energia por série no período — o eixo oposto do mesmo `chart_data` que a rota de
+    # geração soma por data.
+    energia_por_serie: dict[str, float] = {}
+    chart = relatorio.get("chart_data")
+    series = chart.get("daily_generation") if isinstance(chart, dict) else None
+    if isinstance(series, dict):
+        for serie, pontos in series.items():
+            if not isinstance(pontos, list):
+                continue
+            total = 0.0
+            mediu = False
+            for p in pontos:
+                if isinstance(p, dict) and isinstance(p.get("y"), (int, float)):
+                    total += float(p["y"])
+                    mediu = True
+            if mediu:
+                energia_por_serie[str(serie)] = total
+
+    if not energia_por_serie:
+        saida.aviso = "O monitoramento não devolveu energia por inversor neste período."
+        return saida
+
+    # ── Por skid ──
+    por_skid: dict[str, dict[str, Any]] = {}
+    for serie, info in cadastro.items():
+        # Inversor sem energia no período NÃO entra como zero: pode ter sido instalado
+        # depois, e um zero inventado puxaria a média do skid para baixo.
+        energia = energia_por_serie.get(serie)
+        if energia is None:
+            continue
+        nome_skid = info["skid"] or "Sem skid definido"
+        grupo = por_skid.setdefault(
+            nome_skid, {"inversores": 0, "capacidade": 0.0, "energia": 0.0, "tem_cap": True}
+        )
+        grupo["inversores"] += 1
+        grupo["energia"] += energia
+        if info["capacidade"]:
+            grupo["capacidade"] += info["capacidade"]
+        else:
+            # Um inversor sem capacidade contamina a específica do skid inteiro: a
+            # energia dele entra no numerador e a capacidade não entra no denominador,
+            # inflando o resultado. Melhor não publicar a específica desse skid.
+            grupo["tem_cap"] = False
+
+    skids: list[SkidOut] = []
+    for nome, g in por_skid.items():
+        cap = g["capacidade"] if g["tem_cap"] and g["capacidade"] > 0 else None
+        skids.append(
+            SkidOut(
+                nome=nome,
+                inversores=g["inversores"],
+                capacidade_kwp=round(cap, 2) if cap else None,
+                energia_kwh=round(g["energia"], 2),
+                especifica=round(g["energia"] / cap, 3) if cap else None,
+            )
+        )
+
+    mediana_skid = _mediana([s.especifica for s in skids if s.especifica is not None])
+    for s in skids:
+        s.desvio_pct = _desvio(s.especifica, mediana_skid)
+    skids.sort(key=lambda s: s.nome)
+    saida.skids = skids
+
+    # ── Por inversor ──
+    linhas: list[InversorNoRankingOut] = []
+    for serie, info in cadastro.items():
+        energia = energia_por_serie.get(serie)
+        if energia is None:
+            continue
+        cap = info["capacidade"]
+        linhas.append(
+            InversorNoRankingOut(
+                nome=info["nome"],
+                serial=serie,
+                skid=info["skid"],
+                energia_kwh=round(energia, 2),
+                especifica=round(energia / cap, 3) if cap else None,
+            )
+        )
+
+    mediana_inv = _mediana([linha.especifica for linha in linhas if linha.especifica is not None])
+    for linha in linhas:
+        linha.desvio_pct = _desvio(linha.especifica, mediana_inv)
+
+    # Pior desvio primeiro. Quem não tem desvio calculável vai para o fim: sem
+    # capacidade não há comparação, e fingir desvio zero o esconderia no meio da lista.
+    linhas.sort(key=lambda linha: (linha.desvio_pct is None, linha.desvio_pct or 0))
+    saida.inversores = linhas
+    return saida

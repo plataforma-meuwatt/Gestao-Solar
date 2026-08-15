@@ -29,6 +29,53 @@ export type Equipamento = {
 
   /** Silenciado pelo operador no meuWatt — fora das contagens de problema. */
   ignorado: boolean
+
+  /** O trafo/skid a que pertence. `null` = a usina não tem a estrutura cadastrada. */
+  skid: string | null
+  /** Afastamento da mediana dos irmãos, em %. Negativo = produzindo menos. */
+  desvio_mediana_pct: number | null
+}
+
+/** Relé de proteção: as flags e as três fases. Nulo é travessão, nunca zero. */
+export type ReleProtecao = {
+  id: string
+  nome: string
+  modelo: string | null
+  skid: string | null
+  comunicando: boolean
+  tensao_a: number | null
+  tensao_b: number | null
+  tensao_c: number | null
+  corrente_a: number | null
+  corrente_b: number | null
+  corrente_c: number | null
+  potencia_a: number | null
+  potencia_b: number | null
+  potencia_c: number | null
+  potencia_total: number | null
+  reativo_kvar: number | null
+  frequencia_hz: number | null
+  flags: string[]
+  funcoes: string[]
+  medido_em: string | null
+}
+
+/** Relé de temperatura: as bobinas e o ambiente, com a máxima que o aparelho registrou. */
+export type ReleTemperatura = {
+  id: string
+  nome: string
+  skid: string | null
+  comunicando: boolean
+  s1: number | null
+  s2: number | null
+  s3: number | null
+  ambiente: number | null
+  maxima_s1: number | null
+  maxima_s2: number | null
+  maxima_s3: number | null
+  maxima_ambiente: number | null
+  bobinas: Record<string, unknown>[]
+  medido_em: string | null
 }
 
 export type EquipamentosOut = {
@@ -44,6 +91,8 @@ export type EquipamentosOut = {
   atualizado_em: string | null
   aviso: string | null
   equipamentos: Equipamento[]
+  reles_protecao: ReleProtecao[]
+  reles_temperatura: ReleTemperatura[]
 }
 
 export type Entrada = { numero: number; tensao_v: number | null; corrente_a: number | null }

@@ -12,6 +12,7 @@
  */
 
 import { router, useLocalSearchParams } from 'expo-router'
+import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 
 import {
@@ -21,15 +22,29 @@ import {
   Esqueleto,
   EstadoVazio,
   Num,
+  Segmentado,
   StatusChip,
 } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { useEquipamentos, type Equipamento } from '@/features/equipamentos'
-import { duracao, energia, hora, inteiro, potencia } from '@/lib/format'
+import {
+  useEquipamentos,
+  type Equipamento,
+  type ReleProtecao,
+  type ReleTemperatura,
+} from '@/features/equipamentos'
+import { duracao, energia, hora, inteiro, numero, potencia } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
+
+/**
+ * A ordem é a que o dono pediu, e ela tem lógica de operação: o inversor é quem gera, e
+ * é onde a perda aparece primeiro; a temperatura do trafo é o que estraga equipamento de
+ * forma silenciosa; o relé de proteção é o que desliga tudo quando algo dá errado.
+ */
+const TIPOS = ['Tudo', 'Inversores', 'Temperatura', 'Proteção']
 
 export default function Equipamentos() {
   const { id } = useLocalSearchParams<{ id: string }>()
+  const [tipo_, setTipo] = useState(0)
   const { dados, carregando, erro, offlineDesde, recarregar } = useEquipamentos(id)
 
   return (
@@ -116,12 +131,343 @@ export default function Equipamentos() {
 
           {dados.aviso ? <Text style={estilos.aviso}>{dados.aviso}</Text> : null}
 
-          {dados.equipamentos.map((e) => (
-            <CardEquipamento key={e.id} equipamento={e} usinaId={id} />
-          ))}
+          <ComProblema
+            inversores={dados.equipamentos}
+            protecao={dados.reles_protecao ?? []}
+            temperatura={dados.reles_temperatura ?? []}
+            usinaId={id}
+          />
+
+          <Segmentado opcoes={TIPOS} ativo={tipo_} onEscolher={setTipo} />
+
+          {tipo_ === 0 || tipo_ === 1 ? (
+            <SecaoInversores lista={dados.equipamentos} usinaId={id} comTitulo={tipo_ === 0} />
+          ) : null}
+
+          {tipo_ === 0 || tipo_ === 2 ? (
+            <SecaoTemperatura lista={dados.reles_temperatura ?? []} comTitulo={tipo_ === 0} />
+          ) : null}
+
+          {tipo_ === 0 || tipo_ === 3 ? (
+            <SecaoProtecao lista={dados.reles_protecao ?? []} comTitulo={tipo_ === 0} />
+          ) : null}
         </>
       )}
     </Tela>
+  )
+}
+
+/**
+ * O que está com problema, antes da lista.
+ *
+ * Sem isto, achar o inversor parado numa usina de trinta exige rolar até encontrar o card
+ * vermelho. A lista continua completa embaixo — este bloco é atalho, não substituto.
+ *
+ * Só aparece quando há problema: um card permanente dizendo "nada com problema" ocuparia
+ * o topo da tela todos os dias para não informar nada.
+ */
+function ComProblema({
+  inversores,
+  protecao,
+  temperatura,
+  usinaId,
+}: {
+  inversores: Equipamento[]
+  protecao: ReleProtecao[]
+  temperatura: ReleTemperatura[]
+  usinaId?: string
+}) {
+  const invRuins = inversores.filter((e) => !e.ignorado && (e.tom === 'parado' || e.tom === 'alerta'))
+  // Relé com flag ativa é problema declarado pelo próprio aparelho. Relé mudo é problema
+  // de outra natureza — não sabemos o que ele está protegendo — e conta igual.
+  const relesComFlag = protecao.filter((r) => r.flags.length > 0)
+  const relesMudos = protecao.filter((r) => !r.comunicando)
+  const tempMudos = temperatura.filter((t) => !t.comunicando)
+
+  const total = invRuins.length + relesComFlag.length + relesMudos.length + tempMudos.length
+  if (total === 0) return null
+
+  return (
+    <Card>
+      <Text style={estilos.tituloSecao}>Precisam de atenção</Text>
+      <View style={estilos.problemas}>
+        {invRuins.map((e) => (
+          <Pressable
+            key={e.id}
+            style={estilos.problema}
+            onPress={usinaId ? () => router.push(`/equipamento/${e.id}?usina=${usinaId}`) : undefined}
+          >
+            <View style={[estilos.ponto, { backgroundColor: tons[e.tom] }]} />
+            <Text style={estilos.problemaNome} numberOfLines={1}>
+              {e.nome}
+            </Text>
+            <Text style={estilos.problemaDetalhe} numberOfLines={1}>
+              {e.situacao}
+            </Text>
+            <Chevron />
+          </Pressable>
+        ))}
+        {relesComFlag.map((r) => (
+          <View key={`flag-${r.id}`} style={estilos.problema}>
+            <View style={[estilos.ponto, { backgroundColor: tons.parado }]} />
+            <Text style={estilos.problemaNome} numberOfLines={1}>
+              {r.nome}
+            </Text>
+            <Text style={estilos.problemaDetalhe} numberOfLines={1}>
+              {r.flags.join(' · ')}
+            </Text>
+          </View>
+        ))}
+        {[...relesMudos, ...tempMudos].map((r) => (
+          <View key={`mudo-${r.id}`} style={estilos.problema}>
+            <View style={[estilos.ponto, { backgroundColor: tons.semDados }]} />
+            <Text style={estilos.problemaNome} numberOfLines={1}>
+              {r.nome}
+            </Text>
+            <Text style={estilos.problemaDetalhe}>sem comunicação</Text>
+          </View>
+        ))}
+      </View>
+    </Card>
+  )
+}
+
+/**
+ * Inversores agrupados por skid.
+ *
+ * O agrupamento só acontece quando há mais de um skid: numa usina de skid único, o título
+ * repetido acima de cada bloco seria ruído puro. Usina sem a estrutura cadastrada cai no
+ * mesmo caminho, porque `skid` vem `null` para todos.
+ */
+function SecaoInversores({
+  lista,
+  usinaId,
+  comTitulo,
+}: {
+  lista: Equipamento[]
+  usinaId?: string
+  comTitulo: boolean
+}) {
+  const grupos = new Map<string, Equipamento[]>()
+  for (const e of lista) {
+    const chave = e.skid ?? ''
+    const atual = grupos.get(chave)
+    if (atual) atual.push(e)
+    else grupos.set(chave, [e])
+  }
+  const porSkid = grupos.size > 1 || (grupos.size === 1 && !grupos.has(''))
+
+  return (
+    <>
+      {comTitulo ? <Text style={estilos.tituloSecao}>Inversores</Text> : null}
+      {[...grupos.entries()].map(([skid, itens]) => (
+        <View key={skid || 'sem-skid'}>
+          {porSkid ? (
+            <View style={estilos.subtituloLinha}>
+              <Text style={estilos.subtitulo}>{skid || 'Sem skid definido'}</Text>
+              <Text style={tipo.legenda}>
+                <Num style={estilos.subNum}>{itens.length}</Num>
+              </Text>
+            </View>
+          ) : null}
+          {itens.map((e) => (
+            <CardEquipamento key={e.id} equipamento={e} usinaId={usinaId} />
+          ))}
+        </View>
+      ))}
+    </>
+  )
+}
+
+function SecaoTemperatura({ lista, comTitulo }: { lista: ReleTemperatura[]; comTitulo: boolean }) {
+  if (lista.length === 0) {
+    return (
+      <>
+        {comTitulo ? <Text style={estilos.tituloSecao}>Relé de temperatura</Text> : null}
+        <Card>
+          <Text style={tipo.fraco}>
+            Esta usina não tem relé de temperatura no monitoramento.
+          </Text>
+        </Card>
+      </>
+    )
+  }
+
+  return (
+    <>
+      {comTitulo ? <Text style={estilos.tituloSecao}>Relé de temperatura</Text> : null}
+      {lista.map((t) => (
+        <Card key={t.id}>
+          <View style={estilos.cabecaEquip}>
+            <Text style={estilos.nomeEquip} numberOfLines={1}>
+              {t.nome}
+            </Text>
+            <View style={estilos.espacador} />
+            {t.comunicando ? (
+              t.skid ? <Text style={tipo.legenda}>{t.skid}</Text> : null
+            ) : (
+              <StatusChip tom="semDados" texto="Sem comunicação" />
+            )}
+          </View>
+
+          {/*
+           * Uma coluna por bobina, com a leitura de agora em cima e a máxima do dia
+           * embaixo. A máxima vem do próprio aparelho — não é o maior valor que o app
+           * viu, que dependeria de o app estar aberto.
+           */}
+          <View style={estilos.bobinas}>
+            <Bobina rotulo="Bobina 1" agora={t.s1} maxima={t.maxima_s1} />
+            <Bobina rotulo="Bobina 2" agora={t.s2} maxima={t.maxima_s2} />
+            <Bobina rotulo="Bobina 3" agora={t.s3} maxima={t.maxima_s3} />
+            <Bobina rotulo="Ambiente" agora={t.ambiente} maxima={t.maxima_ambiente} />
+          </View>
+
+          {t.medido_em ? (
+            <Text style={estilos.medido}>medido às {hora(t.medido_em)}</Text>
+          ) : null}
+        </Card>
+      ))}
+    </>
+  )
+}
+
+function Bobina({
+  rotulo,
+  agora,
+  maxima,
+}: {
+  rotulo: string
+  agora: number | null
+  maxima: number | null
+}) {
+  return (
+    <View style={estilos.bobina}>
+      <Text style={tipo.fraco}>{rotulo}</Text>
+      <Num style={estilos.bobinaAgora}>{agora !== null ? `${numero(agora, 1)}°` : '—'}</Num>
+      <Text style={tipo.fraco}>
+        {maxima !== null ? (
+          <>
+            máx <Num style={estilos.bobinaMax}>{numero(maxima, 1)}°</Num>
+          </>
+        ) : (
+          'máx —'
+        )}
+      </Text>
+    </View>
+  )
+}
+
+function SecaoProtecao({ lista, comTitulo }: { lista: ReleProtecao[]; comTitulo: boolean }) {
+  if (lista.length === 0) {
+    return (
+      <>
+        {comTitulo ? <Text style={estilos.tituloSecao}>Relé de proteção</Text> : null}
+        <Card>
+          <Text style={tipo.fraco}>Esta usina não tem relé de proteção no monitoramento.</Text>
+        </Card>
+      </>
+    )
+  }
+
+  return (
+    <>
+      {comTitulo ? <Text style={estilos.tituloSecao}>Relé de proteção</Text> : null}
+      {lista.map((r) => (
+        <Card key={r.id}>
+          <View style={estilos.cabecaEquip}>
+            <Text style={estilos.nomeEquip} numberOfLines={1}>
+              {r.nome}
+            </Text>
+            <View style={estilos.espacador} />
+            {!r.comunicando ? (
+              <StatusChip tom="semDados" texto="Sem comunicação" />
+            ) : r.flags.length > 0 ? (
+              <StatusChip tom="parado" texto={`${r.flags.length} flag${r.flags.length > 1 ? 's' : ''}`} />
+            ) : (
+              <StatusChip tom="ok" texto="Sem flag" />
+            )}
+          </View>
+
+          {r.skid || r.modelo ? (
+            <Text style={tipo.fraco}>{[r.skid, r.modelo].filter(Boolean).join(' · ')}</Text>
+          ) : null}
+
+          {/* Flags ativas primeiro: é a única informação aqui que pede ação hoje. */}
+          {r.flags.length > 0 ? (
+            <View style={estilos.flags}>
+              {r.flags.map((f) => (
+                <View key={f} style={estilos.flag}>
+                  <Text style={estilos.flagTexto}>{f}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          <View style={estilos.fases}>
+            <Fase rotulo="A" tensao={r.tensao_a} corrente={r.corrente_a} potencia={r.potencia_a} />
+            <Fase rotulo="B" tensao={r.tensao_b} corrente={r.corrente_b} potencia={r.potencia_b} />
+            <Fase rotulo="C" tensao={r.tensao_c} corrente={r.corrente_c} potencia={r.potencia_c} />
+          </View>
+
+          <View style={estilos.totais}>
+            <Total rotulo="Potência total" valor={r.potencia_total} unidade="kW" />
+            <Total rotulo="Reativo" valor={r.reativo_kvar} unidade="kvar" />
+            <Total rotulo="Frequência" valor={r.frequencia_hz} unidade="Hz" casas={2} />
+          </View>
+
+          {r.funcoes.length > 0 ? (
+            <Text style={estilos.medido}>proteções: {r.funcoes.join(', ')}</Text>
+          ) : null}
+          {r.medido_em ? <Text style={estilos.medido}>medido às {hora(r.medido_em)}</Text> : null}
+        </Card>
+      ))}
+    </>
+  )
+}
+
+function Fase({
+  rotulo,
+  tensao,
+  corrente,
+  potencia: pot,
+}: {
+  rotulo: string
+  tensao: number | null
+  corrente: number | null
+  potencia: number | null
+}) {
+  return (
+    <View style={estilos.fase}>
+      <Text style={estilos.faseRotulo}>{rotulo}</Text>
+      <Num style={estilos.faseValor}>{tensao !== null ? numero(tensao, 1) : '—'}</Num>
+      <Text style={tipo.fraco}>V</Text>
+      <Num style={estilos.faseValor}>{corrente !== null ? numero(corrente, 2) : '—'}</Num>
+      <Text style={tipo.fraco}>A</Text>
+      <Num style={estilos.faseValor}>{pot !== null ? numero(pot, 1) : '—'}</Num>
+      <Text style={tipo.fraco}>kW</Text>
+    </View>
+  )
+}
+
+function Total({
+  rotulo,
+  valor,
+  unidade,
+  casas = 1,
+}: {
+  rotulo: string
+  valor: number | null
+  unidade: string
+  casas?: number
+}) {
+  return (
+    <View>
+      <Text style={tipo.fraco}>{rotulo}</Text>
+      <Text style={estilos.totalLinha}>
+        <Num style={estilos.totalValor}>{valor !== null ? numero(valor, casas) : '—'}</Num>{' '}
+        <Text style={tipo.fraco}>{unidade}</Text>
+      </Text>
+    </View>
   )
 }
 
@@ -208,6 +554,60 @@ function Fantasma() {
 }
 
 const estilos = StyleSheet.create({
+  tituloSecao: {
+    fontFamily: fontes.ui,
+    fontSize: 13,
+    color: cores.textoForte,
+    marginTop: espaco.sm,
+  },
+  subtituloLinha: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: espaco.xs,
+    marginBottom: 2,
+  },
+  subtitulo: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoRotulo },
+
+  problemas: { marginTop: espaco.xs, gap: espaco.xs },
+  problema: { flexDirection: 'row', alignItems: 'center', gap: espaco.xs },
+  problemaNome: { fontFamily: fontes.ui, fontSize: 13, color: cores.textoForte, flexShrink: 1 },
+  problemaDetalhe: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco, flex: 1 },
+
+  cabecaEquip: { flexDirection: 'row', alignItems: 'center', gap: espaco.xs },
+  nomeEquip: { fontFamily: fontes.ui, fontSize: 14, color: cores.textoForte, flexShrink: 1 },
+
+  bobinas: { flexDirection: 'row', marginTop: espaco.sm, gap: espaco.xs },
+  bobina: { flex: 1, gap: 1 },
+  bobinaAgora: { fontSize: 16, color: cores.textoForte },
+  bobinaMax: { fontSize: 10, color: cores.textoCorpo },
+
+  flags: { flexDirection: 'row', flexWrap: 'wrap', gap: espaco.xs, marginTop: espaco.xs },
+  flag: {
+    borderWidth: 1,
+    borderColor: tons.parado,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  flagTexto: { fontFamily: fontes.ui, fontSize: 11, color: tons.parado },
+
+  fases: { marginTop: espaco.sm, gap: 2 },
+  fase: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  faseRotulo: {
+    fontFamily: fontes.ui,
+    fontSize: 11,
+    color: cores.textoRotulo,
+    width: 12,
+  },
+  faseValor: { fontSize: 12, color: cores.textoForte, minWidth: 52, textAlign: 'right' },
+
+  totais: { flexDirection: 'row', justifyContent: 'space-between', marginTop: espaco.sm },
+  totalLinha: { marginTop: 1 },
+  totalValor: { fontSize: 13, color: cores.textoForte },
+
+  medido: { fontFamily: fontes.ui, fontSize: 10, color: cores.textoFraco, marginTop: espaco.xs },
+
   subNum: { fontSize: 13, color: cores.textoRotulo },
 
   resumo: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: espaco.xs },
