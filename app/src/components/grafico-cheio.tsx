@@ -90,7 +90,17 @@ function TelaCheia({
 
   const limitar = (v: number) => Math.min(MAX, Math.max(MIN, v))
 
+  /*
+   * `runOnJS(true)` NÃO é detalhe de performance — é o que impede o app de fechar.
+   *
+   * Com o `react-native-reanimated` instalado, os callbacks do gesto viram worklets e
+   * rodam na thread de UI. `setZoom` e `setAncora` são closures de JavaScript comum:
+   * chamá-las de dentro de um worklet estoura na hora, e o sintoma é o aplicativo
+   * fechando ao abrir o gráfico em tela cheia. Com a marca, o gesto entrega os eventos
+   * na thread de JS, onde `setState` existe.
+   */
   const pinca = Gesture.Pinch()
+    .runOnJS(true)
     .onStart(() => setAncora(zoom))
     .onUpdate((e) => setZoom(limitar(ancora * e.scale)))
 

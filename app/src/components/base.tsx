@@ -507,6 +507,10 @@ const estilos = StyleSheet.create({
   grafLeituraTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoForte },
   grafLeituraVazia: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoFraco },
 
+  grafComEixo: { flexDirection: 'row', gap: 4 },
+  grafEixoY: { justifyContent: 'space-between', width: 34, alignItems: 'flex-end' },
+  grafEixoYDireita: { alignItems: 'flex-start' },
+  grafEixoYTexto: { fontFamily: fontes.mono, fontSize: 8, color: cores.textoFraco },
   grafEixoLinha: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   grafLegendaChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   grafLegendaCor: { width: 8, height: 2, borderRadius: 1 },
@@ -861,6 +865,16 @@ export function GraficoLinha({
   const yKw = (v: number) => altura - (v / kwMax) * altura
   const yPoa = (v: number) => altura - (v / poaMax) * altura
 
+  /*
+   * Duas escalas, uma em cada lado: kW à esquerda, W/m² à direita.
+   *
+   * São grandezas diferentes com eixos diferentes — pôr as duas do mesmo lado faria
+   * ler o número errado para a curva errada, que é pior do que não ter número. O lado
+   * de cada uma é a única pista de qual pertence a qual, então a legenda embaixo
+   * repete a associação.
+   */
+  const marcas = [0, 0.25, 0.5, 0.75, 1]
+
   const caminho = (valor: (p: (typeof pontos)[number]) => number | null | undefined,
                    escala: (v: number) => number) => {
     let d = ''
@@ -899,13 +913,33 @@ export function GraficoLinha({
         )}
       </View>
 
-      <View
-        style={{ height: altura }}
-        onLayout={(e) => setLargura(e.nativeEvent.layout.width)}
-      >
+      <View style={estilos.grafComEixo}>
+        <View style={[estilos.grafEixoY, { height: altura }]}>
+          {[...marcas].reverse().map((f) => (
+            <Text key={`kw-${f}`} style={estilos.grafEixoYTexto} numberOfLines={1}>
+              {(kwMax * f).toFixed(kwMax >= 100 ? 0 : 1)}
+            </Text>
+          ))}
+        </View>
+
+        <View
+          style={{ height: altura, flex: 1 }}
+          onLayout={(e) => setLargura(e.nativeEvent.layout.width)}
+        >
         {largura > 0 ? (
           <>
             <Svg width={largura} height={altura}>
+              {marcas.map((f) => (
+                <Line
+                  key={`grade-${f}`}
+                  x1={0}
+                  y1={altura - f * altura}
+                  x2={largura}
+                  y2={altura - f * altura}
+                  stroke={cores.bordaFraca}
+                  strokeWidth={0.5}
+                />
+              ))}
               {temPoa ? (
                 <Path
                   d={caminho((p) => p.poa, yPoa)}
@@ -947,6 +981,17 @@ export function GraficoLinha({
             />
           </>
         ) : null}
+        </View>
+
+        {temPoa ? (
+          <View style={[estilos.grafEixoY, estilos.grafEixoYDireita, { height: altura }]}>
+            {[...marcas].reverse().map((f) => (
+              <Text key={`poa-${f}`} style={estilos.grafEixoYTexto} numberOfLines={1}>
+                {(poaMax * f).toFixed(0)}
+              </Text>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       <View style={estilos.grafEixoLinha}>
@@ -954,12 +999,12 @@ export function GraficoLinha({
         <Text style={estilos.grafRotulo}>{pontos[pontos.length - 1].hora}</Text>
       </View>
 
-      {temPoa ? (
-        <View style={estilos.grafLegenda}>
-          <Text style={estilos.grafLegendaItem}>— potência</Text>
-          <Text style={estilos.grafLegendaItem}>- - irradiação POA</Text>
-        </View>
-      ) : null}
+      <View style={estilos.grafLegenda}>
+        <Text style={estilos.grafLegendaItem}>— potência (kW, esquerda)</Text>
+        {temPoa ? (
+          <Text style={estilos.grafLegendaItem}>- - irradiação POA (W/m², direita)</Text>
+        ) : null}
+      </View>
     </View>
   )
 }
@@ -1011,6 +1056,20 @@ export function GraficoSeries({
   const x = (i: number) => (i / (horas.length - 1)) * largura
   const y = (v: number) => altura - ((v - menor) / faixa) * altura
 
+  /*
+   * Cinco marcas no eixo vertical, do menor ao maior.
+   *
+   * Sem elas o gráfico responde "qual série está mais alta" e não responde "quantos
+   * graus" — e numa bobina de trafo a segunda pergunta é a que decide se alguém vai ao
+   * campo. O toque dá o valor exato de UM instante; a escala dá a ordem de grandeza do
+   * gráfico inteiro, de relance.
+   *
+   * A escala não começa no zero (ver acima), então os rótulos são obrigatórios: sem
+   * eles, um eixo que vai de 60 °C a 80 °C se lê como se fosse de 0 a 80, e uma
+   * variação de dois graus parece um desabamento.
+   */
+  const marcas = Array.from({ length: 5 }, (_, i) => menor + (faixa * i) / 4)
+
   const caminho = (valores: (number | null)[]) => {
     let d = ''
     let aberto = false
@@ -1044,10 +1103,36 @@ export function GraficoSeries({
         )}
       </View>
 
-      <View style={{ height: altura }} onLayout={(e) => setLargura(e.nativeEvent.layout.width)}>
+      <View style={estilos.grafComEixo}>
+        {/* Coluna dos rótulos, fora da área de desenho: dentro do SVG ela encolheria a
+            largura útil a cada zoom, e as linhas dançariam ao ampliar. */}
+        <View style={[estilos.grafEixoY, { height: altura }]}>
+          {[...marcas].reverse().map((m) => (
+            <Text key={m} style={estilos.grafEixoYTexto} numberOfLines={1}>
+              {m.toFixed(casas)}
+            </Text>
+          ))}
+        </View>
+
+        <View
+          style={{ height: altura, flex: 1 }}
+          onLayout={(e) => setLargura(e.nativeEvent.layout.width)}
+        >
         {largura > 0 ? (
           <>
             <Svg width={largura} height={altura}>
+              {/* Linhas de grade: é o que liga o número da esquerda à altura da curva. */}
+              {marcas.map((m) => (
+                <Line
+                  key={`grade-${m}`}
+                  x1={0}
+                  y1={y(m)}
+                  x2={largura}
+                  y2={y(m)}
+                  stroke={cores.bordaFraca}
+                  strokeWidth={0.5}
+                />
+              ))}
               {series.map((s, i) => (
                 <Path
                   key={s.rotulo}
@@ -1078,10 +1163,14 @@ export function GraficoSeries({
             />
           </>
         ) : null}
+        </View>
       </View>
 
       <View style={estilos.grafEixoLinha}>
         <Text style={estilos.grafRotulo}>{horas[0]}</Text>
+        <Text style={estilos.grafRotulo}>
+          {unidade ? `${unidade}` : ''}
+        </Text>
         <Text style={estilos.grafRotulo}>{horas[horas.length - 1]}</Text>
       </View>
 
