@@ -15,7 +15,8 @@
  * descubra o gesto — um controle invisível não é um controle.
  */
 
-import { useState } from 'react'
+import * as ScreenOrientation from 'expo-screen-orientation'
+import { useEffect, useState } from 'react'
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -62,6 +63,10 @@ export function GraficoExpansivel({
         onRequestClose={() => setAberto(false)}
         // Sem isto o Android fecha o app no botão voltar em vez de fechar a folha.
         transparent={false}
+        // iOS: sem declarar as orientações aceitas, a folha continua em retrato mesmo
+        // com o aparelho deitado. No Android quem manda é o `ScreenOrientation`, e a
+        // propriedade é ignorada — declarar as duas cobre os dois sistemas.
+        supportedOrientations={['portrait', 'landscape']}
       >
         <TelaCheia titulo={titulo} altura={alturaCheia} onFechar={() => setAberto(false)}>
           {children}
@@ -84,9 +89,27 @@ function TelaCheia({
 }) {
   const insets = useSafeAreaInsets()
   const [base, setBase] = useState(0)
+
+  /*
+   * Deitar o celular é o zoom que não custa nada.
+   *
+   * O aplicativo é travado em retrato (`app.json`), e com razão: as telas são listas,
+   * e lista deitada só cabe menos. O gráfico é a exceção — o eixo espremido é o
+   * horizontal, e virar o aparelho quase dobra a largura útil antes de qualquer pinça.
+   *
+   * A trava volta ao fechar. Sem isso o app inteiro ficaria destravado depois da
+   * primeira visita ao gráfico, e as listas passariam a girar sem que ninguém pedisse.
+   */
+  useEffect(() => {
+    void ScreenOrientation.unlockAsync()
+    return () => {
+      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+    }
+  }, [])
   const [zoom, setZoom] = useState(1)
   // O pinça precisa saber de onde partiu: `scale` do gesto é relativo ao início dele.
   const [ancora, setAncora] = useState(1)
+  const [alturaUtil, setAlturaUtil] = useState<number | null>(null)
 
   const limitar = (v: number) => Math.min(MAX, Math.max(MIN, v))
 
@@ -118,7 +141,15 @@ function TelaCheia({
         </Pressable>
       </View>
 
-      <View style={estilos.medida} onLayout={(e) => setBase(e.nativeEvent.layout.width)}>
+      <View
+        style={estilos.medida}
+        onLayout={(e) => {
+          setBase(e.nativeEvent.layout.width)
+          // Em paisagem sobra pouca altura: descontar a barra e os controles evita o
+          // gráfico empurrar os botões de zoom para fora da tela.
+          setAlturaUtil(Math.max(120, e.nativeEvent.layout.height - espaco.md))
+        }}
+      >
         <GestureDetector gesture={pinca}>
           {/*
            * A rolagem horizontal é o que permite alcançar o gráfico ampliado. Fica
@@ -130,7 +161,7 @@ function TelaCheia({
             showsHorizontalScrollIndicator={zoom > 1}
             contentContainerStyle={{ width: largura ?? '100%' }}
           >
-            <View style={estilos.miolo}>{children(altura)}</View>
+            <View style={estilos.miolo}>{children(alturaUtil ?? altura)}</View>
           </ScrollView>
         </GestureDetector>
       </View>
