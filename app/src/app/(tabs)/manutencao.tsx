@@ -1,22 +1,42 @@
 /**
- * Manutenção — o histórico de ordens de serviço atendidas.
+ * Manutenção — a manutenção contratada, do que está acontecendo ao que já foi feito.
  *
- * Substituiu a aba Financeiro. Tudo vem de `GET /api/v1/manutencao`, que consulta o
- * meuPlano usina por usina e devolve só o que tem `closed_at` — serviço concluído é fato
- * datado, não status textual.
+ * Esta aba era só histórico: as OS com `closed_at`, agrupadas por mês. Respondia "o que
+ * fizeram em julho" e deixava de fora a pergunta que o dono faz primeiro — **está sendo
+ * feita?**. Uma preventiva executada na semana passada e ainda em conferência não
+ * aparecia em lugar nenhum: não estava fechada, então não era histórico.
  *
- * A lista é agrupada por mês porque é assim que se lê histórico de manutenção: o dono
- * quer saber "o que fizeram em julho", não percorrer sessenta cartões seguidos.
+ * Agora a tela abre pelo presente. `em_andamento` vem escolhida pelo servidor (a OS não
+ * encerrada mais recente) e ganha o cartão de cima, com a barra de tarefas cumpridas. O
+ * resto desce em lista, com o histórico junto — é a mesma pergunta em dois tempos, e
+ * separá-los em duas abas obrigaria o dono a saber de antemão em qual procurar.
+ *
+ * Cada cartão abre a OS (tarefas + PDF). O cronograma é por usina, então mora num
+ * cartão próprio: com uma usina só, um atalho direto; com várias, uma linha por usina.
+ *
+ * Tudo vem de `GET /api/v1/manutencao/ordens`. A situação de cada OS é a **frase** que o
+ * servidor decidiu — nunca o `status` cru, que diria "Em execução" para uma OS com as
+ * dezessete tarefas prontas e faria o dono achar que o técnico ainda está na usina.
  */
 
 import { router } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 
-import { Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
+import {
+  Barra,
+  CabecalhoCard,
+  Card,
+  Chevron,
+  Esqueleto,
+  EstadoVazio,
+  LinhaNavegacao,
+  Num,
+  StatusChip,
+} from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { useManutencao, type OrdemAtendida } from '@/features/manutencao'
-import { competencia, dataHora, inteiro } from '@/lib/format'
+import { useOrdens, type Ordem } from '@/features/manutencao'
+import { dataPorExtenso, duracao, inteiro } from '@/lib/format'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tipo, type Tom } from '@/theme/tokens'
 
@@ -39,48 +59,50 @@ function rotuloDaClasse(c: string | null): string {
   return limpo.charAt(0).toUpperCase() + limpo.slice(1)
 }
 
-/** Minutos → "1 h 20" ou "45 min". Nulo vira travessão: não medimos ≠ foi instantâneo. */
-function duracaoDeMinutos(min: number | null): string {
-  if (min === null || min <= 0) return '—'
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return h > 0 ? `${h} h${m ? ` ${m}` : ''}` : `${m} min`
-}
-
 function iniciaisDe(nome: string | undefined): string {
   const partes = (nome ?? '').trim().split(/\s+/).filter(Boolean)
   if (partes.length === 0) return '·'
   return (partes[0][0] + (partes.length > 1 ? partes[partes.length - 1][0] : '')).toUpperCase()
 }
 
+/** A data que vale para esta OS: a de conclusão quando existe, senão a de agendamento. */
+function dataDaOrdem(o: Ordem): string | null {
+  return o.concluida_em ?? o.agendada_para
+}
+
 export default function Manutencao() {
   const usuario = useAuth((s) => s.usuario)
   const [usina, setUsina] = useState<string | null>(null)
-  const { dados, carregando, erro, offlineDesde, recarregar } = useManutencao()
+  const { dados, carregando, erro, offlineDesde, recarregar } = useOrdens()
 
   /*
    * O filtro sai das PRÓPRIAS ordens, e não da lista de usinas do usuário.
    *
-   * Quem tem sete usinas mas serviço concluído em três só quer escolher entre essas
-   * três — as outras quatro seriam botões que levam a uma tela vazia. A lista de
-   * opções acompanha o dado, então ela encolhe e cresce sozinha.
+   * Quem tem sete usinas mas OS em três só quer escolher entre essas três — as outras
+   * quatro seriam botões que levam a uma tela vazia. A lista de opções acompanha o
+   * dado, então ela encolhe e cresce sozinha.
    */
   const usinasComOs = [...new Set((dados?.ordens ?? []).map((o) => o.usina))].sort()
-  // Filtro que aponta para usina que sumiu do histórico é ignorado, em vez de
-  // esvaziar a tela sem explicação.
+  // Filtro que aponta para usina que sumiu da lista é ignorado, em vez de esvaziar a
+  // tela sem explicação.
   const filtro = usina && usinasComOs.includes(usina) ? usina : null
   const visiveis = (dados?.ordens ?? []).filter((o) => !filtro || o.usina === filtro)
 
-  // Agrupa por mês de fechamento, preservando a ordem que o servidor já garantiu
-  // (mais recente primeiro). Um `Map` mantém a ordem de inserção — reordenar aqui
-  // desfaria o trabalho do BFF e abriria espaço para as duas telas discordarem.
-  const meses = new Map<string, OrdemAtendida[]>()
-  for (const o of visiveis) {
-    const chave = o.fechada_em ? o.fechada_em.slice(0, 7) : 'sem-data'
-    const atual = meses.get(chave)
-    if (atual) atual.push(o)
-    else meses.set(chave, [o])
-  }
+  // A OS em curso já sai destacada; repeti-la na lista abaixo seria o mesmo cartão duas
+  // vezes na mesma rolagem. Com filtro ativo ela só é destacada se for da usina filtrada.
+  const emCurso =
+    dados?.em_andamento && (!filtro || dados.em_andamento.usina === filtro)
+      ? dados.em_andamento
+      : null
+  const demais = visiveis.filter((o) => o.id !== emCurso?.id)
+
+  // Uma entrada de cronograma por usina, com o `usina_id` que a rota precisa. Sai das
+  // ordens porque é a lista que já está na tela — e é a que tem vínculo com o meuPlano.
+  const usinasDoCronograma = [
+    ...new Map(
+      (dados?.ordens ?? []).map((o) => [o.usina_id, { id: o.usina_id, nome: o.usina }]),
+    ).values(),
+  ].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
 
   return (
     <Tela
@@ -91,13 +113,13 @@ export default function Manutencao() {
             {dados.total !== null ? (
               <>
                 <Num style={estilos.subNum}>{inteiro(visiveis.length)}</Num>{' '}
-                {visiveis.length === 1 ? 'serviço concluído' : 'serviços concluídos'}
+                {visiveis.length === 1 ? 'ordem de serviço' : 'ordens de serviço'}
               </>
             ) : (
-              'histórico indisponível'
+              'manutenção indisponível'
             )}
             {' · '}
-            {/* Com filtro, o nome da usina; sem filtro, quantas usinas o histórico cobre. */}
+            {/* Com filtro, o nome da usina; sem filtro, quantas usinas a aba cobre. */}
             {filtro ?? (
               <>
                 <Num style={estilos.subNum}>{inteiro(dados.usinas_com_manutencao)}</Num>{' '}
@@ -116,11 +138,11 @@ export default function Manutencao() {
           <Card>
             <Esqueleto largura="60%" altura={16} forte />
             <View style={estilos.espaco}>
-              <Esqueleto altura={40} />
+              <Esqueleto altura={60} />
             </View>
           </Card>
           <Card>
-            <Esqueleto altura={60} />
+            <Esqueleto altura={80} />
           </Card>
         </>
       ) : erro ? (
@@ -132,17 +154,17 @@ export default function Manutencao() {
         />
       ) : !dados || dados.ordens.length === 0 ? (
         <EstadoVazio
-          titulo="Nenhum serviço concluído"
+          titulo="Nenhuma ordem de serviço"
           descricao={
             dados?.aviso
-            ?? 'Quando uma ordem de serviço for fechada no meuPlano, ela aparece aqui.'
+            ?? 'Quando uma ordem de serviço for aberta no meuPlano, ela aparece aqui.'
           }
         />
       ) : (
         <>
           {dados.aviso ? <Text style={estilos.aviso}>{dados.aviso}</Text> : null}
 
-          {/* Só com mais de uma usina no histórico: um filtro de uma opção é enfeite. */}
+          {/* Só com mais de uma usina na lista: um filtro de uma opção é enfeite. */}
           {usinasComOs.length > 1 ? (
             <ScrollView
               horizontal
@@ -161,22 +183,35 @@ export default function Manutencao() {
             </ScrollView>
           ) : null}
 
-          {visiveis.length === 0 ? (
+          {emCurso ? <CardEmCurso ordem={emCurso} /> : null}
+
+          {/* O cronograma é por usina, e é onde a pergunta "o contrato está sendo
+              cumprido?" se responde de uma vez, sem abrir OS por OS. */}
+          {usinasDoCronograma.length > 0 ? (
             <Card>
-              <Text style={tipo.fraco}>Nenhum serviço concluído nesta usina.</Text>
+              <CabecalhoCard rotulo="Cronograma do contrato" />
+              {usinasDoCronograma.map((u) => (
+                <LinhaNavegacao
+                  key={u.id}
+                  titulo={usinasDoCronograma.length === 1 ? 'Ver o plano do ano' : u.nome}
+                  onPress={() => router.push(`/cronograma/${u.id}`)}
+                />
+              ))}
             </Card>
           ) : null}
 
-          {[...meses.entries()].map(([chave, ordens]) => (
-            <View key={chave}>
-              <Text style={estilos.mes}>
-                {chave === 'sem-data' ? 'Sem data de fechamento' : competencia(chave)}
-              </Text>
-              {ordens.map((o) => (
-                <CardOrdem key={`${o.id}-${o.fechada_em}`} ordem={o} />
-              ))}
-            </View>
+          {demais.length > 0 ? (
+            <Text style={estilos.secao}>{emCurso ? 'Outras ordens' : 'Ordens de serviço'}</Text>
+          ) : null}
+          {demais.map((o) => (
+            <CardOrdem key={o.id} ordem={o} />
           ))}
+
+          {visiveis.length === 0 ? (
+            <Card>
+              <Text style={tipo.fraco}>Nenhuma ordem de serviço nesta usina.</Text>
+            </Card>
+          ) : null}
         </>
       )}
     </Tela>
@@ -201,34 +236,89 @@ function Filtro({
   )
 }
 
-function CardOrdem({ ordem: o }: { ordem: OrdemAtendida }) {
+/**
+ * A OS em curso, em destaque.
+ *
+ * A barra de tarefas é o que faz "17 de 17" virar leitura de relance — e é ela que
+ * explica a frase "Executada · aguardando verificação" sem precisar de parágrafo.
+ */
+function CardEmCurso({ ordem: o }: { ordem: Ordem }) {
+  const feitas = o.tarefas_feitas ?? 0
+  const total = o.tarefas ?? 0
+  const data = dataDaOrdem(o)
   return (
-    <Card>
-      <View style={estilos.topo}>
-        <Text style={estilos.objetivo} numberOfLines={2}>
-          {o.objetivo}
+    <Pressable onPress={() => router.push(`/os/${o.id}`)}>
+      <Card>
+        <View style={estilos.emCursoTopo}>
+          <Text style={estilos.rotuloAgora}>Acontecendo agora</Text>
+          <StatusChip tom={tomDaClasse(o.classificacao)} texto={rotuloDaClasse(o.classificacao)} />
+        </View>
+
+        <Text style={estilos.objetivoGrande}>{o.objetivo}</Text>
+        <Text style={estilos.usina}>
+          {o.usina}
+          {data ? ` · ${dataPorExtenso(data)}` : ''}
         </Text>
-        <StatusChip tom={tomDaClasse(o.classificacao)} texto={rotuloDaClasse(o.classificacao)} />
-      </View>
 
-      <Text style={estilos.usina}>{o.usina}</Text>
+        <View style={estilos.situacaoLinha}>
+          <StatusChip tom={o.tom} texto={o.situacao} grande />
+        </View>
 
-      <View style={estilos.linhas}>
-        <Linha rotulo="Concluída" valor={o.fechada_em ? dataHora(o.fechada_em) : '—'} />
-        <Linha rotulo="Técnico" valor={o.tecnico ?? '—'} />
-        <Linha rotulo="Execução" valor={duracaoDeMinutos(o.execucao_min)} />
-        {/* Tarefas só aparece quando a OS tem tarefas: "0/0" não é informação. */}
-        {o.tarefas ? (
-          <Linha rotulo="Tarefas" valor={`${o.tarefas_feitas ?? 0}/${o.tarefas}`} />
+        {/* Zero tarefa não vira barra: "0 de 0" a 0% pareceria serviço não começado. */}
+        {total > 0 ? (
+          <View style={estilos.espaco}>
+            <View style={estilos.progressoTopo}>
+              <Text style={tipo.legenda}>Tarefas cumpridas</Text>
+              <Text style={estilos.progressoNum}>
+                <Num style={estilos.progressoForte}>{feitas}</Num>
+                {` de ${total}`}
+              </Text>
+            </View>
+            <Barra pct={(feitas / total) * 100} tom={feitas >= total ? 'ok' : 'alerta'} />
+          </View>
         ) : null}
-      </View>
 
-      {o.resumo ? (
-        <Text style={estilos.resumo} numberOfLines={4}>
-          {o.resumo}
+        <View style={estilos.abrir}>
+          <Text style={estilos.abrirTexto}>Ver o que foi feito</Text>
+          <Chevron />
+        </View>
+      </Card>
+    </Pressable>
+  )
+}
+
+function CardOrdem({ ordem: o }: { ordem: Ordem }) {
+  const data = dataDaOrdem(o)
+  return (
+    <Pressable onPress={() => router.push(`/os/${o.id}`)}>
+      <Card>
+        <View style={estilos.topo}>
+          <Text style={estilos.objetivo} numberOfLines={2}>
+            {o.objetivo}
+          </Text>
+          <Chevron />
+        </View>
+
+        <Text style={estilos.usina}>
+          {o.usina}
+          {data ? ` · ${dataPorExtenso(data)}` : ''}
         </Text>
-      ) : null}
-    </Card>
+
+        <View style={estilos.selos}>
+          <StatusChip tom={o.tom} texto={o.situacao} />
+          <StatusChip tom={tomDaClasse(o.classificacao)} texto={rotuloDaClasse(o.classificacao)} />
+        </View>
+
+        <View style={estilos.linhas}>
+          <Linha rotulo="Técnico" valor={o.tecnico ?? '—'} />
+          <Linha rotulo="Execução" valor={duracao(o.execucao_min)} />
+          {/* Tarefas só aparece quando a OS tem tarefas: "0/0" não é informação. */}
+          {o.tarefas ? (
+            <Linha rotulo="Tarefas" valor={`${o.tarefas_feitas ?? 0}/${o.tarefas}`} />
+          ) : null}
+        </View>
+      </Card>
+    </Pressable>
   )
 }
 
@@ -243,6 +333,8 @@ function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
 
 const estilos = StyleSheet.create({
   subNum: { fontSize: 13, color: cores.textoRotulo },
+  espaco: { marginTop: espaco.sm },
+  aviso: { ...tipo.fraco, paddingHorizontal: espaco.xs },
 
   filtros: { gap: espaco.xs, paddingHorizontal: espaco.xs, paddingVertical: 2 },
   filtro: {
@@ -257,10 +349,8 @@ const estilos = StyleSheet.create({
   filtroAtivo: { backgroundColor: cores.ambar, borderColor: cores.ambar },
   filtroTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoCorpo },
   filtroTextoAtivo: { color: cores.fundo },
-  espaco: { marginTop: espaco.sm },
-  aviso: { ...tipo.fraco, paddingHorizontal: espaco.xs },
 
-  mes: {
+  secao: {
     fontFamily: fontes.ui,
     fontSize: 12,
     color: cores.textoRotulo,
@@ -269,19 +359,48 @@ const estilos = StyleSheet.create({
     paddingHorizontal: espaco.xs,
   },
 
+  emCursoTopo: { flexDirection: 'row', alignItems: 'center', gap: espaco.xs },
+  rotuloAgora: {
+    flex: 1,
+    fontFamily: fontes.ui,
+    fontSize: 10,
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+    color: cores.textoAmbar,
+  },
+  objetivoGrande: {
+    fontFamily: fontes.uiSemi,
+    fontSize: 16,
+    color: cores.textoForte,
+    lineHeight: 22,
+    marginTop: 6,
+  },
+  situacaoLinha: { marginTop: espaco.sm, alignSelf: 'flex-start' },
+
+  progressoTopo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  progressoNum: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoRotulo },
+  progressoForte: { fontSize: 14, color: cores.textoForte },
+
+  abrir: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 5,
+    marginTop: espaco.sm,
+  },
+  abrirTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoAmbar },
+
   topo: { flexDirection: 'row', alignItems: 'flex-start', gap: espaco.xs },
   objetivo: { fontFamily: fontes.uiSemi, fontSize: 15, color: cores.textoForte, flex: 1 },
   usina: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoRotulo, marginTop: 2 },
+  selos: { flexDirection: 'row', flexWrap: 'wrap', gap: espaco.xs, marginTop: espaco.sm },
 
   linhas: { marginTop: espaco.sm, gap: espaco.xs },
   linha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   linhaValor: { fontSize: 12, color: cores.textoForte, flexShrink: 1 },
-
-  resumo: {
-    fontFamily: fontes.ui,
-    fontSize: 12,
-    color: cores.textoCorpo,
-    lineHeight: 17,
-    marginTop: espaco.sm,
-  },
 })
