@@ -58,8 +58,20 @@ const MESES = [
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
 ]
 
+/**
+ * "21 de agosto de 2026".
+ *
+ * Aceita as duas formas que o BFF manda, e a distinção não é preciosismo: `new Date`
+ * lê **"2026-08-21" como UTC meia-noite** e `getDate()` responde em hora local. No
+ * Brasil (UTC−3) isso volta três horas e imprime **20** de agosto — a data de
+ * agendamento de uma OS sairia sempre um dia antes do combinado. Data pura é dia de
+ * calendário, sem fuso; só o timestamp completo tem instante para converter.
+ */
 export function dataPorExtenso(iso: string): string {
-  const d = new Date(iso)
+  const soData = /^\d{4}-\d{2}-\d{2}$/.test(iso)
+  const d = soData
+    ? new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)))
+    : new Date(iso)
   return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`
 }
 
