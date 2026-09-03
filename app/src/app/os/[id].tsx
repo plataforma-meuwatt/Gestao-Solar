@@ -13,8 +13,8 @@
  * serviço não tem parecer, e desenhar um vazio sugeriria que faltou preencher.
  */
 
-import { useLocalSearchParams } from 'expo-router'
-import { StyleSheet, Text, View } from 'react-native'
+import { router, useLocalSearchParams } from 'expo-router'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 
 import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
@@ -146,7 +146,7 @@ export default function OrdemDeServico() {
                 <View key={secao} style={estilos.secao}>
                   <Text style={estilos.secaoTitulo}>{secao}</Text>
                   {itens.map((t, i) => (
-                    <ItemTarefa key={t.id ?? `${secao}-${i}`} tarefa={t} />
+                    <ItemTarefa key={t.id ?? `${secao}-${i}`} tarefa={t} osId={o.id} />
                   ))}
                 </View>
               ))
@@ -174,9 +174,15 @@ export default function OrdemDeServico() {
   )
 }
 
-function ItemTarefa({ tarefa: t }: { tarefa: Tarefa }) {
-  return (
-    <View style={estilos.tarefa}>
+/**
+ * A linha da tarefa ABRE a tarefa. Antes era uma `<View>` — o dono tentou tocar e nada
+ * acontecia: *"as tarefas não são clicáveis, são como checklist"* (03/09/2026). Tarefa sem
+ * `id` (caso raro do upstream) segue como texto: um botão que não leva a lugar nenhum é pior
+ * do que nenhum botão.
+ */
+function ItemTarefa({ tarefa: t, osId }: { tarefa: Tarefa; osId: number }) {
+  const conteudo = (
+    <>
       {/* O ✓ vem do servidor (`feita`), não de comparar textos de status aqui. */}
       <View style={[estilos.marca, t.feita ? estilos.marcaFeita : estilos.marcaAberta]}>
         {t.feita ? <Text style={estilos.marcaTexto}>✓</Text> : null}
@@ -202,7 +208,23 @@ function ItemTarefa({ tarefa: t }: { tarefa: Tarefa }) {
           ) : null}
         </View>
       </View>
-    </View>
+
+      {/* a seta diz, sem palavra nenhuma, que a linha leva a algum lugar */}
+      {t.id ? <Text style={estilos.seta}>›</Text> : null}
+    </>
+  )
+
+  if (!t.id) return <View style={estilos.tarefa}>{conteudo}</View>
+
+  return (
+    <Pressable
+      style={({ pressed }) => [estilos.tarefa, pressed && estilos.tarefaTocada]}
+      onPress={() => router.push(`/tarefa/${t.id}?os=${osId}`)}
+      accessibilityRole="button"
+      accessibilityLabel={`Abrir a tarefa ${t.nome}`}
+    >
+      {conteudo}
+    </Pressable>
   )
 }
 
@@ -253,7 +275,9 @@ const estilos = StyleSheet.create({
     marginBottom: 6,
   },
 
-  tarefa: { flexDirection: 'row', gap: espaco.xs, paddingVertical: 7 },
+  tarefa: { flexDirection: 'row', gap: espaco.xs, paddingVertical: 7, alignItems: 'center' },
+  tarefaTocada: { opacity: 0.6 },
+  seta: { fontFamily: fontes.ui, fontSize: 20, color: cores.textoFraco, paddingLeft: 2 },
   marca: {
     width: 18,
     height: 18,

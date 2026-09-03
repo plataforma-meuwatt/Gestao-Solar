@@ -84,10 +84,14 @@ class MeuPlanoClient:
         return self._service_token
 
     async def _req(
-        self, metodo: str, path: str, token: str | None = None, **kwargs: Any
+        self, metodo: str, path: str, token: str | None = None,
+        timeout: float | None = None, **kwargs: Any
     ) -> httpx.Response:
+        """`timeout` sobrescreve o padrão do cliente para as chamadas que legitimamente
+        demoram — gerar o PDF de uma ficha grande no meuPlano leva alguns segundos na
+        primeira vez, e cortar isso no timeout padrão daria erro num caminho que funciona."""
         jwt = token or await self._token_servico()
-        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as c:
+        async with httpx.AsyncClient(timeout=timeout or self._timeout, follow_redirects=True) as c:
             r = await c.request(
                 metodo, f"{self.base_url}{path}", headers={"Authorization": f"Bearer {jwt}"}, **kwargs
             )
@@ -228,6 +232,21 @@ class MeuPlanoClient:
         """
         r = await self._req("POST", f"/api/v1/meuacesso/service-orders/{so_id}/pdf")
         return r.json()["id"]
+
+    async def tarefa(self, task_id: int) -> dict[str, Any]:
+        """Uma tarefa, com o mesmo enriquecimento da lista (`plan_type_label`,
+        `equipment_path`, `verdict_status`)."""
+        return await self._get(f"/api/v1/meuacesso/tasks/{task_id}")
+
+    async def pdf_da_tarefa(self, task_id: int) -> bytes:
+        """O PDF de UMA tarefa — a ficha respondida pelo técnico.
+
+        Diferente do PDF da OS (que passa pela cesta), o do ensaio tem rota direta que já
+        devolve a versão vigente e só regera quando algo mudou. Uma ficha grande leva alguns
+        segundos na primeira vez, por isso o cliente precisa de um timeout folgado."""
+        r = await self._req("GET", f"/api/v1/meuacesso/tasks/{task_id}/pdf/view",
+                            timeout=180.0)
+        return r.content
 
     async def baixar_pdf_cesta(self, item_id: int) -> bytes:
         r = await self._req("GET", f"/api/v1/meuacesso/pdf-basket/{item_id}/download")

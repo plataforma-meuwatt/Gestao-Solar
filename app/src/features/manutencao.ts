@@ -67,6 +67,12 @@ export type Tarefa = {
   parecer: string | null
   mes_contratual: string | null
   executada_em: string | null
+  /** O que a tarefa pedia. Só o detalhe traz. */
+  descricao?: string | null
+  /** O que o técnico anotou na execução. */
+  observacoes?: string | null
+  /** Quanto da ficha está respondido (0-100). Zero é resposta, não ausência. */
+  preenchimento?: number | null
 }
 
 export type Ordem = {
@@ -158,6 +164,18 @@ export function useOrdem(id: string | number | undefined): Leitura<Ordem> {
   })
 }
 
+/** UMA tarefa da OS. O dono precisa abrir o item e ler o que foi feito — a lista mostra
+ *  nome e ✓, e isso não responde "o que o técnico registrou aqui?". */
+export function useTarefa(
+  osId: string | number | undefined,
+  tarefaId: string | number | undefined,
+): Leitura<Tarefa> {
+  return fetchWithCache<Tarefa>(`manutencao/ordem-${osId ?? ''}-tarefa-${tarefaId ?? ''}`, {
+    caminho: `/api/v1/manutencao/ordens/${osId ?? ''}/tarefas/${tarefaId ?? ''}`,
+    ativo: Boolean(osId && tarefaId),
+  })
+}
+
 export function useCronograma(usinaId: string | number | undefined): Leitura<CronogramaOut> {
   return fetchWithCache<CronogramaOut>(`manutencao/cronograma-${usinaId ?? ''}`, {
     caminho: `/api/v1/manutencao/cronograma?usina_id=${usinaId ?? ''}`,
@@ -170,6 +188,11 @@ export function useCronograma(usinaId: string | number | undefined): Leitura<Cro
 
 export function urlDoPdfDaOrdem(id: number): string {
   return `${baseURL}/api/v1/manutencao/ordens/${id}/pdf`
+}
+
+/** O PDF de UMA tarefa: a ficha respondida, sem as outras dezenas de páginas da OS. */
+export function urlDoPdfDaTarefa(osId: number, tarefaId: number): string {
+  return `${baseURL}/api/v1/manutencao/ordens/${osId}/tarefas/${tarefaId}/pdf`
 }
 
 export function urlDoPdfDoCronograma(usinaId: number): string {

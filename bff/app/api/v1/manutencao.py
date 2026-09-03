@@ -299,6 +299,15 @@ class TarefaOut(BaseModel):
     mes_contratual: str | None = None
     executada_em: date | None = None
 
+    # ── o que o técnico registrou (só o detalhe traz; a lista não precisa) ──
+    #: O que a tarefa pedia, escrito por quem programou.
+    descricao: str | None = None
+    #: Observações da execução — o que o técnico anotou.
+    observacoes: str | None = None
+    #: Quanto da ficha está respondido (0-100). Nulo = o upstream não informou;
+    #: ZERO é resposta legítima ("nada preenchido ainda") e não pode virar nulo.
+    preenchimento: int | None = None
+
 
 class OrdemOut(BaseModel):
     """Uma OS como o dono da usina a lê."""
@@ -487,6 +496,12 @@ def _tarefa_out(t: dict[str, Any]) -> TarefaOut:
         parecer=PARECER.get(parecer_cru) if parecer_cru else None,
         mes_contratual=_texto(t.get("contract_month")),
         executada_em=_data(t.get("scheduled_date")),
+        # O dono pediu para "ver as respostas" da tarefa. O detalhe de cada medição vive no
+        # PDF (é o laudo); o que dá para ler direto na tela é o que a tarefa pedia, o que o
+        # técnico anotou e quanto da ficha foi respondido.
+        descricao=_texto(t.get("description")),
+        observacoes=_texto(t.get("notes")),
+        preenchimento=_inteiro(t.get("fill_percent")),
     )
 
 
@@ -689,6 +704,66 @@ async def pdf_da_ordem(
     if not conteudo:
         raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
     return _pdf(conteudo, f"OS-{so_id}-{link.nome}.pdf".replace(" ", "-"))
+
+
+async def _tarefa_autorizada(
+    db: Session, usuario: User, so_id: int, task_id: int
+) -> tuple[Any, dict[str, Any], PlantLink]:
+    """A tarefa, depois de checar que ela é DAQUELA OS e que a OS é de uma usina desta pessoa.
+
+    Conferir só a OS não bastaria: com `so_id` legítimo e `task_id` de outra ordem, a ficha de
+    outro cliente sairia por aqui. A tarefa tem de pertencer à OS autorizada.
+    """
+    cliente, ordem, link = await _ordem_autorizada(db, usuario, so_id)
+    try:
+        tarefa = await cliente.tarefa(task_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(404, "Tarefa não encontrada.") from exc
+    if _inteiro(tarefa.get("os_id")) != _inteiro(ordem.get("id")):
+        # 404 (e não 403) pela mesma razão de `_ordem_autorizada`: não confirmamos a
+        # existência de uma tarefa que esta pessoa não pode ver.
+        raise HTTPException(404, "Tarefa não encontrada nesta ordem de serviço.")
+    return cliente, tarefa, link
+
+
+@router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}", response_model=TarefaOut)
+async def detalhar_tarefa(
+    so_id: int,
+    task_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> TarefaOut:
+    """UMA tarefa da OS — o que era, em que equipamento, como terminou.
+
+    O dono (03/09/2026): *"as tarefas não são clicáveis, são como checklist. Eu preciso ABRIR
+    as tarefas e ver as respostas delas"*. A lista da OS mostrava nome e estado; abrir era
+    impossível porque não havia nem tela nem rota. Esta é a rota.
+    """
+    _cliente, tarefa, _link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    return _tarefa_out(tarefa)
+
+
+@router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/pdf")
+async def pdf_da_tarefa(
+    so_id: int,
+    task_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> Response:
+    """O PDF de UMA tarefa: a ficha respondida pelo técnico, com medições e fotos.
+
+    O PDF da OS traz tudo junto e pode ter dezenas de páginas; quem quer conferir um ensaio
+    específico precisa do documento dele. O upstream só regera quando algo mudou.
+    """
+    cliente, tarefa, link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    try:
+        conteudo = await cliente.pdf_da_tarefa(task_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Não deu para gerar o PDF desta tarefa: {exc}") from exc
+    if not conteudo:
+        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+    nome = (tarefa.get("name") or f"tarefa-{task_id}")[:60]
+    return _pdf(conteudo, f"{nome}-{link.nome}.pdf".replace(" ", "-").replace("/", "-"))
 
 
 @router.get("/manutencao/cronograma/pdf")
