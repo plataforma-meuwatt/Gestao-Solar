@@ -194,6 +194,24 @@ class MeuPlanoClient:
     async def ordem_servico(self, so_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/service-orders/{so_id}")
 
+    async def tarefas_da_ordem(self, so_id: int) -> list[dict[str, Any]]:
+        """As tarefas de uma OS — o que de fato foi (ou será) executado nela.
+
+        A OS por si só devolve `task_count`/`task_realized_count`: dois números, sem o
+        que são. Quem é dono da usina quer a lista — "Termografia no Skid 02",
+        "Reaperto de conexões" — e o estado de cada uma; é por isso que a tela de
+        detalhe precisa desta chamada além da OS.
+
+        `/tasks` aceita `os_id` e é a MESMA rota que a Programação do meuPlano usa, com
+        o mesmo `_enrich`: vem `plan_type_label` (a seção), `equipment_path` (qual dos
+        cinco trafos) e `verdict_status` (o parecer do ensaio). Reaproveitar a rota
+        oficial em vez de somar campos da OS é o que mantém as duas leituras iguais.
+        """
+        dados = await self._get("/api/v1/meuacesso/tasks", os_id=so_id)
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
+
     async def notificacoes(self, token: str, grupo: str | None = None) -> list[dict[str, Any]]:
         return await self._get("/api/v1/meuacesso/me/notifications", token=token, group=grupo)
 

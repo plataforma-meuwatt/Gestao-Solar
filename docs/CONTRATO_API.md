@@ -200,31 +200,150 @@ Histórico de paradas, agrupado por dia.
 
 ## Manutenção
 
-### `GET /plants/{id}/schedule`
+A aba responde três perguntas do dono, nesta ordem: **está sendo feita?** (a OS de agora),
+**o que foi feito?** (as tarefas dentro dela) e **o contrato está sendo cumprido?** (o
+cronograma). Tudo vem do meuPlano; o BFF autoriza, traduz o status e não recalcula nada.
 
-Matriz do cronograma anual. As cores vêm prontas do meuPlano — o BFF não recalcula.
+### `GET /manutencao` — *no ar*
+
+Histórico: só as OS já encerradas, de todas as usinas da pessoa, mais recentes primeiro.
+"Atendida" é `closed_at` preenchido, não status textual.
+
+### `GET /manutencao/ordens?usina_id=&limite=` — *no ar*
+
+Todas as OS, abertas e encerradas. `usina_id` é o `id` do vínculo **neste** sistema, não o
+do meuPlano; omitido, vale todas as usinas concedidas.
 
 ```json
 {
-  "ano": 2026,
-  "itens": [
-    { "id": 41, "nome": "Termografia",
-      "meses": [null,"verde",null,null,"azul",null,null,null,null,null,null,null] }
-  ],
-  "legenda": { "verde": "Cumprido", "azul": "No prazo",
-               "laranja": "Venceu há pouco", "vermelho": "Vencido" }
+  "total": 6,
+  "em_andamento": {
+    "id": 1016, "usina": "Porto Ferreira", "usina_id": 4, "numero": 12,
+    "objetivo": "Manunteção preventiva do mês de agosto.",
+    "classificacao": "PREVENTIVA",
+    "status": "EM_EXECUCAO",
+    "situacao": "Executada · aguardando verificação",
+    "tom": "tempoRuim",
+    "tecnico": "Paulo Renan Nunes Marquezini",
+    "tarefas": 17, "tarefas_feitas": 17,
+    "agendada_para": "2026-08-21", "concluida_em": null,
+    "fechada_em": null, "aprovada_em": null,
+    "execucao_min": 480, "resumo": null, "itens": null
+  },
+  "ordens": ["…as 6, a mesma forma…"],
+  "usinas_com_manutencao": 6,
+  "aviso": null
 }
 ```
 
-### `GET /plants/{id}/schedule/{itemId}?mes=YYYY-MM`
+`status` é o código cru do meuPlano (`ServiceOrderStatus`), preservado para auditoria.
+`situacao` é a frase que a tela mostra, e **não** é tradução palavra a palavra:
 
-O item e as OS que o atenderam.
+| status | situacao | tom |
+|---|---|---|
+| `ABERTA` | Em preparação | `semDados` |
+| `PROGRAMADA` | Agendada | `tempoRuim` |
+| `EM_EXECUCAO` | Em execução | `alerta` |
+| `FECHADA` | Em verificação | `tempoRuim` |
+| `APROVADA` | Concluída | `ok` |
+| `CANCELADA` | Cancelada | `semDados` |
 
-### `GET /plants/{id}/service-orders?status=&start=&end=`
+Duas razões para traduzir em vez de repassar. `FECHADA` não quer dizer "encerrada" para
+quem é dono — quer dizer que o técnico concluiu e o gestor ainda não conferiu; a própria UI
+do meuPlano a rotula "Em verificação". E o status sozinho engana no caso mais comum: a OS
+1016 está `EM_EXECUCAO` com as **17 tarefas executadas**, então "Em execução" faria o dono
+entender que o técnico ainda está na usina. Quando todas as tarefas estão cumpridas e a OS
+não foi encerrada, `situacao` passa a ser **"Executada · aguardando verificação"** — número
+do próprio meuPlano (`task_count` × `task_realized_count`), não estimativa. Só vale com
+`tarefas > 0`: OS de zero tarefa cairia em `0 == 0` e sairia "executada" sem nada feito.
 
-### `GET /service-orders/{id}`
+`tom` é sempre chave de `tons` em `app/src/theme/tokens.ts`, como em `GET /plants`.
 
-Detalhe da OS: dados, tarefas com situação individual, parecer, fotos.
+`em_andamento` é a OS não encerrada mais recente, já escolhida pelo servidor — sem ela a
+tela teria de reproduzir a regra de "qual é a atual", e a regra passaria a existir em dois
+lugares. `null` quando não há nenhuma em curso.
+
+`itens` é sempre `null` aqui: a lista não busca tarefas, seriam N+1 chamadas ao upstream
+para uma tela que mostra a contagem.
+
+### `GET /manutencao/ordens/{id}` — *no ar*
+
+A mesma forma de `OrdemOut`, com `itens` preenchido: as tarefas agrupadas por seção.
+
+```json
+{
+  "id": 1016, "usina": "Porto Ferreira", "usina_id": 4,
+  "situacao": "Executada · aguardando verificação", "tom": "tempoRuim",
+  "tarefas": 17, "tarefas_feitas": 17,
+  "itens": [
+    { "id": 8841, "nome": "Inspeção externa de transformador - Todos",
+      "grupo": "Transformador",
+      "equipamento": "Skid 04 > Trafo Skid 4 > Transformador a seco",
+      "status": "REALIZADA", "situacao": "Executada", "feita": true,
+      "natureza": "INSPECAO", "parecer": "Aprovado com ressalva",
+      "mes_contratual": "2026-08", "executada_em": "2026-08-21" }
+  ]
+}
+```
+
+`feita` é `status ∈ {REALIZADA, APROVADA}` — verificada é mais que executada, não menos.
+`parecer` só aparece quando existe ficha respondida (`SessionVerdict`): tarefa de serviço
+não tem parecer, e forjar um seria inventar. `itens: null` no detalhe significa "não deu
+para buscar as tarefas" — diferente de `[]`, que afirmaria que a OS não tem nenhuma; a OS
+abre de qualquer forma, porque o cabeçalho já responde a pergunta principal.
+
+O `id` chega do cliente, então a OS é buscada e o `plant_id` dela conferido contra as
+usinas concedidas. Fora do escopo responde **404, não 403**: "proibido" confirmaria que a
+OS existe a quem só trocou um dígito na URL.
+
+### `GET /manutencao/ordens/{id}/pdf` — *no ar*
+
+`application/pdf`, `Content-Disposition: inline`. Dois passos no upstream: `POST .../pdf`
+põe na cesta (reaproveitando a versão quando nada mudou, por fingerprint) e
+`GET /pdf-basket/{item}/download` traz os bytes. `inline` porque o destino é o `PdfViewer`
+embutido — entregar a um app externo dá tela preta silenciosa no Android.
+
+### `GET /manutencao/cronograma?usina_id=` — *no ar*
+
+A matriz do contrato. **12 meses a partir da âncora do contrato**, não do ano civil.
+
+```json
+{
+  "usina": "Porto Ferreira", "usina_id": 4,
+  "status": "CONSOLIDATED", "versao": 1,
+  "meses": ["2026-08","2026-09","2026-10","2026-11","2026-12","2027-01",
+            "2027-02","2027-03","2027-04","2027-05","2027-06","2027-07"],
+  "linhas": [
+    { "nome": "Limpeza e alinhamento dos sensores",
+      "categoria": "servico", "periodicidade": "1/MES",
+      "previsto_ano": 12, "feitos": 1,
+      "meses": [
+        { "mes": "2026-08", "previsto": 1, "estado": "verde",
+          "feito": true, "dispensado": false, "atrasado": false }
+      ] }
+  ],
+  "previsto_ano": 148, "feitos_ano": 1, "aviso": null
+}
+```
+
+`estado` é o `cell_status` do meuPlano, **repassado como vem**: `verde` · `azul` ·
+`laranja` · `vermelho` · `verde_ressalva` · `null`. Aquela cor é conformidade calculada
+contra o histórico do **ativo**, não contra tarefas — é regra máxima do meuPlano
+(`asset_compliance.cell_statuses_from_assets`). Recalcular aqui produziria uma segunda
+resposta para a mesma pergunta, e o dono veria números diferentes nos dois produtos sem
+saber em qual acreditar.
+
+Os três booleanos existem para a tela não ter de conhecer os nomes das cores. E `feito` é
+só `verde`: `verde_ressalva` é **dispensa** — decisão registrada com motivo —, e apagar a
+diferença entre FEITO e DISPENSADO era exatamente o risco que o meuPlano recusou correr.
+Já `feitos` da linha conta os dois: o dispensado saiu da conta daquele mês por decisão, e
+cobrá-lo como pendência seria errado. Quem precisa da diferença a tem por célula.
+
+`status: "DRAFT"` vem com `aviso` — rascunho de negociação não é o combinado com o cliente.
+
+### `GET /manutencao/cronograma/pdf?usina_id=` — *no ar*
+
+O cronograma anual em PDF, com a letra do estado em cada célula (`D` para dispensado).
 
 ---
 

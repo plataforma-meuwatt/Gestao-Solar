@@ -18,10 +18,10 @@ para o mais antigo, e o meuPlano não garante ordem nenhuma na lista que devolve
 """
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -185,3 +185,619 @@ def _para_saida(o: dict[str, Any], link: PlantLink) -> OrdemAtendidaOut:
         tarefas_feitas=_inteiro(o.get("task_realized_count")),
         resumo=_texto(o.get("resumo") or o.get("conclusao_tecnico") or o.get("notes")),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# O que o dono da usina vê da manutenção contratada
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# A aba acima (`GET /manutencao`) responde "o que já foi feito". Falta o resto da
+# pergunta, e é a parte que o dono cobra: **o que está acontecendo agora**, o que
+# cada OS contém, e se o cronograma do contrato está sendo cumprido.
+#
+# Três decisões que moldam este bloco:
+#
+# **O status do meuPlano é traduzido, não repassado.** `FECHADA` não quer dizer
+# "encerrada" para quem é dono: quer dizer que o técnico concluiu e o gestor ainda
+# não conferiu — a própria UI do meuPlano a rotula "Em verificação"
+# (`frontend/.../OSPanel.tsx`). Repassar a palavra crua faria o dono ler uma
+# preventiva executada como se estivesse arquivada, e `APROVADA` — que é o
+# encerramento de verdade — pareceria a mesma coisa. O mapa vive em `SITUACAO`, e o
+# código cru vai junto (`status`) para quem precisar auditar.
+#
+# **Conformidade não se conta por OS.** É regra máxima do meuPlano: a cor da célula
+# do cronograma vem do ATIVO (`asset_compliance.cell_statuses_from_assets`), não de
+# contar tarefas. Então o cronograma é **repassado como vem** — este BFF não recalcula
+# `cell_status`, porque recalcular seria inventar uma segunda verdade sobre a mesma
+# pergunta.
+#
+# **Autorização por OS, não por parâmetro.** O `so_id` chega do cliente. Antes de
+# devolver qualquer coisa, a OS é conferida contra as usinas do escopo dele
+# (`_ordem_autorizada`) — sem isso, trocar o número na URL leria a OS de outro dono.
+
+#: `ServiceOrderStatus` do meuPlano (`backend/app/models/tasks.py`) → a frase que o dono
+#: entende. Os rótulos seguem os da UI do meuPlano para as duas telas não divergirem.
+SITUACAO: dict[str, str] = {
+    "ABERTA": "Em preparação",
+    "PROGRAMADA": "Agendada",
+    "EM_EXECUCAO": "Em execução",
+    "FECHADA": "Em verificação",
+    "APROVADA": "Concluída",
+    "CANCELADA": "Cancelada",
+}
+
+#: Tom da tarja. É SEMPRE uma chave de `tons` em `app/src/theme/tokens.ts` —
+#: `parado` · `alerta` · `multiplos` · `tempoRuim` · `ok` · `semDados`, em camelCase.
+#: A tela faz `tons[tom]`, então nome fora dessa lista não pinta cor errada: não pinta
+#: cor nenhuma. A regra de cor é do servidor, como já é em `plants.py`.
+TOM_DA_SITUACAO: dict[str, str] = {
+    # Ainda não é compromisso com o dono: a OS está sendo montada.
+    "ABERTA": "semDados",
+    # Data e técnico confirmados — informativo, não alarme.
+    "PROGRAMADA": "tempoRuim",
+    "EM_EXECUCAO": "alerta",
+    "FECHADA": "tempoRuim",
+    "APROVADA": "ok",
+    "CANCELADA": "semDados",
+}
+
+#: `TaskStatus` do meuPlano → o que o dono lê na lista de tarefas.
+SITUACAO_TAREFA: dict[str, str] = {
+    "PREVISTA": "Prevista",
+    "PLANEJADA": "Planejada",
+    "PROGRAMADA": "Programada",
+    "REALIZADA": "Executada",
+    "APROVADA": "Executada e verificada",
+    "CANCELADA": "Cancelada",
+}
+
+#: Parecer da sessão de ensaio (`SessionVerdict`). Só aparece quando existe ficha
+#: respondida — tarefa de serviço não tem parecer, e forçar um seria inventar.
+PARECER: dict[str, str] = {
+    "APPROVED": "Aprovado",
+    "APPROVED_WITH_RESERVATION": "Aprovado com ressalva",
+    "REJECTED": "Reprovado",
+}
+
+
+def _situacao(status: Any) -> tuple[str | None, str, str]:
+    """`(código cru, frase para o dono, tom)`.
+
+    Status desconhecido não vira "—": vira o próprio código, capitalizado. O meuPlano
+    pode ganhar um estado novo, e engolir isso deixaria a OS sem situação na tela sem
+    ninguém saber por quê.
+    """
+    cru = _texto(status)
+    if cru is None:
+        return None, "Sem situação", "semDados"
+    chave = cru.strip().upper()
+    return cru, SITUACAO.get(chave, chave.replace("_", " ").capitalize()), TOM_DA_SITUACAO.get(chave, "semDados")
+
+
+class TarefaOut(BaseModel):
+    """Uma tarefa dentro da OS — o item que o técnico marca como feito."""
+
+    id: int | None = None
+    #: O que fazer. `plan_item_name` é o nome do item do plano ("Termografia"); o
+    #: fallback percorre os nomes que o meuPlano preenche em cada tipo de tarefa.
+    nome: str
+    #: Seção da lista: o TIPO do item do plano ("Transformador", "Inversor"). É como a
+    #: própria OS do meuPlano agrupa as tarefas.
+    grupo: str | None = None
+    #: Onde. `equipment_path` distingue cinco trafos de mesmo nome — sem ele o card
+    #: repetido é indistinguível.
+    equipamento: str | None = None
+
+    status: str | None = None
+    situacao: str = "—"
+    #: Executada = o técnico concluiu (REALIZADA ou APROVADA). É o que vira ✓ na tela.
+    feita: bool = False
+    #: INSPECAO | SERVICO — separa "olhar" de "trabalhar" na leitura.
+    natureza: str | None = None
+    parecer: str | None = None
+    #: Mês contratual do cronograma ("YYYY-MM"). Nulo em corretiva avulsa.
+    mes_contratual: str | None = None
+    executada_em: date | None = None
+
+
+class OrdemOut(BaseModel):
+    """Uma OS como o dono da usina a lê."""
+
+    id: int
+    usina: str
+    #: `id` do vínculo neste sistema — é por ele que o app navega, não pelo id do meuPlano.
+    usina_id: int
+    numero: int | None = None
+
+    objetivo: str
+    classificacao: str | None = None
+
+    #: Código cru do meuPlano, para auditoria.
+    status: str | None = None
+    #: A frase que a tela mostra ("Em verificação").
+    situacao: str = "—"
+    tom: str = "semDados"
+
+    tecnico: str | None = None
+    tarefas: int | None = None
+    tarefas_feitas: int | None = None
+
+    agendada_para: date | None = None
+    concluida_em: date | None = None
+    fechada_em: datetime | None = None
+    aprovada_em: datetime | None = None
+    execucao_min: int | None = None
+    resumo: str | None = None
+
+    #: Só o detalhe preenche. A lista vem sem tarefas — seriam N+1 chamadas ao upstream
+    #: para uma tela que mostra a contagem, não os itens.
+    itens: list[TarefaOut] | None = None
+
+
+class OrdensOut(BaseModel):
+    #: Nulo = nenhuma usina respondeu. Zero = não há OS, que é diferente.
+    total: int | None = None
+    #: A que o dono precisa ver primeiro: a mais recente que ainda não foi encerrada.
+    em_andamento: OrdemOut | None = None
+    ordens: list[OrdemOut] = []
+    usinas_com_manutencao: int = 0
+    aviso: str | None = None
+
+
+class CelulaOut(BaseModel):
+    """Um mês de uma linha do cronograma."""
+
+    mes: str                      # "YYYY-MM"
+    #: Quantas ocorrências o contrato prevê neste mês. 0 = mês vazio na matriz.
+    previsto: int = 0
+    #: `cell_status` do meuPlano, repassado: verde | azul | laranja | vermelho |
+    #: verde_ressalva | None. A cor vem do ATIVO, não de contar tarefas — ver o
+    #: cabeçalho deste bloco.
+    estado: str | None = None
+    #: O ✓ da tela. Só `verde` é executado de fato; `verde_ressalva` é dispensa, e
+    #: apagar essa diferença era exatamente o risco que o meuPlano recusou correr.
+    feito: bool = False
+    dispensado: bool = False
+    atrasado: bool = False
+
+
+class LinhaCronogramaOut(BaseModel):
+    """Uma atividade do contrato ao longo dos 12 meses."""
+
+    nome: str
+    #: 'ensaio' | 'servico' | inspeção — o selo da linha.
+    categoria: str | None = None
+    periodicidade: str | None = None
+    previsto_ano: int = 0
+    feitos: int = 0
+    meses: list[CelulaOut] = []
+
+
+class CronogramaOut(BaseModel):
+    usina: str
+    usina_id: int
+    #: DRAFT | CONSOLIDATED. Só o consolidado é o combinado com o cliente; um DRAFT na
+    #: tela do dono seria mostrar rascunho de negociação como se fosse contrato.
+    status: str | None = None
+    versao: int | None = None
+    #: 12 × "YYYY-MM", em ordem. O mês 1 é a âncora do contrato, não janeiro.
+    meses: list[str] = []
+    linhas: list[LinhaCronogramaOut] = []
+    #: Σ previsto e Σ feito do ano — o cabeçalho "18 de 24 atividades cumpridas".
+    previsto_ano: int = 0
+    feitos_ano: int = 0
+    aviso: str | None = None
+
+
+# ── helpers de leitura ──────────────────────────────────────────────────────
+
+
+def _data(valor: Any) -> date | None:
+    """`date` a partir do que o meuPlano manda — texto ISO, ou já um `date`."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    instante = _instante_medida(valor)
+    return instante.date() if instante else None
+
+
+#: Estados em que a OS já saiu do papel e ainda não foi encerrada pelo gestor.
+AGUARDA_VERIFICACAO = {"EM_EXECUCAO", "FECHADA"}
+
+
+def _situacao_da_ordem(o: dict[str, Any]) -> tuple[str | None, str, str]:
+    """A situação da OS já contando as tarefas.
+
+    O status sozinho engana o dono no caso mais comum. A preventiva de agosto de Porto
+    Ferreira (OS 1016) está `EM_EXECUCAO` com as **17 tarefas executadas**: pelo status
+    cru a tela diria "Em execução", e o dono entenderia que o técnico ainda está na
+    usina — quando o serviço acabou e o que falta é a conferência do gestor.
+
+    Então quando todas as tarefas estão cumpridas e a OS não foi encerrada, a frase
+    passa a dizer isso. Não é número inventado: `task_count` e `task_realized_count`
+    são do próprio meuPlano, e o status cru continua em `status` para auditoria.
+
+    Só vale com `tarefas > 0`. OS de zero tarefa (as canceladas de teste, por exemplo)
+    cairia em `0 == 0` e sairia como "executada" sem nada ter sido feito.
+    """
+    cru, frase, tom = _situacao(o.get("status"))
+    chave = (cru or "").strip().upper()
+    total = _inteiro(o.get("task_count")) or 0
+    feitas = _inteiro(o.get("task_realized_count")) or 0
+    if chave in AGUARDA_VERIFICACAO and total > 0 and feitas >= total:
+        return cru, "Executada · aguardando verificação", "tempoRuim"
+    return cru, frase, tom
+
+
+def _ordem_out(o: dict[str, Any], link: PlantLink) -> OrdemOut:
+    cru, frase, tom = _situacao_da_ordem(o)
+    return OrdemOut(
+        id=_inteiro(o.get("id")) or 0,
+        usina=link.nome,
+        usina_id=link.id,
+        numero=_inteiro(o.get("container_numero")),
+        # Mesma cascata de `_para_saida`: `objetivo` vem vazio nas OSs reais destas
+        # usinas, e parar nele deixaria a lista inteira como "OS 1005".
+        objetivo=(
+            _texto(o.get("objetivo"))
+            or _texto(o.get("name"))
+            or _texto(o.get("container_title"))
+            or f"OS {o.get('id')}"
+        ),
+        classificacao=_texto(o.get("classification")),
+        status=cru,
+        situacao=frase,
+        tom=tom,
+        tecnico=_texto(o.get("technician_name") or o.get("technician_label")),
+        tarefas=_inteiro(o.get("task_count")),
+        tarefas_feitas=_inteiro(o.get("task_realized_count")),
+        agendada_para=_data(o.get("scheduled_date")),
+        concluida_em=_data(o.get("end_date")),
+        fechada_em=_instante_medida(o.get("closed_at")),
+        aprovada_em=_instante_medida(o.get("approved_at")),
+        execucao_min=_inteiro(o.get("execution_minutes") or o.get("total_minutes")),
+        resumo=_texto(o.get("resumo") or o.get("conclusao_tecnico") or o.get("notes")),
+    )
+
+
+#: Tarefa cumprida. `APROVADA` entra: verificada é mais que executada, não menos.
+FEITAS = {"REALIZADA", "APROVADA"}
+
+
+def _tarefa_out(t: dict[str, Any]) -> TarefaOut:
+    status = _texto(t.get("status"))
+    chave = (status or "").strip().upper()
+    parecer_cru = (_texto(t.get("verdict_status")) or "").strip().upper()
+    return TarefaOut(
+        id=_inteiro(t.get("id")),
+        nome=(
+            _texto(t.get("plan_item_name"))
+            or _texto(t.get("ensaio_screen_name"))
+            or _texto(t.get("checklist_name"))
+            or _texto(t.get("name"))
+            or f"Tarefa {t.get('id')}"
+        ),
+        grupo=_texto(t.get("plan_type_label")) or _texto(t.get("plan_type_code")),
+        equipamento=_texto(t.get("equipment_path")) or _texto(t.get("equipment_name")),
+        status=status,
+        situacao=SITUACAO_TAREFA.get(chave, chave.replace("_", " ").capitalize() or "—"),
+        feita=chave in FEITAS,
+        natureza=_texto(t.get("checklist_natureza")),
+        parecer=PARECER.get(parecer_cru) if parecer_cru else None,
+        mes_contratual=_texto(t.get("contract_month")),
+        executada_em=_data(t.get("scheduled_date")),
+    )
+
+
+async def _usinas_com_manutencao(db: Session, usuario: User) -> tuple[list[PlantLink], str | None]:
+    """As usinas desta pessoa que têm o outro lado do vínculo.
+
+    Devolve o aviso junto porque as duas razões de lista vazia — "nenhuma usina
+    liberada" e "nenhuma ligada ao meuPlano" — pedem frases diferentes na tela, e
+    decidir isso em cada endpoint produziria três textos para o mesmo caso.
+    """
+    usinas = usinas_do_usuario(db, usuario)
+    if not usinas:
+        return [], "Você ainda não tem usina liberada."
+    com = [u for u in usinas if u.mp_usina_id]
+    if not com:
+        return [], "Nenhuma das suas usinas está ligada ao meuPlano."
+    return com, None
+
+
+def _link_do_escopo(db: Session, usuario: User, usina_id: int) -> PlantLink:
+    """O vínculo pedido, se for desta pessoa. Senão, 404.
+
+    **404 e não 403**: dizer "proibido" confirmaria que a usina existe, e quem trocou
+    o número na URL não tem por que descobrir isso.
+    """
+    for u in usinas_do_usuario(db, usuario):
+        if u.id == usina_id:
+            if not u.mp_usina_id:
+                raise HTTPException(404, "Esta usina não está ligada ao meuPlano.")
+            return u
+    raise HTTPException(404, "Usina não encontrada.")
+
+
+# ── ordens de serviço ───────────────────────────────────────────────────────
+
+
+#: OS que ainda pede algo de alguém. `FECHADA` entra: está esperando a verificação do
+#: gestor, e é justamente o estado da preventiva que o dono quer acompanhar.
+EM_CURSO = {"ABERTA", "PROGRAMADA", "EM_EXECUCAO", "FECHADA"}
+
+
+@router.get("/manutencao/ordens", response_model=OrdensOut)
+async def listar_ordens(
+    usina_id: int | None = None,
+    limite: int = 100,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> OrdensOut:
+    """Todas as ordens de serviço das usinas desta pessoa, abertas e encerradas.
+
+    Diferente de `GET /manutencao`, que é só histórico: aqui entra o que está em curso,
+    porque é isso que responde "a manutenção que eu contratei está sendo feita?".
+
+    `em_andamento` sai destacado — a OS não encerrada mais recente. Sem esse campo a
+    tela teria de reproduzir a regra de "qual é a atual", e a regra mudaria em dois
+    lugares.
+    """
+    if usina_id is not None:
+        alvo = _link_do_escopo(db, usuario, usina_id)
+        com_manutencao, aviso = [alvo], None
+    else:
+        com_manutencao, aviso = await _usinas_com_manutencao(db, usuario)
+
+    saida = OrdensOut(usinas_com_manutencao=len(com_manutencao), aviso=aviso)
+    if not com_manutencao:
+        return saida
+
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"meuPlano indisponível: {exc}"
+        return saida
+
+    respostas = await asyncio.gather(
+        *[cliente.ordens_servico(u.mp_usina_id) for u in com_manutencao],
+        return_exceptions=True,
+    )
+
+    ordens: list[OrdemOut] = []
+    falharam: list[str] = []
+    for link, resposta in zip(com_manutencao, respostas, strict=True):
+        if not isinstance(resposta, list):
+            falharam.append(link.nome)
+            continue
+        ordens.extend(
+            _ordem_out(o, link) for o in resposta if isinstance(o, dict) and o.get("id")
+        )
+
+    # Mais recente primeiro, pela data que existe: a de conclusão quando encerrada, a
+    # de agendamento quando não. OS sem data nenhuma vai para o fim — ver a nota de
+    # `manutencao_atendida` sobre por que `datetime.min`/`max` mentem os dois.
+    def _quando(x: OrdemOut) -> date | None:
+        return x.concluida_em or x.agendada_para or (x.fechada_em.date() if x.fechada_em else None)
+
+    datadas = sorted((x for x in ordens if _quando(x)), key=lambda x: _quando(x), reverse=True)  # type: ignore[arg-type,return-value]
+    ordens = [*datadas, *(x for x in ordens if not _quando(x))]
+
+    saida.em_andamento = next(
+        (o for o in ordens if (o.status or "").strip().upper() in EM_CURSO), None
+    )
+    saida.total = len(ordens)
+    saida.ordens = ordens[: max(1, min(limite, 300))]
+
+    if falharam:
+        saida.aviso = f"Não deu para consultar: {', '.join(falharam)}."
+    elif not ordens:
+        saida.aviso = "Nenhuma ordem de serviço registrada nas suas usinas."
+    return saida
+
+
+async def _ordem_autorizada(
+    db: Session, usuario: User, so_id: int
+) -> tuple[Any, dict[str, Any], PlantLink]:
+    """A OS, o cliente do meuPlano e o vínculo — depois de checar o escopo.
+
+    O `so_id` vem do cliente, então a OS é buscada e o `plant_id` dela conferido contra
+    as usinas desta pessoa. Confiar no número seria abrir a OS de outro dono trocando
+    um dígito na URL.
+    """
+    com_manutencao, aviso = await _usinas_com_manutencao(db, usuario)
+    if not com_manutencao:
+        raise HTTPException(404, aviso or "Sem usina com manutenção.")
+
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"meuPlano indisponível: {exc}") from exc
+
+    try:
+        ordem = await cliente.ordem_servico(so_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(404, "Ordem de serviço não encontrada.") from exc
+
+    alvo = _inteiro(ordem.get("plant_id"))
+    link = next((u for u in com_manutencao if u.mp_usina_id == alvo), None)
+    if link is None:
+        # Mesma razão de `_link_do_escopo`: 404, não 403.
+        raise HTTPException(404, "Ordem de serviço não encontrada.")
+    return cliente, ordem, link
+
+
+@router.get("/manutencao/ordens/{so_id}", response_model=OrdemOut)
+async def detalhar_ordem(
+    so_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> OrdemOut:
+    """Uma OS com as tarefas dentro — o que foi feito, item por item."""
+    cliente, ordem, link = await _ordem_autorizada(db, usuario, so_id)
+    saida = _ordem_out(ordem, link)
+
+    try:
+        tarefas = await cliente.tarefas_da_ordem(so_id)
+    except Exception:  # noqa: BLE001
+        # A OS abre mesmo assim: o cabeçalho já responde a pergunta principal, e
+        # `itens=None` diz "não deu para buscar" — diferente de `[]`, que afirmaria
+        # que a OS não tem tarefa nenhuma.
+        return saida
+
+    itens = [_tarefa_out(t) for t in tarefas if isinstance(t, dict)]
+    # Agrupadas por seção, como na OS do meuPlano; dentro da seção, ordem do upstream.
+    itens.sort(key=lambda t: (t.grupo or "￿", t.nome))
+    saida.itens = itens
+    return saida
+
+
+# ── PDF ─────────────────────────────────────────────────────────────────────
+#
+# Dois passos no upstream: `POST .../pdf` põe na cesta (e reaproveita a versão quando
+# nada mudou, por fingerprint) e `GET /pdf-basket/{id}/download` traz os bytes. O app
+# recebe o arquivo pronto e o abre no `PdfViewer` — nunca entrega a um app externo,
+# que no Android dá tela preta silenciosa (regra do CLAUDE.md).
+
+
+def _pdf(conteudo: bytes, nome: str) -> Response:
+    return Response(
+        content=conteudo,
+        media_type="application/pdf",
+        headers={
+            # `inline`: o destino é o visualizador embutido, não a pasta de downloads.
+            "Content-Disposition": f'inline; filename="{nome}"',
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
+@router.get("/manutencao/ordens/{so_id}/pdf")
+async def pdf_da_ordem(
+    so_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> Response:
+    """O PDF da OS, com as tarefas e as fichas respondidas."""
+    cliente, _ordem, link = await _ordem_autorizada(db, usuario, so_id)
+    try:
+        item = await cliente.gerar_pdf_os(so_id)
+        conteudo = await cliente.baixar_pdf_cesta(item)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Não deu para gerar o PDF desta OS: {exc}") from exc
+    if not conteudo:
+        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+    return _pdf(conteudo, f"OS-{so_id}-{link.nome}.pdf".replace(" ", "-"))
+
+
+@router.get("/manutencao/cronograma/pdf")
+async def pdf_do_cronograma(
+    usina_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> Response:
+    """O cronograma anual em PDF, com a letra do estado em cada célula."""
+    link = _link_do_escopo(db, usuario, usina_id)
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+        conteudo = await cliente.pdf_cronograma(link.mp_usina_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Não deu para gerar o cronograma em PDF: {exc}") from exc
+    if not conteudo:
+        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+    return _pdf(conteudo, f"Cronograma-{link.nome}.pdf".replace(" ", "-"))
+
+
+# ── cronograma ──────────────────────────────────────────────────────────────
+
+#: `cell_status` do meuPlano. `verde` é executado; `verde_ressalva` é DISPENSADO — a
+#: distinção é deliberada lá (apagá-la era o risco de produto) e é preservada aqui.
+FEITO = {"verde"}
+DISPENSADO = {"verde_ressalva"}
+ATRASADO = {"vermelho"}
+
+
+@router.get("/manutencao/cronograma", response_model=CronogramaOut)
+async def cronograma_da_usina(
+    usina_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> CronogramaOut:
+    """O cronograma de manutenção do contrato, mês a mês.
+
+    Repassa `cell_status` como vem do meuPlano. Aquela cor é conformidade calculada
+    contra o histórico do ATIVO, não contra tarefas — recalcular aqui produziria uma
+    segunda resposta para a mesma pergunta, e o dono veria números diferentes nos dois
+    produtos sem saber em qual acreditar.
+    """
+    link = _link_do_escopo(db, usuario, usina_id)
+    saida = CronogramaOut(usina=link.nome, usina_id=link.id)
+
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+        dados = await cliente.cronograma(link.mp_usina_id)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"Não deu para buscar o cronograma: {exc}"
+        return saida
+
+    meses = [m for m in (dados.get("month_labels") or []) if isinstance(m, str)]
+    saida.meses = meses
+    saida.status = _texto(dados.get("status"))
+    saida.versao = _inteiro(dados.get("version"))
+
+    linhas: list[LinhaCronogramaOut] = []
+    for r in dados.get("rows") or []:
+        if not isinstance(r, dict):
+            continue
+        contagens = r.get("months") or {}
+        estados = r.get("cell_status") or {}
+        celulas: list[CelulaOut] = []
+        for i, rotulo in enumerate(meses, start=1):
+            chave = str(i)
+            estado = _texto(estados.get(chave))
+            celulas.append(
+                CelulaOut(
+                    mes=rotulo,
+                    previsto=_inteiro(contagens.get(chave)) or 0,
+                    estado=estado,
+                    feito=estado in FEITO,
+                    dispensado=estado in DISPENSADO,
+                    atrasado=estado in ATRASADO,
+                )
+            )
+        valor = _inteiro(r.get("periodicity_value"))
+        unidade = _texto(r.get("periodicity_unit"))
+        linhas.append(
+            LinhaCronogramaOut(
+                nome=(
+                    _texto(r.get("conjunto_nome"))
+                    or _texto(r.get("name"))
+                    or _texto(r.get("type_code"))
+                    or "Atividade"
+                ),
+                categoria=(
+                    _texto(r.get("screen_categoria")) or _texto(r.get("checklist_natureza"))
+                ),
+                periodicidade=(
+                    f"{valor}/{unidade}" if valor is not None and unidade else unidade
+                ),
+                previsto_ano=_inteiro(r.get("expected_per_year")) or 0,
+                # Cumprido conta `verde` E `verde_ressalva`: o dispensado saiu da conta
+                # do mês por decisão registrada, então cobrá-lo como pendência seria
+                # errado. Quem precisa da diferença a tem por célula.
+                feitos=sum(1 for c in celulas if c.feito or c.dispensado),
+                meses=celulas,
+            )
+        )
+
+    saida.linhas = linhas
+    saida.previsto_ano = sum(l.previsto_ano for l in linhas)
+    saida.feitos_ano = sum(l.feitos for l in linhas)
+
+    if not linhas:
+        saida.aviso = "O contrato desta usina ainda não tem cronograma."
+    elif (saida.status or "").strip().upper() == "DRAFT":
+        # Rascunho de negociação não é o combinado. A tela mostra, mas avisa.
+        saida.aviso = "Este cronograma ainda é um rascunho, não a versão consolidada."
+    return saida

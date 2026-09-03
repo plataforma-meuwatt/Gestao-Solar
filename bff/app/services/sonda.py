@@ -120,7 +120,13 @@ MEUPLANO: list[Rota] = [
          "A lista de usinas do lado da manutenção",
          captura={"usina_id": "id"}),
     Rota("mp.ordens", "GET", "/api/v1/meuacesso/service-orders",
-         "Ordens de serviço da usina", params={"plant_id": "{usina_id}"}),
+         "Ordens de serviço da usina", params={"plant_id": "{usina_id}"},
+         captura={"so_id": "id"}),
+    Rota("mp.ordem", "GET", "/api/v1/meuacesso/service-orders/{so_id}",
+         "Cabeçalho da OS na tela de Manutenção — e a checagem de escopo antes do PDF"),
+    Rota("mp.tarefas", "GET", "/api/v1/meuacesso/tasks",
+         "As tarefas dentro da OS: o que foi feito, item por item",
+         params={"os_id": "{so_id}"}),
     # O cronograma mora dentro de um contrato, e o contrato vem daqui — do pipeline, não
     # do financeiro: são duas tabelas de container com numerações próprias, e o cronograma
     # só reconhece a do pipeline. As duas rotas são sondadas em sequência de propósito, o
@@ -151,6 +157,20 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Gera um arquivo na cesta do produto de origem. A sonda não "
                             "escreve em sistema de terceiro."),
+    Rota("mp.pdf_cesta", "GET", "/api/v1/meuacesso/pdf-basket/{item_id}/download",
+         "Os bytes do PDF da OS, depois de gerado", essencial=False,
+         sonda=False,
+         nao_sondada_porque="O id da cesta só existe depois do POST que gera o arquivo, "
+                            "e esse POST escreve no produto de origem — a sonda não o "
+                            "chama. Sem ele não há item para baixar."),
+    Rota("mp.pdf_cronograma", "GET",
+         "/api/v1/maintenance/usinas/{contrato_usina_id}/cronograma/pdf",
+         "Cronograma anual em PDF", essencial=False,
+         sonda=False,
+         nao_sondada_porque="É leitura, mas renderiza o PDF inteiro a cada chamada. "
+                            "Sondar isso a cada varredura gastaria o Chromium do "
+                            "meuPlano para conferir uma rota que a tela exercita "
+                            "sob demanda."),
     Rota("mp.assistente", "POST", "/api/v1/meuacesso/assistant/chat",
          "O assistente", essencial=False,
          sonda=False,
