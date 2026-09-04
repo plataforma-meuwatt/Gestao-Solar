@@ -118,19 +118,45 @@ async def cliente_meuwatt(db: Session) -> MeuWattClient:
     )
 
 
+#: O cliente do meuPlano, guardado enquanto a configuração não muda.
+#:
+#: Cada `MeuPlanoClient` novo é uma sessão nova: quando a ponte usa usuário e senha (e não
+#: token fixo), a primeira chamada dele FAZ LOGIN. Criar um por requisição era invisível
+#: enquanto cada tela pedia uma coisa — até a ficha passar a mostrar sessenta e uma fotos, e
+#: cada miniatura virar um login. Guardado aqui, o token de serviço é reaproveitado e o
+#: `_service_token` do cliente continua fazendo o seu trabalho.
+#:
+#: A chave inclui a configuração cifrada: mexer na credencial em "Painel → Conexões" muda a
+#: chave e o cliente velho é abandonado no mesmo instante — sem invalidação manual para
+#: alguém esquecer de chamar.
+_clientes_meuplano: dict[tuple, MeuPlanoClient] = {}
+
+
 async def cliente_meuplano(db: Session) -> MeuPlanoClient:
     integracao = obter(db, Produto.MEUPLANO)
     if integracao is None or not integracao.ativa:
         raise RuntimeError("A ponte com o meuPlano não está configurada.")
+
+    chave = (integracao.base_url, integracao.token_cifrado, integracao.usuario_servico,
+             integracao.senha_cifrada)
+    guardado = _clientes_meuplano.get(chave)
+    if guardado is not None:
+        return guardado
+
     if integracao.token_cifrado:
-        return MeuPlanoClient(
+        cliente = MeuPlanoClient(
             base_url=integracao.base_url, token=decifrar(integracao.token_cifrado)
         )
-    return MeuPlanoClient(
-        base_url=integracao.base_url,
-        usuario=integracao.usuario_servico,
-        senha=decifrar(integracao.senha_cifrada),
-    )
+    else:
+        cliente = MeuPlanoClient(
+            base_url=integracao.base_url,
+            usuario=integracao.usuario_servico,
+            senha=decifrar(integracao.senha_cifrada),
+        )
+    # Um por configuração; trocar a credencial troca a chave. O dicionário não cresce.
+    _clientes_meuplano.clear()
+    _clientes_meuplano[chave] = cliente
+    return cliente
 
 
 # ── diagnóstico ─────────────────────────────────────────────────────────────

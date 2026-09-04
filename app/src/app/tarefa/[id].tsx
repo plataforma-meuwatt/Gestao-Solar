@@ -254,14 +254,39 @@ function BlocoMedicao({ medicao: m }: { medicao: Medicao }) {
       </Text>
       {m.linhas.map((l, i) => (
         <View key={`${l.ponto}-${i}`} style={estilos.itemLinha}>
-          <Text style={estilos.itemRotulo} numberOfLines={2}>{l.ponto}</Text>
+          {/* Um item de torque ou de serviço não tem "ponto": o nome da medição já é o
+              assunto, e imprimir um travessão à esquerda de cada linha não diz nada. */}
+          <Text style={estilos.itemRotulo} numberOfLines={2}>
+            {l.ponto && l.ponto !== '—' ? l.ponto : m.nome}
+          </Text>
           <View style={estilos.itemDireita}>
-            {/* Valor ausente vira "—". Zero é medição e aparece como zero. */}
-            <Num style={estilos.itemValor}>
-              {l.valor ?? '—'}
-              {l.valor && l.unidade ? ` ${l.unidade}` : ''}
-            </Num>
-            {l.aprovado === false ? <Text style={estilos.reprovado}>reprovado</Text> : null}
+            {/*
+             * O ESTADO na frente do valor.
+             *
+             * Num item de serviço o que importa é "Não feito", não o "1" ou o travessão que
+             * está no lugar da medida. Quando há rótulo, ele é a resposta; o valor bruto só
+             * aparece quando diz alguma coisa por si.
+             */}
+            {l.situacao ? (
+              <Text
+                style={[
+                  estilos.estadoItem,
+                  l.aprovado === false && estilos.estadoRuim,
+                  l.aprovado === true && estilos.estadoBom,
+                ]}
+              >
+                {l.situacao}
+              </Text>
+            ) : (
+              // Valor ausente vira "—". Zero é medição e aparece como zero.
+              <Num style={estilos.itemValor}>
+                {l.valor ?? '—'}
+                {l.valor && l.unidade ? ` ${l.unidade}` : ''}
+              </Num>
+            )}
+            {l.situacao === null && l.aprovado === false ? (
+              <Text style={estilos.reprovado}>reprovado</Text>
+            ) : null}
           </View>
         </View>
       ))}
@@ -339,6 +364,9 @@ const estilos = StyleSheet.create({
   itemDireita: { alignItems: 'flex-end' },
   itemValor: { fontFamily: fontes.ui, fontSize: 13.5, color: cores.textoForte },
   reprovado: { fontFamily: fontes.uiForte, fontSize: 10.5, color: tons.parado, marginTop: 1 },
+  estadoItem: { fontFamily: fontes.uiForte, fontSize: 12.5, color: cores.textoRotulo },
+  estadoBom: { color: tons.ok },
+  estadoRuim: { color: tons.parado },
 
   pergunta: { paddingVertical: 6 },
   perguntaTexto: { fontFamily: fontes.ui, fontSize: 13, lineHeight: 18, color: cores.textoCorpo },

@@ -182,6 +182,12 @@ export type LinhaMedicao = {
   desvio: string | null
   /** Tri-estado: true aprovado, false reprovado, null "não se aplica"/não julgado. */
   aprovado: boolean | null
+  /**
+   * O rótulo que o laudo imprime quando o item é ESTADO e não julgamento — "Não feito" num
+   * item de serviço, por exemplo. Vinha no mesmo campo de `aprovado`, e um texto onde se
+   * esperava sim/não derrubava a ficha inteira antes de desenhar qualquer coisa.
+   */
+  situacao: string | null
   observacao: string | null
 }
 

@@ -18,6 +18,7 @@ para o mais antigo, e o meuPlano não garante ordem nenhuma na lista que devolve
 """
 
 import asyncio
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -812,7 +813,14 @@ async def detalhar_tarefa(
 
 
 class LinhaMedicaoOut(BaseModel):
-    """Um ponto medido. `aprovado` é tri-estado: sim, não e "não se aplica" (nulo)."""
+    """Um ponto medido.
+
+    `aprovado` é tri-estado: sim, não e "não se aplica" (nulo). `situacao` é outra coisa — o
+    RÓTULO que o laudo imprime quando o item não é um julgamento, e sim um estado: "Não feito"
+    num item de serviço, por exemplo. Eram o mesmo campo do lado do meuPlano, e um item de
+    torque com `aprovado: "Aprovado"` derrubava a validação da ficha inteira — foi por isso
+    que a manutenção mensal dos inversores de Porto Ferreira nunca abria (04/09/2026).
+    """
 
     ponto: str
     valor: str | None = None
@@ -820,7 +828,13 @@ class LinhaMedicaoOut(BaseModel):
     alvo: str | None = None
     desvio: str | None = None
     aprovado: bool | None = None
+    situacao: str | None = None
     observacao: str | None = None
+
+    #: TOLERÂNCIA DELIBERADA. Um campo novo do upstream não pode derrubar a tela: a ficha é
+    #: leitura, e perder uma coluna é muito melhor que perder a página. (O padrão do Pydantic
+    #: já é ignorar, mas aqui isso é decisão, não acaso — não trocar por "forbid".)
+    model_config = {"extra": "ignore"}
 
 
 class MedicaoOut(BaseModel):
@@ -936,6 +950,41 @@ def _apontar_fotos_para_ca(ficha: Any, so_id: int, task_id: int) -> None:
                 reescrever((pergunta or {}).get("fotos"))
 
 
+#: Autorização de tarefa guardada por instantes — (usuário, ordem, tarefa) -> (quando, dados).
+#:
+#: Abrir uma ficha de vinte inversores pede SESSENTA E UMA miniaturas, quase ao mesmo tempo. Sem
+#: isto, cada uma refazia a cadeia inteira de autorização: as usinas do usuário, a ordem e a
+#: tarefa no meuPlano — três idas ao upstream POR IMAGEM. O resultado no aparelho era o ícone
+#: preto de imagem que não carrega, porque o servidor não vencia a fila.
+#:
+#: Trinta segundos é o suficiente para uma tela abrir e curto o bastante para um acesso
+#: revogado não sobreviver a ele. E é só um ATALHO de leitura: quem não passou pela cadeia
+#: completa uma vez não entra no dicionário.
+_AUTORIZACAO_TTL_S = 30.0
+_autorizacoes: dict[tuple[int, int, int], tuple[float, tuple[Any, dict[str, Any], PlantLink]]] = {}
+
+
+async def _tarefa_autorizada_em_cache(
+    db: Session, usuario: User, so_id: int, task_id: int
+) -> tuple[Any, dict[str, Any], PlantLink]:
+    """`_tarefa_autorizada`, sem repetir a cadeia a cada imagem da mesma ficha."""
+    agora = time.monotonic()
+    chave = (usuario.id, so_id, task_id)
+
+    guardada = _autorizacoes.get(chave)
+    if guardada is not None and agora - guardada[0] < _AUTORIZACAO_TTL_S:
+        return guardada[1]
+
+    dados = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    _autorizacoes[chave] = (agora, dados)
+    # Poda o que venceu: sem isto o dicionário cresce com cada tarefa já vista, para sempre.
+    if len(_autorizacoes) > 256:
+        for k, (quando, _) in list(_autorizacoes.items()):
+            if agora - quando >= _AUTORIZACAO_TTL_S:
+                _autorizacoes.pop(k, None)
+    return dados
+
+
 @router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/fotos/{foto_id}")
 async def foto_da_tarefa(
     so_id: int,
@@ -952,7 +1001,7 @@ async def foto_da_tarefa(
     usina do usuário. O meuPlano ainda confere que a foto é daquela tarefa — duas cercas, porque
     o id vem do cliente e sozinho não prova nada.
     """
-    cliente, _tarefa, _link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    cliente, _tarefa, _link = await _tarefa_autorizada_em_cache(db, usuario, so_id, task_id)
     try:
         conteudo, tipo = await cliente.foto_da_tarefa(task_id, foto_id, variante)
     except Exception as exc:  # noqa: BLE001
