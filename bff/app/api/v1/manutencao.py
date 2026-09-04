@@ -743,6 +743,86 @@ async def detalhar_tarefa(
     return _tarefa_out(tarefa)
 
 
+class LinhaMedicaoOut(BaseModel):
+    """Um ponto medido. `aprovado` é tri-estado: sim, não e "não se aplica" (nulo)."""
+
+    ponto: str
+    valor: str | None = None
+    unidade: str | None = None
+    alvo: str | None = None
+    desvio: str | None = None
+    aprovado: bool | None = None
+    observacao: str | None = None
+
+
+class MedicaoOut(BaseModel):
+    nome: str
+    unidade: str | None = None
+    linhas: list[LinhaMedicaoOut] = []
+
+
+class PerguntaOut(BaseModel):
+    pergunta: str
+    #: A resposta como o técnico deu. Nulo/"— não respondida —" é ausência, não "não".
+    resposta: str | None = None
+    #: A resposta É o problema (a régua de polaridade é do meuPlano, não daqui).
+    problema: bool = False
+    observacao: str | None = None
+    fotos: int = 0
+
+
+class SecaoChecklistOut(BaseModel):
+    nome: str
+    perguntas: list[PerguntaOut] = []
+
+
+class EquipamentoFichaOut(BaseModel):
+    """O que foi feito NAQUELE equipamento — numa coletiva há vários."""
+
+    equipamento: str
+    modelo: str | None = None
+    fabricante: str | None = None
+    numero_serie: str | None = None
+    executado_em: str | None = None
+    executado_por: str | None = None
+    parecer: str | None = None
+    parecer_motivo: str | None = None
+    medicoes: list[MedicaoOut] = []
+    checklist: list[SecaoChecklistOut] = []
+    fotos: int = 0
+
+
+class FichaOut(BaseModel):
+    """A ficha respondida da tarefa, como a tela a lê."""
+
+    id: int | None = None
+    nome: str | None = None
+    coletiva: bool = False
+    parecer: str | None = None
+    equipamentos: list[EquipamentoFichaOut] = []
+    fotos: int = 0
+
+
+@router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/ficha", response_model=FichaOut)
+async def ficha_da_tarefa(
+    so_id: int,
+    task_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> FichaOut:
+    """As RESPOSTAS da tarefa — para ler na tela, sem baixar o PDF.
+
+    O dono (03/09/2026): *"quero ver detalhe na tela"*. O PDF continua sendo o laudo; isto é a
+    leitura. Os dois saem da mesma fonte no meuPlano, então não divergem.
+    """
+    cliente, _tarefa, _link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    try:
+        bruta = await cliente.ficha_da_tarefa(task_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Não deu para ler a ficha desta tarefa: {exc}") from exc
+    return FichaOut.model_validate(bruta)
+
+
 @router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/pdf")
 async def pdf_da_tarefa(
     so_id: int,

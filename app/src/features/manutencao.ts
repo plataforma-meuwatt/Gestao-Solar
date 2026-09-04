@@ -164,6 +164,75 @@ export function useOrdem(id: string | number | undefined): Leitura<Ordem> {
   })
 }
 
+/* ── A FICHA RESPONDIDA ─────────────────────────────────────────────────────
+ * O que o técnico registrou, equipamento por equipamento. Vem da MESMA fonte do PDF no
+ * meuPlano — tela e laudo não podem divergir. O PDF continua existindo: ele é o documento;
+ * isto é a leitura.
+ */
+
+export type LinhaMedicao = {
+  ponto: string
+  valor: string | null
+  unidade: string | null
+  alvo: string | null
+  desvio: string | null
+  /** Tri-estado: true aprovado, false reprovado, null "não se aplica"/não julgado. */
+  aprovado: boolean | null
+  observacao: string | null
+}
+
+export type Medicao = {
+  nome: string
+  unidade: string | null
+  linhas: LinhaMedicao[]
+}
+
+export type PerguntaChecklist = {
+  pergunta: string
+  resposta: string | null
+  /** A resposta É o problema — a régua de polaridade é do meuPlano, não daqui. */
+  problema: boolean
+  observacao: string | null
+  fotos: number
+}
+
+export type SecaoChecklist = { nome: string; perguntas: PerguntaChecklist[] }
+
+export type EquipamentoDaFicha = {
+  equipamento: string
+  modelo: string | null
+  fabricante: string | null
+  numero_serie: string | null
+  executado_em: string | null
+  executado_por: string | null
+  parecer: string | null
+  parecer_motivo: string | null
+  medicoes: Medicao[]
+  checklist: SecaoChecklist[]
+  fotos: number
+}
+
+export type Ficha = {
+  id: number | null
+  nome: string | null
+  coletiva: boolean
+  parecer: string | null
+  equipamentos: EquipamentoDaFicha[]
+  fotos: number
+}
+
+/** As respostas da tarefa. Separada de `useTarefa` porque é mais cara: a tela abre com o
+ *  cabeçalho na hora e a ficha chega em seguida, em vez de tudo esperar tudo. */
+export function useFicha(
+  osId: string | number | undefined,
+  tarefaId: string | number | undefined,
+): Leitura<Ficha> {
+  return fetchWithCache<Ficha>(`manutencao/ordem-${osId ?? ''}-ficha-${tarefaId ?? ''}`, {
+    caminho: `/api/v1/manutencao/ordens/${osId ?? ''}/tarefas/${tarefaId ?? ''}/ficha`,
+    ativo: Boolean(osId && tarefaId),
+  })
+}
+
 /** UMA tarefa da OS. O dono precisa abrir o item e ler o que foi feito — a lista mostra
  *  nome e ✓, e isso não responde "o que o técnico registrou aqui?". */
 export function useTarefa(

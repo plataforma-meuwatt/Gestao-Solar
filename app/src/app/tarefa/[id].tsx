@@ -24,7 +24,14 @@ import { StyleSheet, Text, View } from 'react-native'
 import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
 import { Tela } from '@/components/Tela'
-import { urlDoPdfDaTarefa, useTarefa } from '@/features/manutencao'
+import {
+  urlDoPdfDaTarefa,
+  useFicha,
+  useTarefa,
+  type EquipamentoDaFicha,
+  type Medicao,
+  type SecaoChecklist,
+} from '@/features/manutencao'
 import { dataPorExtenso } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons, type Tom } from '@/theme/tokens'
 
@@ -49,6 +56,9 @@ function mesPorExtenso(yyyyMm: string | null): string | null {
 export default function TarefaDaOrdem() {
   const { id, os } = useLocalSearchParams<{ id: string; os: string }>()
   const { dados: t, carregando, erro, offlineDesde, recarregar } = useTarefa(os, id)
+  // A ficha é mais cara que o cabeçalho: a tela abre com o que já tem e as respostas
+  // chegam em seguida, em vez de tudo esperar tudo.
+  const { dados: ficha, carregando: carregandoFicha, erro: erroFicha } = useFicha(os, id)
 
   return (
     <Tela
@@ -124,6 +134,30 @@ export default function TarefaDaOrdem() {
             </Card>
           ) : null}
 
+          {/* AS RESPOSTAS. Antes só existiam dentro do PDF — o dono pediu para lê-las aqui
+              ("quero ver detalhe na tela"). Numa tarefa coletiva há um bloco por
+              equipamento; numa individual, um só. */}
+          {carregandoFicha && !ficha ? (
+            <Card>
+              <Esqueleto largura="40%" altura={13} />
+              <View style={estilos.espaco}>
+                <Esqueleto altura={90} />
+              </View>
+            </Card>
+          ) : erroFicha && !ficha ? (
+            <Card>
+              <CabecalhoCard rotulo="Respostas" />
+              <Text style={tipo.fraco}>
+                Não deu para carregar as respostas agora. A ficha em PDF, abaixo, continua
+                disponível.
+              </Text>
+            </Card>
+          ) : ficha && ficha.equipamentos.length > 0 ? (
+            ficha.equipamentos.map((e, i) => (
+              <BlocoEquipamento key={`${e.equipamento}-${i}`} equipamento={e} />
+            ))
+          ) : null}
+
           <Card>
             <CabecalhoCard
               rotulo="Ficha em PDF"
@@ -151,6 +185,96 @@ export default function TarefaDaOrdem() {
         </>
       )}
     </Tela>
+  )
+}
+
+/** Um equipamento da ficha: o que foi medido e o que foi respondido nele. */
+function BlocoEquipamento({ equipamento: e }: { equipamento: EquipamentoDaFicha }) {
+  const nada = e.medicoes.length === 0 && e.checklist.length === 0
+  return (
+    <Card>
+      <CabecalhoCard
+        rotulo={e.equipamento}
+        direita={
+          e.parecer ? (
+            <Text style={[estilos.parecer, { color: tons[tomDoParecer(e.parecer)] }]}>
+              {e.parecer}
+            </Text>
+          ) : undefined
+        }
+      />
+
+      {e.parecer_motivo ? <Text style={estilos.motivo}>{e.parecer_motivo}</Text> : null}
+
+      {/* Quem fez e quando: numa coletiva cada equipamento pode ter sido feito em hora
+          diferente, e é isso que explica um resultado fora da curva. */}
+      {e.executado_por || e.executado_em ? (
+        <Text style={estilos.autoria}>
+          {[e.executado_por, e.executado_em].filter(Boolean).join(' · ')}
+        </Text>
+      ) : null}
+
+      {e.medicoes.map((m, i) => (
+        <BlocoMedicao key={`${m.nome}-${i}`} medicao={m} />
+      ))}
+
+      {e.checklist.map((sec, i) => (
+        <BlocoChecklist key={`${sec.nome}-${i}`} secao={sec} />
+      ))}
+
+      {nada ? (
+        <Text style={tipo.fraco}>Nada foi registrado nesta ficha ainda.</Text>
+      ) : null}
+
+      {e.fotos > 0 ? (
+        <Text style={estilos.fotos}>
+          {e.fotos === 1 ? '1 foto' : `${e.fotos} fotos`} — no PDF abaixo
+        </Text>
+      ) : null}
+    </Card>
+  )
+}
+
+/** Uma medição: cada ponto com o que foi lido. */
+function BlocoMedicao({ medicao: m }: { medicao: Medicao }) {
+  return (
+    <View style={estilos.grupo}>
+      <Text style={estilos.grupoTitulo}>
+        {m.nome}
+        {m.unidade ? <Text style={estilos.unidade}>{`  (${m.unidade})`}</Text> : null}
+      </Text>
+      {m.linhas.map((l, i) => (
+        <View key={`${l.ponto}-${i}`} style={estilos.itemLinha}>
+          <Text style={estilos.itemRotulo} numberOfLines={2}>{l.ponto}</Text>
+          <View style={estilos.itemDireita}>
+            {/* Valor ausente vira "—". Zero é medição e aparece como zero. */}
+            <Num style={estilos.itemValor}>
+              {l.valor ?? '—'}
+              {l.valor && l.unidade ? ` ${l.unidade}` : ''}
+            </Num>
+            {l.aprovado === false ? <Text style={estilos.reprovado}>reprovado</Text> : null}
+          </View>
+        </View>
+      ))}
+    </View>
+  )
+}
+
+/** Uma seção do checklist: a pergunta e o que foi respondido. */
+function BlocoChecklist({ secao }: { secao: SecaoChecklist }) {
+  return (
+    <View style={estilos.grupo}>
+      <Text style={estilos.grupoTitulo}>{secao.nome}</Text>
+      {secao.perguntas.map((p, i) => (
+        <View key={`${p.pergunta}-${i}`} style={estilos.pergunta}>
+          <Text style={estilos.perguntaTexto}>{p.pergunta}</Text>
+          <Text style={[estilos.resposta, p.problema && estilos.respostaProblema]}>
+            {p.resposta ?? '—'}
+          </Text>
+          {p.observacao ? <Text style={estilos.obs}>{p.observacao}</Text> : null}
+        </View>
+      ))}
+    </View>
   )
 }
 
@@ -188,5 +312,28 @@ const estilos = StyleSheet.create({
   linhaValor: { fontFamily: fontes.ui, fontSize: 13.5, color: cores.textoCorpo },
 
   explicacao: { fontFamily: fontes.ui, fontSize: 13, lineHeight: 19, color: cores.textoFraco },
+
+  motivo: { fontFamily: fontes.ui, fontSize: 13, lineHeight: 19, color: cores.textoCorpo, marginTop: 4 },
+  autoria: { fontFamily: fontes.ui, fontSize: 11.5, color: cores.textoFraco, marginTop: 2 },
+  fotos: { fontFamily: fontes.ui, fontSize: 11.5, color: cores.textoFraco, marginTop: espaco.xs },
+
+  grupo: { marginTop: espaco.sm },
+  grupoTitulo: { fontFamily: fontes.uiForte, fontSize: 12, color: cores.textoRotulo, letterSpacing: 0.3 },
+  unidade: { fontFamily: fontes.ui, fontSize: 11.5, color: cores.textoFraco },
+
+  itemLinha: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    gap: espaco.xs, paddingVertical: 5,
+  },
+  itemRotulo: { flex: 1, fontFamily: fontes.ui, fontSize: 13, color: cores.textoCorpo, lineHeight: 18 },
+  itemDireita: { alignItems: 'flex-end' },
+  itemValor: { fontFamily: fontes.ui, fontSize: 13.5, color: cores.textoForte },
+  reprovado: { fontFamily: fontes.uiForte, fontSize: 10.5, color: tons.parado, marginTop: 1 },
+
+  pergunta: { paddingVertical: 6 },
+  perguntaTexto: { fontFamily: fontes.ui, fontSize: 13, lineHeight: 18, color: cores.textoCorpo },
+  resposta: { fontFamily: fontes.uiForte, fontSize: 13, color: cores.textoForte, marginTop: 2 },
+  respostaProblema: { color: tons.parado },
+  obs: { fontFamily: fontes.ui, fontSize: 12, lineHeight: 17, color: cores.textoFraco, marginTop: 2 },
   texto: { fontFamily: fontes.ui, fontSize: 13.5, lineHeight: 20, color: cores.textoCorpo, marginTop: 2 },
 })

@@ -238,6 +238,15 @@ class MeuPlanoClient:
         `equipment_path`, `verdict_status`)."""
         return await self._get(f"/api/v1/meuacesso/tasks/{task_id}")
 
+    async def ficha_da_tarefa(self, task_id: int) -> dict[str, Any]:
+        """As RESPOSTAS da tarefa em JSON — medições, checklist, parecer, por equipamento.
+
+        É a mesma fonte do PDF do lado de lá (`ficha_leitura` lê o que o gerador do laudo lê),
+        então tela e documento não divergem. Uma ficha grande leva alguns segundos.
+        """
+        r = await self._req("GET", f"/api/v1/meuacesso/tasks/{task_id}/ficha", timeout=120.0)
+        return r.json()
+
     async def pdf_da_tarefa(self, task_id: int) -> bytes:
         """O PDF de UMA tarefa — a ficha respondida pelo técnico.
 
