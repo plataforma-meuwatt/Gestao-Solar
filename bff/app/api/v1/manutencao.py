@@ -295,6 +295,9 @@ class TarefaOut(BaseModel):
     #: INSPECAO | SERVICO — separa "olhar" de "trabalhar" na leitura.
     natureza: str | None = None
     parecer: str | None = None
+    #: A OS que executa esta tarefa. A tela da tarefa é `/ordens/{so}/tarefas/{id}`, então
+    #: sem isto o X do cronograma não teria como abrir a tarefa que ele representa.
+    os_id: int | None = None
     #: Mês contratual do cronograma ("YYYY-MM"). Nulo em corretiva avulsa.
     mes_contratual: str | None = None
     executada_em: date | None = None
@@ -373,6 +376,9 @@ class CelulaOut(BaseModel):
 class LinhaCronogramaOut(BaseModel):
     """Uma atividade do contrato ao longo dos 12 meses."""
 
+    #: O item do plano que esta linha representa. É por ele que se descobre QUAIS tarefas
+    #: estão atrás do X de um mês — sem ele, a célula é uma marca sem porta.
+    plan_item_id: int | None = None
     nome: str
     #: 'ensaio' | 'servico' | inspeção — o selo da linha.
     categoria: str | None = None
@@ -494,6 +500,7 @@ def _tarefa_out(t: dict[str, Any]) -> TarefaOut:
         feita=chave in FEITAS,
         natureza=_texto(t.get("checklist_natureza")),
         parecer=PARECER.get(parecer_cru) if parecer_cru else None,
+        os_id=_inteiro(t.get("os_id")),
         mes_contratual=_texto(t.get("contract_month")),
         executada_em=_data(t.get("scheduled_date")),
         # O dono pediu para "ver as respostas" da tarefa. O detalhe de cada medição vive no
@@ -846,6 +853,37 @@ async def pdf_da_tarefa(
     return _pdf(conteudo, f"{nome}-{link.nome}.pdf".replace(" ", "-").replace("/", "-"))
 
 
+@router.get("/manutencao/cronograma/tarefas", response_model=list[TarefaOut])
+async def tarefas_da_celula(
+    usina_id: int,
+    plan_item_id: int,
+    mes: str,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> list[TarefaOut]:
+    """As tarefas por trás de UM X do cronograma — atividade × mês.
+
+    O dono (04/09/2026): *"quero clicar nos X com tarefa feita e abrir as informações da
+    tarefa"*. A célula sabia só a cor; agora ela abre o que aconteceu ali.
+
+    O escopo é o da usina (mesma régua de `_link_do_escopo`): o `plan_item_id` vem do
+    cliente e sozinho não prova nada — as tarefas devolvidas são conferidas contra a usina
+    autorizada antes de sair daqui.
+    """
+    link = _link_do_escopo(db, usuario, usina_id)
+    if link.mp_usina_id is None:
+        raise HTTPException(404, "Usina sem vínculo com o meuPlano.")
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+        brutas = await cliente.tarefas_do_item_no_mes(plan_item_id, mes)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Não deu para ler as tarefas deste mês: {exc}") from exc
+    # a tarefa tem de ser DESTA usina — o item do plano veio do cliente
+    minhas = [t for t in brutas
+              if isinstance(t, dict) and _inteiro(t.get("plant_id")) == link.mp_usina_id]
+    return [_tarefa_out(t) for t in minhas]
+
+
 @router.get("/manutencao/cronograma/pdf")
 async def pdf_do_cronograma(
     usina_id: int,
@@ -925,6 +963,7 @@ async def cronograma_da_usina(
         unidade = _texto(r.get("periodicity_unit"))
         linhas.append(
             LinhaCronogramaOut(
+                plan_item_id=_inteiro(r.get("plan_item_id")),
                 nome=(
                     _texto(r.get("conjunto_nome"))
                     or _texto(r.get("name"))

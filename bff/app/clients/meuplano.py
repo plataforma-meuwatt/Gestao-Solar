@@ -238,6 +238,19 @@ class MeuPlanoClient:
         `equipment_path`, `verdict_status`)."""
         return await self._get(f"/api/v1/meuacesso/tasks/{task_id}")
 
+    async def tarefas_do_item_no_mes(self, plan_item_id: int, mes: str) -> list[dict[str, Any]]:
+        """As tarefas de UMA atividade do plano NAQUELE mês — o que está atrás do X.
+
+        A mesma rota `/tasks` da lista da OS, com os filtros que o próprio Cronograma do
+        meuPlano usa (`usina_type_plan_item_id` + `contract_month`). Reaproveitar a rota
+        oficial é o que mantém as duas leituras iguais.
+        """
+        dados = await self._get("/api/v1/meuacesso/tasks",
+                                usina_type_plan_item_id=plan_item_id, contract_month=mes)
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
+
     async def ficha_da_tarefa(self, task_id: int) -> dict[str, Any]:
         """As RESPOSTAS da tarefa em JSON — medições, checklist, parecer, por equipamento.
 

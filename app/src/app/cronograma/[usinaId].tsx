@@ -23,23 +23,39 @@
  * dar. A coluna do nome fica fixa à esquerda.
  */
 
-import { useLocalSearchParams } from 'expo-router'
-import { ScrollView, StyleSheet, Text, View } from 'react-native'
+import { router, useLocalSearchParams } from 'expo-router'
+import { useRef, useState } from 'react'
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native'
 
 import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num } from '@/components/base'
 import { Tela } from '@/components/Tela'
 import {
+  tarefasDaCelula,
   urlDoPdfDoCronograma,
   useCronograma,
   type Celula,
   type LinhaCronograma,
+  type Tarefa,
 } from '@/features/manutencao'
 import { inteiro } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 const LARGURA_NOME = 150
 const LARGURA_MES = 34
+/** Altura do corpo rolável. O cabeçalho fica FORA dele — é isso que o mantém parado
+ *  quando a lista rola (o dono: "ao rolar pra baixo, os meses ficam congelados"). */
+const ALTURA_CORPO = 340
 
 /** "2026-08" → "ago". A grade não tem espaço para o mês inteiro. */
 const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
@@ -113,48 +129,7 @@ export default function Cronograma() {
               }
             />
 
-            <View style={estilos.grade}>
-              {/* Coluna fixa: o nome da atividade. Sem ela, rolar para dezembro deixa
-                  as marcas órfãs — quem lê não sabe mais de qual linha são. */}
-              <View style={estilos.colunaNome}>
-                <View style={estilos.cabecalhoNome}>
-                  <Text style={estilos.cabecalhoTexto}>Atividade</Text>
-                </View>
-                {c.linhas.map((l, i) => (
-                  <View key={`n${i}`} style={estilos.celulaNome}>
-                    <Text style={estilos.nomeAtividade} numberOfLines={2}>
-                      {l.nome}
-                    </Text>
-                    {l.periodicidade ? (
-                      <Text style={estilos.periodicidade}>{l.periodicidade}</Text>
-                    ) : null}
-                  </View>
-                ))}
-              </View>
-
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View>
-                  <View style={estilos.cabecalhoMeses}>
-                    {c.meses.map((m, i) => (
-                      <View key={m} style={estilos.cabecalhoMes}>
-                        <Text style={estilos.mesTexto}>{mesCurto(m)}</Text>
-                        {/* O ano na primeira coluna e sempre que vira. */}
-                        {i === 0 || m.slice(0, 4) !== c.meses[i - 1].slice(0, 4) ? (
-                          <Text style={estilos.anoTexto}>{anoDe(m)}</Text>
-                        ) : null}
-                      </View>
-                    ))}
-                    <View style={estilos.cabecalhoTotal}>
-                      <Text style={estilos.mesTexto}>ano</Text>
-                    </View>
-                  </View>
-
-                  {c.linhas.map((l, i) => (
-                    <LinhaGrade key={`l${i}`} linha={l} />
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
+            <Grade cronograma={c} />
 
             <Legenda />
           </Card>
@@ -180,14 +155,223 @@ export default function Cronograma() {
   )
 }
 
-function LinhaGrade({ linha: l }: { linha: LinhaCronograma }) {
+/**
+ * A grade com CABEÇALHO CONGELADO e coluna de nomes fixa.
+ *
+ * O desenho: o cabeçalho dos meses fica FORA do rolar vertical (por isso não sai da tela ao
+ * descer a lista) e DENTRO do rolar horizontal (por isso acompanha ao ir para dezembro). São
+ * dois roláveis verticais — nomes e células — mantidos em sincronia; o que o usuário arrasta
+ * é o da direita, e o da esquerda o segue.
+ */
+function Grade({ cronograma: c }: { cronograma: { meses: string[]; linhas: LinhaCronograma[]; usina_id: number } }) {
+  const nomesRef = useRef<ScrollView>(null)
+  const celulasRef = useRef<ScrollView>(null)
+  const [celulaAberta, setCelulaAberta] = useState<
+    { linha: LinhaCronograma; mes: string; tarefas: Tarefa[] | null; erro: string | null } | null
+  >(null)
+
+  /** Toque na célula: busca as tarefas daquele mês e abre a folha com elas.
+   *
+   *  A busca é feita AQUI, no toque, e não num efeito da folha: o efeito exigiria escrever
+   *  estado depois da montagem (e o lint do projeto proíbe, com razão — é onde nascem os
+   *  "setState num componente que já saiu da tela"). */
+  const abrirCelula = (linha: LinhaCronograma, mes: string) => {
+    if (linha.plan_item_id == null) {
+      setCelulaAberta({ linha, mes, tarefas: [], erro: 'Esta linha não tem tarefas ligadas no plano.' })
+      return
+    }
+    setCelulaAberta({ linha, mes, tarefas: null, erro: null })
+    tarefasDaCelula(c.usina_id, linha.plan_item_id, mes)
+      .then((ts) => setCelulaAberta((atual) =>
+        atual && atual.mes === mes && atual.linha === linha ? { ...atual, tarefas: ts } : atual))
+      .catch(() => setCelulaAberta((atual) =>
+        atual && atual.mes === mes && atual.linha === linha
+          ? { ...atual, tarefas: [], erro: 'Não deu para carregar as tarefas deste mês.' }
+          : atual))
+  }
+
+  // Sincroniza o rolar vertical dos dois lados. `scrollTo` sem animação: com animação, a
+  // coluna de nomes ficaria sempre um quadro atrás do dedo.
+  const sincronizar = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    nomesRef.current?.scrollTo({ y: e.nativeEvent.contentOffset.y, animated: false })
+  }
+
+  return (
+    <>
+      <View style={estilos.grade}>
+        <View style={estilos.colunaNome}>
+          {/* canto: fica parado nos DOIS eixos */}
+          <View style={estilos.cabecalhoNome}>
+            <Text style={estilos.cabecalhoTexto}>Atividade</Text>
+          </View>
+          <ScrollView
+            ref={nomesRef}
+            style={{ height: ALTURA_CORPO }}
+            showsVerticalScrollIndicator={false}
+            // quem arrasta é a área das células; esta coluna apenas acompanha
+            scrollEnabled={false}
+          >
+            {c.linhas.map((l, i) => (
+              <View key={`n${i}`} style={estilos.celulaNome}>
+                <Text style={estilos.nomeAtividade} numberOfLines={2}>
+                  {l.nome}
+                </Text>
+                {l.periodicidade ? (
+                  <Text style={estilos.periodicidade}>{l.periodicidade}</Text>
+                ) : null}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View>
+            {/* FORA do rolar vertical: é isto que congela os meses no topo */}
+            <View style={estilos.cabecalhoMeses}>
+              {c.meses.map((m, i) => (
+                <View key={m} style={estilos.cabecalhoMes}>
+                  <Text style={estilos.mesTexto}>{mesCurto(m)}</Text>
+                  {i === 0 || m.slice(0, 4) !== c.meses[i - 1].slice(0, 4) ? (
+                    <Text style={estilos.anoTexto}>{anoDe(m)}</Text>
+                  ) : null}
+                </View>
+              ))}
+              <View style={estilos.cabecalhoTotal}>
+                <Text style={estilos.mesTexto}>ano</Text>
+              </View>
+            </View>
+
+            <ScrollView
+              ref={celulasRef}
+              style={{ height: ALTURA_CORPO }}
+              showsVerticalScrollIndicator={false}
+              onScroll={sincronizar}
+              scrollEventThrottle={16}
+            >
+              {c.linhas.map((l, i) => (
+                <LinhaGrade
+                  key={`l${i}`}
+                  linha={l}
+                  onAbrirCelula={(mes) => abrirCelula(l, mes)}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        </ScrollView>
+      </View>
+
+      {celulaAberta ? (
+        <TarefasDoMes
+          titulo={celulaAberta.linha.nome}
+          mes={celulaAberta.mes}
+          tarefas={celulaAberta.tarefas}
+          erro={celulaAberta.erro}
+          onFechar={() => setCelulaAberta(null)}
+        />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * O que está atrás do X: as tarefas daquela atividade naquele mês.
+ *
+ * Pedido do dono (04/09/2026): *"quero clicar nos X com tarefa feita e abrir as informações
+ * da tarefa"*. A célula dizia só a cor; agora ela abre a lista, e cada tarefa leva à ficha.
+ */
+function TarefasDoMes({
+  titulo,
+  mes,
+  tarefas,
+  erro,
+  onFechar,
+}: {
+  titulo: string
+  mes: string
+  /** `null` = ainda buscando. `[]` = buscou e não há nada — são coisas diferentes. */
+  tarefas: Tarefa[] | null
+  erro: string | null
+  onFechar: () => void
+}) {
+  return (
+    <Modal transparent animationType="fade" visible onRequestClose={onFechar}>
+      <Pressable style={estilos.fundoModal} onPress={onFechar} />
+      <View style={estilos.folha}>
+        <Text style={estilos.folhaTitulo}>{titulo}</Text>
+        <Text style={estilos.folhaSub}>{mesCurto(mes)}/{anoDe(mes)}</Text>
+
+        {erro ? (
+          <Text style={tipo.fraco}>{erro}</Text>
+        ) : tarefas === null ? (
+          <ActivityIndicator color={cores.ambar} style={estilos.folhaEspera} />
+        ) : tarefas.length === 0 ? (
+          <Text style={tipo.fraco}>
+            Nenhuma tarefa registrada neste mês para esta atividade.
+          </Text>
+        ) : (
+          <ScrollView>
+            {tarefas.map((t) => (
+              <Pressable
+                key={t.id ?? t.nome}
+                style={({ pressed }) => [estilos.folhaItem, pressed && estilos.folhaItemTocado]}
+                disabled={!t.id || !t.os_id}
+                onPress={() => {
+                  onFechar()
+                  router.push(`/tarefa/${t.id}?os=${t.os_id}`)
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={estilos.folhaItemNome} numberOfLines={2}>{t.nome}</Text>
+                  {t.equipamento ? (
+                    <Text style={estilos.folhaItemEquip} numberOfLines={1}>{t.equipamento}</Text>
+                  ) : null}
+                </View>
+                <Text style={estilos.folhaItemSit}>{t.feita ? '✓' : t.situacao}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+
+        <Pressable style={estilos.folhaFechar} onPress={onFechar}>
+          <Text style={estilos.folhaFecharTexto}>Fechar</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  )
+}
+
+function LinhaGrade({
+  linha: l,
+  onAbrirCelula,
+}: {
+  linha: LinhaCronograma
+  onAbrirCelula: (mes: string) => void
+}) {
   return (
     <View style={estilos.linha}>
-      {l.meses.map((cel) => (
-        <View key={cel.mes} style={estilos.celula}>
-          <Marca celula={cel} />
-        </View>
-      ))}
+      {l.meses.map((cel) => {
+        // Só a célula que TEM algo abre: mês sem previsão não esconde tarefa nenhuma, e
+        // um toque que abre uma folha vazia ensina o usuário a não tocar mais.
+        const temConteudo = cel.previsto > 0 || cel.feito || cel.dispensado || cel.atrasado
+        if (!temConteudo) {
+          return (
+            <View key={cel.mes} style={estilos.celula}>
+              <Marca celula={cel} />
+            </View>
+          )
+        }
+        return (
+          <Pressable
+            key={cel.mes}
+            style={({ pressed }) => [estilos.celula, pressed && estilos.celulaTocada]}
+            onPress={() => onAbrirCelula(cel.mes)}
+            accessibilityRole="button"
+            accessibilityLabel={`Ver as tarefas de ${l.nome} em ${cel.mes}`}
+          >
+            <Marca celula={cel} />
+          </Pressable>
+        )
+      })}
       <View style={estilos.celulaTotal}>
         <Num style={estilos.total}>
           {l.feitos}/{l.previsto_ano}
@@ -274,6 +458,30 @@ function ItemLegenda({
 }
 
 const estilos = StyleSheet.create({
+  celulaTocada: { opacity: 0.55 },
+
+  fundoModal: { flex: 1, backgroundColor: '#00000099' },
+  folha: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: cores.superficieElevada,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    padding: espaco.md, paddingBottom: espaco.lg, gap: 2,
+    maxHeight: '70%',
+  },
+  folhaTitulo: { fontFamily: fontes.uiForte, fontSize: 15, color: cores.textoForte },
+  folhaSub: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoFraco, marginBottom: espaco.xs },
+  folhaEspera: { marginVertical: espaco.md },
+  folhaItem: {
+    flexDirection: 'row', alignItems: 'center', gap: espaco.xs,
+    paddingVertical: 10, borderTopWidth: 1, borderTopColor: cores.borda,
+  },
+  folhaItemTocado: { opacity: 0.6 },
+  folhaItemNome: { fontFamily: fontes.ui, fontSize: 13.5, color: cores.textoCorpo, lineHeight: 18 },
+  folhaItemEquip: { fontFamily: fontes.ui, fontSize: 11.5, color: cores.textoFraco, marginTop: 1 },
+  folhaItemSit: { fontFamily: fontes.uiForte, fontSize: 12, color: cores.textoRotulo },
+  folhaFechar: { alignSelf: 'flex-end', paddingVertical: 10, paddingHorizontal: 4, marginTop: espaco.xs },
+  folhaFecharTexto: { fontFamily: fontes.uiForte, fontSize: 13, color: cores.ambar },
+
   espaco: { marginTop: espaco.sm },
   subNum: { fontSize: 13, color: cores.textoRotulo },
   aviso: { ...tipo.fraco, paddingHorizontal: espaco.xs },

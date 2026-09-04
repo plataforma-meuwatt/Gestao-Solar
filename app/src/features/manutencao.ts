@@ -5,7 +5,7 @@
  * olha para trás, que é como o dono confere se o contrato de O&M está sendo cumprido.
  */
 
-import { baseURL } from '@/lib/api'
+import { baseURL, tokenDaSessao } from '@/lib/api'
 import { fetchWithCache, type Leitura } from '@/lib/cache'
 import type { Tom } from '@/theme/tokens'
 
@@ -65,6 +65,8 @@ export type Tarefa = {
   natureza: string | null
   /** Só quando existe ficha respondida. Tarefa de serviço não tem parecer. */
   parecer: string | null
+  /** A OS que executa a tarefa (a tela da tarefa é `/tarefa/{id}?os={os_id}`). */
+  os_id?: number | null
   mes_contratual: string | null
   executada_em: string | null
   /** O que a tarefa pedia. Só o detalhe traz. */
@@ -123,6 +125,8 @@ export type Celula = {
 }
 
 export type LinhaCronograma = {
+  /** O item do plano desta linha — é por ele que se abre o que está atrás do X. */
+  plan_item_id: number | null
   nome: string
   categoria: string | null
   periodicidade: string | null
@@ -250,6 +254,23 @@ export function useCronograma(usinaId: string | number | undefined): Leitura<Cro
     caminho: `/api/v1/manutencao/cronograma?usina_id=${usinaId ?? ''}`,
     ativo: Boolean(usinaId),
   })
+}
+
+/** As tarefas por trás de UM X do cronograma (atividade × mês). Sem cache de disco: é uma
+ *  consulta pontual, feita no toque, e guardar isso encheria o cache com uma entrada por
+ *  célula tocada. */
+export async function tarefasDaCelula(
+  usinaId: number,
+  planItemId: number,
+  mes: string,
+): Promise<Tarefa[]> {
+  const r = await fetch(
+    `${baseURL}/api/v1/manutencao/cronograma/tarefas?usina_id=${usinaId}` +
+      `&plan_item_id=${planItemId}&mes=${encodeURIComponent(mes)}`,
+    { headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` } },
+  )
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return (await r.json()) as Tarefa[]
 }
 
 /* Os PDFs não passam pelo cache: são baixados com a sessão em CABEÇALHO, nunca na URL —
