@@ -194,10 +194,14 @@ function BlocoEquipamento({ equipamento: e }: { equipamento: EquipamentoDaFicha 
   const nada = e.medicoes.length === 0 && e.checklist.length === 0
   // `e.fotos` traz TUDO (sessão + respostas). Aqui ficam só as que não têm pergunta dona,
   // para nenhuma foto aparecer duas vezes na mesma tela.
+  // `Array.isArray` por toda parte: enquanto o servidor não terminar de subir, `fotos` ainda
+  // pode chegar como a CONTAGEM antiga — e uma ficha que quebra é pior que uma sem foto.
   const daPergunta = new Set(
-    e.checklist.flatMap((sec) => sec.perguntas.flatMap((p) => p.fotos.map((f) => f.id))),
+    e.checklist.flatMap((sec) =>
+      sec.perguntas.flatMap((p) => (Array.isArray(p.fotos) ? p.fotos.map((f) => f.id) : [])),
+    ),
   )
-  const soltas = e.fotos.filter((f) => !daPergunta.has(f.id))
+  const soltas = Array.isArray(e.fotos) ? e.fotos.filter((f) => !daPergunta.has(f.id)) : []
   return (
     <Card>
       <CabecalhoCard

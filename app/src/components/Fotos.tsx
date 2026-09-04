@@ -32,15 +32,24 @@ function fonte(caminho: string) {
   }
 }
 
-export function Fotos({ fotos, titulo }: { fotos: FotoDaFicha[]; titulo?: string }) {
+export function Fotos({ fotos, titulo }: { fotos: FotoDaFicha[] | number; titulo?: string }) {
   const [aberta, setAberta] = useState<FotoDaFicha | null>(null)
-  if (!fotos.length) return null
+  /*
+   * O tipo aceita `number` de propósito.
+   *
+   * OTA e deploy do servidor não chegam juntos: por alguns minutos o aplicativo novo conversa
+   * com o BFF antigo, onde `fotos` ainda é a CONTAGEM. Sem esta porta, o `.map` de um número
+   * derrubaria a ficha inteira — e a tela quebrada duraria mais que a janela do deploy, porque
+   * o cache de leitura guarda a resposta antiga em disco.
+   */
+  const lista = Array.isArray(fotos) ? fotos : []
+  if (!lista.length) return null
 
   return (
     <View style={estilos.bloco}>
       {titulo ? <Text style={estilos.titulo}>{titulo}</Text> : null}
       <View style={estilos.grade}>
-        {fotos.map((f) => (
+        {lista.map((f) => (
           <Pressable key={f.id} onPress={() => setAberta(f)} style={estilos.celula}>
             <Image source={fonte(f.thumb_url)} style={estilos.miniatura} resizeMode="cover" />
           </Pressable>
