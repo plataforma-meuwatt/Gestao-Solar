@@ -8,8 +8,11 @@
  *
  * Quatro decisões que não são detalhe:
  *
- * **A sessão vai em cabeçalho.** A imagem é servida por rota autenticada do BFF; token em
- * URL entra em log de servidor.
+ * **A imagem é BAIXADA, não apontada.** A rota é autenticada e a sessão vai em cabeçalho —
+ * token em URL entra em log de servidor. O `<Image>` aceita `headers` no `source`, e no
+ * aparelho do dono nenhuma miniatura carregava assim; quem sabidamente manda o cabeçalho é o
+ * `fetch`, por onde o aplicativo inteiro conversa com o servidor. Então `lib/imagens` traz o
+ * arquivo para o disco e o `<Image>` lê `file://`, onde não há sessão nenhuma para carregar.
  *
  * **Miniatura na grade, original só ao tocar.** Uma ficha coletiva de vinte inversores tem
  * dezenas de fotos; baixar todas em tamanho cheio para desenhar quadrados de 90 px gastaria
@@ -23,10 +26,10 @@
  * venceu ou se a rede caiu; o quadro diz "não carregou" e aceita um toque para tentar de novo.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native'
 
-import { baseURL, tokenDaSessao } from '@/lib/api'
+import { arquivoDaImagem } from '@/lib/imagens'
 import { cores, espaco, fontes, raio, tipo } from '@/theme/tokens'
 
 export type FotoDaFicha = { id: number; legenda: string | null; url: string; thumb_url: string }
@@ -34,12 +37,32 @@ export type FotoDaFicha = { id: number; legenda: string | null; url: string; thu
 /** Quantas miniaturas nascem carregando. O resto espera o toque em "ver todas". */
 const DE_CARA = 6
 
-/** O endereço completo com a sessão — o BFF devolve o caminho, não a URL inteira. */
-function fonte(caminho: string) {
-  return {
-    uri: caminho.startsWith('http') ? caminho : `${baseURL}${caminho}`,
-    headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
-  }
+/**
+ * O arquivo local da imagem: `null` enquanto baixa, o motivo em texto quando não vem.
+ *
+ * `tentativa` no fim das dependências é o que faz "tocar para tentar" tentar de novo — sem
+ * ela, o efeito não roda outra vez e o botão seria enfeite.
+ */
+function useImagem(caminho: string, chave: string, tentativa: number) {
+  const [uri, setUri] = useState<string | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    setErro(null)
+    arquivoDaImagem(caminho, chave)
+      .then((local) => {
+        if (vivo) setUri(local)
+      })
+      .catch((e: unknown) => {
+        if (vivo) setErro(e instanceof Error ? e.message : 'não deu para carregar')
+      })
+    return () => {
+      vivo = false
+    }
+  }, [caminho, chave, tentativa])
+
+  return { uri, erro }
 }
 
 export function Fotos({ fotos, titulo }: { fotos: FotoDaFicha[] | number; titulo?: string }) {
@@ -87,41 +110,32 @@ export function Fotos({ fotos, titulo }: { fotos: FotoDaFicha[] | number; titulo
 
 /** Um quadrado da grade, com os três estados que ele pode ter. */
 function Miniatura({ foto, onAbrir }: { foto: FotoDaFicha; onAbrir: () => void }) {
-  const [estado, setEstado] = useState<'carregando' | 'pronta' | 'erro'>('carregando')
-  // Muda a cada tentativa: sem isto o componente reusa o resultado anterior e "tentar de
-  // novo" não tenta nada.
   const [tentativa, setTentativa] = useState(0)
+  const { uri, erro } = useImagem(foto.thumb_url, `${foto.id}-thumb`, tentativa)
 
-  if (estado === 'erro') {
+  if (erro) {
     return (
       <Pressable
         style={[estilos.celula, estilos.falhou]}
-        onPress={() => {
-          setEstado('carregando')
-          setTentativa((n) => n + 1)
-        }}
+        onPress={() => setTentativa((n) => n + 1)}
       >
-        <Text style={estilos.falhouTexto}>não carregou</Text>
+        {/* O MOTIVO, não "falhou". Um quadrado que só diz que deu errado manda todo mundo
+            adivinhar entre sessão vencida, foto apagada e rede caída. */}
+        <Text style={estilos.falhouTexto} numberOfLines={3}>
+          {erro}
+        </Text>
         <Text style={estilos.maisDica}>tocar para tentar</Text>
       </Pressable>
     )
   }
 
   return (
-    <Pressable onPress={onAbrir} style={estilos.celula}>
-      <Image
-        key={tentativa}
-        source={fonte(foto.thumb_url)}
-        style={estilos.miniatura}
-        resizeMode="cover"
-        onLoad={() => setEstado('pronta')}
-        onError={() => setEstado('erro')}
-      />
-      {estado === 'carregando' ? (
-        <View style={estilos.sobre}>
-          <ActivityIndicator color={cores.ambar} size="small" />
-        </View>
-      ) : null}
+    <Pressable onPress={onAbrir} style={estilos.celula} disabled={!uri}>
+      {uri ? (
+        <Image source={{ uri }} style={estilos.miniatura} resizeMode="cover" />
+      ) : (
+        <ActivityIndicator color={cores.ambar} size="small" />
+      )}
     </Pressable>
   )
 }
@@ -135,25 +149,16 @@ function Miniatura({ foto, onAbrir }: { foto: FotoDaFicha; onAbrir: () => void }
  * o dano.
  */
 function Ampliada({ foto, onFechar }: { foto: FotoDaFicha; onFechar: () => void }) {
-  const [estado, setEstado] = useState<'carregando' | 'pronta' | 'erro'>('carregando')
+  const { uri, erro } = useImagem(foto.url, `${foto.id}-cheia`, 0)
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onFechar}>
       <Pressable style={estilos.fundo} onPress={onFechar}>
-        {estado === 'carregando' ? (
-          <ActivityIndicator color={cores.ambar} style={estilos.espera} />
-        ) : null}
-        {estado === 'erro' ? (
-          <Text style={estilos.erroCheia}>
-            Não deu para carregar esta foto agora. Toque para fechar e tente de novo.
-          </Text>
+        {erro ? (
+          <Text style={estilos.erroCheia}>Não deu para carregar esta foto: {erro}.</Text>
+        ) : uri ? (
+          <Image source={{ uri }} style={estilos.cheia} resizeMode="contain" />
         ) : (
-          <Image
-            source={fonte(foto.url)}
-            style={estilos.cheia}
-            resizeMode="contain"
-            onLoad={() => setEstado('pronta')}
-            onError={() => setEstado('erro')}
-          />
+          <ActivityIndicator color={cores.ambar} style={estilos.espera} />
         )}
         {foto.legenda ? <Text style={estilos.legenda}>{foto.legenda}</Text> : null}
         <Text style={estilos.dica}>toque para fechar</Text>
