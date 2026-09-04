@@ -246,7 +246,10 @@ async def test_usina_sem_meuplano_avisa_e_total_fica_nulo(db, dono, usinas, monk
     saida = await listar_pendencias(usina_id=minha.id, db=db, usuario=dono)
 
     assert saida.total is None
-    assert saida.aviso and "meuPlano" in saida.aviso
+    # A frase nomeia o SERVIÇO que falta, não o produto por trás: o cliente não tem conta
+    # no meuPlano e o nome não lhe diria nada (ver `test_vocabulario_do_cliente.py`).
+    assert saida.aviso and "manutenção contratada" in saida.aviso
+    assert "meuPlano" not in saida.aviso
     assert saida.usinas_com_manutencao == 0
 
     # E sem `usina_id`, com nenhuma usina ligada: mesma frase, nenhuma ida ao upstream.

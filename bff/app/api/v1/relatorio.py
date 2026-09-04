@@ -348,7 +348,7 @@ def _contrato(cabecalho: Any) -> ContratoOut | None:
 #: "não publicado" é a MESMA da aba Cronograma (`NAO_PUBLICADO`): o cliente que troca de
 #: aba lê a mesma explicação para o mesmo estado.
 MOTIVO_SEM_CRONOGRAMA: dict[str, str] = {
-    "sem_contrato": "Esta usina não tem contrato de manutenção no meuPlano.",
+    "sem_contrato": "Esta usina não tem contrato de manutenção cadastrado.",
     "sem_cronograma_consolidado": NAO_PUBLICADO,
 }
 
@@ -597,7 +597,7 @@ async def _preparar(
     try:
         cliente = await integracoes.cliente_meuplano(db)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"meuPlano indisponível: {exc}") from exc
+        raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
     try:
         contrato, _aviso = await _resolver_contrato(cliente, link, contrato_id)
     except HTTPException:
@@ -629,7 +629,7 @@ async def relatorio_de_manutencao(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para montar o relatório de manutenção") from exc
     if not isinstance(bruto, dict):
-        raise HTTPException(502, "O meuPlano devolveu um relatório sem conteúdo.")
+        raise HTTPException(502, "O relatório veio sem conteúdo. Tente de novo em instantes.")
     return traduzir(bruto, link, periodo, contrato)
 
 
@@ -655,6 +655,6 @@ async def pdf_do_relatorio(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para gerar o relatório de manutenção em PDF") from exc
     if not conteudo:
-        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+        raise HTTPException(502, "O PDF veio vazio. Tente de novo em instantes.")
     nome = f"Relatorio-manutencao-{link.nome}-{periodo[0]}-{periodo[1]}.pdf"
     return _pdf(conteudo, nome.replace(" ", "-").replace("/", "-"))

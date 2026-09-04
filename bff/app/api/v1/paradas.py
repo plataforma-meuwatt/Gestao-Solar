@@ -298,7 +298,7 @@ async def paradas_da_usina(
     try:
         cliente = await integracoes.cliente_meuwatt(db)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     slug = link.mw_plant_slug

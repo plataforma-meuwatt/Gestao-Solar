@@ -430,7 +430,7 @@ async def detalhe_do_equipamento(
 
     if not link.mw_plant_slug:
         raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao meuWatt."
+            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao monitoramento."
         )
 
     try:
@@ -445,13 +445,13 @@ async def detalhe_do_equipamento(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, f"meuWatt indisponível: {exc}"
+            status.HTTP_503_SERVICE_UNAVAILABLE, f"Monitoramento indisponível: {exc}"
         ) from exc
 
     inversores = agora_resp.get("inverters") if isinstance(agora_resp, dict) else None
     if not isinstance(inversores, list):
         raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, "O meuWatt não devolveu inversores."
+            status.HTTP_503_SERVICE_UNAVAILABLE, "O monitoramento não devolveu inversores."
         )
 
     inv = next((i for i in inversores if str(i.get("id")) == equipamento_id), None)
@@ -651,7 +651,7 @@ async def equipamentos_da_usina(
     if not link.mw_plant_slug:
         return EquipamentosOut(
             usina=link.nome,
-            aviso="Esta usina não está ligada ao meuWatt, de onde vêm os inversores.",
+            aviso="Esta usina não está ligada ao monitoramento, de onde vêm os inversores.",
         )
 
     try:
@@ -662,7 +662,7 @@ async def equipamentos_da_usina(
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001 — a tela abre com o aviso
-        return EquipamentosOut(usina=link.nome, aviso=f"meuWatt indisponível: {exc}")
+        return EquipamentosOut(usina=link.nome, aviso=f"Monitoramento indisponível: {exc}")
 
     if not isinstance(agora_resp, dict):
         return EquipamentosOut(
@@ -671,7 +671,7 @@ async def equipamentos_da_usina(
 
     inversores = agora_resp.get("inverters")
     if not isinstance(inversores, list):
-        return EquipamentosOut(usina=link.nome, aviso="O meuWatt não devolveu inversores.")
+        return EquipamentosOut(usina=link.nome, aviso="O monitoramento não devolveu inversores.")
 
     modelos = _modelos_por_serial(diario)
     energias = _energia_por_serial(diario)
@@ -851,7 +851,7 @@ async def comparativo_da_usina(
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     if not isinstance(agora_resp, dict) or not isinstance(relatorio, dict):
@@ -874,7 +874,7 @@ async def comparativo_da_usina(
         }
 
     if not cadastro:
-        saida.aviso = "O meuWatt não devolveu inversores para comparar."
+        saida.aviso = "O monitoramento não devolveu inversores para comparar."
         return saida
 
     # Energia por série no período — o eixo oposto do mesmo `chart_data` que a rota de
@@ -1031,7 +1031,7 @@ async def curva_do_rele_de_temperatura(
         cliente = await integracoes.cliente_meuwatt(db)
         bruto = await cliente.intraday_temperatura(link.mw_plant_slug, alvo)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     sensores = bruto.get("sensors") if isinstance(bruto, dict) else None
@@ -1124,7 +1124,7 @@ async def maximas_do_rele_de_temperatura(
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     for i, resposta in enumerate(respostas):
@@ -1198,7 +1198,7 @@ async def curva_do_rele_de_protecao(
         cliente = await integracoes.cliente_meuwatt(db)
         bruto = await cliente.intraday_rele(link.mw_plant_slug, alvo)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     reles = bruto.get("relays") if isinstance(bruto, dict) else None
@@ -1274,7 +1274,7 @@ async def historico_de_flags(
         cliente = await integracoes.cliente_meuwatt(db)
         bruto = await cliente.eventos_de_trip(link.mw_plant_slug, int(cru), max(1, min(limite, 200)))
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     if not isinstance(bruto, dict):
@@ -1339,7 +1339,7 @@ async def curva_das_strings(
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     if not isinstance(agora_resp, dict) or not isinstance(bruto, dict):

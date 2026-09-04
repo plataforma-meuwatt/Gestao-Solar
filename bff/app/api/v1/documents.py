@@ -73,14 +73,14 @@ async def meus_documentos(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
         if not alvo.mw_plant_slug:
             return DocumentosOut(
-                aviso="Esta usina não está ligada ao meuWatt, de onde vêm os relatórios."
+                aviso="Esta usina não está ligada ao monitoramento, de onde vêm os relatórios."
             )
         links = [alvo]
     meus_slugs = {l.mw_plant_slug for l in links if l.mw_plant_slug}
 
     if not meus_slugs:
         return DocumentosOut(
-            aviso="Nenhuma das suas usinas está ligada ao meuWatt, de onde vêm os relatórios."
+            aviso="Nenhuma das suas usinas está ligada ao monitoramento, de onde vêm os relatórios."
         )
 
     try:
@@ -91,7 +91,7 @@ async def meus_documentos(
 
     relatorios = portal.get("reports") if isinstance(portal, dict) else None
     if not isinstance(relatorios, list):
-        return DocumentosOut(aviso="O meuWatt não devolveu relatórios.")
+        return DocumentosOut(aviso="O monitoramento não devolveu relatórios.")
 
     # O corte que impede o vazamento: fora do escopo desta conta, não existe.
     nome_por_slug = {l.mw_plant_slug: l.nome for l in links if l.mw_plant_slug}

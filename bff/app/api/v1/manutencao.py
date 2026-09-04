@@ -68,14 +68,32 @@ class ManutencaoOut(BaseModel):
     aviso: str | None = None
 
 
+#: Como a ponte se CHAMA para quem lê a tela.
+#:
+#: O dono foi explícito ao pedir o portal: *"em vez de o cliente acessar meuWatt e meuPlano,
+#: ele vai acessar o Gestão Solar"* — e quem entra num portal só não deve descobrir, por uma
+#: mensagem de erro, que por trás existem dois outros sistemas com nome próprio. Pior: o nome
+#: não ajuda em nada, porque o cliente não tem conta neles nem a quem cobrar por eles.
+#:
+#: Então a REGRA é: nas rotas do cliente (`/api/v1/*`) a ponte é nomeada pelo SERVIÇO que
+#: presta — "monitoramento" e "sistema de manutenção". Nas rotas do gestor (`/api/painel/*`)
+#: os nomes dos produtos ficam, e devem ficar: lá o diagnóstico existe justamente para dizer
+#: em QUAL produto falta o vínculo.
+#:
+#: Os comentários e docstrings deste arquivo continuam nomeando meuWatt e meuPlano — são para
+#: quem mantém o código, e apagá-los tornaria a origem do dado um mistério.
+MANUTENCAO = "sistema de manutenção"
+MONITORAMENTO = "monitoramento"
+
+
 def _erro_do_upstream(
-    exc: Exception, contexto: str, produto: str = "meuPlano"
+    exc: Exception, contexto: str, produto: str = MANUTENCAO
 ) -> HTTPException:
     """Traduz uma falha do upstream preservando o QUE aconteceu.
 
     `produto` nomeia a ponte na frase. Nasceu quando `plants.py` (meuWatt) passou a usar
-    a mesma régua: sem ele, uma queda do meuWatt chegaria ao portal como "o meuPlano
-    respondeu 500", apontando o dedo para o produto errado.
+    a mesma régua: sem ele, uma queda do meuWatt chegaria ao portal como "a manutenção
+    respondeu 500", apontando o dedo para o serviço errado.
 
     O padrão antigo — `except Exception` e `HTTPException(502, ...)` — achatava tudo num só
     número. O dono viu o resultado disso em 04/09/2026: um PDF que o upstream recusava por
@@ -167,13 +185,13 @@ async def manutencao_atendida(
         saida.aviso = "Você ainda não tem usina liberada."
         return saida
     if not com_manutencao:
-        saida.aviso = "Nenhuma das suas usinas está ligada ao meuPlano."
+        saida.aviso = "Nenhuma das suas usinas tem manutenção contratada."
         return saida
 
     try:
         cliente = await integracoes.cliente_meuplano(db)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuPlano indisponível: {exc}"
+        saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
 
     # Uma chamada por usina, em paralelo: em série, sete usinas seriam sete latências
@@ -322,6 +340,23 @@ PARECER: dict[str, str] = {
     "REJECTED": "Reprovado",
 }
 
+#: A COR do parecer, escrita aqui e não na tela.
+#:
+#: A situação da OS sempre saiu daqui com `tom`; o parecer da tarefa, não — e o preço
+#: apareceu na integração do portal (04/09/2026): três telas (Cronograma, OS e Relatórios)
+#: tinham cada uma a SUA cópia da régua, deduzida da frase já traduzida, e as três
+#: discordavam. A da OS devolvia "ok" no que não reconhecia: um parecer novo que o meuPlano
+#: inventasse sairia VERDE para o cliente — "aprovado" sobre um veredito que ninguém leu.
+#: Aqui, o que não está no mapa fica SEM cor, que é a única resposta honesta.
+#:
+#: Ressalva não é aprovação: cor própria, pela mesma razão que o cronograma se recusa a
+#: fundir "feito" com "dispensado".
+TOM_DO_PARECER: dict[str, str] = {
+    "APPROVED": "ok",
+    "APPROVED_WITH_RESERVATION": "alerta",
+    "REJECTED": "parado",
+}
+
 
 def _situacao(status: Any) -> tuple[str | None, str, str]:
     """`(código cru, frase para o dono, tom)`.
@@ -358,6 +393,11 @@ class TarefaOut(BaseModel):
     #: INSPECAO | SERVICO — separa "olhar" de "trabalhar" na leitura.
     natureza: str | None = None
     parecer: str | None = None
+    #: A cor do parecer (`TOM_DO_PARECER`). Vai junto com a frase porque, sem ela, cada tela
+    #: que pinta um parecer precisa deduzir a cor do texto — e três delas fizeram isso de
+    #: três jeitos diferentes. Nulo = sem parecer OU parecer que não sabemos classificar; nos
+    #: dois casos a tela mostra o texto sem cor, nunca uma cor chutada.
+    parecer_tom: str | None = None
     #: A OS que executa esta tarefa. A tela da tarefa é `/ordens/{so}/tarefas/{id}`, então
     #: sem isto o X do cronograma não teria como abrir a tarefa que ele representa.
     os_id: int | None = None
@@ -591,6 +631,7 @@ def _tarefa_out(t: dict[str, Any]) -> TarefaOut:
         feita=chave in FEITAS,
         natureza=_texto(t.get("checklist_natureza")),
         parecer=PARECER.get(parecer_cru) if parecer_cru else None,
+        parecer_tom=TOM_DO_PARECER.get(parecer_cru) if parecer_cru else None,
         os_id=_inteiro(t.get("os_id")),
         mes_contratual=_texto(t.get("contract_month")),
         executada_em=_data(t.get("scheduled_date")),
@@ -615,7 +656,7 @@ async def _usinas_com_manutencao(db: Session, usuario: User) -> tuple[list[Plant
         return [], "Você ainda não tem usina liberada."
     com = [u for u in usinas if u.mp_usina_id]
     if not com:
-        return [], "Nenhuma das suas usinas está ligada ao meuPlano."
+        return [], "Nenhuma das suas usinas tem manutenção contratada."
     return com, None
 
 
@@ -628,7 +669,7 @@ def _link_do_escopo(db: Session, usuario: User, usina_id: int) -> PlantLink:
     for u in usinas_do_usuario(db, usuario):
         if u.id == usina_id:
             if not u.mp_usina_id:
-                raise HTTPException(404, "Esta usina não está ligada ao meuPlano.")
+                raise HTTPException(404, "Esta usina não tem manutenção contratada.")
             return u
     raise HTTPException(404, "Usina não encontrada.")
 
@@ -670,7 +711,7 @@ async def listar_ordens(
     try:
         cliente = await integracoes.cliente_meuplano(db)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuPlano indisponível: {exc}"
+        saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
 
     respostas = await asyncio.gather(
@@ -736,7 +777,7 @@ async def _ordem_autorizada(
     try:
         cliente = await cliente_task
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"meuPlano indisponível: {exc}") from exc
+        raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
 
     try:
         ordem = await cliente.ordem_servico(so_id)
@@ -814,7 +855,7 @@ async def pdf_da_ordem(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para gerar o PDF desta OS") from exc
     if not conteudo:
-        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+        raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
     return _pdf(conteudo, f"OS-{so_id}-{link.nome}.pdf".replace(" ", "-"))
 
 
@@ -1109,7 +1150,7 @@ async def pdf_da_tarefa(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para gerar o PDF desta tarefa") from exc
     if not conteudo:
-        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+        raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
     nome = (tarefa.get("name") or f"tarefa-{task_id}")[:60]
     return _pdf(conteudo, f"{nome}-{link.nome}.pdf".replace(" ", "-").replace("/", "-"))
 
@@ -1133,7 +1174,7 @@ async def tarefas_da_celula(
     """
     link = _link_do_escopo(db, usuario, usina_id)
     if link.mp_usina_id is None:
-        raise HTTPException(404, "Usina sem vínculo com o meuPlano.")
+        raise HTTPException(404, "Esta usina não tem manutenção contratada.")
     try:
         cliente = await integracoes.cliente_meuplano(db)
         brutas = await cliente.tarefas_do_item_no_mes(plan_item_id, mes)
@@ -1213,7 +1254,7 @@ async def _resolver_contrato(
                 return c, None
         raise HTTPException(404, "Contrato não encontrado nesta usina.")
     if not contratos:
-        return None, "Esta usina não tem contrato de manutenção no meuPlano."
+        return None, "Esta usina não tem contrato de manutenção cadastrado."
     return _contrato_padrao(contratos), None
 
 
@@ -1233,7 +1274,7 @@ async def listar_contratos(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para ler os contratos desta usina") from exc
     if not saida.contratos:
-        saida.aviso = "Esta usina não tem contrato de manutenção no meuPlano."
+        saida.aviso = "Esta usina não tem contrato de manutenção cadastrado."
     return saida
 
 
@@ -1269,7 +1310,7 @@ async def pdf_do_cronograma(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para gerar o cronograma em PDF") from exc
     if not conteudo:
-        raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
+        raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
     return _pdf(conteudo, f"Cronograma-{link.nome}.pdf".replace(" ", "-"))
 
 

@@ -332,7 +332,7 @@ def _link_ou_aviso(db: Session, usuario: User, usina_id: int) -> tuple[PlantLink
     for u in usinas_do_usuario(db, usuario):
         if u.id == usina_id:
             if not u.mp_usina_id:
-                return None, "Esta usina não está ligada ao meuPlano."
+                return None, "Esta usina não tem manutenção contratada."
             return u, None
     raise HTTPException(404, "Usina não encontrada.")
 
@@ -366,7 +366,7 @@ async def listar_pendencias(
     try:
         cliente = await integracoes.cliente_meuplano(db)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuPlano indisponível: {exc}"
+        saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
 
     respostas = await asyncio.gather(
@@ -438,7 +438,7 @@ async def _pendencia_autorizada(
     try:
         cliente = await cliente_task
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"meuPlano indisponível: {exc}") from exc
+        raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
 
     try:
         bruto = await cliente.vc_pendencia(cid)
@@ -581,7 +581,7 @@ async def documento_da_pendencia(
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para carregar este documento") from exc
     if not conteudo:
-        raise HTTPException(502, "O meuPlano devolveu um documento vazio.")
+        raise HTTPException(502, "O documento veio vazio. Peça à equipe para publicá-lo de novo.")
     return Response(content=conteudo, media_type=tipo, headers={
         # `inline`: abre no navegador; quem quiser salvar, salva de lá.
         "Content-Disposition": _content_disposition(publicado.nome),

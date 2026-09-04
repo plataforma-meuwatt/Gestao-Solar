@@ -285,7 +285,7 @@ async def _bloco_manutencao(
 
     if saida["os_em_andamento"] is None and contagens is None:
         # Nada veio: o bloco inteiro é nulo, e o aviso diz por quê.
-        raise RuntimeError(" · ".join(avisos) or "o meuPlano não respondeu")
+        raise RuntimeError(" · ".join(avisos) or "a manutenção não respondeu")
     saida["aviso"] = " · ".join(avisos) or None
     return saida
 

@@ -225,9 +225,9 @@ async def minhas_notificacoes(
                 if isinstance(r, list):
                     saida.extend(r)
                 else:
-                    falhas.append("alertas do meuWatt")
+                    falhas.append("alertas do monitoramento")
         except Exception:  # noqa: BLE001
-            falhas.append("alertas do meuWatt")
+            falhas.append("alertas do monitoramento")
 
     com_mp = [l for l in links if l.mp_usina_id]
     if com_mp:
@@ -239,9 +239,9 @@ async def minhas_notificacoes(
                 if isinstance(r, list):
                     saida.extend(r)
                 else:
-                    falhas.append("serviços do meuPlano")
+                    falhas.append("serviços da manutenção")
         except Exception:  # noqa: BLE001
-            falhas.append("serviços do meuPlano")
+            falhas.append("serviços da manutenção")
 
     # Mensalidade é do próprio BFF: não depende de ponte nenhuma, e por isso aparece
     # mesmo quando os dois upstreams estão fora.

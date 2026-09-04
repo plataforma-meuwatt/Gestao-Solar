@@ -678,7 +678,7 @@ async def detalhe_usina(
             elif isinstance(alertas, list):
                 equipamentos["alertas_ativos"] = len(alertas)
         except Exception as exc:  # noqa: BLE001
-            dados = {"aviso": f"meuWatt indisponível: {exc}"}
+            dados = {"aviso": f"Monitoramento indisponível: {exc}"}
 
     detalhe = UsinaDetalheOut(
         id=link.id,
@@ -775,9 +775,13 @@ def minhas_conexoes(
     links = usinas_do_usuario(db, usuario)
     estado = integracoes.listar(db)
 
+    # A ponte é nomeada pelo SERVIÇO que presta, não pelo produto que a implementa: quem
+    # entra aqui é o dono da usina, que não tem conta no meuWatt nem no meuPlano e não tem
+    # a quem cobrar por eles. E "Monitoramento" responde melhor a pergunta desta tela
+    # ("está quebrado ou eu não contratei isso?") do que um nome próprio que ele nunca viu.
     descricao = {
-        Produto.MEUWATT: ("meuWatt", "Geração, inversores e disponibilidade"),
-        Produto.MEUPLANO: ("meuPlano", "Manutenção, cronograma e ordens de serviço"),
+        Produto.MEUWATT: ("Monitoramento", "Geração, inversores e disponibilidade"),
+        Produto.MEUPLANO: ("Manutenção", "Cronograma, ordens de serviço e pendências"),
     }
 
     plataformas: list[PlataformaOut] = []
@@ -956,7 +960,7 @@ async def geracao_da_usina(
         relatorio = await cliente.geracao_periodo(link.mw_plant_slug, inicio, fim)
     except Exception as exc:  # noqa: BLE001
         # Sem inventar número: total fica `None` e o app mostra "sem dados".
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     if not isinstance(relatorio, dict):
@@ -1124,7 +1128,7 @@ async def curva_do_dia(
         cliente = await integracoes.cliente_meuwatt(db)
         intraday = await cliente.intraday(link.mw_plant_slug, referencia)
     except Exception as exc:  # noqa: BLE001
-        saida.aviso = f"meuWatt indisponível: {exc}"
+        saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
     saida.pontos, saida.tem_estacao = _curva_da_usina(intraday)
@@ -1479,11 +1483,11 @@ def _erro_do_meuwatt(exc: BaseException, contexto: str) -> HTTPException:
     módulo os dois se importariam em círculo (mesmo motivo do `_esta_aberta` em
     `detalhe_usina`).
     """
-    from app.api.v1.manutencao import _erro_do_upstream
+    from app.api.v1.manutencao import MONITORAMENTO, _erro_do_upstream
 
     if not isinstance(exc, Exception):
         exc = RuntimeError(str(exc))
-    return _erro_do_upstream(exc, contexto, produto="meuWatt")
+    return _erro_do_upstream(exc, contexto, produto=MONITORAMENTO)
 
 
 @router.get("/plants/{plant_link_id}/desempenho", response_model=DesempenhoOut)

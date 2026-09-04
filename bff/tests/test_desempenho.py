@@ -283,7 +283,8 @@ def test_range_fora_do_ar_e_502_com_o_produto_certo(cenario):
     r = http.get(f"/api/v1/plants/{usina.id}/desempenho?referencia=2026-08-14")
 
     assert r.status_code == 502
-    assert "meuPlano" not in r.json()["detail"]
+    # A ponte que caiu foi a da GERAÇÃO: a frase não pode acusar a da manutenção.
+    assert "manutenção" not in r.json()["detail"]
 
 
 def test_range_demorando_e_504(cenario):
@@ -293,7 +294,10 @@ def test_range_demorando_e_504(cenario):
     r = http.get(f"/api/v1/plants/{usina.id}/desempenho?referencia=2026-08-14")
 
     assert r.status_code == 504
-    assert "meuWatt" in r.json()["detail"]
+    # Diz QUAL serviço demorou — mas pelo nome do serviço, nunca "meuWatt" (ver o teste
+    # `test_o_cliente_nunca_le_o_nome_do_produto`, que é quem guarda a regra).
+    assert "monitoramento" in r.json()["detail"]
+    assert "meuWatt" not in r.json()["detail"]
 
 
 # ── entrada e escopo ─────────────────────────────────────────────────────────

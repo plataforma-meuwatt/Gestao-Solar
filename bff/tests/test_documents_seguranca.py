@@ -155,4 +155,6 @@ async def test_usina_sem_meuwatt_avisa_em_vez_de_vazar(db, usinas, dono_com_duas
     db.commit()
     saida = await meus_documentos(a.id, db, dono_com_duas_usinas)
     assert saida.documentos == []
-    assert saida.aviso and "meuWatt" in saida.aviso
+    # A frase nomeia o SERVIÇO ausente, nunca o produto (ver `test_vocabulario_do_cliente.py`).
+    assert saida.aviso and "monitoramento" in saida.aviso
+    assert "meuWatt" not in saida.aviso
