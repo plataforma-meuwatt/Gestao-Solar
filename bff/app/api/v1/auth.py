@@ -123,6 +123,24 @@ def eu(db: Session = Depends(get_db), usuario: User = Depends(usuario_atual)) ->
     return _perfil(db, usuario)
 
 
+@router.post("/renovar", response_model=LoginOut)
+def renovar(db: Session = Depends(get_db), usuario: User = Depends(usuario_atual)) -> LoginOut:
+    """Sessão deslizante: troca um token de cliente ainda válido por um novo de 30 dias.
+
+    O portal do cliente fica semanas aberto numa aba do notebook. Sem isto, o token vencia
+    no meio do uso e a pessoa caía na tela de entrada sem ter feito nada — e um cliente
+    corporativo que precisa digitar senha todo mês deixa de abrir o portal. O cliente
+    (app ou portal) chama aqui quando `expira_em` está perto, e guarda o novo par.
+
+    O que a renovação NÃO faz, de propósito: não aceita token vencido (aí é senha de novo —
+    é o único corte que um token perdido tem), não aceita sessão de painel (a guarda
+    `usuario_atual` já recusa), e não cria tabela nova — `criar_token` é a mesma emissão do
+    login, então o token novo é indistinguível de um login recente.
+    """
+    token, expira = criar_token(usuario.id)
+    return LoginOut(token=token, expira_em=expira, usuario=_perfil(db, usuario))
+
+
 class TrocarSenhaIn(BaseModel):
     senha_atual: str
     senha_nova: str

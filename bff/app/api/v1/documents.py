@@ -37,6 +37,9 @@ class DocumentoOut(BaseModel):
     id: int
     nome: str
     usina: str
+    #: `id` do vínculo neste sistema — o portal do cliente é por usina, e sem isto a tela de
+    #: Relatórios não saberia de qual usina é cada fechamento sem comparar nomes.
+    plant_id: int | None = None
     #: `DIÁRIO` · `SEMANAL` · `MENSAL` · `ANUAL` — o vocabulário é do meuWatt.
     periodo: str
     de: date
@@ -52,10 +55,27 @@ class DocumentosOut(BaseModel):
 
 @router.get("/documents", response_model=DocumentosOut)
 async def meus_documentos(
-    db: Session = Depends(get_db), usuario: User = Depends(usuario_atual)
+    usina_id: int | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
 ) -> DocumentosOut:
-    """Os relatórios que o gestor publicou para as usinas desta pessoa."""
+    """Os relatórios que o gestor publicou para as usinas desta pessoa.
+
+    `usina_id` (o id do vínculo) recorta a UMA usina — é como a tela de Relatórios do
+    portal do cliente pede. Fora do escopo desta conta responde **404**, pela mesma razão
+    de `_usina_no_escopo`: "proibido" confirmaria que a usina existe. O corte por
+    `mw_plant_slug` continua sendo a barreira contra o vazamento; o filtro só o estreita.
+    """
     links = usinas_do_usuario(db, usuario)
+    if usina_id is not None:
+        alvo = next((l for l in links if l.id == usina_id), None)
+        if alvo is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
+        if not alvo.mw_plant_slug:
+            return DocumentosOut(
+                aviso="Esta usina não está ligada ao meuWatt, de onde vêm os relatórios."
+            )
+        links = [alvo]
     meus_slugs = {l.mw_plant_slug for l in links if l.mw_plant_slug}
 
     if not meus_slugs:
@@ -75,6 +95,7 @@ async def meus_documentos(
 
     # O corte que impede o vazamento: fora do escopo desta conta, não existe.
     nome_por_slug = {l.mw_plant_slug: l.nome for l in links if l.mw_plant_slug}
+    id_por_slug = {l.mw_plant_slug: l.id for l in links if l.mw_plant_slug}
 
     saida: list[DocumentoOut] = []
     for r in relatorios:
@@ -87,6 +108,7 @@ async def meus_documentos(
                 nome=str(r.get("name") or "Relatório"),
                 # O nome que o cliente conhece é o do vínculo, não o do upstream.
                 usina=nome_por_slug.get(slug) or str(r.get("plant_name") or ""),
+                plant_id=id_por_slug.get(slug),
                 periodo=str(r.get("period") or ""),
                 de=r["date_from"],
                 ate=r["date_to"],

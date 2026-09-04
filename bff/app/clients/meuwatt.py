@@ -146,6 +146,27 @@ class MeuWattClient:
             f"/plants/{slug}/generation/range", start=inicio.isoformat(), end=fim.isoformat()
         )
 
+    async def pvsyst(self, slug: str, inicio: date, fim: date) -> dict[str, Any]:
+        """A meta de projeto DIÁRIA (`pvsyst_previewed_energy`): `rows[].{date, e_grid}`.
+
+        É o "esperado" contra o qual o portal compara a energia medida. Nunca é estimado
+        deste lado: se a tabela não tem linha para o período, a resposta vem vazia e o
+        portal diz "sem meta cadastrada" — não inventa um número.
+        """
+        return await self._get(
+            f"/plants/{slug}/pvsyst", start=inicio.isoformat(), end=fim.isoformat()
+        )
+
+    async def pvsyst_manual(self, slug: str, ano: int) -> dict[str, Any]:
+        """A meta de projeto MENSAL digitada na aba Projeto do meuWatt
+        (`pvsyst_manual_monthly`): `rows[].{month, e_grid}` só dos meses salvos.
+
+        É a fonte que o próprio mw-fe usa no relatório (`ReportView` → `getManualYear`),
+        e a segunda opção deste lado quando a tabela diária não cobre o período — muitas
+        usinas têm só a simulação anual em PDF, transcrita mês a mês.
+        """
+        return await self._get(f"/plants/{slug}/pvsyst/manual/{int(ano)}")
+
     async def intraday(self, slug: str, dia: date | None = None) -> dict[str, Any]:
         """Curva do dia em buckets de 5 min: `points[].{time, inverters[]}`.
 
@@ -185,10 +206,49 @@ class MeuWattClient:
         """
         return await self._get(f"/plants/{slug}/relays/{relay_id}/trip-events", limit=limite)
 
-    async def alertas(self, slug: str, status: str = "active") -> list[dict[str, Any]]:
-        return await self._get(f"/plants/{slug}/alerts", status=status)
+    async def alertas(
+        self, slug: str, status: str = "active", limit: int = 500, offset: int = 0
+    ) -> dict[str, Any]:
+        """Uma PÁGINA de alertas: `AlertListResponse{plant, total, alerts[]}`.
 
-    async def paradas(self, slug: str, inicio: date, fim: date) -> list[dict[str, Any]]:
+        O upstream pagina (`limit` ≤ 500, `offset`) e, sem dizer nada, corta em 100 quando
+        ninguém pede — foi assim que o histórico de uma usina com 130 paradas chegava com
+        30 a menos. Quem quer tudo usa `alertas_todos`.
+        """
+        return await self._get(
+            f"/plants/{slug}/alerts", status=status, limit=limit, offset=offset
+        )
+
+    async def alertas_todos(
+        self, slug: str, status: str = "all", limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Todos os alertas da usina, página a página, até a última vir incompleta.
+
+        É a fonte ALTERNATIVA de paradas enquanto `breakdowns/range` responde 500 (ver
+        `api/v1/paradas.py`): o mesmo evento aparece nos dois lugares, só que aqui sem
+        filtro de período — o corte por data fica com quem chama. O teto de páginas é
+        proteção contra um upstream que devolvesse sempre uma página cheia; 20 páginas
+        são dez mil eventos, mais do que qualquer usina acumulou.
+        """
+        todos: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(20):
+            pagina = await self.alertas(slug, status=status, limit=limit, offset=offset)
+            itens = pagina.get("alerts") if isinstance(pagina, dict) else pagina
+            if not isinstance(itens, list):
+                break
+            todos.extend(i for i in itens if isinstance(i, dict))
+            if len(itens) < limit:
+                break
+            offset += limit
+        return todos
+
+    async def paradas(self, slug: str, inicio: date, fim: date) -> dict[str, Any]:
+        """`BreakdownRangeResponse{plant, start, end, total, total_loss_kwh,
+        total_off_time_minutes, breakdowns[]}` — as paradas cujo INÍCIO cai no período.
+
+        Responde 500 em produção (ver `api/v1/paradas.py`, que tem a fonte reserva).
+        """
         return await self._get(
             f"/plants/{slug}/breakdowns/range", start=inicio.isoformat(), end=fim.isoformat()
         )

@@ -15,6 +15,7 @@ erro — e muito melhor do que uma tela de zeros, que se lê como "não gerou na
 """
 
 import asyncio
+from calendar import monthrange
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -1134,4 +1135,532 @@ async def curva_do_dia(
             saida.pico_poa = max(leituras) if leituras else None
     else:
         saida.aviso = "O monitoramento não devolveu leitura para este dia."
+    return saida
+
+
+# ── Desempenho: medido × esperado do PROJETO ─────────────────────────────────
+#
+# O portal do cliente responde "gerei o que era esperado?" — e a régua não pode
+# ser inventada aqui. O "esperado" é a meta de projeto CADASTRADA no meuWatt
+# (PVsyst): a tabela diária `pvsyst_previewed_energy` (`/plants/{slug}/pvsyst`)
+# ou, quando ela não cobre o período, a mensal digitada na aba Projeto
+# (`/plants/{slug}/pvsyst/manual/{ano}`), que é a fonte que o próprio relatório
+# do mw-fe usa. Sem nenhuma das duas, o portal diz "sem meta cadastrada" — nunca
+# um percentual sobre um número que ninguém cadastrou.
+#
+# O medido sai de `generation/range`, que também traz PR, disponibilidade real
+# e contratual e a perda por parada do período — os mesmos números dos cards do
+# meuWatt, para os dois produtos não discordarem sobre a mesma usina.
+#
+# Duas fabricações do upstream que NÃO chegam ao portal:
+# - `total_generation_kwh` é `0.0` e `performance_ratio` é `0.0` por construção
+#   quando o período não tem dado (`days_with_data == 0`, `pr_den == 0`). Aqui
+#   viram nulo, e a tela diz "sem dados" em vez de "0 kWh · 0% do projeto".
+# - Meta do MÊS CORRENTE só até hoje: somar a expectativa do mês inteiro contra
+#   a energia de meio mês diria "abaixo do esperado" para toda usina, todo dia 15.
+
+
+class MesDesempenho(BaseModel):
+    #: `YYYY-MM`.
+    mes: str
+    #: Nulo = o mês não tem medição no monitoramento. Zero seria "mediu zero".
+    energia_kwh: float | None = None
+    #: Nulo = sem meta cadastrada para o mês.
+    esperado_projeto_kwh: float | None = None
+    disponibilidade_contratual_pct: float | None = None
+    perdas_kwh: float | None = None
+
+
+class DesempenhoOut(BaseModel):
+    recorte: str
+    inicio: str
+    fim: str
+    energia_kwh: float | None = None
+    esperado_projeto_kwh: float | None = None
+    #: `energia / esperado × 100`, uma casa. Nulo quando falta qualquer um dos dois.
+    pct_do_projeto: float | None = None
+    #: PR do período, em %, do próprio meuWatt. Nulo sem POA medida (o upstream
+    #: devolve 0.0 nesse caso, e 0% de PR não é uma medição).
+    pr_pct: float | None = None
+    disponibilidade_real_pct: float | None = None
+    disponibilidade_contratual_pct: float | None = None
+    #: Energia perdida em paradas no período. Zero aqui é legítimo: houve dado e
+    #: não houve perda. Nulo é "não houve dado".
+    perdas_paradas_kwh: float | None = None
+    #: Só no recorte `ano`: um item por mês do período, com o esperado ao lado.
+    meses: list[MesDesempenho] = []
+    #: Régua do projeto, já decidida — ver `_situacao_do_projeto`.
+    tom: str
+    situacao: str
+    aviso: str | None = None
+
+
+class MesHistorico(BaseModel):
+    mes: str
+    energia_kwh: float | None = None
+    esperado_projeto_kwh: float | None = None
+    #: A energia do MESMO mês do ano anterior. Nulo quando aquele mês não tem dado.
+    ano_anterior_kwh: float | None = None
+    perdas_kwh: float | None = None
+
+
+class HistoricoOut(BaseModel):
+    inicio: str
+    fim: str
+    meses: list[MesHistorico] = []
+    aviso: str | None = None
+
+
+def _chave_mes(d: date) -> str:
+    return f"{d.year:04d}-{d.month:02d}"
+
+
+def _deslocar_mes(chave: str, delta: int) -> str:
+    """`'2026-03'`, −12 → `'2025-03'`. Aritmética de calendário, sem dia."""
+    ano, mes = int(chave[:4]), int(chave[5:7])
+    indice = ano * 12 + (mes - 1) + delta
+    return f"{indice // 12:04d}-{indice % 12 + 1:02d}"
+
+
+def _meses_entre(primeiro: str, ultimo: str) -> list[str]:
+    saida: list[str] = []
+    atual = primeiro
+    while atual <= ultimo:
+        saida.append(atual)
+        atual = _deslocar_mes(atual, 1)
+    return saida
+
+
+def _primeiro_dia(chave: str) -> date:
+    return date(int(chave[:4]), int(chave[5:7]), 1)
+
+
+def _fatias_por_ano(inicio: date, fim: date) -> list[tuple[date, date]]:
+    """Quebra o intervalo em pedaços de no máximo um ano civil.
+
+    `generation/range` recusa mais de 366 dias. Cortar no 31/12 dá pedaços que
+    nunca passam disso (ano bissexto tem exatamente 366) e mantém os meses
+    inteiros dentro de uma fatia só — o `monthly_summaries` de cada resposta
+    vem completo, sem um mês partido entre duas chamadas.
+    """
+    fatias: list[tuple[date, date]] = []
+    atual = inicio
+    while atual <= fim:
+        fim_do_ano = date(atual.year, 12, 31)
+        fatias.append((atual, min(fim_do_ano, fim)))
+        atual = fim_do_ano + timedelta(days=1)
+    return fatias
+
+
+def _tem_dado(relatorio: Any) -> bool:
+    """Se o `range` mediu alguma coisa. `days_with_data` é o campo que o próprio
+    upstream usa para saber se os totais têm lastro."""
+    if not isinstance(relatorio, dict):
+        return False
+    dias = relatorio.get("days_with_data")
+    return isinstance(dias, (int, float)) and not isinstance(dias, bool) and dias > 0
+
+
+def _energia_do_periodo(relatorio: Any) -> float | None:
+    if not _tem_dado(relatorio):
+        return None
+    return _numero(relatorio.get("total_generation_kwh"))
+
+
+def _pr_pct(relatorio: Any) -> float | None:
+    """`performance_ratio` vem como razão 0–1 (o mw-fe multiplica por 100 em
+    `MetersView`). Zero é o valor por construção quando não há POA — não é PR."""
+    if not _tem_dado(relatorio):
+        return None
+    pr = _numero(relatorio.get("performance_ratio"))
+    if pr is None or pr <= 0:
+        return None
+    return round(pr * 100, 1)
+
+
+def _perdas_do_periodo(relatorio: Any) -> float | None:
+    if not _tem_dado(relatorio):
+        return None
+    resumo = relatorio.get("summary")
+    if not isinstance(resumo, dict):
+        return None
+    return _numero(resumo.get("total_lost_kwh"))
+
+
+def _resumo_por_mes(relatorio: Any) -> dict[str, dict[str, Any]]:
+    """`monthly_summaries[]` → `{'YYYY-MM': linha}`. Mês ausente é ausência."""
+    saida: dict[str, dict[str, Any]] = {}
+    if not isinstance(relatorio, dict):
+        return saida
+    linhas = relatorio.get("monthly_summaries")
+    if not isinstance(linhas, list):
+        return saida
+    for linha in linhas:
+        if not isinstance(linha, dict):
+            continue
+        mes = linha.get("month")
+        if isinstance(mes, str) and len(mes) >= 7:
+            saida[mes[:7]] = linha
+    return saida
+
+
+class _Meta:
+    """A meta do projeto por mês, e como ela chegou."""
+
+    def __init__(self) -> None:
+        self.por_mes: dict[str, float] = {}
+        #: A fonte falhou — diferente de "não há meta", que é `por_mes` vazio.
+        self.indisponivel = False
+        self.aviso: str | None = None
+
+    def total(self, meses: list[str]) -> float | None:
+        valores = [self.por_mes[m] for m in meses if m in self.por_mes]
+        return round(sum(valores), 2) if valores else None
+
+
+def _esperado_diario_por_mes(pvsyst: Any, inicio: date, fim: date) -> dict[str, float]:
+    """`rows[].{date, e_grid}` somados por mês, só entre `inicio` e `fim`.
+
+    O corte em `fim` é o que faz a meta do mês corrente parar em hoje: a linha
+    de amanhã existe na tabela, mas a energia de amanhã ainda não foi medida.
+    """
+    por_mes: dict[str, float] = {}
+    if not isinstance(pvsyst, dict):
+        return por_mes
+    linhas = pvsyst.get("rows")
+    if not isinstance(linhas, list):
+        return por_mes
+    for linha in linhas:
+        if not isinstance(linha, dict):
+            continue
+        dia_texto, kwh = linha.get("date"), _numero(linha.get("e_grid"))
+        if not isinstance(dia_texto, str) or kwh is None:
+            continue
+        try:
+            dia = date.fromisoformat(dia_texto[:10])
+        except ValueError:
+            continue
+        if dia < inicio or dia > fim:
+            continue
+        chave = _chave_mes(dia)
+        por_mes[chave] = por_mes.get(chave, 0.0) + kwh
+    return por_mes
+
+
+def _esperado_manual_por_mes(manual: Any, ano: int, fim: date) -> dict[str, float]:
+    """`rows[].{month, e_grid}` do ano → `{'YYYY-MM': kwh}`, até o mês de `fim`.
+
+    O mês em que `fim` cai é proporcional aos dias decorridos: a meta mensal é
+    um número só, e compará-la inteira com meio mês medido diria "abaixo do
+    esperado" sem que nada estivesse errado. Não é estimativa nova — é a mesma
+    meta cadastrada, na fração do mês que já aconteceu.
+    """
+    por_mes: dict[str, float] = {}
+    if not isinstance(manual, dict):
+        return por_mes
+    linhas = manual.get("rows")
+    if not isinstance(linhas, list):
+        return por_mes
+    for linha in linhas:
+        if not isinstance(linha, dict):
+            continue
+        mes, kwh = linha.get("month"), _numero(linha.get("e_grid"))
+        if not isinstance(mes, int) or isinstance(mes, bool) or not 1 <= mes <= 12:
+            continue
+        if kwh is None:
+            continue
+        chave = f"{ano:04d}-{mes:02d}"
+        if chave > _chave_mes(fim):
+            continue
+        if chave == _chave_mes(fim):
+            dias_no_mes = monthrange(ano, mes)[1]
+            if fim.day < dias_no_mes:
+                kwh = kwh * fim.day / dias_no_mes
+        por_mes[chave] = round(kwh, 2)
+    return por_mes
+
+
+async def _meta_do_projeto(cliente, slug: str, inicio: date, fim: date) -> _Meta:
+    """A meta do projeto de cada mês entre `inicio` e `fim`, das duas fontes.
+
+    A diária tem precedência (é dia a dia, então respeita "até hoje" sem
+    proporção). A mensal digitada só entra nos meses que a diária não cobre, e
+    só se pede o ano que tem mês faltando — nada de uma chamada por ano por
+    hábito. Uma fonte fora do ar vira `indisponivel` + aviso, e não "sem meta":
+    a tela precisa distinguir "ninguém cadastrou" de "o monitoramento caiu".
+    """
+    meta = _Meta()
+    meses = _meses_entre(_chave_mes(inicio), _chave_mes(fim))
+    avisos: list[str] = []
+
+    try:
+        diario = await cliente.pvsyst(slug, inicio, fim)
+        meta.por_mes.update(_esperado_diario_por_mes(diario, inicio, fim))
+    except Exception as exc:  # noqa: BLE001 — a meta é acessório; o medido segue
+        meta.indisponivel = True
+        avisos.append(f"meta diária do projeto indisponível ({type(exc).__name__})")
+
+    faltando = [m for m in meses if m not in meta.por_mes]
+    anos = sorted({int(m[:4]) for m in faltando})
+    if anos:
+        respostas = await asyncio.gather(
+            *(cliente.pvsyst_manual(slug, ano) for ano in anos), return_exceptions=True
+        )
+        for ano, resposta in zip(anos, respostas, strict=True):
+            if isinstance(resposta, BaseException):
+                meta.indisponivel = True
+                avisos.append(
+                    f"meta mensal do projeto de {ano} indisponível ({type(resposta).__name__})"
+                )
+                continue
+            for mes, kwh in _esperado_manual_por_mes(resposta, ano, fim).items():
+                meta.por_mes.setdefault(mes, kwh)
+
+    if meta.por_mes:
+        # Chegou meta por algum caminho: a queda do outro não é mais o assunto.
+        meta.indisponivel = False
+    if avisos:
+        meta.aviso = " · ".join(avisos)
+    return meta
+
+
+def _situacao_do_projeto(
+    energia: float | None, esperado: float | None, meta_indisponivel: bool = False
+) -> tuple[float | None, str, str]:
+    """A régua do portal: `(pct, tom, situacao)`.
+
+    Os limiares são os que o dono aceita para "dentro do esperado" numa usina
+    de O&M — 95% cobre a variação de irradiação de um mês normal; abaixo de 85%
+    algo está parado ou degradado e não é mais variação de clima.
+
+        sem medição       -> semDados  "Sem dados de geração no período"
+        sem meta          -> semDados  "Sem meta de projeto cadastrada"
+        >= 95 %           -> ok        "Dentro do esperado"
+        85 % a 95 %       -> alerta    "Abaixo do esperado"
+        < 85 %            -> parado    "Bem abaixo do esperado"
+
+    Nenhum ramo devolve número onde falta fonte: sem meta o `pct` é nulo, não 0.
+    """
+    if energia is None:
+        return None, "semDados", "Sem dados de geração no período"
+    if esperado is None or esperado <= 0:
+        if meta_indisponivel:
+            return None, "semDados", "Meta do projeto indisponível agora"
+        return None, "semDados", "Sem meta de projeto cadastrada"
+    pct = round(energia / esperado * 100, 1)
+    if pct >= 95:
+        return pct, "ok", "Dentro do esperado"
+    if pct >= 85:
+        return pct, "alerta", "Abaixo do esperado"
+    return pct, "parado", "Bem abaixo do esperado"
+
+
+def _juntar_avisos(*partes: str | None) -> str | None:
+    juntos = [p for p in partes if p]
+    return " · ".join(juntos) if juntos else None
+
+
+def _usina_monitorada(db: Session, usuario: User, plant_link_id: int) -> PlantLink:
+    """Escopo + vínculo com o meuWatt. Sem vínculo é 404, e não uma resposta vazia:
+    o portal de energia não tem o que mostrar de uma usina que não é monitorada, e
+    a tela precisa dizer isso em vez de desenhar um gráfico em branco."""
+    link = _usina_no_escopo(db, usuario, plant_link_id)
+    if not link.mw_plant_slug:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao monitoramento."
+        )
+    return link
+
+
+def _erro_do_meuwatt(exc: BaseException, contexto: str) -> HTTPException:
+    """A régua de `manutencao._erro_do_upstream`, nomeando o meuWatt.
+
+    Importado dentro da função porque `manutencao` importa daqui; no nível do
+    módulo os dois se importariam em círculo (mesmo motivo do `_esta_aberta` em
+    `detalhe_usina`).
+    """
+    from app.api.v1.manutencao import _erro_do_upstream
+
+    if not isinstance(exc, Exception):
+        exc = RuntimeError(str(exc))
+    return _erro_do_upstream(exc, contexto, produto="meuWatt")
+
+
+@router.get("/plants/{plant_link_id}/desempenho", response_model=DesempenhoOut)
+async def desempenho_da_usina(
+    plant_link_id: int,
+    recorte: str = "mes",
+    referencia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> DesempenhoOut:
+    """Medido × esperado do projeto no mês ou no ano, com PR, disponibilidade e
+    perdas — tudo do meuWatt, nada calculado além da divisão.
+
+    Diferente de `/geracao`, uma queda do `range` aqui é ERRO (502/504), não um
+    200 com aviso: o número central da tela é o medido, e sem ele não há o que
+    mostrar. A meta é acessório — cai em aviso.
+    """
+    if recorte not in ("mes", "ano"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "recorte deve ser 'mes' ou 'ano'.")
+
+    link = _usina_monitorada(db, usuario, plant_link_id)
+    hoje = hoje_na_usina()
+    inicio, fim = _janela(recorte, _referencia_pedida(referencia))
+    # Até hoje, e não até o fim do mês: o `range` fabrica dias vazios no futuro e
+    # a meta do projeto, somada até o dia 31, compararia mês inteiro com meio mês.
+    fim = min(fim, hoje)
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_meuwatt(exc, "Não deu para ler o desempenho") from exc
+
+    relatorio, meta = await asyncio.gather(
+        cliente.geracao_periodo(link.mw_plant_slug, inicio, fim),
+        _meta_do_projeto(cliente, link.mw_plant_slug, inicio, fim),
+        return_exceptions=True,
+    )
+    if isinstance(relatorio, BaseException):
+        raise _erro_do_meuwatt(relatorio, "Não deu para ler o desempenho")
+    if isinstance(meta, BaseException):
+        # `_meta_do_projeto` engole as próprias falhas; isto é rede de segurança.
+        meta_segura = _Meta()
+        meta_segura.indisponivel = True
+        meta_segura.aviso = f"meta do projeto indisponível ({type(meta).__name__})"
+        meta = meta_segura
+
+    meses = _meses_entre(_chave_mes(inicio), _chave_mes(fim))
+    energia = _energia_do_periodo(relatorio)
+    esperado = meta.total(meses)
+    pct, tom, situacao = _situacao_do_projeto(energia, esperado, meta.indisponivel)
+
+    saida = DesempenhoOut(
+        recorte=recorte,
+        inicio=inicio.isoformat(),
+        fim=fim.isoformat(),
+        energia_kwh=energia,
+        esperado_projeto_kwh=esperado,
+        pct_do_projeto=pct,
+        pr_pct=_pr_pct(relatorio),
+        disponibilidade_real_pct=(
+            _numero(relatorio.get("availability_real_pct")) if _tem_dado(relatorio) else None
+        ),
+        disponibilidade_contratual_pct=(
+            _numero(relatorio.get("availability_contratual_pct"))
+            if _tem_dado(relatorio) else None
+        ),
+        perdas_paradas_kwh=_perdas_do_periodo(relatorio),
+        tom=tom,
+        situacao=situacao,
+        aviso=_juntar_avisos(
+            "O monitoramento não devolveu geração para este período." if energia is None else None,
+            meta.aviso,
+        ),
+    )
+
+    if recorte == "ano":
+        por_mes = _resumo_por_mes(relatorio)
+        for mes in meses:
+            linha = por_mes.get(mes)
+            saida.meses.append(
+                MesDesempenho(
+                    mes=mes,
+                    energia_kwh=_numero(linha.get("generation_kwh")) if linha else None,
+                    esperado_projeto_kwh=meta.por_mes.get(mes),
+                    disponibilidade_contratual_pct=(
+                        _numero(linha.get("availability_contratual_pct")) if linha else None
+                    ),
+                    perdas_kwh=_numero(linha.get("lost_kwh")) if linha else None,
+                )
+            )
+    return saida
+
+
+#: Teto do histórico. Três anos são quatro chamadas ao `range` (uma por ano
+#: civil) mais o ano anterior para a comparação — acima disso a tela vira
+#: planilha, e o custo por abertura de página deixa de fazer sentido.
+HISTORICO_MAX_MESES = 36
+
+
+@router.get("/plants/{plant_link_id}/historico", response_model=HistoricoOut)
+async def historico_da_usina(
+    plant_link_id: int,
+    meses: int = 24,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> HistoricoOut:
+    """Os últimos N meses: medido × esperado × o mesmo mês do ano anterior.
+
+    O `range` é lido em fatias de um ano civil (teto de 366 dias do upstream) e
+    UM ano a mais para trás — é dele que sai `ano_anterior_kwh` do começo da
+    série. Mês sem `monthly_summaries` fica nulo: a tela não desenha barra, e é
+    assim que "não mediu" deixa de parecer "gerou zero".
+
+    Uma fatia que falha anula os meses dela e vira aviso; todas falhando é erro,
+    porque aí não há série nenhuma para mostrar.
+    """
+    if not 1 <= meses <= HISTORICO_MAX_MESES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"meses deve estar entre 1 e {HISTORICO_MAX_MESES}."
+        )
+
+    link = _usina_monitorada(db, usuario, plant_link_id)
+    hoje = hoje_na_usina()
+    ultimo_mes = _chave_mes(hoje)
+    primeiro_mes = _deslocar_mes(ultimo_mes, -(meses - 1))
+    inicio = _primeiro_dia(primeiro_mes)
+    inicio_leitura = _primeiro_dia(_deslocar_mes(primeiro_mes, -12))
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_meuwatt(exc, "Não deu para ler o histórico") from exc
+
+    fatias = _fatias_por_ano(inicio_leitura, hoje)
+    respostas, meta = await asyncio.gather(
+        asyncio.gather(
+            *(cliente.geracao_periodo(link.mw_plant_slug, a, b) for a, b in fatias),
+            return_exceptions=True,
+        ),
+        _meta_do_projeto(cliente, link.mw_plant_slug, inicio, hoje),
+        return_exceptions=True,
+    )
+    if isinstance(respostas, BaseException):
+        raise _erro_do_meuwatt(respostas, "Não deu para ler o histórico")
+    if isinstance(meta, BaseException):
+        meta_segura = _Meta()
+        meta_segura.indisponivel = True
+        meta_segura.aviso = f"meta do projeto indisponível ({type(meta).__name__})"
+        meta = meta_segura
+
+    por_mes: dict[str, dict[str, Any]] = {}
+    falhas: list[str] = []
+    for (a, b), resposta in zip(fatias, respostas, strict=True):
+        if isinstance(resposta, BaseException):
+            falhas.append(f"{_chave_mes(a)} a {_chave_mes(b)} ({type(resposta).__name__})")
+            continue
+        por_mes.update(_resumo_por_mes(resposta))
+    if len(falhas) == len(fatias):
+        primeira = next(r for r in respostas if isinstance(r, BaseException))
+        raise _erro_do_meuwatt(primeira, "Não deu para ler o histórico")
+
+    saida = HistoricoOut(inicio=inicio.isoformat(), fim=hoje.isoformat())
+    for mes in _meses_entre(primeiro_mes, ultimo_mes):
+        linha = por_mes.get(mes)
+        anterior = por_mes.get(_deslocar_mes(mes, -12))
+        saida.meses.append(
+            MesHistorico(
+                mes=mes,
+                energia_kwh=_numero(linha.get("generation_kwh")) if linha else None,
+                esperado_projeto_kwh=meta.por_mes.get(mes),
+                ano_anterior_kwh=_numero(anterior.get("generation_kwh")) if anterior else None,
+                perdas_kwh=_numero(linha.get("lost_kwh")) if linha else None,
+            )
+        )
+
+    saida.aviso = _juntar_avisos(
+        f"Sem leitura do monitoramento em: {', '.join(falhas)}." if falhas else None,
+        meta.aviso,
+    )
     return saida

@@ -72,3 +72,87 @@ def test_a_rota_do_app_tambem_fecha_o_tipo():
         "o parâmetro `tipo` voltou a ser texto livre — é ele que entra na URL do upstream"
     )
     assert set(typing.get_args(anotacao)) == {"geracao", "paradas"}
+
+
+# ── recorte por usina (portal do cliente) ───────────────────────────────────
+#
+# A tela de Relatórios do portal é POR USINA, e passou a pedir `?usina_id=`. O filtro só
+# ESTREITA o corte por `mw_plant_slug` — nunca o substitui. Fora do escopo é 404, pela mesma
+# razão das outras rotas: "proibido" confirmaria que a usina existe.
+
+from datetime import datetime
+
+from app.api.v1.documents import meus_documentos
+from app.core.security import gerar_hash_senha
+from app.models.user import Perfil, User, UserPlantAccess
+
+
+class _PortalFalso:
+    """O `/reports/portal` do meuWatt com token de admin: devolve TODAS as usinas."""
+
+    async def portal_relatorios(self):
+        return {"reports": [
+            {"id": 1, "name": "Fechamento agosto", "plant_slug": "porto-ferreira",
+             "period": "MENSAL", "date_from": "2026-08-01", "date_to": "2026-08-31",
+             "sent_at": "2026-09-02T10:00:00", "files": [{"kind": "geracao", "filename": "g.pdf"}]},
+            {"id": 2, "name": "Fechamento agosto", "plant_slug": "ribeirao-bonito",
+             "period": "MENSAL", "date_from": "2026-08-01", "date_to": "2026-08-31",
+             "sent_at": "2026-09-02T10:00:00", "files": []},
+            {"id": 3, "name": "Fechamento agosto", "plant_slug": "usina-de-outro-cliente",
+             "period": "MENSAL", "date_from": "2026-08-01", "date_to": "2026-08-31",
+             "sent_at": "2026-09-02T10:00:00", "files": []},
+        ]}
+
+
+@pytest.fixture
+def dono_com_duas_usinas(db, usinas, monkeypatch):
+    u = User(apelido="dono", email="dono@exemplo.com.br", nome="Dono",
+             perfil=Perfil.CLIENTE, senha_hash=gerar_hash_senha("cliente-1234"))
+    db.add(u)
+    db.commit()
+    for usina in usinas:
+        db.add(UserPlantAccess(user_id=u.id, plant_link_id=usina.id))
+    db.commit()
+
+    async def _cliente(_db):
+        return _PortalFalso()
+
+    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+    return u
+
+
+async def test_sem_filtro_saem_as_usinas_do_escopo_com_plant_id(db, usinas, dono_com_duas_usinas):
+    saida = await meus_documentos(None, db, dono_com_duas_usinas)
+    a, b = usinas
+    # A usina do outro cliente (id 3) nunca sai — o corte por slug é a barreira.
+    assert {d.id for d in saida.documentos} == {1, 2}
+    assert {d.plant_id for d in saida.documentos} == {a.id, b.id}
+    assert all(d.plant_id is not None for d in saida.documentos)
+    assert isinstance(saida.documentos[0].publicado_em, datetime)
+
+
+async def test_com_usina_id_sai_so_aquela_usina(db, usinas, dono_com_duas_usinas):
+    a, _b = usinas
+    saida = await meus_documentos(a.id, db, dono_com_duas_usinas)
+    assert [d.id for d in saida.documentos] == [1]
+    assert saida.documentos[0].plant_id == a.id
+    assert saida.documentos[0].usina == a.nome
+
+
+async def test_usina_id_fora_do_escopo_e_404(db, dono_com_duas_usinas):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        await meus_documentos(987654, db, dono_com_duas_usinas)
+    assert e.value.status_code == 404
+
+
+async def test_usina_sem_meuwatt_avisa_em_vez_de_vazar(db, usinas, dono_com_duas_usinas):
+    """Vínculo só com o meuPlano: não há relatório de geração — e não há fallback para
+    "todas as usinas", que devolveria os documentos das outras."""
+    a, _b = usinas
+    a.mw_plant_slug = None
+    db.commit()
+    saida = await meus_documentos(a.id, db, dono_com_duas_usinas)
+    assert saida.documentos == []
+    assert saida.aviso and "meuWatt" in saida.aviso

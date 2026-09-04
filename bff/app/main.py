@@ -29,7 +29,11 @@ from app.api.v1 import (
     notifications,
     painel,
     painel_clientes,
+    paradas,
+    pendencias,
     plants,
+    relatorio,
+    resumo,
 )
 from app.core.config import get_settings
 
@@ -64,14 +68,18 @@ app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
 app.include_router(plants.router)
+app.include_router(paradas.router)
 app.include_router(billing.router)
 app.include_router(home.router)
 app.include_router(equipamentos.router)
 app.include_router(notifications.router)
 app.include_router(manutencao.router)
+app.include_router(pendencias.router)
 app.include_router(permissoes.router)
 app.include_router(avisos.router)
 app.include_router(documents.router)
+app.include_router(resumo.router)
+app.include_router(relatorio.router)
 
 
 @app.get("/health", tags=["infra"])

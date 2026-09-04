@@ -81,6 +81,12 @@ MEUWATT: list[Rota] = [
          "Geração do dia e disponibilidade", params={"date": "{hoje}"}),
     Rota("mw.range", "GET", "/plants/{slug}/generation/range",
          "Gráfico do mês e do ano", params={"start": "{semana_passada}", "end": "{hoje}"}),
+    Rota("mw.pvsyst", "GET", "/plants/{slug}/pvsyst",
+         "A meta do projeto (diária) — o 'esperado' do portal do cliente",
+         essencial=False, params={"start": "{semana_passada}", "end": "{hoje}"}),
+    Rota("mw.pvsyst_manual", "GET", "/plants/{slug}/pvsyst/manual/{ano}",
+         "A meta do projeto (mensal, digitada) — segunda fonte do 'esperado'",
+         essencial=False),
     Rota("mw.intraday", "GET", "/plants/{slug}/charts/intraday",
          "Curva de potência do dia, no detalhe do inversor", params={"date": "{hoje}"}),
     Rota("mw.intraday_strings", "GET", "/plants/{slug}/charts/intraday/strings",
@@ -91,10 +97,25 @@ MEUWATT: list[Rota] = [
          "Temperatura das bobinas, no relé de temperatura", params={"date": "{hoje}"}),
     Rota("mw.alerts", "GET", "/plants/{slug}/alerts", "Alertas ativos da usina",
          params={"status": "active"}),
+    Rota("mw.alerts_historico", "GET", "/plants/{slug}/alerts",
+         "Paradas do portal (fonte reserva enquanto breakdowns/range responde 500)",
+         essencial=False, params={"status": "all", "limit": "50", "offset": "0"}),
     Rota("mw.breakdowns", "GET", "/plants/{slug}/breakdowns/range",
-         "Paradas, e o histórico do equipamento",
+         "Paradas do portal — fonte primária; se falhar, o BFF troca sozinho para alerts",
          params={"start": "{semana_passada}", "end": "{hoje}"}),
-    Rota("mw.slots", "GET", "/plants/{slug}/slots", "Inversores da tela de Equipamentos"),
+    Rota("mw.trip_events", "GET", "/plants/{slug}/relays/{relay_id}/trip-events",
+         "Histórico de flags do relé de proteção, na tela de Equipamentos",
+         essencial=False, sonda=False,
+         nao_sondada_porque="O id do relé só aparece dentro de `monitoring/current`, "
+                            "como `relay-{id}` no meio dos equipamentos — não há campo "
+                            "de topo para a sonda colher. A tela de Equipamentos "
+                            "exercita este caminho com o relé escolhido."),
+    Rota("mw.slots", "GET", "/plants/{slug}/slots", "Inversores da tela de Equipamentos",
+         captura={"slot_id": "id"}),
+    # Achada pelo teste inverso da sonda: o cliente chamava `/slots/{id}` há meses sem
+    # linha aqui — a versão por prefixo do teste antigo nunca reclamou.
+    Rota("mw.slot", "GET", "/plants/{slug}/slots/{slot_id}",
+         "A ficha de um inversor (slot), no detalhe do equipamento", essencial=False),
     Rota("mw.bills", "GET", "/plants/{slug}/utility-bills",
          "Faturas da concessionária", essencial=False),
     Rota("mw.users", "GET", "/admin/users",
@@ -107,6 +128,17 @@ MEUWATT: list[Rota] = [
          nao_sondada_porque="Exige o token do próprio dono da usina (é restrita a "
                             "plant_owner). Com o token de serviço, um 403 aqui seria o "
                             "comportamento correto e apareceria como falha."),
+    Rota("mw.portal_arquivo", "GET", "/reports/{report_id}/files/{kind}",
+         "Os PDFs de geração e de paradas de um fechamento publicado", essencial=False,
+         sonda=False,
+         nao_sondada_porque="O id do fechamento só sai de `/reports/portal`, que a sonda "
+                            "não chama (acima). E é um download de arquivo, não JSON."),
+    Rota("mw.login", "POST", "/auth/login",
+         "O login com a credencial do PRÓPRIO usuário, uma vez, ao entrar",
+         sonda=False,
+         nao_sondada_porque="Exige uma senha, e a sonda só tem o token pessoal. Se o "
+                            "login sumisse, a tela de Conexões (que autentica de "
+                            "verdade) avisaria antes."),
 ]
 
 #: Rotas do meuPlano. Prefixos `/api/v1/meuacesso` e `/api/v1/maintenance`.
@@ -126,7 +158,36 @@ MEUPLANO: list[Rota] = [
          "Cabeçalho da OS na tela de Manutenção — e a checagem de escopo antes do PDF"),
     Rota("mp.tarefas", "GET", "/api/v1/meuacesso/tasks",
          "As tarefas dentro da OS: o que foi feito, item por item",
-         params={"os_id": "{so_id}"}),
+         params={"os_id": "{so_id}"}, captura={"task_id": "id"}),
+    # A tarefa devolve o item do plano e o mês contratual de onde ela veio — o par que a
+    # rota seguinte precisa. Tarefa avulsa (fora do plano) vem com os dois vazios, e a
+    # seguinte fica pulada com a razão escrita, em vez de 422 por parâmetro faltando.
+    Rota("mp.tarefa", "GET", "/api/v1/meuacesso/tasks/{task_id}",
+         "Cabeçalho da tarefa na tela da OS, e a checagem de escopo antes da ficha",
+         captura={"plan_item_id": "usina_type_plan_item_id",
+                  "mes_contratual": "contract_month"}),
+    Rota("mp.tarefas_do_item", "GET", "/api/v1/meuacesso/tasks",
+         "As tarefas atrás de um X do cronograma (item do plano × mês)",
+         params={"usina_type_plan_item_id": "{plan_item_id}",
+                 "contract_month": "{mes_contratual}"}),
+    Rota("mp.tarefa_ficha", "GET", "/api/v1/meuacesso/tasks/{task_id}/ficha",
+         "As respostas da tarefa: medições, checklist, parecer, por equipamento",
+         sonda=False,
+         nao_sondada_porque="É leitura, mas monta a ficha inteira (sessões, leituras, "
+                            "fotos) a cada chamada — uma coletiva de 20 inversores leva "
+                            "dezenas de segundos. A tela da tarefa exercita sob demanda."),
+    Rota("mp.tarefa_foto", "GET", "/api/v1/meuacesso/tasks/{task_id}/fotos/{foto_id}",
+         "Os bytes de uma foto da ficha", essencial=False,
+         sonda=False,
+         nao_sondada_porque="O id da foto só existe dentro da ficha, que a sonda não "
+                            "monta (acima). E é imagem, não JSON."),
+    Rota("mp.tarefa_pdf", "GET", "/api/v1/meuacesso/tasks/{task_id}/pdf/view",
+         "O PDF da ficha respondida", essencial=False,
+         sonda=False,
+         nao_sondada_porque="Renderiza o PDF inteiro quando algo mudou desde a última "
+                            "versão. Sondar a cada varredura gastaria o gerador do "
+                            "meuPlano para conferir uma rota que a tela exercita sob "
+                            "demanda."),
     # O cronograma mora dentro de um contrato, e o contrato vem daqui — do pipeline, não
     # do financeiro: são duas tabelas de container com numerações próprias, e o cronograma
     # só reconhece a do pipeline. As duas rotas são sondadas em sequência de propósito, o
@@ -135,9 +196,20 @@ MEUPLANO: list[Rota] = [
          "Os contratos de O&M — é dentro de um deles que existe cronograma",
          captura={"container_id": "id", "contrato_usina_id": "usina_id"},
          captura_exige="usina_id"),
-    Rota("mp.cronograma", "GET", "/api/v1/maintenance/usinas/{contrato_usina_id}/cronograma",
-         "Cronograma de manutenção, com a cor de cada célula",
-         params={"container_id": "{container_id}"}),
+    # O cronograma que o CLIENTE vê vem do router `visao-cliente`, não da rota interna:
+    # a interna cria o rascunho v1 ao ser lida (leitura com efeito colateral) e devolve
+    # DRAFT como se fosse o combinado. A lista de contratos dessa visão diz qual deles tem
+    # versão consolidada — `captura_exige` escolhe um assim, senão o cronograma responderia
+    # 404 por culpa da sonda (contrato só com rascunho), não do produto.
+    Rota("mp.vc_contratos", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/contratos",
+         "Os contratos da usina com a versão consolidada de cada um — o seletor de "
+         "contrato do portal do cliente",
+         captura={"vc_container_id": "id"}, captura_exige="versao_consolidada"),
+    Rota("mp.cronograma", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma",
+         "Cronograma consolidado do contrato, com a cor de cada célula",
+         params={"container_id": "{vc_container_id}"}),
     Rota("mp.lookup", "GET", "/api/v1/meuacesso/admin/users/lookup",
          "Achar a conta do cliente por e-mail, ao vincular",
          params={"email": "{email}"}),
@@ -152,6 +224,24 @@ MEUPLANO: list[Rota] = [
          "Notificações do app", essencial=False),
     Rota("mp.nao_lidas", "GET", "/api/v1/meuacesso/me/notifications/unread-count",
          "O contador na aba", essencial=False),
+    # Pendências do portal do cliente: a rota `visao-cliente` recorta pelo `shareable` sempre,
+    # e o BFF recorta de novo. Não essenciais — sem elas o portal perde uma aba, não a ponte.
+    Rota("mp.vc_pendencias", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/pendencias",
+         "As pendências compartilháveis, na aba Pendências do portal do cliente",
+         essencial=False, captura={"pendencia_id": "id"}),
+    Rota("mp.vc_pendencia", "GET",
+         "/api/v1/meuacesso/visao-cliente/pendencias/{pendencia_id}",
+         "O drawer da pendência: parecer, documentos publicados e OSs vinculadas",
+         essencial=False),
+    Rota("mp.vc_documento", "GET",
+         "/api/v1/meuacesso/pipelines/containers/{pendencia_id}/documents/{documento_id}/download",
+         "Os bytes de um documento publicado da pendência", essencial=False,
+         sonda=False,
+         nao_sondada_porque="Baixa um arquivo do armazenamento a cada chamada, e o id do "
+                            "documento só existe dentro do detalhe de uma pendência que "
+                            "tenha algo publicado. A tela exercita este caminho sob "
+                            "demanda, depois de conferir que o documento é publicado."),
     Rota("mp.pdf_os", "POST", "/api/v1/meuacesso/service-orders/{so_id}/pdf",
          "PDF da ordem de serviço", essencial=False,
          sonda=False,
@@ -164,17 +254,47 @@ MEUPLANO: list[Rota] = [
                             "e esse POST escreve no produto de origem — a sonda não o "
                             "chama. Sem ele não há item para baixar."),
     Rota("mp.pdf_cronograma", "GET",
-         "/api/v1/maintenance/usinas/{contrato_usina_id}/cronograma/pdf",
-         "Cronograma anual em PDF", essencial=False,
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma/pdf/view",
+         "Cronograma anual consolidado em PDF", essencial=False,
+         params={"container_id": "{vc_container_id}"},
          sonda=False,
          nao_sondada_porque="É leitura, mas renderiza o PDF inteiro a cada chamada. "
                             "Sondar isso a cada varredura gastaria o Chromium do "
                             "meuPlano para conferir uma rota que a tela exercita "
                             "sob demanda."),
+    # O relatório de manutenção do portal, por competência: do mês passado ao atual é o
+    # menor período que sempre existe. Vai com o contrato consolidado colhido acima — sem
+    # ele o upstream escolheria sozinho, e sem nenhum consolidado responderia 404 por um
+    # estado normal ("ainda não publicado"); pulada com a razão é o retrato honesto.
+    Rota("mp.vc_relatorio", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorio-manutencao",
+         "O relatório de manutenção do período, na tela de Relatórios do portal",
+         essencial=False,
+         params={"de": "{mes_passado}", "ate": "{mes_atual}",
+                 "container_id": "{vc_container_id}"}),
+    Rota("mp.vc_relatorio_pdf", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorio-manutencao/pdf/view",
+         "O mesmo relatório em PDF", essencial=False,
+         params={"de": "{mes_passado}", "ate": "{mes_atual}",
+                 "container_id": "{vc_container_id}"},
+         sonda=False,
+         nao_sondada_porque="Renderiza o PDF inteiro a cada chamada. A tela do portal "
+                            "exercita sob demanda."),
     Rota("mp.assistente", "POST", "/api/v1/meuacesso/assistant/chat",
          "O assistente", essencial=False,
          sonda=False,
          nao_sondada_porque="Abre uma conversa e consome cota do modelo lá."),
+    Rota("mp.assistente_run", "GET", "/api/v1/meuacesso/assistant/runs/{run_id}",
+         "A resposta do assistente, por polling", essencial=False,
+         sonda=False,
+         nao_sondada_porque="O id do run só existe depois do POST que abre a conversa — "
+                            "e esse a sonda não chama."),
+    Rota("mp.login", "POST", "/api/v1/meuacesso/auth/login",
+         "O login com a credencial do PRÓPRIO usuário, uma vez, ao entrar",
+         sonda=False,
+         nao_sondada_porque="Exige uma senha, e a sonda só tem o token pessoal. Se o "
+                            "login sumisse, a tela de Conexões (que autentica de "
+                            "verdade) avisaria antes."),
 ]
 
 CATALOGO: dict[Produto, list[Rota]] = {
@@ -399,9 +519,15 @@ async def varrer(db: Session, produto: Produto) -> Varredura:
         )
 
     hoje = date.today()
+    # Competências (YYYY-MM) do relatório do portal: o mês passado até o atual é o menor
+    # período que sempre existe — em janeiro inclusive, quando "este ano" é um mês só.
+    primeiro_do_mes = hoje.replace(day=1)
     contexto: dict[str, Any] = {
         "hoje": hoje.isoformat(),
         "semana_passada": (hoje - timedelta(days=7)).isoformat(),
+        "ano": str(hoje.year),
+        "mes_atual": hoje.strftime("%Y-%m"),
+        "mes_passado": (primeiro_do_mes - timedelta(days=1)).strftime("%Y-%m"),
     }
 
     resultados: list[Resultado] = []

@@ -160,6 +160,9 @@ export type Diagnostico = {
   usinas: UsinaDoCliente[]
   meuwatt: BlocoDiagnostico
   meuplano: BlocoDiagnostico
+  /** O que o cliente vai encontrar na aba Cronograma do portal. Opcional enquanto uma
+   *  aba antiga do painel conversa com a API nova: sem ele a tela só omite o bloco. */
+  manutencao?: BlocoDiagnostico
 }
 
 export type Membro = {

@@ -23,6 +23,13 @@ class MeuPlanoError(RuntimeError):
     pass
 
 
+def _params_do_periodo(de: str, ate: str, container_id: int | None) -> dict[str, Any]:
+    """Query do relatório de manutenção. `container_id` ausente NÃO vai como "None" na URL:
+    o meuPlano o lê como texto e responderia 422 em vez de escolher o contrato sozinho."""
+    return {k: v for k, v in {"de": de, "ate": ate, "container_id": container_id}.items()
+            if v is not None}
+
+
 class MeuPlanoClient:
     """A credencial de serviço vem do que o gestor gravou no painel, não do ambiente."""
 
@@ -158,31 +165,61 @@ class MeuPlanoClient:
         )
         return dados if isinstance(dados, list) else (dados.get("items") or [])
 
-    async def cronograma(self, usina_id: int, container_id: int | None = None) -> dict[str, Any]:
-        """O cronograma de manutenção da usina, dentro de um contrato.
+    # ------------------------------------------ visão do cliente: cronograma
+    #
+    # Por que não as rotas internas: `GET /maintenance/usinas/{id}/cronograma` CRIA o
+    # rascunho v1 quando ele não existe e devolve DRAFT como se fosse o combinado, e
+    # `/cronograma/pdf` renderiza a última versão, rascunho inclusive. Foi assim que o
+    # dono de usina podia ver X de negociação como contrato. O router `visao-cliente`
+    # só serve a versão CONSOLIDADA.
 
-        `container_id` é **obrigatório** no upstream — sem ele a resposta é 422. Este
-        cliente o tratava como opcional, e o resultado era a tela de manutenção falhando
-        com um erro de validação em vez de mostrar o cronograma.
+    async def vc_contratos(self, usina_id: int) -> list[dict[str, Any]]:
+        """Os contratos de O&M da usina, cada um dizendo se tem cronograma consolidado
+        (`versao_consolidada`, nulo enquanto só há rascunho).
 
-        Quando não vem informado, é descoberto: uma usina normalmente tem um contrato só,
-        e é esse o cronograma que o dono dela quer ver. Com mais de um, vale o primeiro —
-        escolher qual contrato mostrar é decisão de produto que ainda não foi tomada, e
-        chutar em silêncio seria pior do que a tela pedir para escolher no dia em que isso
-        aparecer.
+        Substitui o `contratos()[0]` cego que o cronograma usava: o portal mostra a lista
+        para o cliente escolher, e o BFF escolhe por padrão o que tem a versão consolidada
+        mais recente — nunca o primeiro que apareceu. `contratos()` (rota interna do
+        funil) continua existindo para o painel; o portal não a chama.
         """
-        if container_id is None:
-            contratos = await self.contratos(usina_id)
-            if not contratos:
-                raise MeuPlanoError(
-                    f"A usina {usina_id} não tem contrato de manutenção no meuPlano, "
-                    "e o cronograma é sempre dentro de um contrato."
-                )
-            container_id = contratos[0]["id"]
-
-        return await self._get(
-            f"/api/v1/maintenance/usinas/{usina_id}/cronograma", container_id=container_id
+        dados = await self._get(
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/contratos"
         )
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
+
+    async def vc_cronograma(self, usina_id: int, container_id: int) -> dict[str, Any]:
+        """O cronograma CONSOLIDADO do contrato — a mesma matriz do `_cronograma_out`
+        interno, com `cell_status` vindo do ATIVO.
+
+        `container_id` é obrigatório aqui como no upstream: cronograma existe sempre
+        dentro de um contrato. Quem não sabe qual, pergunta em `vc_contratos` primeiro.
+        Contrato só com rascunho responde **404** — e o chamador decide o que dizer ao
+        cliente; este cliente não inventa matriz vazia no lugar.
+        """
+        return await self._get(
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma",
+            container_id=container_id,
+        )
+
+    async def vc_cronograma_pdf(self, usina_id: int, container_id: int) -> bytes:
+        """O PDF do cronograma consolidado. Renderiza a cada chamada — timeout folgado."""
+        r = await self._req(
+            "GET",
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma/pdf/view",
+            params={"container_id": container_id},
+            timeout=120.0,
+        )
+        return r.content
+
+    async def cronograma(self, usina_id: int, container_id: int) -> dict[str, Any]:
+        """Mantido pelo nome; hoje é `vc_cronograma`.
+
+        O ramo que descobria o contrato sozinho (`contratos()[0]`) saiu: escolher qual
+        contrato mostrar é decisão de quem chama, com a lista de `vc_contratos` na mão.
+        """
+        return await self.vc_cronograma(usina_id, container_id)
 
     async def ordens_servico(
         self, usina_id: int, status: str | None = None
@@ -286,9 +323,85 @@ class MeuPlanoClient:
         r = await self._req("GET", f"/api/v1/meuacesso/pdf-basket/{item_id}/download")
         return r.content
 
-    async def pdf_cronograma(self, usina_id: int) -> bytes:
-        r = await self._req("GET", f"/api/v1/maintenance/usinas/{usina_id}/cronograma/pdf")
+    async def pdf_cronograma(self, usina_id: int, container_id: int) -> bytes:
+        """Mantido pelo nome; hoje é `vc_cronograma_pdf`.
+
+        Antes batia em `/maintenance/usinas/{id}/cronograma/pdf` SEM `container_id` — que
+        lá é `Query(...)` obrigatório. O upstream respondia 422, este lado achatava em 502
+        "Não deu para gerar o cronograma em PDF", e o botão de PDF nunca funcionou.
+        """
+        return await self.vc_cronograma_pdf(usina_id, container_id)
+
+    # ------------------------------------ relatório de manutenção (visão do cliente)
+
+    async def vc_relatorio(
+        self, usina_id: int, de: str, ate: str, container_id: int | None = None
+    ) -> dict[str, Any]:
+        """O relatório de manutenção do período — agregado do próprio ativo, no meuPlano.
+
+        `de`/`ate` são competências (`YYYY-MM`). Sem `container_id`, o meuPlano escolhe o
+        contrato com cronograma consolidado mais recente. Agrega cronograma, OSs, pareceres,
+        problemas, dispensas e pendências numa ida só; numa usina grande isso leva segundos,
+        daí o prazo folgado.
+        """
+        r = await self._req(
+            "GET",
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorio-manutencao",
+            params=_params_do_periodo(de, ate, container_id),
+            timeout=120.0,
+        )
+        return r.json()
+
+    async def vc_relatorio_pdf(
+        self, usina_id: int, de: str, ate: str, container_id: int | None = None
+    ) -> bytes:
+        """O mesmo relatório, renderizado em PDF pelo meuPlano — do MESMO JSON, então tela e
+        documento não divergem. `/pdf/view` e não `/pdf`: é a rota autenticada (a terminação
+        `/pdf` cai na dispensa pública do audit de permissões de lá)."""
+        r = await self._req(
+            "GET",
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorio-manutencao/pdf/view",
+            params=_params_do_periodo(de, ate, container_id),
+            timeout=180.0,
+        )
         return r.content
+
+    # ------------------------------------- pendências (visão do cliente)
+    #
+    # A rota INTERNA do funil (`/pipelines/global/pendencia/containers`) devolve TUDO a quem
+    # manda na usina — e a conta de serviço desta ponte é da Splendor, que manda. O router
+    # `visao-cliente` do meuPlano aplica o corte do cliente (`shareable`, documentos
+    # publicados) sempre, independente de quem pergunta. É só ele que este cliente chama.
+
+    async def vc_pendencias(self, usina_id: int) -> list[dict[str, Any]]:
+        """As pendências COMPARTILHÁVEIS de uma usina, já recortadas pelo meuPlano.
+
+        O BFF re-filtra `shareable` de qualquer jeito (`api/v1/pendencias.py`): a régua do
+        que o cliente vê tem de valer mesmo que a rota de lá mude.
+        """
+        dados = await self._get(f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/pendencias")
+        if isinstance(dados, dict):
+            return dados.get("items") or dados.get("results") or []
+        return dados or []
+
+    async def vc_pendencia(self, cid: int) -> dict[str, Any]:
+        """O detalhe leve: o container, o parecer, os documentos PUBLICADOS e as OSs
+        vinculadas — numa chamada. Sem feed nem checklist, por desenho de lá."""
+        return await self._get(f"/api/v1/meuacesso/visao-cliente/pendencias/{cid}")
+
+    async def vc_documento(self, cid: int, did: int) -> tuple[bytes, str]:
+        """Os bytes de UM documento da pendência, com o tipo declarado.
+
+        O meuPlano responde com um redirect para a URL assinada do armazenamento; o cliente
+        segue o redirect (e o httpx tira o `Authorization` ao trocar de host, que é o
+        certo — a URL assinada já é a credencial). Quem chama precisa ter conferido ANTES
+        que o `did` está entre os publicados: a rota de lá é aberta por id.
+        """
+        r = await self._req(
+            "GET", f"/api/v1/meuacesso/pipelines/containers/{cid}/documents/{did}/download",
+            timeout=60.0,
+        )
+        return r.content, r.headers.get("content-type", "application/octet-stream")
 
     # ------------------------------------------------------------- assistente
 

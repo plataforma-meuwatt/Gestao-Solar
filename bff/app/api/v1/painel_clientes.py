@@ -385,6 +385,8 @@ class DiagnosticoOut(BaseModel):
     usinas: list[UsinaDoCliente]
     meuwatt: BlocoDiagnostico
     meuplano: BlocoDiagnostico
+    #: O que o cliente vai encontrar na aba Cronograma do portal — o gestor vê ANTES dele.
+    manutencao: BlocoDiagnostico
 
 
 @router.get("/clientes/{cliente_id}/diagnostico", response_model=DiagnosticoOut)
@@ -406,6 +408,7 @@ async def diagnostico(
 
     mw = await _diagnostico_meuwatt(db, usinas)
     mp = await _diagnostico_meuplano(db, usinas)
+    contrato = await _diagnostico_manutencao(db, usinas)
 
     return DiagnosticoOut(
         cliente=cliente.nome,
@@ -422,6 +425,7 @@ async def diagnostico(
         ],
         meuwatt=mw,
         meuplano=mp,
+        manutencao=contrato,
     )
 
 
@@ -491,6 +495,75 @@ async def _diagnostico_meuplano(db: Session, usinas: list[PlantLink]) -> BlocoDi
     return BlocoDiagnostico(
         ok=not falhas,
         detalhe=f"{len(itens) - len(falhas)} de {len(itens)} usina(s) responderam.",
+        itens=itens,
+    )
+
+
+async def _diagnostico_manutencao(db: Session, usinas: list[PlantLink]) -> BlocoDiagnostico:
+    """Por usina: tem contrato? O contrato tem cronograma CONSOLIDADO?
+
+    A aba Cronograma do portal do cliente só mostra a versão consolidada. Um contrato que
+    ficou em rascunho aparece lá como "a equipe ainda não publicou" — e a página vazia,
+    vista pelo cliente primeiro, parece "nada foi feito". Este bloco existe para o gestor
+    ver isso antes: cada item leva `situacao` e `tom` (`ok` · `alerta` · `parado`, as
+    mesmas chaves de tom do resto do sistema), e o bloco só fica `ok` quando toda usina
+    tem contrato com versão consolidada.
+
+    Reusa `_contrato_padrao` do BFF de manutenção: o contrato apontado aqui é o MESMO que
+    o portal abre quando o cliente não escolhe nenhum.
+    """
+    from app.api.v1.manutencao import _contrato_padrao, _contratos_da_usina  # noqa: PLC0415
+
+    alvos = [u for u in usinas if u.mp_usina_id]
+    if not alvos:
+        return BlocoDiagnostico(
+            ok=False, detalhe="Nenhuma usina deste cliente existe no meuPlano."
+        )
+
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+    except Exception as exc:  # noqa: BLE001
+        return BlocoDiagnostico(ok=False, detalhe=str(exc))
+
+    itens = []
+    for u in alvos:
+        origem = f"GET /meuacesso/visao-cliente/usinas/{u.mp_usina_id}/contratos"
+        try:
+            contratos = await _contratos_da_usina(cliente, u)
+        except Exception as exc:  # noqa: BLE001
+            itens.append({"usina": u.nome, "origem": origem,
+                          "erro": f"{type(exc).__name__}: {exc}"})
+            continue
+
+        padrao = _contrato_padrao(contratos)
+        rotulo = None
+        if padrao is None:
+            situacao, tom = "sem contrato de manutenção", "parado"
+        else:
+            rotulo = padrao.titulo or (f"nº {padrao.numero}" if padrao.numero else None)
+            if padrao.versao_cronograma is None:
+                situacao, tom = "contrato sem cronograma consolidado", "alerta"
+            else:
+                situacao, tom = "ok", "ok"
+        itens.append(
+            {
+                "usina": u.nome,
+                "origem": origem,
+                "situacao": situacao,
+                "tom": tom,
+                "contratos": len(contratos),
+                "contrato": rotulo,
+                "versao_consolidada": padrao.versao_cronograma if padrao else None,
+            }
+        )
+
+    problemas = [i for i in itens if i.get("tom") != "ok"]
+    return BlocoDiagnostico(
+        ok=not problemas,
+        detalhe=(
+            f"{len(itens) - len(problemas)} de {len(itens)} usina(s) com cronograma "
+            "publicado para o cliente."
+        ),
         itens=itens,
     )
 

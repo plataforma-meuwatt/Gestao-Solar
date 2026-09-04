@@ -46,6 +46,11 @@ def _tudo_responde(mock):
         200, json={"name": "Fulano", "email": "fulano@empresa.com.br"}
     )
     mock.get(f"{BASE}/plants").respond(200, json=[{"slug": "porto-ferreira", "name": "Porto"}])
+    # A lista de slots antes do curinga (o respx casa na ordem de registro): é dela que
+    # sai o `slot_id` da rota de detalhe — sem um item com `id`, a dependente fica pulada.
+    mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(
+        200, json=[{"id": 1, "label": "INV-01"}]
+    )
     mock.route(url__startswith=f"{BASE}/plants/porto-ferreira").respond(
         200, json={"total_generation_kwh": 120.5}
     )
@@ -100,10 +105,11 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
 async def test_rota_que_sumiu_e_falha_essencial(db, conectado):
     """404 numa rota essencial é o caso que a sonda existe para pegar: token válido,
     conexão verde, e uma tela do app que abriria vazia."""
-    # A específica primeiro: o respx casa na ordem de registro, e o curinga de
-    # `_tudo_responde` engoliria esta se viesse antes.
-    respx.mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(404, json={"detail": "sumiu"})
     _tudo_responde(respx.mock)
+    # Mesmo padrão já registrado em `_tudo_responde`: o respx SUBSTITUI a rota no lugar
+    # (mantendo a posição antes do curinga) em vez de acrescentar outra — é o que deixa
+    # este 404 valer sem que o curinga de `/plants/porto-ferreira*` o engula.
+    respx.mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(404, json={"detail": "sumiu"})
 
     v = await sonda.varrer(db, Produto.MEUWATT)
 
@@ -213,3 +219,151 @@ def test_o_catalogo_cobre_o_que_os_clientes_chamam():
         for rota in catalogo:
             raiz = rota.caminho.split("{")[0].rstrip("/")
             assert raiz in fonte, f"{rota.caminho} não aparece em {modulo.__name__}"
+
+
+# ----------------------------------------------------------------- o sentido inverso
+#
+# O teste acima confere catálogo → cliente e passa por PREFIXO: `/api/v1/meuacesso/tasks`
+# casa com o fonte mesmo quando o cliente já chama `/tasks/{id}/ficha`, `/tasks/{id}/
+# fotos/{fid}` e `/tasks/{id}/pdf/view` sem nenhuma delas constar. Foi assim que cinco
+# rotas do meuPlano e uma do meuWatt viveram meses fora da sonda com o alarme "verde".
+# Daí o inverso: todo caminho que o cliente monta tem de existir no catálogo.
+
+
+def _caminhos_do_cliente(modulo) -> set[str]:
+    """Os caminhos que o módulo monta, como MOLDES: `{...}` vira `{}`.
+
+    Lidos da árvore sintática, não do texto: string constante que começa com `/` e
+    f-string que começa com `/` ou com `{self.base_url}/`. Docstrings e comentários não
+    entram — nenhum começa com barra —, então um exemplo citado numa explicação não vira
+    falso positivo.
+    """
+    import ast
+    import inspect
+    import re
+
+    def molde(no: ast.AST) -> str | None:
+        if isinstance(no, ast.Constant) and isinstance(no.value, str):
+            return no.value
+        if isinstance(no, ast.JoinedStr):
+            partes = []
+            for pedaco in no.values:
+                if isinstance(pedaco, ast.Constant):
+                    partes.append(str(pedaco.value))
+                else:
+                    partes.append("{}")
+            return "".join(partes)
+        return None
+
+    achados: set[str] = set()
+
+    def visitar(no: ast.AST) -> None:
+        texto = molde(no)
+        if texto is not None:
+            if texto.startswith("{}/"):
+                texto = texto[2:]
+            if re.match(r"^/[a-z]", texto):
+                achados.add(re.sub(r"\{[^}]*\}", "{}", texto))
+            # Uma f-string é um caminho só: descer nos pedaços dela renderia "/alerts"
+            # e "/slots/" soltos, que não são rota nenhuma.
+            return
+        for filho in ast.iter_child_nodes(no):
+            visitar(filho)
+
+    visitar(ast.parse(inspect.getsource(modulo)))
+    return achados
+
+
+def _moldes_do_catalogo(catalogo) -> set[str]:
+    import re
+
+    return {re.sub(r"\{[^}]*\}", "{}", r.caminho) for r in catalogo}
+
+
+def _fora_do_catalogo(modulo, catalogo) -> set[str]:
+    return _caminhos_do_cliente(modulo) - _moldes_do_catalogo(catalogo)
+
+
+def test_todo_caminho_do_cliente_esta_no_catalogo():
+    """Cliente → catálogo, molde a molde. Uma rota nova no cliente sem linha aqui falha
+    na hora, com o caminho escrito — não meses depois, na tela do cliente."""
+    from app.clients import meuplano, meuwatt
+
+    assert _fora_do_catalogo(meuwatt, sonda.MEUWATT) == set()
+    assert _fora_do_catalogo(meuplano, sonda.MEUPLANO) == set()
+
+
+def test_o_inverso_reprova_quando_uma_rota_some_do_catalogo():
+    """A prova de que o teste acima pega o esquecimento: tirar UMA linha do catálogo faz
+    exatamente o molde dela aparecer como fora."""
+    from app.clients import meuplano
+
+    alvo = next(r for r in sonda.MEUPLANO if r.chave == "mp.tarefa_ficha")
+    sem_ela = [r for r in sonda.MEUPLANO if r is not alvo]
+
+    assert _fora_do_catalogo(meuplano, sem_ela) == {"/api/v1/meuacesso/tasks/{}/ficha"}
+
+
+# ── o cronograma do cliente na sonda ────────────────────────────────────────
+
+MP_BASE = "https://api.meuplano.test"
+MP = "mp_pat_1xNq7BRe4VjtKjjVeAKiQDOPhoccF47X00gaAL"
+
+
+@pytest.fixture
+def meuplano_conectado(db):
+    linha = Integracao(
+        produto=Produto.MEUPLANO,
+        base_url=MP_BASE,
+        token_cifrado=cripto.cifrar(MP),
+        token_prefixo="mp_pat_1xNq",
+        ativa=True,
+    )
+    db.add(linha)
+    db.commit()
+    return linha
+
+
+@respx.mock
+async def test_o_cronograma_sondado_e_o_do_contrato_consolidado(db, meuplano_conectado):
+    """A rota de cliente responde 404 para contrato só em rascunho. A sonda tem de escolher
+    um contrato COM versão consolidada — senão o vermelho seria culpa da sonda, não do
+    produto. Aqui o primeiro contrato da lista é rascunho de propósito."""
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(
+        200, json=[{"id": 7, "name": "Porto Ferreira"}]
+    )
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/contratos").respond(
+        200,
+        json=[
+            {"id": 30, "numero": 300, "versao_consolidada": None},
+            {"id": 20, "numero": 200, "versao_consolidada": 2},
+        ],
+    )
+    cronograma = respx.mock.get(
+        f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/cronograma"
+    ).respond(200, json={"status": "CONSOLIDATED", "rows": []})
+    # o resto do catálogo responde vazio — registrado por ÚLTIMO: o respx casa na ordem
+    respx.mock.route(host="api.meuplano.test").respond(200, json={})
+
+    v = await sonda.varrer(db, Produto.MEUPLANO)
+
+    r = next(r for r in v.rotas if r.chave == "mp.cronograma")
+    assert r.situacao == "ok", r.detalhe
+    assert cronograma.calls.last.request.url.params["container_id"] == "20"
+    # o PDF não é sondado, mas o caminho declarado já é o da visão do cliente
+    pdf = next(r for r in v.rotas if r.chave == "mp.pdf_cronograma")
+    assert pdf.situacao == "nao_sondada" and "visao-cliente" in pdf.caminho
+
+
+@respx.mock
+async def test_sem_contrato_consolidado_o_cronograma_fica_pulado(db, meuplano_conectado):
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/contratos").respond(
+        200, json=[{"id": 30, "numero": 300, "versao_consolidada": None}]
+    )
+    respx.mock.route(host="api.meuplano.test").respond(200, json={})
+
+    v = await sonda.varrer(db, Produto.MEUPLANO)
+
+    r = next(r for r in v.rotas if r.chave == "mp.cronograma")
+    assert r.situacao == "pulada" and "vc_container_id" in (r.detalhe or "")

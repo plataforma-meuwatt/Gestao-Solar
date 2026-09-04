@@ -91,6 +91,9 @@ export function Diagnostico() {
 
           <Bloco titulo="meuWatt — geração" bloco={diag.meuwatt} />
           <Bloco titulo="meuPlano — manutenção" bloco={diag.meuplano} />
+          {diag.manutencao ? (
+            <Bloco titulo="Portal do cliente — cronograma do contrato" bloco={diag.manutencao} />
+          ) : null}
         </div>
       ) : null}
     </Pagina>

@@ -63,3 +63,95 @@ def test_cifra_com_chave_trocada_falha_alto(monkeypatch):
     monkeypatch.setattr(cripto, "_fernet", lambda: Fernet(Fernet.generate_key()))
     with pytest.raises(cripto.SegredoInvalido):
         cripto.decifrar(cifrado)
+
+
+# ── os dois portões não se confundem ──────────────────────────────────────────
+#
+# A promessa "um token do app não abre o painel, e vice-versa" era cumprida pela metade:
+# `gestor_atual` recusava o token do cliente, mas `usuario_atual` lia só o `sub` e deixava
+# o token do painel entrar em `/api/v1/*` em nome do gestor. Com o portal do cliente e o
+# painel em domínios separados, uma sessão não pode valer nos dois.
+
+
+@pytest.fixture
+def cliente_http(db):
+    from fastapi.testclient import TestClient
+
+    from app.core.db import get_db
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def dono(db):
+    from app.models.user import Perfil, User
+
+    u = User(
+        apelido="renan.marquezini",
+        email="renan@exemplo.com.br",
+        nome="Renan",
+        perfil=Perfil.CLIENTE,
+        senha_hash=gerar_hash_senha("cliente-1234"),
+    )
+    db.add(u)
+    db.commit()
+    return u
+
+
+def _com(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_token_de_painel_nao_abre_rota_de_cliente(cliente_http, administrador):
+    """O caso que estava aberto. O gestor, com a sessão do painel colada, tomava 200 em
+    `/api/v1/auth/eu` — e, se tivesse usina concedida, veria a usina pelo portal."""
+    from app.core.security import criar_token_painel
+
+    token, _ = criar_token_painel(administrador.id)
+
+    r = cliente_http.get("/api/v1/auth/eu", headers=_com(token))
+
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Esta sessão é do painel do gestor"
+
+
+def test_token_de_cliente_abre_rota_de_cliente(cliente_http, dono):
+    from app.core.security import criar_token
+
+    token, _ = criar_token(dono.id)
+
+    r = cliente_http.get("/api/v1/auth/eu", headers=_com(token))
+
+    assert r.status_code == 200
+    assert r.json()["apelido"] == "renan.marquezini"
+
+
+def test_token_de_cliente_segue_sem_abrir_o_painel(cliente_http, dono):
+    """A metade que já valia continua valendo: fechar um lado não pode abrir o outro."""
+    from app.core.security import criar_token
+
+    token, _ = criar_token(dono.id)
+
+    assert cliente_http.get("/api/painel/usinas", headers=_com(token)).status_code == 403
+
+
+def test_qualquer_escopo_desconhecido_e_recusado_pelo_cliente(cliente_http, dono):
+    """A cerca testa a PRESENÇA da claim, não o valor `painel`: um escopo inventado no
+    futuro nasce recusado, em vez de entrar por omissão."""
+    from jose import jwt
+
+    from app.core.config import get_settings
+    from app.core.security import ALGORITMO
+
+    token = jwt.encode(
+        {"sub": str(dono.id), "escopo": "novo-portao"},
+        get_settings().gs_jwt_secret,
+        algorithm=ALGORITMO,
+    )
+
+    assert cliente_http.get("/api/v1/auth/eu", headers=_com(token)).status_code == 401

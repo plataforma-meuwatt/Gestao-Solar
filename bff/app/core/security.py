@@ -78,6 +78,16 @@ def usuario_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
+    """Guarda do cliente (app e portal). Só aceita a sessão emitida por `criar_token`.
+
+    A promessa "um token do app não abre o painel, e vice-versa" era cumprida pela metade:
+    `gestor_atual` recusava o token do cliente, mas esta função lia só o `sub` e deixava um
+    token de painel entrar em `/api/v1/*` em nome do gestor. Passou despercebido enquanto
+    o gestor não tinha usina concedida — a lista vinha vazia e ninguém reclamava. Com o
+    portal do cliente e o painel em domínios separados (app.gestao.solar × adm.gestao.solar),
+    uma sessão não pode valer nos dois: quem cola o token do painel aqui recebe 401, e o
+    portal manda a pessoa entrar com a conta de cliente.
+    """
     if cred is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Não autenticado")
     try:
@@ -87,6 +97,14 @@ def usuario_atual(
         user_id = int(dados["sub"])
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
+
+    # Qualquer `escopo` no JWT é sessão de outro portão — hoje só existe `painel`, e o
+    # teste é pela PRESENÇA da claim de propósito: um escopo novo no futuro nasce recusado
+    # aqui, em vez de entrar por omissão.
+    if "escopo" in dados:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Esta sessão é do painel do gestor"
+        )
 
     usuario = db.get(User, user_id)
     if usuario is None or not usuario.ativo:

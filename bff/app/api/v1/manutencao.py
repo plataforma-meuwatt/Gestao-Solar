@@ -68,8 +68,14 @@ class ManutencaoOut(BaseModel):
     aviso: str | None = None
 
 
-def _erro_do_upstream(exc: Exception, contexto: str) -> HTTPException:
-    """Traduz uma falha do meuPlano preservando o QUE aconteceu.
+def _erro_do_upstream(
+    exc: Exception, contexto: str, produto: str = "meuPlano"
+) -> HTTPException:
+    """Traduz uma falha do upstream preservando o QUE aconteceu.
+
+    `produto` nomeia a ponte na frase. Nasceu quando `plants.py` (meuWatt) passou a usar
+    a mesma régua: sem ele, uma queda do meuWatt chegaria ao portal como "o meuPlano
+    respondeu 500", apontando o dedo para o produto errado.
 
     O padrão antigo — `except Exception` e `HTTPException(502, ...)` — achatava tudo num só
     número. O dono viu o resultado disso em 04/09/2026: um PDF que o upstream recusava por
@@ -91,12 +97,12 @@ def _erro_do_upstream(exc: Exception, contexto: str) -> HTTPException:
         status = exc.response.status_code
         detalhe = _detalhe_da_resposta(exc.response)
         if status in (403, 404, 413):
-            return HTTPException(status, detalhe or f"{contexto}: o meuPlano respondeu {status}.")
+            return HTTPException(status, detalhe or f"{contexto}: o {produto} respondeu {status}.")
         if status == 401:
-            return HTTPException(502, f"{contexto}: a ponte com o meuPlano perdeu a sessão.")
-        return HTTPException(502, f"{contexto}: {detalhe or f'o meuPlano respondeu {status}'}.")
+            return HTTPException(502, f"{contexto}: a ponte com o {produto} perdeu a sessão.")
+        return HTTPException(502, f"{contexto}: {detalhe or f'o {produto} respondeu {status}'}.")
     if isinstance(exc, httpx.TimeoutException):
-        return HTTPException(504, f"{contexto}: o meuPlano demorou demais para responder.")
+        return HTTPException(504, f"{contexto}: o {produto} demorou demais para responder.")
     return HTTPException(502, f"{contexto}: {exc}")
 
 
@@ -200,7 +206,10 @@ async def manutencao_atendida(
     )
     ordens = [*datadas, *(x for x in ordens if x.fechada_em is None)]
 
-    saida.total = len(ordens)
+    # `total` nulo quando NENHUMA usina respondeu — é o contrato declarado no campo, e a
+    # Visão geral do portal depende dele: com `0` aqui, uma usina com o meuPlano caído
+    # saía como "0 OS em andamento", que se lê como "nada acontecendo".
+    saida.total = len(ordens) if len(falharam) < len(com_manutencao) else None
     saida.ordens = ordens[: max(1, min(limite, 200))]
 
     if falharam:
@@ -442,11 +451,39 @@ class LinhaCronogramaOut(BaseModel):
     meses: list[CelulaOut] = []
 
 
+class ContratoOut(BaseModel):
+    """Um contrato de O&M da usina — o que o seletor de contrato do portal lista."""
+
+    #: id do container no meuPlano. É o `contrato_id` que as rotas de cronograma e
+    #: relatório aceitam; o número (`numero`) é só rótulo.
+    id: int
+    numero: int | None = None
+    titulo: str | None = None
+    inicio: date | None = None
+    fim: date | None = None
+    #: Nulo quando o meuPlano não soube dizer (contrato sem vigência cadastrada).
+    vigente: bool | None = None
+    #: Versão do cronograma CONSOLIDADO. Nulo = só rascunho, ou nenhum — nos dois casos
+    #: o cliente não tem cronograma para ver neste contrato.
+    versao_cronograma: int | None = None
+
+
+class ContratosOut(BaseModel):
+    usina: str
+    usina_id: int
+    contratos: list[ContratoOut] = []
+    aviso: str | None = None
+
+
 class CronogramaOut(BaseModel):
     usina: str
     usina_id: int
-    #: DRAFT | CONSOLIDATED. Só o consolidado é o combinado com o cliente; um DRAFT na
-    #: tela do dono seria mostrar rascunho de negociação como se fosse contrato.
+    #: O contrato de onde a matriz veio (id do container no meuPlano). Vai junto para o
+    #: seletor da tela saber qual está marcado quando o cliente não escolheu nenhum.
+    contrato_id: int | None = None
+    contrato: str | None = None
+    #: Só CONSOLIDATED chega aqui — a rota de cliente do meuPlano não serve rascunho.
+    #: Nulo = a equipe ainda não publicou o cronograma deste contrato.
     status: str | None = None
     versao: int | None = None
     #: 12 × "YYYY-MM", em ordem. O mês 1 é a âncora do contrato, não janeiro.
@@ -663,7 +700,10 @@ async def listar_ordens(
     saida.em_andamento = next(
         (o for o in ordens if (o.status or "").strip().upper() in EM_CURSO), None
     )
-    saida.total = len(ordens)
+    # `total` nulo quando NENHUMA usina respondeu — é o contrato declarado no campo, e a
+    # Visão geral do portal depende dele: com `0` aqui, uma usina com o meuPlano caído
+    # saía como "0 OS em andamento", que se lê como "nada acontecendo".
+    saida.total = len(ordens) if len(falharam) < len(com_manutencao) else None
     saida.ordens = ordens[: max(1, min(limite, 300))]
 
     if falharam:
@@ -1105,17 +1145,127 @@ async def tarefas_da_celula(
     return [_tarefa_out(t) for t in minhas]
 
 
-@router.get("/manutencao/cronograma/pdf")
-async def pdf_do_cronograma(
+# ── contratos ───────────────────────────────────────────────────────────────
+#
+# O cronograma existe sempre DENTRO de um contrato. Até aqui este BFF escolhia o contrato
+# sozinho — `contratos()[0]`, o primeiro que o banco devolvesse — e, pior, lia a rota
+# interna do meuPlano, que cria o rascunho v1 ao ser lida e devolve DRAFT. O portal do
+# cliente precisa do contrário: a lista para ele escolher, e só a versão CONSOLIDADA.
+
+#: Frase única para "consolidado não existe". A tela não pode dizer "nada foi feito":
+#: sem consolidação não há o que cobrar — ainda.
+NAO_PUBLICADO = "A equipe ainda não publicou o cronograma deste contrato."
+
+
+def _bool(valor: Any) -> bool | None:
+    return valor if isinstance(valor, bool) else None
+
+
+def _contrato_out(c: dict[str, Any]) -> ContratoOut | None:
+    ident = _inteiro(c.get("id"))
+    if ident is None:
+        return None
+    return ContratoOut(
+        id=ident,
+        numero=_inteiro(c.get("numero")),
+        titulo=_texto(c.get("title")) or _texto(c.get("titulo")),
+        inicio=_data(c.get("start_date")),
+        fim=_data(c.get("end_date")),
+        vigente=_bool(c.get("vigente")),
+        versao_cronograma=_inteiro(c.get("versao_consolidada")),
+    )
+
+
+def _contrato_padrao(contratos: list[ContratoOut]) -> ContratoOut | None:
+    """Qual contrato mostrar quando o cliente não escolheu.
+
+    A régua, em ordem: só entre os que TÊM cronograma consolidado (um sem isso não tem o
+    que mostrar); o vigente antes do encerrado; o de início mais recente; e o id maior
+    desempata. Sem nenhum consolidado, vale o primeiro pela mesma ordem sem o filtro —
+    para a resposta carregar `contrato_id` e o aviso de não publicado apontar um contrato
+    real, e não "a usina".
+    """
+    def chave(c: ContratoOut) -> tuple[int, date, int]:
+        return (1 if c.vigente else 0, c.inicio or date.min, c.id)
+
+    consolidados = [c for c in contratos if c.versao_cronograma is not None]
+    fonte = consolidados or contratos
+    return max(fonte, key=chave) if fonte else None
+
+
+async def _contratos_da_usina(cliente: Any, link: PlantLink) -> list[ContratoOut]:
+    brutos = await cliente.vc_contratos(link.mp_usina_id)
+    saida = [_contrato_out(c) for c in brutos if isinstance(c, dict)]
+    return [c for c in saida if c is not None]
+
+
+async def _resolver_contrato(
+    cliente: Any, link: PlantLink, contrato_id: int | None
+) -> tuple[ContratoOut | None, str | None]:
+    """`(contrato, aviso)`. Com `contrato_id`, confere que ele é DESTA usina antes de
+    perguntar qualquer coisa ao meuPlano — o id chega do cliente, e o 404 do upstream para
+    "contrato de outra usina" é o mesmo 404 de "sem consolidação": sem esta conferência os
+    dois virariam a frase de não publicado, e trocar o id na URL passaria em silêncio."""
+    contratos = await _contratos_da_usina(cliente, link)
+    if contrato_id is not None:
+        for c in contratos:
+            if c.id == contrato_id:
+                return c, None
+        raise HTTPException(404, "Contrato não encontrado nesta usina.")
+    if not contratos:
+        return None, "Esta usina não tem contrato de manutenção no meuPlano."
+    return _contrato_padrao(contratos), None
+
+
+@router.get("/manutencao/contratos", response_model=ContratosOut)
+async def listar_contratos(
     usina_id: int,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
+) -> ContratosOut:
+    """Os contratos de O&M da usina, com a versão consolidada do cronograma de cada um —
+    é o seletor de contrato do Cronograma e do Relatório."""
+    link = _link_do_escopo(db, usuario, usina_id)
+    saida = ContratosOut(usina=link.nome, usina_id=link.id)
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+        saida.contratos = await _contratos_da_usina(cliente, link)
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_upstream(exc, "Não deu para ler os contratos desta usina") from exc
+    if not saida.contratos:
+        saida.aviso = "Esta usina não tem contrato de manutenção no meuPlano."
+    return saida
+
+
+@router.get("/manutencao/cronograma/pdf")
+async def pdf_do_cronograma(
+    usina_id: int,
+    contrato_id: int | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
 ) -> Response:
-    """O cronograma anual em PDF, com a letra do estado em cada célula."""
+    """O cronograma anual CONSOLIDADO em PDF, com a letra do estado em cada célula.
+
+    `contrato_id` é opcional pelo mesmo motivo de `cronograma_da_usina`: o app em campo
+    chama só com `usina_id`, e a regra do contrato padrão vale para os dois.
+    """
     link = _link_do_escopo(db, usuario, usina_id)
     try:
         cliente = await integracoes.cliente_meuplano(db)
-        conteudo = await cliente.pdf_cronograma(link.mp_usina_id)
+        contrato, aviso = await _resolver_contrato(cliente, link, contrato_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_upstream(exc, "Não deu para ler os contratos desta usina") from exc
+    if contrato is None:
+        raise HTTPException(404, aviso or NAO_PUBLICADO)
+    try:
+        conteudo = await cliente.vc_cronograma_pdf(link.mp_usina_id, contrato.id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            # Um PDF não tem como avisar por dentro: aqui o "não publicado" É a resposta.
+            raise HTTPException(404, NAO_PUBLICADO) from exc
+        raise _erro_do_upstream(exc, "Não deu para gerar o cronograma em PDF") from exc
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para gerar o cronograma em PDF") from exc
     if not conteudo:
@@ -1135,22 +1285,53 @@ ATRASADO = {"vermelho"}
 @router.get("/manutencao/cronograma", response_model=CronogramaOut)
 async def cronograma_da_usina(
     usina_id: int,
+    contrato_id: int | None = None,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
 ) -> CronogramaOut:
-    """O cronograma de manutenção do contrato, mês a mês.
+    """O cronograma CONSOLIDADO do contrato, mês a mês.
 
     Repassa `cell_status` como vem do meuPlano. Aquela cor é conformidade calculada
     contra o histórico do ATIVO, não contra tarefas — recalcular aqui produziria uma
     segunda resposta para a mesma pergunta, e o dono veria números diferentes nos dois
     produtos sem saber em qual acreditar.
+
+    `contrato_id` é OPCIONAL de propósito: o app em campo chama só com `usina_id` e não
+    recebe OTA junto com o deploy — ausente, vale o contrato com versão consolidada mais
+    recente (`_contrato_padrao`). Contrato só com rascunho responde 200 com a matriz
+    vazia, `status` nulo e a frase de não publicado: a tela precisa distinguir "não há
+    combinado ainda" de "combinado e nada feito", e um 404 aqui derrubaria a tela inteira
+    do cliente por um estado que é normal no início de um contrato.
     """
     link = _link_do_escopo(db, usuario, usina_id)
     saida = CronogramaOut(usina=link.nome, usina_id=link.id)
 
     try:
         cliente = await integracoes.cliente_meuplano(db)
-        dados = await cliente.cronograma(link.mp_usina_id)
+        contrato, aviso = await _resolver_contrato(cliente, link, contrato_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"Não deu para buscar os contratos: {exc}"
+        return saida
+    if contrato is None:
+        saida.aviso = aviso
+        return saida
+    saida.contrato_id = contrato.id
+    saida.contrato = contrato.titulo or (
+        f"Contrato {contrato.numero}" if contrato.numero is not None else None
+    )
+
+    try:
+        dados = await cliente.vc_cronograma(link.mp_usina_id, contrato.id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            # O contrato é desta usina (conferido acima); 404 aqui é só "sem consolidado".
+            saida.aviso = NAO_PUBLICADO
+            return saida
+        motivo = _detalhe_da_resposta(exc.response) or str(exc)
+        saida.aviso = f"Não deu para buscar o cronograma: {motivo}"
+        return saida
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Não deu para buscar o cronograma: {exc}"
         return saida
@@ -1211,8 +1392,9 @@ async def cronograma_da_usina(
     saida.feitos_ano = sum(l.feitos for l in linhas)
 
     if not linhas:
-        saida.aviso = "O contrato desta usina ainda não tem cronograma."
+        saida.aviso = "O cronograma consolidado deste contrato não tem nenhuma atividade."
     elif (saida.status or "").strip().upper() == "DRAFT":
-        # Rascunho de negociação não é o combinado. A tela mostra, mas avisa.
+        # Não deveria acontecer — a rota de cliente do meuPlano só serve consolidado. Se um
+        # dia servir, a tela avisa em vez de vender rascunho como contrato.
         saida.aviso = "Este cronograma ainda é um rascunho, não a versão consolidada."
     return saida
