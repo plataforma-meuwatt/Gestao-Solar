@@ -1,0 +1,265 @@
+/**
+ * O que este teste guarda são as leituras que, desenhadas errado, acusam a equipe de campo de
+ * algo que ela não fez:
+ *
+ * 1. **`itens = null` (a busca das tarefas falhou) NÃO pode virar "esta ordem não tem
+ *    tarefas".** É o erro mais caro desta tela: uma falha de rede passaria a dizer, na frente
+ *    do diretor, que o serviço foi cobrado sem nada executado.
+ * 2. **Parecer tem três cores.** Reprovado é vermelho, ressalva é âmbar, aprovado é verde;
+ *    fundir ressalva com reprovação (ou com aprovação) muda o que o laudo afirma.
+ * 3. **404 é "não é sua", não é falha.** O BFF responde 404 e não 403 de propósito, e a tela
+ *    tem de oferecer o caminho de volta em vez de "Tentar de novo" numa porta que não abre.
+ * 4. **Duração ausente é "—", nunca zero** — e o PDF sai por botão, nunca por link com o
+ *    endereço da API (token em URL entra em log).
+ */
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { api } from '@/lib/api'
+import { identificarCache, limparCache } from '@/lib/leitura'
+import type { Ordem, Tarefa } from '@/features/ordem/api'
+import Pagina from '@/features/ordem/Pagina'
+
+function tarefa(parcial: Partial<Tarefa>): Tarefa {
+  return {
+    id: 1,
+    nome: 'Termografia',
+    grupo: 'Transformador',
+    equipamento: 'UFV / Subestação / TR-01',
+    status: 'APROVADA',
+    situacao: 'Executada e verificada',
+    feita: true,
+    natureza: 'INSPECAO',
+    parecer: null,
+    parecer_tom: null,
+    os_id: 55,
+    mes_contratual: '2026-08',
+    executada_em: '2026-08-12',
+    descricao: null,
+    observacoes: null,
+    preenchimento: 100,
+    ...parcial,
+  }
+}
+
+function resposta(parcial: Partial<Ordem>): Ordem {
+  return {
+    id: 55,
+    usina: 'UFV Porto Ferreira',
+    usina_id: 7,
+    numero: 1005,
+    objetivo: 'Preventiva trimestral',
+    classificacao: 'PREVENTIVA',
+    status: 'APROVADA',
+    situacao: 'Concluída',
+    tom: 'ok',
+    tecnico: 'Fulano de Tal',
+    tarefas: 2,
+    tarefas_feitas: 2,
+    agendada_para: '2026-08-12',
+    concluida_em: '2026-08-12',
+    fechada_em: null,
+    aprovada_em: null,
+    execucao_min: 180,
+    resumo: null,
+    itens: [tarefa({})],
+    ...parcial,
+  }
+}
+
+function montar() {
+  const cliente = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  return render(
+    <QueryClientProvider client={cliente}>
+      <MemoryRouter initialEntries={['/usinas/7/ordens/55']}>
+        <Routes>
+          <Route path="/usinas/:id/ordens/:osId" element={<Pagina />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+/** Um erro do axios como o interceptor o entrega — é dele que sai a frase do servidor. */
+function erroDoServidor(status: number, detail: string) {
+  return Object.assign(new Error(`HTTP ${status}`), {
+    isAxiosError: true,
+    response: { status, data: { detail } },
+  })
+}
+
+describe('tela de uma ordem de serviço', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    identificarCache(7)
+  })
+
+  afterEach(() => {
+    // Sem `globals` no vitest a árvore renderizada não se limpa sozinha, e uma asserção de
+    // AUSÊNCIA passaria a falhar por um texto que é do caso anterior.
+    cleanup()
+    vi.restoreAllMocks()
+    limparCache()
+  })
+
+  it('pergunta ao BFF a OS da URL', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ data: resposta({}) })
+    montar()
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    expect(String(get.mock.calls[0][0])).toBe('/api/v1/manutencao/ordens/55')
+  })
+
+  it('mostra o cabeçalho com a frase de situação do servidor, sem traduzir de novo', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({ status: 'FECHADA', situacao: 'Em verificação', tom: 'tempoRuim' }),
+    })
+    montar()
+
+    expect(await screen.findByText('Preventiva trimestral')).toBeTruthy()
+    expect(screen.getByText('Em verificação')).toBeTruthy()
+    expect(screen.getByText('Preventiva')).toBeTruthy()
+    // Número de contrato é identificador: sem separador de milhar ("nº 1.005" seria outro).
+    expect(screen.getByText('nº 1005')).toBeTruthy()
+    expect(screen.getByText('3 h')).toBeTruthy()
+    expect(screen.queryByText('FECHADA')).toBeNull()
+  })
+
+  it('sem duração e sem contagem, escreve "—" — nunca zero', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({ execucao_min: null, tarefas: null, tarefas_feitas: null, tecnico: null }),
+    })
+    const { container } = montar()
+
+    await screen.findByText('Preventiva trimestral')
+    const travessoes = [...container.querySelectorAll('dd')].filter((d) => d.textContent === '—')
+    // Técnico, execução, verificada e concluída-sem-data: nenhum deles vira 0.
+    expect(travessoes.length).toBeGreaterThan(0)
+    expect(container.textContent).not.toContain('0 de 0')
+    expect(container.textContent).not.toContain('0 min')
+  })
+
+  it('itens NULO diz que não deu para buscar; itens VAZIO diz que a OS não tem tarefa', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: resposta({ itens: null }) })
+    montar()
+    expect(
+      await screen.findByText(/Não deu para carregar as tarefas desta ordem/),
+    ).toBeTruthy()
+    expect(screen.queryByText('Esta ordem não tem tarefas registradas.')).toBeNull()
+
+    cleanup()
+    limparCache()
+    vi.restoreAllMocks()
+
+    vi.spyOn(api, 'get').mockResolvedValue({ data: resposta({ itens: [], tarefas: 0, tarefas_feitas: 0 }) })
+    montar()
+    expect(await screen.findByText('Esta ordem não tem tarefas registradas.')).toBeTruthy()
+    expect(screen.queryByText(/Não deu para carregar as tarefas/)).toBeNull()
+  })
+
+  it('agrupa por seção, marca a feita e mostra a situação só na que ainda não foi', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({
+        tarefas: 2,
+        tarefas_feitas: 1,
+        itens: [
+          tarefa({ id: 1, nome: 'Termografia', grupo: 'Transformador', feita: true }),
+          tarefa({
+            id: 2,
+            nome: 'Limpeza dos módulos',
+            grupo: 'Módulos',
+            feita: false,
+            status: 'PROGRAMADA',
+            situacao: 'Programada',
+            parecer: null,
+          }),
+        ],
+      }),
+    })
+    montar()
+
+    expect(await screen.findByText('Transformador')).toBeTruthy()
+    expect(screen.getByText('Módulos')).toBeTruthy()
+    expect(screen.getByText('Programada')).toBeTruthy()
+    // "Executada e verificada" não aparece na tarefa com ✓: o próprio ✓ já disse isso.
+    expect(screen.queryByText('Executada e verificada')).toBeNull()
+    expect(screen.getByText('1')).toBeTruthy() // contagem "1 de 2"
+  })
+
+  it('a cor do parecer é a que o servidor mandou, não uma deduzida da frase', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({
+        itens: [
+          tarefa({ id: 1, nome: 'Ensaio A', parecer: 'Reprovado', parecer_tom: 'parado' }),
+          tarefa({
+            id: 2,
+            nome: 'Ensaio B',
+            parecer: 'Aprovado com ressalva',
+            parecer_tom: 'alerta',
+          }),
+          tarefa({ id: 3, nome: 'Ensaio C', parecer: 'Aprovado', parecer_tom: 'ok' }),
+        ],
+      }),
+    })
+    montar()
+
+    expect((await screen.findByText('Reprovado')).className).toContain('text-tom-parado')
+    expect(screen.getByText('Aprovado com ressalva').className).toContain('text-tom-alerta')
+    expect(screen.getByText('Aprovado').className).toContain('text-tom-ok')
+  })
+
+  it('parecer sem cor conhecida sai neutro — nunca verde', async () => {
+    // O defeito que a mudança consertou: esta tela tinha `return 'ok'` como fallback da régua
+    // local, então um veredito novo do meuPlano chegaria ao cliente pintado de "aprovado" —
+    // sobre uma ficha que ninguém tinha lido. Agora quem não sabe a cor não inventa uma.
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({
+        itens: [tarefa({ id: 9, nome: 'Ensaio Z', parecer: 'Sob análise', parecer_tom: null })],
+      }),
+    })
+    montar()
+
+    const selo = await screen.findByText('Sob análise')
+    expect(selo.className).toContain('text-tom-semDados')
+    expect(selo.className).not.toContain('text-tom-ok')
+  })
+
+  it('OS de outra usina (404) vira estado vazio com o caminho de volta', async () => {
+    vi.spyOn(api, 'get').mockRejectedValue(
+      erroDoServidor(404, 'Ordem de serviço não encontrada.'),
+    )
+    montar()
+
+    // `useLeitura` tenta de novo uma vez antes de desistir (é o desenho dela); a espera aqui
+    // cobre esse segundo de repique, senão o teste julga a tela ainda no esqueleto.
+    expect(await screen.findByText('Ordem de serviço não encontrada', {}, { timeout: 5000 })).toBeTruthy()
+    const volta = screen.getByText('Ver as ordens de serviço') as HTMLAnchorElement
+    expect(volta.getAttribute('href')).toBe('/usinas/7/ordens')
+    // "Tentar de novo" é para rede caída; aqui insistir não abriria nada.
+    expect(screen.queryByText('Tentar de novo')).toBeNull()
+  })
+
+  it('rede caída e sem cache vira erro com "Tentar de novo", não "não encontrada"', async () => {
+    vi.spyOn(api, 'get').mockRejectedValue(
+      erroDoServidor(502, 'Não deu para conferir a ordem de serviço: meuPlano indisponível.'),
+    )
+    montar()
+
+    expect(await screen.findByText('Tentar de novo', {}, { timeout: 5000 })).toBeTruthy()
+    expect(screen.queryByText('Ordem de serviço não encontrada')).toBeNull()
+  })
+
+  it('o PDF sai por botão — nunca por link com o endereço da API', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: resposta({}) })
+    const { container } = montar()
+
+    expect(await screen.findByText('Abrir a OS em PDF')).toBeTruthy()
+    expect(screen.getAllByText('Ficha em PDF').length).toBeGreaterThan(0)
+    const comApi = [...container.querySelectorAll('a')].filter((a) =>
+      (a.getAttribute('href') ?? '').includes('/api/'),
+    )
+    expect(comApi.length).toBe(0)
+  })
+})

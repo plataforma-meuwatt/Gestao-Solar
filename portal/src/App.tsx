@@ -15,8 +15,11 @@
  * 3. **A raiz leva à Visão geral**, e um endereço desconhecido também — errar a URL não pode
  *    virar tela em branco.
  *
- * A renovação da sessão acontece no boot (`renovar`): o token vale 30 dias, e quem usa o
- * portal uma vez por semana o veria expirar sem ter feito nada de errado.
+ * No boot, duas coisas acontecem em silêncio: o perfil é revalidado contra o servidor
+ * (`hidratar` → `GET /auth/eu`) e o prazo da sessão é estendido quando está perto do fim
+ * (`renovar`). As duas importam — sem a primeira, uma senha provisória marcada pelo gestor só
+ * apareceria no próximo login; sem a segunda, o token de 30 dias venceria para quem abre o
+ * portal uma vez por mês.
  */
 
 import { Suspense, useEffect } from 'react'
@@ -32,7 +35,9 @@ import { useAuth } from '@/store/auth'
 const Entrar = lazyRetry(() => import('@/features/entrar/Pagina'))
 const Conta = lazyRetry(() => import('@/features/conta/Pagina'))
 const VisaoGeral = lazyRetry(() => import('@/features/visao-geral/Pagina'))
-const Energia = lazyRetry(() => import('@/features/energia/Pagina'))
+// A tela da usina responde "quanto gerei" — o rótulo no menu é "Energia", mas a pasta leva o
+// nome do assunto (`usina`), que é o que a rota `/usinas/:id` diz.
+const Usina = lazyRetry(() => import('@/features/usina/Pagina'))
 const Paradas = lazyRetry(() => import('@/features/paradas/Pagina'))
 const Cronograma = lazyRetry(() => import('@/features/cronograma/Pagina'))
 const Ordens = lazyRetry(() => import('@/features/ordens/Pagina'))
@@ -62,10 +67,12 @@ function Protegido({ children }: { children: React.ReactNode }) {
 
 export function App() {
   const renovar = useAuth((s) => s.renovar)
+  const hidratar = useAuth((s) => s.hidratar)
 
   useEffect(() => {
+    void hidratar()
     void renovar()
-  }, [renovar])
+  }, [hidratar, renovar])
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -83,7 +90,7 @@ export function App() {
             >
               <Route path="/" element={<VisaoGeral />} />
               <Route path="/conta" element={<Conta />} />
-              <Route path="/usinas/:id" element={<Energia />} />
+              <Route path="/usinas/:id" element={<Usina />} />
               <Route path="/usinas/:id/paradas" element={<Paradas />} />
               <Route path="/usinas/:id/cronograma" element={<Cronograma />} />
               <Route path="/usinas/:id/ordens" element={<Ordens />} />

@@ -41,7 +41,10 @@ export default {
         sans: ['Figtree', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['IBM Plex Mono', 'ui-monospace', 'Cascadia Mono', 'Menlo', 'monospace'],
       },
-      borderRadius: { card: '16px', campo: '12px' },
+      // Os raios de `app/src/theme/tokens.ts` (`raio`). `chip` e `barra` não são enfeite:
+      // `Selo` e `Barra` já os usavam e, sem a entrada aqui, o Tailwind não emite a classe —
+      // o selo saía quadrado e a barra de progresso, com a quina viva.
+      borderRadius: { card: '16px', campo: '12px', chip: '12px', barra: '3px' },
     },
   },
   // As classes de tom são montadas a partir do valor que vem do servidor; o Tailwind não

@@ -3,7 +3,7 @@
  *
  * Diferenças deliberadas em relação ao painel do gestor (`painel/src/lib/api.ts`):
  *
- * - **`baseURL` é a origem pura**, sem `/api/painel`. O portal consome as rotas de
+ * - **`baseURL` é a origem pura**, sem o prefixo do painel do gestor. O portal consome as rotas de
  *   cliente (`/api/v1/...`) e cada chamada escreve o caminho completo. Copiar o painel
  *   entregaria um site que loga no endpoint errado.
  * - **401 só desloga se a requisição realmente enviou um token.** O painel deslogava em

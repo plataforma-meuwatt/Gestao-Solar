@@ -221,11 +221,27 @@ export function CarregandoCartao({ linhas = 3 }: { linhas?: number }) {
  *
  * "Não há OS nesta usina" é uma afirmação; "não conseguimos ler" é outra. Misturar as duas
  * faz o cliente concluir que a equipe não trabalhou quando o que houve foi rede.
+ *
+ * `tom` existe porque nem todo vazio é neutro: "nenhuma parada no período" é uma BOA
+ * notícia, e sair na mesma cor apagada de "não deu para ler" desperdiça a única coisa que
+ * o cliente queria saber. Sem `tom` o cartão fica neutro, que é o certo para a maioria —
+ * pintar de verde um "nada encontrado" que ninguém pediu seria mentir na outra direção.
  */
-export function Vazio({ titulo, descricao, acao }: { titulo: string; descricao?: string; acao?: ReactNode }) {
+export function Vazio({
+  titulo,
+  descricao,
+  acao,
+  tom,
+}: {
+  titulo: string
+  descricao?: string
+  acao?: ReactNode
+  tom?: string
+}) {
+  const c = tom ? classesDoTom(tom) : null
   return (
-    <Cartao className="text-center">
-      <p className="text-sm font-medium text-corpo">{titulo}</p>
+    <Cartao className={c ? `text-center ${c.borda}` : 'text-center'}>
+      <p className={c ? `text-sm font-medium ${c.texto}` : 'text-sm font-medium text-corpo'}>{titulo}</p>
       {descricao ? <p className="mx-auto mt-1 max-w-md text-sm text-fraco">{descricao}</p> : null}
       {acao ? <div className="mt-4">{acao}</div> : null}
     </Cartao>
@@ -269,6 +285,122 @@ export function SeloOffline({ desde }: { desde: string }) {
     <Aviso tom="semDados">
       Sem conexão com o servidor — mostrando o que foi lido às <Num>{desde}</Num>.
     </Aviso>
+  )
+}
+
+/**
+ * A hora da última leitura boa — e, quando a rede caiu, a hora do que está na tela.
+ *
+ * Vive no rodapé e no canto dos cartões. É a diferença entre "o portal está mostrando o
+ * agora" e "o portal está mostrando o que deu para ler"; sem ela, as duas situações têm
+ * exatamente a mesma aparência.
+ */
+export function AtualizadoAs({ em, offlineDesde }: { em?: string; offlineDesde?: string }) {
+  if (offlineDesde) {
+    return (
+      <span className="text-xs text-tom-semDados">
+        sem conexão — dados de <Num>{offlineDesde}</Num>
+      </span>
+    )
+  }
+  if (!em) return null
+  return (
+    <span className="text-xs text-fraco">
+      atualizado às <Num>{em}</Num>
+    </span>
+  )
+}
+
+/**
+ * A faixa que chama o cliente para uma ação — parada em curso, prazo vencido, OS em
+ * execução.
+ *
+ * O texto vem do SERVIDOR (`atencao.titulo` / `atencao.detalhe`): quem sabe o que merece
+ * destaque é quem tem o dado inteiro, não a tela. Clicável quando há para onde ir; sem
+ * `aoAbrir` continua sendo um aviso legítimo, e não um botão morto.
+ */
+export function FaixaAtencao({
+  tom: valor = 'alerta',
+  titulo,
+  detalhe,
+  aoAbrir,
+}: {
+  tom?: Tom | string
+  titulo: string
+  detalhe?: ReactNode
+  aoAbrir?: () => void
+}) {
+  const c = classesDoTom(valor)
+  const conteudo = (
+    <>
+      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-chip ${c.fundo} border ${c.borda}`} />
+      <span className="min-w-0">
+        <span className={`block text-sm font-medium ${c.texto}`}>{titulo}</span>
+        {detalhe ? <span className="mt-0.5 block text-sm text-corpo">{detalhe}</span> : null}
+      </span>
+      {aoAbrir ? (
+        <span aria-hidden className="ml-auto self-center text-fraco">
+          ›
+        </span>
+      ) : null}
+    </>
+  )
+  const classe = `flex w-full items-start gap-3 rounded-card border px-4 py-3 text-left ${c.borda} ${c.fundo}`
+  return aoAbrir ? (
+    <button type="button" onClick={aoAbrir} className={`${classe} transition hover:brightness-125`}>
+      {conteudo}
+    </button>
+  ) : (
+    <div className={classe}>{conteudo}</div>
+  )
+}
+
+/**
+ * Linha de navegação com um valor à direita — "Pendências … 3 abertas ›".
+ *
+ * A seta só aparece quando há destino. Seta sem clique é a promessa que o portal não cumpre,
+ * e o cliente fica tentando abrir o que não abre.
+ */
+export function LinhaNavegacao({
+  titulo,
+  detalhe,
+  valor,
+  tomValor,
+  aoAbrir,
+}: {
+  titulo: string
+  detalhe?: ReactNode
+  valor?: ReactNode
+  tomValor?: Tom | string
+  aoAbrir?: () => void
+}) {
+  const cor = tomValor ? classesDoTom(tomValor).texto : 'text-corpo'
+  const conteudo = (
+    <>
+      <span className="min-w-0">
+        <span className="block truncate text-sm text-corpo">{titulo}</span>
+        {detalhe ? <span className="block truncate text-xs text-fraco">{detalhe}</span> : null}
+      </span>
+      <span className="ml-auto flex items-center gap-2">
+        {valor !== undefined && valor !== null ? (
+          <Num className={`text-sm ${cor}`}>{valor}</Num>
+        ) : null}
+        {aoAbrir ? (
+          <span aria-hidden className="text-fraco">
+            ›
+          </span>
+        ) : null}
+      </span>
+    </>
+  )
+  const classe =
+    'flex w-full items-center gap-3 border-b border-borda-fraca py-3 text-left last:border-0'
+  return aoAbrir ? (
+    <button type="button" onClick={aoAbrir} className={`${classe} hover:text-forte`}>
+      {conteudo}
+    </button>
+  ) : (
+    <div className={classe}>{conteudo}</div>
   )
 }
 
@@ -536,6 +668,96 @@ export function Barra({ pct, tom: valor = 'ok' }: { pct: number | null; tom?: To
   )
 }
 
+/* ------------------------------------------------------------------ modal */
+
+/**
+ * Caixa modal — o detalhe curto que interrompe de propósito (as tarefas de um mês do
+ * cronograma, por exemplo). Para o detalhe longo, use a `Gaveta`.
+ *
+ * Fecha no ESC e no clique fora, e **prende o foco** enquanto está aberta. O painel do
+ * gestor não faz isso, e a consequência é real: com Tab o foco escapa para os links de trás,
+ * e quem navega por teclado (ou por leitor de tela) fica "digitando" numa tela que não está
+ * vendo. O fundo vem do token `painel`, não de um hexadecimal solto.
+ */
+export function Modal({
+  titulo,
+  aberto,
+  aoFechar,
+  children,
+  largura = 'max-w-2xl',
+}: {
+  titulo: string
+  aberto: boolean
+  aoFechar: () => void
+  children: ReactNode
+  largura?: string
+}) {
+  const caixa = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!aberto) return
+    const antes = document.activeElement as HTMLElement | null
+
+    const foco = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        aoFechar()
+        return
+      }
+      if (e.key !== 'Tab' || !caixa.current) return
+      const alvos = caixa.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
+      if (alvos.length === 0) return
+      const primeiro = alvos[0]
+      const ultimo = alvos[alvos.length - 1]
+      if (e.shiftKey && document.activeElement === primeiro) {
+        e.preventDefault()
+        ultimo.focus()
+      } else if (!e.shiftKey && document.activeElement === ultimo) {
+        e.preventDefault()
+        primeiro.focus()
+      }
+    }
+
+    document.addEventListener('keydown', foco)
+    // O foco entra na caixa; ao fechar, volta para quem a abriu — senão a leitura recomeça
+    // do topo da página a cada vez.
+    caixa.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', foco)
+      antes?.focus?.()
+    }
+  }, [aberto, aoFechar])
+
+  if (!aberto) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto p-4 sm:p-8">
+      <button
+        type="button"
+        aria-label="Fechar"
+        onClick={aoFechar}
+        className="fixed inset-0 cursor-default bg-black/55"
+      />
+      <div
+        ref={caixa}
+        role="dialog"
+        aria-modal="true"
+        aria-label={titulo}
+        tabIndex={-1}
+        className={`relative w-full ${largura} rounded-card border border-borda-forte bg-painel shadow-xl outline-none`}
+      >
+        <header className="flex items-center justify-between gap-3 border-b border-borda px-5 py-4">
+          <h2 className="truncate text-base font-semibold text-forte">{titulo}</h2>
+          <Botao variante="discreto" onClick={aoFechar}>
+            Fechar
+          </Botao>
+        </header>
+        <div className="px-5 py-4">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ gaveta */
 
 /**
@@ -582,6 +804,56 @@ export function Gaveta({
         </header>
         <div className="flex-1 overflow-auto px-5 py-4">{children}</div>
       </aside>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ 4 estados */
+
+/**
+ * Os quatro estados de uma leitura, desenhados sempre do mesmo jeito.
+ *
+ * Toda tela do portal desenha carregando, vazio, erro e offline — a regra não é
+ * negociável, e repeti-la à mão em dez telas garante que uma delas esqueça o quarto. Aqui
+ * a `Leitura` entra e sai a tela certa:
+ *
+ * - sem nada na mão → esqueleto;
+ * - sem nada e com falha → erro com "Tentar de novo";
+ * - com cache e rede caída → o conteúdo, com o selo de offline em cima (nunca esconder o
+ *   dado velho: escondê-lo custaria a única informação que o cliente tem);
+ * - com dado → o conteúdo.
+ *
+ * `vazio` é opcional porque "vazio" é decisão de cada tela: uma lista sem itens pode ser
+ * "nenhuma parada no período" (boa notícia) ou "nada a mostrar" (aviso).
+ */
+export function Tela4Estados<T>({
+  leitura,
+  children,
+  esqueleto,
+}: {
+  leitura: {
+    dados: T | null
+    carregando: boolean
+    erro: string | null
+    offlineDesde?: string
+    recarregar: () => void
+  }
+  children: (dados: T) => ReactNode
+  esqueleto?: ReactNode
+}) {
+  if (leitura.carregando) return <>{esqueleto ?? <CarregandoCartao />}</>
+  if (leitura.dados === null) {
+    return (
+      <Erro
+        mensagem={leitura.erro ?? 'O servidor não devolveu dados.'}
+        aoTentar={leitura.recarregar}
+      />
+    )
+  }
+  return (
+    <div className="space-y-4">
+      {leitura.offlineDesde ? <SeloOffline desde={leitura.offlineDesde} /> : null}
+      {children(leitura.dados)}
     </div>
   )
 }
@@ -783,6 +1055,119 @@ export function GraficoLinha({ pontos, altura = 220 }: { pontos: PontoCurva[]; a
       <div className="mt-1 flex gap-4 text-[11px] text-fraco">
         <span>— potência (kW, esquerda)</span>
         {temPoa ? <span>- - irradiação POA (W/m², direita)</span> : null}
+      </div>
+    </div>
+  )
+}
+
+export type MesDoHistorico = {
+  /** `YYYY-MM`. O rótulo curto é derivado aqui; a chave crua serve de identidade. */
+  mes: string
+  rotulo: string
+  medido: number | null
+  esperado: number | null
+  anoAnterior: number | null
+}
+
+/**
+ * O histórico longo: 24 meses de energia medida, contra o esperado do projeto e contra o
+ * mesmo mês do ano passado.
+ *
+ * As três séries respondem perguntas diferentes e por isso têm formas diferentes: a barra é
+ * o que a usina fez; o traço cheio é o que o projeto prometia (`esperado`); o traço claro é
+ * o ano anterior — a régua que o diretor usa quando não há PVsyst cadastrado.
+ *
+ * Mês sem leitura fica VAZIO. Uma barra no chão diria que a usina não gerou naquele mês, e
+ * essa afirmação vale dinheiro numa reunião de contrato.
+ */
+export function GraficoHistorico({
+  meses,
+  altura = 220,
+  unidade = 'kWh',
+}: {
+  meses: MesDoHistorico[]
+  altura?: number
+  unidade?: string
+}) {
+  const [marcado, setMarcado] = useState<number | null>(null)
+  if (meses.length === 0) return null
+
+  const valores = meses
+    .flatMap((m) => [m.medido, m.esperado, m.anoAnterior])
+    .filter((v): v is number => typeof v === 'number')
+  const maximo = valores.length ? Math.max(...valores) : 0
+  const alturaDe = (v: number | null) =>
+    maximo > 0 && typeof v === 'number' ? (v / maximo) * altura : 0
+  const lido = marcado !== null ? meses[marcado] : null
+  const passoRotulo = Math.max(1, Math.ceil(meses.length / 12))
+
+  return (
+    <div>
+      <div className="mb-2 min-h-[1.25rem] text-xs text-corpo">
+        {lido ? (
+          <>
+            {lido.rotulo} · <Num>{numero(lido.medido, 1)}</Num> {unidade}
+            {typeof lido.esperado === 'number' ? (
+              <span className="text-fraco">
+                {' '}
+                · esperado <Num>{numero(lido.esperado, 1)}</Num>
+              </span>
+            ) : null}
+            {typeof lido.anoAnterior === 'number' ? (
+              <span className="text-fraco">
+                {' '}
+                · ano anterior <Num>{numero(lido.anoAnterior, 1)}</Num>
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-fraco">passe o mouse num mês para ver os valores</span>
+        )}
+      </div>
+
+      <div className="flex items-end gap-1" style={{ height: altura }}>
+        {meses.map((m, i) => (
+          <div
+            key={m.mes}
+            onMouseEnter={() => setMarcado(i)}
+            onMouseLeave={() => setMarcado(null)}
+            className="relative flex flex-1 cursor-default items-end justify-center"
+            style={{ height: altura }}
+          >
+            {typeof m.medido === 'number' ? (
+              <div
+                className={`w-full rounded-t-[3px] ${marcado === i ? 'bg-ambar' : 'bg-ambar/70'}`}
+                style={{ height: Math.max(2, alturaDe(m.medido)) }}
+              />
+            ) : null}
+            {typeof m.anoAnterior === 'number' && maximo > 0 ? (
+              <div
+                className="pointer-events-none absolute left-0 right-0 border-t border-dotted border-fraco/60"
+                style={{ bottom: alturaDe(m.anoAnterior) }}
+              />
+            ) : null}
+            {typeof m.esperado === 'number' && maximo > 0 ? (
+              <div
+                className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-forte/60"
+                style={{ bottom: alturaDe(m.esperado) }}
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex gap-1">
+        {meses.map((m, i) => (
+          <div key={`r-${m.mes}`} className="flex-1 text-center text-[10px] text-fraco">
+            {i % passoRotulo === 0 ? m.rotulo : ''}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-1 flex flex-wrap gap-4 text-[11px] text-fraco">
+        <span>▮ medido</span>
+        <span>- - esperado do projeto</span>
+        <span>· · · mesmo mês do ano anterior</span>
       </div>
     </div>
   )

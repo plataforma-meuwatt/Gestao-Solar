@@ -8,44 +8,115 @@
  * diretor com cinco usinas faz.
  *
  * A Visão geral é a exceção: é a carteira inteira, e por isso vive fora do contexto de usina.
+ * Quem tem uma usina só não a vê — carteira de um item é a própria usina, e um item de menu
+ * que leva de volta ao mesmo lugar é ruído.
  *
  * Navegação lateral e não abas: são seis seções e um monitor largo — abas no topo espremeriam
  * os rótulos e obrigariam a abreviar. À esquerda elas cabem por extenso, que é o que um
  * portal corporativo pede.
+ *
+ * **Três larguras, uma navegação só** (a lista vive em `shell/menu.ts`): a partir de 1024 px
+ * a barra mostra ícone e rótulo; entre 768 px e 1024 px vira um trilho de ícones (com o nome
+ * no `title`, nunca ícone anônimo); abaixo de 768 px ela sai da tela e o botão "Menu" abre a
+ * gaveta. O painel do gestor é desktop-only porque é ferramenta de escritório; este portal é
+ * aberto por um diretor que pode estar num notebook pequeno ou num tablet, em reunião.
  */
 
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
-import { useEffect, useMemo } from 'react'
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Menu as IconeMenu, UserRound, X, type LucideIcon } from 'lucide-react'
+import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 
-import { Combobox, Num } from '@/components/base'
+import { AtualizadoAs, Cartao, Erro } from '@/components/base'
 import { useLeitura } from '@/lib/leitura'
+import { SECOES, VISAO_GERAL } from '@/shell/menu'
+import { SeletorUsina, type UsinasOut } from '@/shell/SeletorUsina'
 import { useAuth } from '@/store/auth'
 import { useUsina } from '@/store/usina'
 
-type UsinaDaLista = { id: number; nome: string; cidade: string | null; uf: string | null }
-type UsinasOut = { usinas: UsinaDaLista[] }
+/**
+ * Limite de erro por rota.
+ *
+ * Um erro de renderização numa tela não pode apagar o portal inteiro: sem isto o React
+ * desmonta a árvore toda e o cliente fica com a página branca — sem menu, sem como voltar e
+ * sem saber o que aconteceu. Aqui a falha fica dentro do `main`, com a navegação de pé, e o
+ * estado se limpa sozinho quando o caminho muda (a `chave`).
+ */
+class LimiteDeErro extends Component<
+  { chave: string; children: ReactNode },
+  { mensagem: string | null }
+> {
+  state: { mensagem: string | null } = { mensagem: null }
 
-/** As seções de uma usina, na ordem das perguntas que o cliente faz. */
-const SECOES = [
-  { fim: '', rotulo: 'Energia' },
-  { fim: '/paradas', rotulo: 'Paradas' },
-  { fim: '/cronograma', rotulo: 'Cronograma' },
-  { fim: '/ordens', rotulo: 'Ordens de serviço' },
-  { fim: '/pendencias', rotulo: 'Pendências' },
-  { fim: '/relatorios', rotulo: 'Relatórios' },
-]
+  static getDerivedStateFromError(erro: unknown) {
+    return { mensagem: erro instanceof Error ? erro.message : 'Erro inesperado na tela.' }
+  }
+
+  componentDidUpdate(anterior: { chave: string }) {
+    if (anterior.chave !== this.props.chave && this.state.mensagem) {
+      this.setState({ mensagem: null })
+    }
+  }
+
+  render() {
+    if (this.state.mensagem) {
+      return (
+        <div className="mx-auto w-full max-w-[1400px] px-6 py-6">
+          <Erro mensagem={this.state.mensagem} aoTentar={() => window.location.reload()} />
+        </div>
+      )
+    }
+    return <>{this.props.children}</>
+  }
+}
+
+/** Uma entrada da navegação, nas três formas (barra, trilho e gaveta). */
+function Link({
+  para,
+  rotulo,
+  Icone,
+  fim,
+  soIcone,
+  aoNavegar,
+}: {
+  para: string
+  rotulo: string
+  Icone: LucideIcon
+  fim?: boolean
+  soIcone?: boolean
+  aoNavegar?: () => void
+}) {
+  return (
+    <NavLink
+      to={para}
+      end={fim}
+      onClick={aoNavegar}
+      title={rotulo}
+      aria-label={rotulo}
+      className={({ isActive }) =>
+        `flex items-center gap-3 rounded-campo px-3 py-2 text-sm transition ${
+          soIcone ? 'justify-center' : ''
+        } ${isActive ? 'bg-superficie-alta font-medium text-forte' : 'text-fraco hover:text-corpo'}`
+      }
+    >
+      <Icone size={18} aria-hidden />
+      {soIcone ? null : <span className="truncate">{rotulo}</span>}
+    </NavLink>
+  )
+}
 
 export function Layout() {
   const navigate = useNavigate()
+  const local = useLocation()
   const { id } = useParams<{ id: string }>()
   const usuario = useAuth((s) => s.usuario)
   const sair = useAuth((s) => s.sair)
   const usinaEscolhida = useUsina((s) => s.id)
   const escolher = useUsina((s) => s.escolher)
   const carregar = useUsina((s) => s.carregar)
+  const [gaveta, setGaveta] = useState(false)
 
-  const { dados, atualizadoEm } = useLeitura<UsinasOut>('plants')
-  const usinas = dados?.usinas ?? []
+  const { dados, atualizadoEm, offlineDesde } = useLeitura<UsinasOut>('plants')
+  const usinas = useMemo(() => dados?.usinas ?? [], [dados])
 
   // A lembrança é por conta: trocar de usuário no mesmo computador não herda a usina do outro.
   useEffect(() => {
@@ -58,31 +129,61 @@ export function Layout() {
     if (daUrl && daUrl !== usinaEscolhida) escolher(daUrl, usuario?.id ?? null)
   }, [daUrl, usinaEscolhida, escolher, usuario?.id])
 
-  const opcoes = useMemo(
-    () =>
-      usinas.map((u) => ({
-        valor: String(u.id),
-        rotulo: u.nome,
-        detalhe: [u.cidade, u.uf].filter(Boolean).join(', ') || undefined,
-      })),
-    [usinas],
+  // Uma usina só: a carteira É a usina, e o portal abre direto nela. Com duas ou mais, a
+  // Visão geral responde a primeira pergunta ("como está tudo?") e continua sendo a raiz.
+  const usinaUnica = usinas.length === 1 ? usinas[0].id : null
+  useEffect(() => {
+    if (usinaUnica && local.pathname === '/') navigate(`/usinas/${usinaUnica}`, { replace: true })
+  }, [usinaUnica, local.pathname, navigate])
+
+  // Fecha a gaveta ao navegar: no celular ela cobre a tela, e deixá-la aberta esconderia
+  // justamente o que o cliente acabou de pedir.
+  useEffect(() => {
+    setGaveta(false)
+  }, [local.pathname])
+
+  const atual = daUrl ?? usinaEscolhida ?? usinaUnica
+
+  const navegacao = (soIcone: boolean, aoNavegar?: () => void) => (
+    <>
+      {usinaUnica ? null : (
+        <div className={soIcone ? 'mb-3' : 'mb-4'}>
+          <Link
+            para={VISAO_GERAL.para}
+            rotulo={VISAO_GERAL.rotulo}
+            Icone={VISAO_GERAL.icone}
+            fim
+            soIcone={soIcone}
+            aoNavegar={aoNavegar}
+          />
+        </div>
+      )}
+
+      {atual ? (
+        <>
+          {soIcone ? null : (
+            <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">Esta usina</p>
+          )}
+          <ul className="space-y-0.5">
+            {SECOES.map((s) => (
+              <li key={s.fim || 'energia'}>
+                <Link
+                  para={`/usinas/${atual}${s.fim}`}
+                  rotulo={s.rotulo}
+                  Icone={s.icone}
+                  fim={s.fim === ''}
+                  soIcone={soIcone}
+                  aoNavegar={aoNavegar}
+                />
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : soIcone ? null : (
+        <p className="px-3 text-sm text-fraco">Escolha uma usina para ver as seções dela.</p>
+      )}
+    </>
   )
-
-  const atual = daUrl ?? usinaEscolhida
-  const secaoAtual = useMemo(() => {
-    const caminho = window.location.pathname
-    const achada = [...SECOES]
-      .sort((a, b) => b.fim.length - a.fim.length)
-      .find((s) => s.fim && caminho.endsWith(s.fim))
-    return achada?.fim ?? ''
-  }, [])
-
-  function trocarUsina(valor: string) {
-    const novo = Number(valor)
-    escolher(novo, usuario?.id ?? null)
-    // Mantém a seção: é o que faz o seletor ser um contexto, e não um atalho para a home.
-    navigate(`/usinas/${novo}${secaoAtual}`)
-  }
 
   return (
     <div className="flex min-h-screen flex-col bg-fundo">
@@ -97,99 +198,102 @@ export function Layout() {
       />
 
       <header className="relative z-20 border-b border-borda bg-fundo/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-4 px-6 py-3">
-          <NavLink to="/" className="flex items-center gap-2">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 px-4 py-3 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setGaveta(true)}
+            aria-label="Abrir menu"
+            className="rounded-campo p-1.5 text-fraco hover:text-corpo md:hidden"
+          >
+            <IconeMenu size={20} aria-hidden />
+          </button>
+
+          <NavLink to={usinaUnica ? `/usinas/${usinaUnica}` : '/'} className="shrink-0">
             <span className="text-base font-semibold tracking-tight text-forte">Gestão Solar</span>
           </NavLink>
 
-          {opcoes.length > 0 ? (
-            <div className="ml-2 min-w-0 flex-1">
-              <Combobox
-                opcoes={opcoes}
-                valor={atual ? String(atual) : null}
-                onEscolher={trocarUsina}
-                placeholder="Escolher usina…"
-                className="max-w-xs"
-              />
-            </div>
-          ) : (
-            <div className="flex-1" />
-          )}
+          <div className="ml-1 min-w-0 flex-1">
+            <SeletorUsina atual={atual} />
+          </div>
 
           <NavLink
             to="/conta"
+            title="Minha conta"
             className={({ isActive }) =>
-              `text-sm ${isActive ? 'text-ambar-texto' : 'text-fraco hover:text-corpo'}`
-            }
-          >
-            {usuario?.nome ?? 'Minha conta'}
-          </NavLink>
-          <button
-            type="button"
-            onClick={sair}
-            className="text-sm text-fraco transition hover:text-corpo"
-          >
-            Sair
-          </button>
-        </div>
-      </header>
-
-      <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1 gap-0 px-0">
-        <nav className="hidden w-56 shrink-0 border-r border-borda py-6 pl-6 pr-3 lg:block">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              `mb-4 block rounded-campo px-3 py-2 text-sm ${
-                isActive ? 'bg-superficie-alta font-medium text-forte' : 'text-fraco hover:text-corpo'
+              `flex items-center gap-2 text-sm ${
+                isActive ? 'text-ambar-texto' : 'text-fraco hover:text-corpo'
               }`
             }
           >
-            Visão geral
+            <UserRound size={18} aria-hidden />
+            <span className="hidden max-w-[12rem] truncate sm:inline">
+              {usuario?.nome ?? 'Minha conta'}
+            </span>
           </NavLink>
+        </div>
+      </header>
 
-          {atual ? (
-            <>
-              <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">Esta usina</p>
-              <ul className="space-y-0.5">
-                {SECOES.map((s) => (
-                  <li key={s.fim || 'energia'}>
-                    <NavLink
-                      to={`/usinas/${atual}${s.fim}`}
-                      end={s.fim === ''}
-                      className={({ isActive }) =>
-                        `block rounded-campo px-3 py-2 text-sm ${
-                          isActive
-                            ? 'bg-superficie-alta font-medium text-forte'
-                            : 'text-fraco hover:text-corpo'
-                        }`
-                      }
-                    >
-                      {s.rotulo}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p className="px-3 text-sm text-fraco">Escolha uma usina para ver as seções dela.</p>
-          )}
+      <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1">
+        {/* trilho de ícones: entre 768 px e 1024 px o rótulo não cabe */}
+        <nav className="hidden w-16 shrink-0 border-r border-borda px-2 py-6 md:block lg:hidden">
+          {navegacao(true)}
+        </nav>
+
+        <nav className="hidden w-56 shrink-0 border-r border-borda py-6 pl-6 pr-3 lg:block">
+          {navegacao(false)}
         </nav>
 
         <main className="min-w-0 flex-1">
-          <Outlet />
+          <LimiteDeErro chave={local.pathname}>
+            <Outlet />
+          </LimiteDeErro>
         </main>
       </div>
 
-      <footer className="relative z-10 border-t border-borda px-6 py-3 text-center text-xs text-fraco">
-        {atualizadoEm ? (
-          <>
-            atualizado às <Num>{atualizadoEm}</Num>
-          </>
-        ) : (
-          'Gestão Solar'
-        )}
+      <footer className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-t border-borda px-6 py-3 text-xs text-fraco">
+        <span className="truncate">
+          {usuario?.nome ?? ''}
+          {usuario?.empresa ? ` · ${usuario.empresa}` : ''}
+        </span>
+        <span className="flex items-center gap-3">
+          <AtualizadoAs em={atualizadoEm} offlineDesde={offlineDesde} />
+          <button type="button" onClick={sair} className="transition hover:text-corpo">
+            Sair
+          </button>
+        </span>
       </footer>
+
+      {/* Gaveta do celular — a MESMA lista de `menu.ts`, sem duplicar item nenhum. */}
+      {gaveta ? (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <button
+            type="button"
+            aria-label="Fechar menu"
+            onClick={() => setGaveta(false)}
+            className="absolute inset-0 cursor-default bg-black/55"
+          />
+          <aside className="relative flex h-full w-64 flex-col border-r border-borda-forte bg-painel p-4">
+            <div className="mb-4 flex items-center justify-between">
+              <span className="text-sm font-semibold text-forte">Menu</span>
+              <button
+                type="button"
+                onClick={() => setGaveta(false)}
+                aria-label="Fechar menu"
+                className="text-fraco hover:text-corpo"
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+            {navegacao(false, () => setGaveta(false))}
+            <div className="mt-auto pt-4">
+              <Cartao className="p-3 text-xs text-fraco">
+                {usuario?.nome ?? ''}
+                {usuario?.empresa ? ` · ${usuario.empresa}` : ''}
+              </Cartao>
+            </div>
+          </aside>
+        </div>
+      ) : null}
     </div>
   )
 }

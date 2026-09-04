@@ -1,24 +1,357 @@
 /**
- * Ordem de serviço — O que foi feito nesta OS, item por item?
+ * Uma ordem de serviço — "o que foi feito nesta OS, item por item, e como terminou?".
  *
- * ⛔ ESQUELETO. A tela real entra no item PT-8 do plano do portal do cliente. Este arquivo
- * existe para o roteador ter um destino desde o primeiro dia: uma rota que aponta para o
- * vazio quebra a navegação inteira, e um placeholder honesto — que DIZ que ainda não foi
- * construído — é melhor que uma tela em branco que se lê como erro.
+ * A lista (`/usinas/:id/ordens`) responde "está sendo feito?". Esta tela responde a pergunta
+ * seguinte, que é a que o cliente faz quando a fatura da manutenção chega — e só ela.
  *
- * Ao implementar: apague este conteúdo, não o arquivo. O caminho do módulo está no
- * `src/App.tsx` e o nome do arquivo é o contrato com o roteador.
+ * Três decisões que moldam o desenho:
+ *
+ * **A situação é a frase do SERVIDOR.** `FECHADA` não quer dizer "encerrada" para quem é dono:
+ * quer dizer que o técnico concluiu e o gestor ainda não conferiu. O BFF traduz isso em "Em
+ * verificação" e manda o tom junto (`bff/app/api/v1/manutencao.py`, `SITUACAO`). Traduzir de
+ * novo aqui criaria uma segunda verdade sobre a mesma OS.
+ *
+ * **Nada de medição, checklist ou foto na tela.** Análise de equipamento é trabalho da equipe
+ * de O&M, não do diretor que abre o portal — foi o pedido do dono ("ele só quer saber se está
+ * sendo feito"). Quem quiser o detalhe abre o PDF da tarefa, que é o laudo, gerado pela mesma
+ * fonte no meuPlano.
+ *
+ * **`itens` nulo ≠ `itens` vazio.** O BFF devolve o cabeçalho da OS mesmo quando a busca das
+ * tarefas falha, e nesse caso `itens` vem nulo. Dizer "esta ordem não tem tarefas" numa falha
+ * de rede seria acusar a equipe de não ter feito o serviço.
+ *
+ * Os PDFs vão por `fetch` com a sessão em CABEÇALHO (`lib/arquivo.ts`): `<a href>` não manda
+ * cabeçalho, e a saída fácil — o token na query — entra em log de servidor e em histórico.
  */
 
-import { Pagina, Vazio } from '@/components/base'
+import { useState, type ReactNode } from 'react'
+import { Link, useParams } from 'react-router-dom'
+
+import {
+  Aviso,
+  Botao,
+  CabecalhoCard,
+  CarregandoCartao,
+  Cartao,
+  Esqueleto,
+  Num,
+  Pagina,
+  Selo,
+  Tela4Estados,
+  Vazio,
+} from '@/components/base'
+import { mensagemDeErro } from '@/lib/api'
+import { abrirPdf } from '@/lib/arquivo'
+import { dataPorExtenso, duracao, inteiro } from '@/lib/format'
+import {
+  caminhoDoPdfDaOrdem,
+  caminhoDoPdfDaTarefa,
+  ehNaoEncontrada,
+  useOrdem,
+  type Ordem as OrdemDeServico,
+  type Tarefa,
+} from '@/features/ordem/api'
+
+/** Corretiva é conserto (algo quebrou); preventiva é rotina cumprida. Mesma régua do app. */
+function tomDaClasse(c: string | null): string {
+  const v = (c ?? '').toUpperCase()
+  if (v.includes('CORRETIVA')) return 'alerta'
+  if (v.includes('PREVENTIVA')) return 'ok'
+  return 'semDados'
+}
+
+function rotuloDaClasse(c: string | null): string {
+  if (!c) return 'sem classificação'
+  const limpo = c.replace(/_/g, ' ').toLowerCase()
+  return limpo.charAt(0).toUpperCase() + limpo.slice(1)
+}
+
+/** As seções na ordem em que vieram — o BFF já ordenou por grupo e nome. */
+function agrupar(itens: Tarefa[]): [string, Tarefa[]][] {
+  const mapa = new Map<string, Tarefa[]>()
+  for (const t of itens) {
+    const secao = t.grupo ?? 'Outras'
+    const atual = mapa.get(secao)
+    if (atual) atual.push(t)
+    else mapa.set(secao, [t])
+  }
+  return [...mapa.entries()]
+}
 
 export default function Ordem() {
+  const { id, osId } = useParams<{ id: string; osId: string }>()
+  const leitura = useOrdem(osId)
+
+  // Qual PDF está sendo preparado, e o que deu errado no último. O erro fica NA TELA (faixa):
+  // popup do navegador é proibido no produto, e um alerta some antes de ser lido.
+  const [baixando, setBaixando] = useState<string | null>(null)
+  const [erroPdf, setErroPdf] = useState<string | null>(null)
+
+  const voltar = id ? `/usinas/${id}/ordens` : '/'
+
+  /**
+   * Chamado direto do `onClick`: `abrirPdf` abre a aba no ato do gesto e só depois a aponta
+   * para o Blob — esperar o download antes de abrir faria o bloqueador de popup derrubar
+   * tudo. O prazo é folgado porque o meuPlano RENDERIZA o documento na hora do pedido.
+   */
+  const abrir = async (chave: string, caminho: string, nome: string) => {
+    setErroPdf(null)
+    setBaixando(chave)
+    try {
+      await abrirPdf(caminho, nome, { prazoMs: 180_000 })
+    } catch (erro) {
+      setErroPdf(mensagemDeErro(erro))
+    } finally {
+      setBaixando(null)
+    }
+  }
+
+  // 404 do BFF não é falha de leitura: é "esta OS não existe ou não é sua" (`_ordem_autorizada`
+  // responde 404 e não 403 de propósito, para não confirmar a existência da OS de outro
+  // cliente). Um estado vazio com o caminho de volta responde melhor que "Tentar de novo", que
+  // insistiria numa porta que nunca vai abrir.
+  if (ehNaoEncontrada(leitura)) {
+    return (
+      <Pagina titulo="Ordem de serviço">
+        <Vazio
+          titulo="Ordem de serviço não encontrada"
+          descricao="Ela pode ter sido removida, ou é de uma usina que não está liberada para a sua conta."
+          acao={
+            <Link
+              to={voltar}
+              className="inline-flex min-h-[38px] items-center rounded-campo border border-borda-forte px-3.5 text-sm font-medium text-corpo transition hover:bg-superficie-alta"
+            >
+              Ver as ordens de serviço
+            </Link>
+          }
+        />
+      </Pagina>
+    )
+  }
+
   return (
-    <Pagina titulo="Ordem de serviço" subtitulo="O que foi feito nesta OS, item por item?">
-      <Vazio
-        titulo="Em construção"
-        descricao="Esta tela ainda não foi construída. Ela vai responder: o que foi feito nesta OS, item por item?"
-      />
+    <Pagina
+      // Identificador não leva máscara de milhar: "OS 1.005" não é o número de OS nenhuma.
+      titulo={`OS ${osId ?? ''}`}
+      subtitulo={
+        <span className="flex flex-wrap items-center gap-2">
+          <Link to={voltar} className="text-fraco transition hover:text-corpo">
+            ‹ Ordens de serviço
+          </Link>
+          {leitura.dados ? <span className="text-fraco">· {leitura.dados.usina}</span> : null}
+        </span>
+      }
+    >
+      <Tela4Estados
+        leitura={leitura}
+        esqueleto={
+          <div className="space-y-4">
+            <Cartao>
+              <Esqueleto altura={18} largura="60%" />
+              <div className="mt-4 space-y-3">
+                <Esqueleto altura={12} largura="40%" />
+                <Esqueleto altura={12} largura="55%" />
+              </div>
+            </Cartao>
+            <CarregandoCartao linhas={5} />
+          </div>
+        }
+      >
+        {(o) => (
+          <>
+            {erroPdf ? <Aviso tom="parado">{erroPdf}</Aviso> : null}
+
+            <Cabecalho ordem={o} />
+
+            <Tarefas ordem={o} osId={osId ?? String(o.id)} baixando={baixando} aoAbrirPdf={abrir} />
+
+            <Cartao>
+              <CabecalhoCard rotulo="Ficha em PDF" />
+              <p className="text-sm text-corpo">
+                A ordem completa, com as tarefas e as fichas preenchidas pelo técnico. O arquivo
+                abre em outra aba do navegador.
+              </p>
+              <div className="mt-4">
+                <Botao
+                  desabilitado={baixando !== null}
+                  onClick={() =>
+                    void abrir(
+                      'os',
+                      caminhoDoPdfDaOrdem(osId ?? o.id),
+                      `OS-${o.id}-${o.usina}.pdf`.replace(/\s+/g, '-'),
+                    )
+                  }
+                >
+                  {baixando === 'os' ? 'Preparando o PDF…' : 'Abrir a OS em PDF'}
+                </Botao>
+              </div>
+            </Cartao>
+          </>
+        )}
+      </Tela4Estados>
     </Pagina>
+  )
+}
+
+/* ------------------------------------------------------------------ cabeçalho */
+
+function Dado({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] uppercase tracking-wide text-rotulo">{rotulo}</dt>
+      <dd className="mt-0.5 truncate text-sm text-corpo">{children}</dd>
+    </div>
+  )
+}
+
+function Cabecalho({ ordem: o }: { ordem: OrdemDeServico }) {
+  return (
+    <Cartao>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className="min-w-0 text-lg font-semibold leading-snug text-forte">{o.objetivo}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <Selo tom={tomDaClasse(o.classificacao)}>{rotuloDaClasse(o.classificacao)}</Selo>
+          <Selo tom={o.tom}>{o.situacao}</Selo>
+        </div>
+      </div>
+
+      <dl className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <Dado rotulo="Técnico">{o.tecnico ?? '—'}</Dado>
+        <Dado rotulo="Contrato">
+          {/* Número de contrato é identificador: sem separador de milhar. */}
+          <Num>{o.numero === null ? '—' : `nº ${o.numero}`}</Num>
+        </Dado>
+        <Dado rotulo="Agendada">
+          <Num>{dataPorExtenso(o.agendada_para)}</Num>
+        </Dado>
+        <Dado rotulo="Concluída">
+          {/* `end_date` é a data de conclusão; sem ela vale o carimbo de fechamento, que é o
+              instante em que o técnico encerrou. Um dos dois costuma existir. */}
+          <Num>{dataPorExtenso(o.concluida_em ?? o.fechada_em)}</Num>
+        </Dado>
+        <Dado rotulo="Verificada">
+          <Num>{dataPorExtenso(o.aprovada_em)}</Num>
+        </Dado>
+        <Dado rotulo="Execução">
+          <Num>{duracao(o.execucao_min)}</Num>
+        </Dado>
+      </dl>
+
+      {o.resumo ? (
+        <p className="mt-5 whitespace-pre-line border-t border-borda-fraca pt-4 text-sm text-corpo">
+          {o.resumo}
+        </p>
+      ) : null}
+    </Cartao>
+  )
+}
+
+/* ------------------------------------------------------------------ tarefas */
+
+function Tarefas({
+  ordem: o,
+  osId,
+  baixando,
+  aoAbrirPdf,
+}: {
+  ordem: OrdemDeServico
+  osId: string
+  baixando: string | null
+  aoAbrirPdf: (chave: string, caminho: string, nome: string) => Promise<void>
+}) {
+  return (
+    <Cartao>
+      <CabecalhoCard
+        rotulo="O que foi feito"
+        direita={
+          // Contagem nula = o upstream não informou. `inteiro` escreve "—", nunca zero.
+          o.tarefas === null ? undefined : (
+            <span>
+              <Num className="text-sm text-forte">{inteiro(o.tarefas_feitas)}</Num>
+              {` de ${inteiro(o.tarefas)}`}
+            </span>
+          )
+        }
+      />
+
+      {/* As duas frases que nunca podem virar uma só — ver o cabeçalho do módulo. */}
+      {!Array.isArray(o.itens) ? (
+        <p className="text-sm text-fraco">
+          Não deu para carregar as tarefas desta ordem. O restante da ficha está acima.
+        </p>
+      ) : o.itens.length === 0 ? (
+        <p className="text-sm text-fraco">Esta ordem não tem tarefas registradas.</p>
+      ) : (
+        <div className="space-y-5">
+          {agrupar(o.itens).map(([secao, itens]) => (
+            <section key={secao}>
+              <h3 className="mb-1 text-[11px] uppercase tracking-wide text-rotulo">{secao}</h3>
+              <ul>
+                {itens.map((t, i) => (
+                  <li key={t.id ?? `${secao}-${i}`}>
+                    <ItemTarefa tarefa={t} osId={osId} baixando={baixando} aoAbrirPdf={aoAbrirPdf} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </Cartao>
+  )
+}
+
+function ItemTarefa({
+  tarefa: t,
+  osId,
+  baixando,
+  aoAbrirPdf,
+}: {
+  tarefa: Tarefa
+  osId: string
+  baixando: string | null
+  aoAbrirPdf: (chave: string, caminho: string, nome: string) => Promise<void>
+}) {
+  const tarefaId = t.id
+  const chave = `t-${tarefaId}`
+  return (
+    <div className="flex items-start gap-3 border-b border-borda-fraca py-3 last:border-0">
+      {/* O ✓ vem do servidor (`feita`), não de comparar textos de status aqui. */}
+      <span
+        aria-hidden
+        className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border text-[11px] leading-none ${
+          t.feita ? 'border-tom-ok bg-tom-ok text-fundo' : 'border-borda-forte'
+        }`}
+      >
+        {t.feita ? '✓' : ''}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <p className={`text-sm ${t.feita ? 'text-corpo' : 'text-fraco'}`}>{t.nome}</p>
+        {t.equipamento ? <p className="mt-0.5 text-xs text-fraco">{t.equipamento}</p> : null}
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          {/* Situação só quando NÃO está feita: no item com ✓ a palavra "Executada" repete o
+              que o próprio ✓ acabou de dizer. */}
+          {t.feita ? null : <span className="text-xs text-rotulo">{t.situacao}</span>}
+          {t.parecer ? <Selo tom={t.parecer_tom ?? 'semDados'}>{t.parecer}</Selo> : null}
+        </div>
+      </div>
+
+      {/* Tarefa sem `id` (caso raro do upstream) fica sem botão: um botão que não leva a lugar
+          nenhum é pior do que nenhum botão. */}
+      {tarefaId === null ? null : (
+        <Botao
+          variante="secundario"
+          className="shrink-0 whitespace-nowrap"
+          desabilitado={baixando !== null}
+          onClick={() =>
+            void aoAbrirPdf(chave, caminhoDoPdfDaTarefa(osId, tarefaId), `tarefa-${tarefaId}.pdf`)
+          }
+        >
+          {baixando === chave ? 'Preparando…' : 'Ficha em PDF'}
+        </Botao>
+      )}
+    </div>
   )
 }

@@ -81,12 +81,28 @@ export function limparCache(): void {
 const ehSessao = (erro: unknown) =>
   axios.isAxiosError(erro) && (erro.response?.status === 401 || erro.response?.status === 403)
 
+/** O status HTTP da recusa. Rede que não chegou ao servidor não tem status — é `null`. */
+const statusDe = (erro: unknown): number | null =>
+  axios.isAxiosError(erro) ? (erro.response?.status ?? null) : null
+
 export type Leitura<T> = {
   dados: T | null
   /** Só enquanto não há absolutamente nada para desenhar — o skeleton. */
   carregando: boolean
   /** Preenchido quando não há nem cache nem resposta. Com cache na tela, vira a faixa. */
   erro: string | null
+  /**
+   * O status HTTP da recusa; `null` quando deu certo ou quando a rede nem chegou ao servidor.
+   *
+   * Existe por causa de uma distinção que várias telas precisam fazer e nenhuma conseguia:
+   * **"não é sua / não existe" (404) não é "a rede caiu"**. A primeira é um estado vazio com
+   * o caminho de volta — insistir nunca vai abrir aquela porta; a segunda é um erro com
+   * "Tentar de novo". Sem o status, três telas (Usina, OS e Pendências) reconheciam o 404
+   * pela FRASE que o BFF escreve, e ficavam penduradas na prosa dele: acrescentar um ponto
+   * final a "Ordem de serviço não encontrada." faria a tela cair no erro genérico, sem nada
+   * quebrar e sem ninguém notar.
+   */
+  status: number | null
   /** `HH:MM` da gravação, quando o que está na tela é cache e a rede falhou. */
   offlineDesde: string | undefined
   /** `HH:MM` da última leitura boa (rede ou cache) — o "atualizado às" do rodapé. */
@@ -168,6 +184,9 @@ export function useLeitura<T>(
     dados,
     carregando: ativo && dados === null && consulta.isPending,
     erro: dados === null && consulta.error ? mensagemDeErro(consulta.error) : null,
+    // O status acompanha o `erro`: só vale falar em 404 quando não há nada na tela. Com
+    // cache mostrando, a tela está desenhada e o que importa é a faixa de offline.
+    status: dados === null && consulta.error ? statusDe(consulta.error) : null,
     offlineDesde: mostrandoCache && consulta.error ? hora(doDisco.gravadoEm) : undefined,
     atualizadoEm: daRede
       ? hora(new Date(consulta.dataUpdatedAt).toISOString())

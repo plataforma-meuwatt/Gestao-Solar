@@ -11,14 +11,14 @@
  * compartilhável. Este store é a memória de qual foi a última — o roteador escreve nele, e
  * ele decide para onde ir quando alguém entra pela raiz.
  *
- * A escolha é guardada POR CONTA (`gs-portal-usina:u{id}`): a mesma pessoa pode ter conta de
+ * A escolha é guardada POR CONTA (`gs_portal_usina:u{id}`): a mesma pessoa pode ter conta de
  * gestor e de dono no mesmo computador, e a usina de uma não é assunto da outra.
  */
 
 import { create } from 'zustand'
 
 const chave = (usuarioId: number | null) =>
-  `gs-portal-usina:${usuarioId === null ? 'anonimo' : `u${usuarioId}`}`
+  `gs_portal_usina:${usuarioId === null ? 'anonimo' : `u${usuarioId}`}`
 
 function ler(usuarioId: number | null): number | null {
   try {
