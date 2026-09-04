@@ -700,8 +700,12 @@ async def _ordem_autorizada(
 
     try:
         ordem = await cliente.ordem_servico(so_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(404, "Ordem de serviço não encontrada.") from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(404, "Ordem de serviço não encontrada.") from exc
+        raise _erro_do_upstream(exc, "Não deu para conferir a ordem de serviço") from exc
+    except Exception as exc:  # noqa: BLE001 — timeout, rede
+        raise _erro_do_upstream(exc, "Não deu para conferir a ordem de serviço") from exc
 
     alvo = _inteiro(ordem.get("plant_id"))
     link = next((u for u in com_manutencao if u.mp_usina_id == alvo), None)
@@ -785,8 +789,15 @@ async def _tarefa_autorizada(
     cliente, ordem, link = await _ordem_autorizada(db, usuario, so_id)
     try:
         tarefa = await cliente.tarefa(task_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(404, "Tarefa não encontrada.") from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(404, "Tarefa não encontrada.") from exc
+        # 500, 502, 503 do upstream NÃO são "não encontrada". Em 04/09/2026 o meuPlano
+        # respondeu 500 (pool de conexões esgotado) e o dono leu "tarefa não encontrada"
+        # numa tarefa que estava ali — a frase mandava procurar no lugar errado.
+        raise _erro_do_upstream(exc, "Não deu para conferir a tarefa") from exc
+    except Exception as exc:  # noqa: BLE001 — timeout, rede
+        raise _erro_do_upstream(exc, "Não deu para conferir a tarefa") from exc
     # A ordem já foi conferida contra as usinas desta pessoa; falta a tarefa ser DELA.
     if _inteiro(tarefa.get("os_id")) != _inteiro(ordem.get("id")):
         # 404 (e não 403) pela mesma razão de `_ordem_autorizada`: não confirmamos a
@@ -914,7 +925,9 @@ async def ficha_da_tarefa(
     O dono (03/09/2026): *"quero ver detalhe na tela"*. O PDF continua sendo o laudo; isto é a
     leitura. Os dois saem da mesma fonte no meuPlano, então não divergem.
     """
-    cliente, _tarefa, _link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    # Pelo cache de propósito: é a ficha que abre a tela, e as miniaturas vêm logo atrás.
+    # Autorizada aqui, elas encontram a resposta pronta e não tocam no upstream.
+    cliente, _tarefa, _link = await _tarefa_autorizada_em_cache(db, usuario, so_id, task_id)
     try:
         bruta = await cliente.ficha_da_tarefa(task_id)
     except Exception as exc:  # noqa: BLE001
@@ -960,14 +973,24 @@ def _apontar_fotos_para_ca(ficha: Any, so_id: int, task_id: int) -> None:
 #: Trinta segundos é o suficiente para uma tela abrir e curto o bastante para um acesso
 #: revogado não sobreviver a ele. E é só um ATALHO de leitura: quem não passou pela cadeia
 #: completa uma vez não entra no dicionário.
-_AUTORIZACAO_TTL_S = 30.0
+_AUTORIZACAO_TTL_S = 120.0
 _autorizacoes: dict[tuple[int, int, int], tuple[float, tuple[Any, dict[str, Any], PlantLink]]] = {}
+#: Cadeias EM VOO, por chave: seis miniaturas que chegam juntas com o cache frio esperam a
+#: MESMA autorização, em vez de disparar seis cadeias — foi exatamente o que esgotou o pool de
+#: conexões do meuPlano em 04/09/2026 (cinco `GET /tasks/6804` no mesmo segundo, 30 s de fila,
+#: 500 em todos).
+_em_voo: dict[tuple[int, int, int], "asyncio.Future[tuple[Any, dict[str, Any], PlantLink]]"] = {}
 
 
 async def _tarefa_autorizada_em_cache(
     db: Session, usuario: User, so_id: int, task_id: int
 ) -> tuple[Any, dict[str, Any], PlantLink]:
-    """`_tarefa_autorizada`, sem repetir a cadeia a cada imagem da mesma ficha."""
+    """`_tarefa_autorizada`, sem repetir a cadeia a cada imagem da mesma ficha.
+
+    Dois minutos: o tempo de abrir a ficha, rolar e tocar em "ver todas" — e curto o bastante
+    para um acesso revogado não sobreviver. É só um ATALHO de leitura: quem não passou pela
+    cadeia completa uma vez não entra no dicionário.
+    """
     agora = time.monotonic()
     chave = (usuario.id, so_id, task_id)
 
@@ -975,7 +998,22 @@ async def _tarefa_autorizada_em_cache(
     if guardada is not None and agora - guardada[0] < _AUTORIZACAO_TTL_S:
         return guardada[1]
 
-    dados = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    voando = _em_voo.get(chave)
+    if voando is not None:
+        return await voando
+
+    fut: "asyncio.Future[tuple[Any, dict[str, Any], PlantLink]]" = asyncio.get_running_loop().create_future()
+    _em_voo[chave] = fut
+    try:
+        dados = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    except BaseException as exc:
+        fut.set_exception(exc)
+        raise
+    else:
+        fut.set_result(dados)
+    finally:
+        _em_voo.pop(chave, None)
+
     _autorizacoes[chave] = (agora, dados)
     # Poda o que venceu: sem isto o dicionário cresce com cada tarefa já vista, para sempre.
     if len(_autorizacoes) > 256:

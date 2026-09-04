@@ -17,6 +17,7 @@ O que estes testes protegem, em ordem de gravidade:
 Nada de rede: o cliente do meuPlano entra como fantasia.
 """
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -45,6 +46,14 @@ def _conceder(db, usuario, usina):
     db.commit()
 
 
+def _nao_existe(path: str) -> httpx.HTTPStatusError:
+    """Como o cliente REAL falha quando o meuPlano diz 404 — um `LookupError` cru não
+    distinguiria "não existe" de "o upstream caiu", que agora têm status diferentes."""
+    pedido = httpx.Request("GET", f"https://meuplano.exemplo/api/v1/meuacesso{path}")
+    resposta = httpx.Response(404, json={"detail": "não existe"}, request=pedido)
+    return httpx.HTTPStatusError("404", request=pedido, response=resposta)
+
+
 class ClienteFalso:
     """O meuPlano como fantasia: uma OS, uma tarefa dela e uma tarefa alheia."""
 
@@ -55,12 +64,12 @@ class ClienteFalso:
 
     async def ordem_servico(self, so_id):
         if so_id != self.ordem["id"]:
-            raise LookupError("não existe")
+            raise _nao_existe(f"/service-orders/{so_id}")
         return self.ordem
 
     async def tarefa(self, task_id):
         if task_id not in self.tarefas:
-            raise LookupError("não existe")
+            raise _nao_existe(f"/tasks/{task_id}")
         return self.tarefas[task_id]
 
     async def pdf_da_tarefa(self, task_id):

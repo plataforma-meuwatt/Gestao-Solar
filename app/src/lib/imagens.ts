@@ -36,6 +36,9 @@ const emVoo = new Map<string, Promise<string>>()
 /** Um "PDF de 200 bytes" para imagem: resposta curta demais é página de erro disfarçada. */
 const MINIMO_PLAUSIVEL = 200
 
+/** Quanto se espera por uma imagem antes de dizer que demorou. */
+const PRAZO_MS = 45_000
+
 export class ImagemIndisponivel extends Error {}
 
 /**
@@ -64,9 +67,29 @@ async function baixar(caminho: string, chave: string): Promise<string> {
   if (destino.exists && destino.size > MINIMO_PLAUSIVEL) return destino.uri
 
   const url = caminho.startsWith('http') ? caminho : `${baseURL}${caminho}`
-  const resposta = await fetch(url, {
-    headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
-  })
+  /*
+   * PRAZO. O `fetch` do React Native não desiste sozinho: se o servidor segurar a conexão, a
+   * miniatura fica "carregando" para sempre — e foi o que o dono viu quando o meuPlano ficou
+   * 30 s na fila do pool de conexões. Quarenta e cinco segundos é folga para uma imagem que
+   * normalmente vem em dois; passou disso, o quadro diz que demorou e aceita tentar de novo.
+   */
+  const prazo = new AbortController()
+  const alarme = setTimeout(() => prazo.abort(), PRAZO_MS)
+  let resposta: Response
+  try {
+    resposta = await fetch(url, {
+      headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
+      signal: prazo.signal,
+    })
+  } catch (e) {
+    throw new ImagemIndisponivel(
+      e instanceof Error && /abort/i.test(e.message)
+        ? 'demorou demais para vir'
+        : 'sem conexão com o servidor',
+    )
+  } finally {
+    clearTimeout(alarme)
+  }
 
   if (!resposta.ok) throw new ImagemIndisponivel(await motivo(resposta))
 
