@@ -23,6 +23,7 @@ import { StyleSheet, Text, View } from 'react-native'
 
 import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
+import { Fotos } from '@/components/Fotos'
 import { Tela } from '@/components/Tela'
 import {
   urlDoPdfDaTarefa,
@@ -191,6 +192,12 @@ export default function TarefaDaOrdem() {
 /** Um equipamento da ficha: o que foi medido e o que foi respondido nele. */
 function BlocoEquipamento({ equipamento: e }: { equipamento: EquipamentoDaFicha }) {
   const nada = e.medicoes.length === 0 && e.checklist.length === 0
+  // `e.fotos` traz TUDO (sessão + respostas). Aqui ficam só as que não têm pergunta dona,
+  // para nenhuma foto aparecer duas vezes na mesma tela.
+  const daPergunta = new Set(
+    e.checklist.flatMap((sec) => sec.perguntas.flatMap((p) => p.fotos.map((f) => f.id))),
+  )
+  const soltas = e.fotos.filter((f) => !daPergunta.has(f.id))
   return (
     <Card>
       <CabecalhoCard
@@ -226,11 +233,9 @@ function BlocoEquipamento({ equipamento: e }: { equipamento: EquipamentoDaFicha 
         <Text style={tipo.fraco}>Nada foi registrado nesta ficha ainda.</Text>
       ) : null}
 
-      {e.fotos > 0 ? (
-        <Text style={estilos.fotos}>
-          {e.fotos === 1 ? '1 foto' : `${e.fotos} fotos`} — no PDF abaixo
-        </Text>
-      ) : null}
+      {/* AS FOTOS DA SESSÃO. As que pendem de uma RESPOSTA aparecem junto da pergunta, logo
+          acima — separá-las é o que deixa claro o que cada foto está provando. */}
+      <Fotos fotos={soltas} titulo={soltas.length === 1 ? 'Foto' : 'Fotos'} />
     </Card>
   )
 }
@@ -272,6 +277,7 @@ function BlocoChecklist({ secao }: { secao: SecaoChecklist }) {
             {p.resposta ?? '—'}
           </Text>
           {p.observacao ? <Text style={estilos.obs}>{p.observacao}</Text> : null}
+          <Fotos fotos={p.fotos} />
         </View>
       ))}
     </View>

@@ -140,6 +140,33 @@ class ReleTemperaturaOut(BaseModel):
     medido_em: datetime | None = None
 
 
+class EstacaoOut(BaseModel):
+    """A estação solarimétrica da usina — o sensor que diz quanto sol houve.
+
+    O dono (04/09/2026): *"veja por que não aparece a estação solarimétrica de Ibitinga"*. Ela
+    nunca apareceu em usina nenhuma: a tela de equipamentos montava inversores e relés, e a
+    estação vinha ignorada na MESMA resposta de `monitoring/current` — sem custar chamada.
+
+    Ela é o que separa "a usina caiu" de "o sol foi embora": sem irradiação, uma queda de
+    geração não tem explicação, e é sobre ela que o PR do dia é calculado.
+    """
+
+    id: str
+    nome: str
+    #: Falso = a estação parou de falar. O número do dia continua ali, mas congelado.
+    comunicando: bool = False
+    #: Irradiação ACUMULADA no dia, em kWh/m². `ghi` é no plano horizontal; `poa`, no plano
+    #: dos módulos — é o `poa` que se compara com a geração.
+    ghi_hoje_kwh: float | None = None
+    poa_hoje_kwh: float | None = None
+    #: Quando a estação mediu — não quando respondemos.
+    medido_em: datetime | None = None
+    #: O que o monitoramento diz do sensor ("ok", "stale"...). Nulo = não informou.
+    situacao: str | None = None
+    #: Desde quando está falhando, quando o upstream sabe dizer.
+    falha_desde: datetime | None = None
+
+
 class EquipamentosOut(BaseModel):
     usina: str
     #: Nulo = não consultamos. Zero seria "usina sem inversor", que não existe.
@@ -161,6 +188,8 @@ class EquipamentosOut(BaseModel):
     #: custam chamada extra. Lista vazia = a usina não tem esse equipamento cadastrado.
     reles_protecao: list[ReleProtecaoOut] = []
     reles_temperatura: list[ReleTemperaturaOut] = []
+    #: Mesma resposta, mesmo custo. Lista vazia = a usina não tem estação cadastrada.
+    estacoes: list[EstacaoOut] = []
 
 
 def _situacao(
@@ -512,6 +541,36 @@ def _lista_de_textos(valor: Any) -> list[str]:
     return saida
 
 
+def _estacoes(agora_resp: dict[str, Any]) -> list[EstacaoOut]:
+    """As estações solarimétricas de `monitoring/current`.
+
+    O upstream declara o regime em `irradiance_regime`: com `daily_kwh`, `hghi`/`hpoa` são
+    kWh/m² ACUMULADOS no dia — não W/m² instantâneos. Ler os dois como se fossem a mesma
+    grandeza poria "1,8" numa tela onde se espera "800", então só o acumulado é publicado
+    aqui, com o nome dizendo o que é.
+    """
+    saida: list[EstacaoOut] = []
+    for w in agora_resp.get("weather_stations") or []:
+        if not isinstance(w, dict):
+            continue
+        diario = str(w.get("irradiance_regime") or "").strip() == "daily_kwh"
+        saida.append(
+            EstacaoOut(
+                id=str(w.get("id") or "estacao"),
+                nome=_texto(w.get("name")) or "Estação solarimétrica",
+                comunicando=bool(w.get("comm")),
+                ghi_hoje_kwh=_numero(w.get("hghi_today_kwh") if not diario else
+                                     w.get("hghi_today_kwh") or w.get("hghi")),
+                poa_hoje_kwh=_numero(w.get("hpoa_today_kwh") if not diario else
+                                     w.get("hpoa_today_kwh") or w.get("hpoa")),
+                medido_em=_instante(w.get("timestamp")),
+                situacao=_texto(w.get("data_status")),
+                falha_desde=_instante(w.get("failure_since")),
+            )
+        )
+    return saida
+
+
 def _reles(agora_resp: dict[str, Any]) -> tuple[list[ReleProtecaoOut], list[ReleTemperaturaOut]]:
     """Separa os relés de proteção dos de temperatura, na resposta de `monitoring/current`.
 
@@ -617,6 +676,7 @@ async def equipamentos_da_usina(
     modelos = _modelos_por_serial(diario)
     energias = _energia_por_serial(diario)
     reles_protecao, reles_temperatura = _reles(agora_resp)
+    estacoes = _estacoes(agora_resp)
     agora = datetime.now(UTC)
 
     saida: list[EquipamentoOut] = []
@@ -695,6 +755,7 @@ async def equipamentos_da_usina(
         equipamentos=saida,
         reles_protecao=reles_protecao,
         reles_temperatura=reles_temperatura,
+        estacoes=estacoes,
     )
 
 

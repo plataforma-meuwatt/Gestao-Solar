@@ -33,6 +33,7 @@ import {
   useHistoricoDeFlags,
   useMaximas,
   type Equipamento,
+  type Estacao,
   type ReleProtecao,
   type ReleTemperatura,
 } from '@/features/equipamentos'
@@ -47,7 +48,7 @@ import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
  * é onde a perda aparece primeiro; a temperatura do trafo é o que estraga equipamento de
  * forma silenciosa; o relé de proteção é o que desliga tudo quando algo dá errado.
  */
-const TIPOS = ['Tudo', 'Inversores', 'Temperatura', 'Proteção']
+const TIPOS = ['Tudo', 'Inversores', 'Temperatura', 'Proteção', 'Estação']
 
 export default function Equipamentos() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -160,7 +161,9 @@ export default function Equipamentos() {
             <Num style={estilos.inventarioNum}>{(dados.reles_temperatura ?? []).length}</Num>{' '}
             de temperatura ·{' '}
             <Num style={estilos.inventarioNum}>{(dados.reles_protecao ?? []).length}</Num>{' '}
-            de proteção
+            de proteção ·{' '}
+            <Num style={estilos.inventarioNum}>{(dados.estacoes ?? []).length}</Num>{' '}
+            {(dados.estacoes ?? []).length === 1 ? 'estação' : 'estações'}
           </Text>
 
           {tipo_ === 0 || tipo_ === 1 ? (
@@ -182,9 +185,99 @@ export default function Equipamentos() {
               usinaId={id}
             />
           ) : null}
+
+          {tipo_ === 0 || tipo_ === 4 ? (
+            <SecaoEstacao lista={dados.estacoes ?? []} comTitulo={tipo_ === 0} />
+          ) : null}
         </>
       )}
     </Tela>
+  )
+}
+
+/**
+ * A estação solarimétrica.
+ *
+ * O dono (04/09/2026): *"veja por que não aparece a estação solarimétrica de Ibitinga"*. Ela
+ * vinha na mesma resposta dos inversores e era descartada — em toda usina, não só em
+ * Ibitinga.
+ *
+ * O número é a irradiação ACUMULADA do dia (kWh/m²), não a instantânea: é assim que o
+ * monitoramento a publica, e é esse valor que se compara com a geração para explicar um dia
+ * fraco. O rótulo diz a unidade porque 1,8 e 800 são o mesmo sol contado de dois jeitos.
+ */
+function SecaoEstacao({ lista, comTitulo }: { lista: Estacao[]; comTitulo: boolean }) {
+  if (lista.length === 0) {
+    return (
+      <>
+        {comTitulo ? <Text style={estilos.tituloSecao}>Estação solarimétrica · 0</Text> : null}
+        <Card>
+          <Text style={tipo.fraco}>
+            Esta usina não tem estação solarimétrica no monitoramento.
+          </Text>
+        </Card>
+      </>
+    )
+  }
+
+  return (
+    <>
+      {comTitulo ? (
+        <Text style={estilos.tituloSecao}>Estação solarimétrica · {lista.length}</Text>
+      ) : null}
+      {lista.map((e) => (
+        <Card key={e.id}>
+          <View style={estilos.cabecaEquip}>
+            <Text style={estilos.nomeEquip} numberOfLines={1}>
+              {e.nome}
+            </Text>
+            <View style={estilos.espacador} />
+            <StatusChip
+              tom={e.comunicando ? 'ok' : 'semDados'}
+              texto={e.comunicando ? 'Comunicando' : 'Sem comunicação'}
+            />
+          </View>
+
+          {/*
+           * POA primeiro: é a irradiação no plano dos MÓDULOS, a que se compara com a
+           * geração para explicar um dia fraco. A GHI (plano horizontal) fica abaixo, como
+           * referência — as duas juntas mostram o ganho da inclinação.
+           *
+           * O valor é ACUMULADO no dia (kWh/m²), que é como o monitoramento publica; a
+           * unidade vai escrita porque 1,8 e 800 são o mesmo sol contado de dois jeitos.
+           */}
+          <View style={estilos.fases}>
+            <Medida
+              rotulo="POA hoje"
+              valor={e.poa_hoje_kwh !== null ? numero(e.poa_hoje_kwh, 2) : '—'}
+              unidade="kWh/m²"
+            />
+            <Medida
+              rotulo="GHI hoje"
+              valor={e.ghi_hoje_kwh !== null ? numero(e.ghi_hoje_kwh, 2) : '—'}
+              unidade="kWh/m²"
+            />
+          </View>
+
+          <Text style={tipo.fraco}>
+            {e.medido_em ? `medido ${dataHora(e.medido_em)}` : 'sem horário de medição'}
+            {!e.comunicando && e.falha_desde ? ` · sem falar desde ${dataHora(e.falha_desde)}` : ''}
+          </Text>
+        </Card>
+      ))}
+    </>
+  )
+}
+
+/** Um número da estação, no mesmo peso das fases do relé. */
+function Medida({ rotulo, valor, unidade }: { rotulo: string; valor: string; unidade: string }) {
+  return (
+    <View style={estilos.fase}>
+      <Text style={tipo.legenda}>{rotulo}</Text>
+      <Text style={estilos.faseValor}>
+        <Num>{valor}</Num> <Text style={tipo.legenda}>{unidade}</Text>
+      </Text>
+    </View>
   )
 }
 

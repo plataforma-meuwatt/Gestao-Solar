@@ -238,6 +238,18 @@ class MeuPlanoClient:
         `equipment_path`, `verdict_status`)."""
         return await self._get(f"/api/v1/meuacesso/tasks/{task_id}")
 
+    async def foto_da_tarefa(self, task_id: int, foto_id: int,
+                             variante: str = "original") -> tuple[bytes, str]:
+        """Os bytes de UMA foto da ficha, com o tipo que o meuPlano declarou.
+
+        Timeout curto de propósito: é uma imagem já pronta no armazenamento, não um documento
+        que nasce na hora. Se demorar mais que isso, é falha — e a tela deve dizer, não ficar
+        esperando com o usuário olhando um quadrado cinza.
+        """
+        r = await self._req("GET", f"/api/v1/meuacesso/tasks/{task_id}/fotos/{foto_id}",
+                            params={"variante": variante}, timeout=30.0)
+        return r.content, r.headers.get("content-type", "image/jpeg")
+
     async def tarefas_do_item_no_mes(self, plan_item_id: int, mes: str) -> list[dict[str, Any]]:
         """As tarefas de UMA atividade do plano NAQUELE mês — o que está atrás do X.
 

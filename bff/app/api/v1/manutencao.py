@@ -681,12 +681,19 @@ async def _ordem_autorizada(
     as usinas desta pessoa. Confiar no número seria abrir a OS de outro dono trocando
     um dígito na URL.
     """
-    com_manutencao, aviso = await _usinas_com_manutencao(db, usuario)
+    # As usinas desta pessoa e a ponte com o meuPlano são perguntas independentes: esperar
+    # uma para começar a outra somava segundos numa cadeia que já tem quatro idas ao
+    # upstream — e foi o bastante para a ficha de vinte inversores estourar o prazo do
+    # aplicativo (04/09/2026). Nada é DEVOLVIDO antes da checagem de escopo, logo abaixo.
+    usinas_task = asyncio.create_task(_usinas_com_manutencao(db, usuario))
+    cliente_task = asyncio.create_task(integracoes.cliente_meuplano(db))
+    com_manutencao, aviso = await usinas_task
     if not com_manutencao:
+        cliente_task.cancel()
         raise HTTPException(404, aviso or "Sem usina com manutenção.")
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = await cliente_task
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"meuPlano indisponível: {exc}") from exc
 
@@ -779,6 +786,7 @@ async def _tarefa_autorizada(
         tarefa = await cliente.tarefa(task_id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(404, "Tarefa não encontrada.") from exc
+    # A ordem já foi conferida contra as usinas desta pessoa; falta a tarefa ser DELA.
     if _inteiro(tarefa.get("os_id")) != _inteiro(ordem.get("id")):
         # 404 (e não 403) pela mesma razão de `_ordem_autorizada`: não confirmamos a
         # existência de uma tarefa que esta pessoa não pode ver.
@@ -821,6 +829,20 @@ class MedicaoOut(BaseModel):
     linhas: list[LinhaMedicaoOut] = []
 
 
+class FotoOut(BaseModel):
+    """Uma evidência anexada pelo técnico.
+
+    A `url` é do BFF, não do meuPlano: o aplicativo só tem sessão aqui, e um endereço do
+    upstream chegaria ao aparelho sem credencial nenhuma. O que vem de lá é o `id`; o
+    endereço é montado nesta casa.
+    """
+
+    id: int
+    legenda: str | None = None
+    url: str
+    thumb_url: str
+
+
 class PerguntaOut(BaseModel):
     pergunta: str
     #: A resposta como o técnico deu. Nulo/"— não respondida —" é ausência, não "não".
@@ -828,7 +850,9 @@ class PerguntaOut(BaseModel):
     #: A resposta É o problema (a régua de polaridade é do meuPlano, não daqui).
     problema: bool = False
     observacao: str | None = None
-    fotos: int = 0
+    #: As fotos DAQUELA resposta. Numa inspeção é aqui que a evidência mora — "existem sinais
+    #: de avaria?" e a foto do que se viu —, não no bloco do equipamento.
+    fotos: list[FotoOut] = []
 
 
 class SecaoChecklistOut(BaseModel):
@@ -849,7 +873,8 @@ class EquipamentoFichaOut(BaseModel):
     parecer_motivo: str | None = None
     medicoes: list[MedicaoOut] = []
     checklist: list[SecaoChecklistOut] = []
-    fotos: int = 0
+    #: TODAS as fotos do equipamento — as da sessão e as das respostas, já reunidas.
+    fotos: list[FotoOut] = []
 
 
 class FichaOut(BaseModel):
@@ -880,7 +905,63 @@ async def ficha_da_tarefa(
         bruta = await cliente.ficha_da_tarefa(task_id)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para ler a ficha desta tarefa") from exc
+    _apontar_fotos_para_ca(bruta, so_id, task_id)
     return FichaOut.model_validate(bruta)
+
+
+def _apontar_fotos_para_ca(ficha: Any, so_id: int, task_id: int) -> None:
+    """Troca o endereço das fotos do meuPlano pelo endereço DESTA casa.
+
+    O meuPlano devolve caminhos relativos (`/tasks/6710/fotos/37`) exatamente para que quem
+    entrega monte o endereço final. Aqui isso vira `/api/v1/manutencao/ordens/{os}/tarefas/
+    {tarefa}/fotos/{foto}` — a única rota que o aplicativo consegue abrir, porque é a única
+    onde a sessão dele vale.
+    """
+    base = f"/api/v1/manutencao/ordens/{so_id}/tarefas/{task_id}/fotos"
+
+    def reescrever(lista: Any) -> None:
+        for f in lista or []:
+            if isinstance(f, dict) and f.get("id") is not None:
+                f["url"] = f"{base}/{f['id']}"
+                f["thumb_url"] = f"{base}/{f['id']}?variante=thumb"
+
+    if not isinstance(ficha, dict):
+        return
+    for equipamento in ficha.get("equipamentos") or []:
+        if not isinstance(equipamento, dict):
+            continue
+        reescrever(equipamento.get("fotos"))
+        for secao in equipamento.get("checklist") or []:
+            for pergunta in (secao or {}).get("perguntas") or []:
+                reescrever((pergunta or {}).get("fotos"))
+
+
+@router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/fotos/{foto_id}")
+async def foto_da_tarefa(
+    so_id: int,
+    task_id: int,
+    foto_id: int,
+    variante: str = "original",
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> Response:
+    """UMA foto da ficha — a evidência que o técnico anexou.
+
+    O dono (04/09/2026): *"as tarefas não aparece foto em nenhuma"*. Passa pelo MESMO portão da
+    ficha e do PDF (`_tarefa_autorizada`): a tarefa tem de ser daquela ordem, e a ordem, de uma
+    usina do usuário. O meuPlano ainda confere que a foto é daquela tarefa — duas cercas, porque
+    o id vem do cliente e sozinho não prova nada.
+    """
+    cliente, _tarefa, _link = await _tarefa_autorizada(db, usuario, so_id, task_id)
+    try:
+        conteudo, tipo = await cliente.foto_da_tarefa(task_id, foto_id, variante)
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_upstream(exc, "Não deu para carregar esta foto") from exc
+    return Response(content=conteudo, media_type=tipo, headers={
+        # A foto de uma ficha executada não muda. Sem cache, rolar a lista de evidências
+        # rebaixaria a mesma imagem a cada volta — e quem está em campo paga por isso.
+        "Cache-Control": "private, max-age=3600",
+    })
 
 
 @router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/pdf")

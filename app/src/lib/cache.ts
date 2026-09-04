@@ -153,7 +153,21 @@ export type Leitura<T> = {
  */
 export function fetchWithCache<T>(
   chave: string,
-  opcoes: { caminho?: string; ativo?: boolean; queryKey?: QueryKey } = {},
+  opcoes: {
+    caminho?: string
+    ativo?: boolean
+    queryKey?: QueryKey
+    /**
+     * Prazo em milissegundos, quando o padrão de 12 s não serve.
+     *
+     * Existe por um caso concreto (04/09/2026): a ficha de uma tarefa coletiva com vinte
+     * inversores atravessa quatro chamadas em série no BFF, a última delas montando a ficha
+     * inteira — passa dos 12 s e o aplicativo desistia com "a conexão demorou demais", numa
+     * tarefa que estava sendo montada normalmente do outro lado. Prazo é por chamada porque
+     * subir o padrão faria toda tela ficar 40 s pendurada quando a rede cair de verdade.
+     */
+    prazoMs?: number
+  } = {},
 ): Leitura<T> {
   const caminho = opcoes.caminho ?? `/api/v1/${chave}`
   const ativo = opcoes.ativo ?? true
@@ -181,7 +195,8 @@ export function fetchWithCache<T>(
     retry: (tentativas, erro) => !ehSessao(erro) && tentativas < 1,
     queryFn: async () => {
       try {
-        const { data } = await api.get<T>(caminho)
+        const { data } = await api.get<T>(caminho,
+          opcoes.prazoMs ? { timeout: opcoes.prazoMs } : undefined)
         void gravarCache(chave, data)
         return data
       } catch (erro) {

@@ -15,11 +15,12 @@
  * descubra o gesto — um controle invisível não é um controle.
  */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { Barreira } from '@/components/Barreira'
 import { moduloNativo } from '@/lib/nativo'
 import { cores, espaco, fontes, raio, tipo } from '@/theme/tokens'
 
@@ -63,11 +64,37 @@ export function GraficoExpansivel({
 }) {
   const [aberto, setAberto] = useState(false)
 
+  /*
+   * A ORIENTAÇÃO MUDA FORA DA FOLHA — antes de ela existir, e depois de ela sumir.
+   *
+   * O aplicativo é travado em retrato no `app.json`, o que vira `screenOrientation` no
+   * manifesto do Android. Destravar isso em tempo de execução com um `Modal` JÁ montado
+   * faz o sistema recriar a Activity por baixo de uma folha que continua aberta — e o
+   * aplicativo fecha. Era exatamente o que acontecia desde que o girar entrou (`07c4b18`):
+   * o `unlockAsync` morava num efeito DENTRO da folha, ou seja, no pior momento possível.
+   *
+   * Destravando antes de abrir e retravando depois de fechar, a troca acontece com uma
+   * árvore estável dos dois lados, e o girar continua funcionando como o dono pediu.
+   */
+  const abrir = () => {
+    const so = orientacao()
+    if (!so) return setAberto(true) // sem o módulo, a folha abre em retrato — e só
+    so.unlockAsync()
+      .catch(() => {}) // aparelho que recusa destravar não impede de ver o gráfico
+      .finally(() => setAberto(true))
+  }
+
+  const fechar = () => {
+    setAberto(false)
+    const so = orientacao()
+    if (so) void so.lockAsync(so.OrientationLock.PORTRAIT_UP).catch(() => {})
+  }
+
   return (
     <>
       <View style={estilos.cabeca}>
         <View style={estilos.espacador} />
-        <Pressable onPress={() => setAberto(true)} hitSlop={10} style={estilos.botaoExpandir}>
+        <Pressable onPress={abrir} hitSlop={10} style={estilos.botaoExpandir}>
           <Text style={estilos.botaoTexto}>expandir</Text>
         </Pressable>
       </View>
@@ -77,7 +104,7 @@ export function GraficoExpansivel({
       <Modal
         visible={aberto}
         animationType="slide"
-        onRequestClose={() => setAberto(false)}
+        onRequestClose={fechar}
         // Sem isto o Android fecha o app no botão voltar em vez de fechar a folha.
         transparent={false}
         // iOS: sem declarar as orientações aceitas, a folha continua em retrato mesmo
@@ -85,9 +112,13 @@ export function GraficoExpansivel({
         // propriedade é ignorada — declarar as duas cobre os dois sistemas.
         supportedOrientations={['portrait', 'landscape']}
       >
-        <TelaCheia titulo={titulo} altura={alturaCheia} onFechar={() => setAberto(false)}>
-          {children}
-        </TelaCheia>
+        {/* A folha vai dentro de uma barreira própria: um gráfico que quebre ao ampliar
+            mostra o motivo e deixa fechar, em vez de derrubar a tela inteira por trás. */}
+        <Barreira nome="o gráfico ampliado">
+          <TelaCheia titulo={titulo} altura={alturaCheia} onFechar={fechar}>
+            {children}
+          </TelaCheia>
+        </Barreira>
       </Modal>
     </>
   )
@@ -108,23 +139,10 @@ function TelaCheia({
   const [base, setBase] = useState(0)
 
   /*
-   * Deitar o celular é o zoom que não custa nada.
-   *
-   * O aplicativo é travado em retrato (`app.json`), e com razão: as telas são listas,
-   * e lista deitada só cabe menos. O gráfico é a exceção — o eixo espremido é o
-   * horizontal, e virar o aparelho quase dobra a largura útil antes de qualquer pinça.
-   *
-   * A trava volta ao fechar. Sem isso o app inteiro ficaria destravado depois da
-   * primeira visita ao gráfico, e as listas passariam a girar sem que ninguém pedisse.
+   * Deitar o celular é o zoom que não custa nada: o eixo espremido é o horizontal, e virar
+   * o aparelho quase dobra a largura útil antes de qualquer pinça. Quem destrava e retrava
+   * é o `GraficoExpansivel`, antes de abrir e depois de fechar — ver a razão lá.
    */
-  useEffect(() => {
-    const so = orientacao()
-    if (!so) return // aparelho sem o módulo: fica em retrato, e é só isso que se perde
-    void so.unlockAsync()
-    return () => {
-      void so.lockAsync(so.OrientationLock.PORTRAIT_UP)
-    }
-  }, [])
   const [zoom, setZoom] = useState(1)
   // O pinça precisa saber de onde partiu: `scale` do gesto é relativo ao início dele.
   const [ancora, setAncora] = useState(1)

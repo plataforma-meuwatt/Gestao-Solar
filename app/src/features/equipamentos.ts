@@ -78,6 +78,25 @@ export type ReleTemperatura = {
   medido_em: string | null
 }
 
+/**
+ * A estação solarimétrica — o sensor que diz quanto sol houve.
+ *
+ * É o que separa "a usina caiu" de "o sol foi embora": sem irradiação, uma queda de geração
+ * não tem explicação. Aparecia em lugar nenhum até 04/09/2026, embora viesse na mesma
+ * resposta dos inversores.
+ */
+export type Estacao = {
+  id: string
+  nome: string
+  comunicando: boolean
+  /** Irradiação ACUMULADA no dia, kWh/m². `poa` é no plano dos módulos — o que se compara. */
+  ghi_hoje_kwh: number | null
+  poa_hoje_kwh: number | null
+  medido_em: string | null
+  situacao: string | null
+  falha_desde: string | null
+}
+
 export type EquipamentosOut = {
   usina: string
   total: number | null
@@ -93,6 +112,7 @@ export type EquipamentosOut = {
   equipamentos: Equipamento[]
   reles_protecao: ReleProtecao[]
   reles_temperatura: ReleTemperatura[]
+  estacoes: Estacao[]
 }
 
 export type Entrada = { numero: number; tensao_v: number | null; corrente_a: number | null }

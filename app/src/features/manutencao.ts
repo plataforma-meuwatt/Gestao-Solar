@@ -191,13 +191,22 @@ export type Medicao = {
   linhas: LinhaMedicao[]
 }
 
+/** Uma evidência anexada pelo técnico. A `url` é do BFF — é lá que a sessão vale. */
+export type Foto = {
+  id: number
+  legenda: string | null
+  url: string
+  thumb_url: string
+}
+
 export type PerguntaChecklist = {
   pergunta: string
   resposta: string | null
   /** A resposta É o problema — a régua de polaridade é do meuPlano, não daqui. */
   problema: boolean
   observacao: string | null
-  fotos: number
+  /** As fotos DAQUELA resposta: numa inspeção, é aqui que a evidência mora. */
+  fotos: Foto[]
 }
 
 export type SecaoChecklist = { nome: string; perguntas: PerguntaChecklist[] }
@@ -213,7 +222,8 @@ export type EquipamentoDaFicha = {
   parecer_motivo: string | null
   medicoes: Medicao[]
   checklist: SecaoChecklist[]
-  fotos: number
+  /** Todas as do equipamento — as da sessão e as das respostas, já reunidas. */
+  fotos: Foto[]
 }
 
 export type Ficha = {
@@ -234,6 +244,10 @@ export function useFicha(
   return fetchWithCache<Ficha>(`manutencao/ordem-${osId ?? ''}-ficha-${tarefaId ?? ''}`, {
     caminho: `/api/v1/manutencao/ordens/${osId ?? ''}/tarefas/${tarefaId ?? ''}/ficha`,
     ativo: Boolean(osId && tarefaId),
+    // A leitura mais cara do aplicativo: uma ficha coletiva de vinte inversores é montada
+    // do zero no meuPlano, depois de três chamadas de autorização. Com os 12 s de sempre, a
+    // ficha da manutenção mensal dos inversores nunca abria.
+    prazoMs: 60000,
   })
 }
 
