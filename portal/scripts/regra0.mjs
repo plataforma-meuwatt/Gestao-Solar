@@ -7,6 +7,11 @@
 //
 // Também recusa o que a regra de UI proíbe: popup nativo do navegador, número cru
 // (`toFixed` em vez de `format.ts`), sorteio e dado de mentira.
+//
+// EXCEÇÃO DECLARADA: uma linha terminada em `// regra0: <motivo>` passa. Existe porque nem
+// todo número é dado de negócio — coordenada de SVG e largura medida do layout não vêm da
+// API e não representam medição nenhuma. Exigir o motivo escrito é o que separa a exceção
+// legítima do atalho: quem burla tem de dizer por quê, e quem revisa lê a frase.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +39,8 @@ const achados = []
 for (const arquivo of arquivos(RAIZ)) {
   const linhas = readFileSync(arquivo, 'utf8').split('\n')
   linhas.forEach((linha, i) => {
+    // A exceção vale para a linha inteira: quem a declara assume as regras dela.
+    if (/\/\/\s*regra0:\s*\S/.test(linha)) return
     for (const regra of REGRAS) {
       if (regra.re.test(linha)) {
         achados.push(
