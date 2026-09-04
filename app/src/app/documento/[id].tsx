@@ -18,15 +18,13 @@
  */
 
 import { router, useLocalSearchParams } from 'expo-router'
-import * as FileSystem from 'expo-file-system'
-import * as Sharing from 'expo-sharing'
 import { useState } from 'react'
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { Botao, EstadoVazio } from '@/components/base'
 import { urlDoArquivo } from '@/features/documentos'
-import { tokenDaSessao } from '@/lib/api'
+import { abrirPdf } from '@/lib/pdf'
 import { cores, espaco, fontes, TOQUE_MIN } from '@/theme/tokens'
 
 const NOME_DA_PECA: Record<string, string> = {
@@ -49,39 +47,15 @@ export default function Documento() {
     if (!id) return
     setEstado('baixando')
     setErro(null)
-    try {
-      const destino = new FileSystem.File(
-        FileSystem.Paths.cache,
-        `relatorio-${id}-${peca}.pdf`,
-      )
-      if (destino.exists) destino.delete()
-
-      const baixado = await FileSystem.File.downloadFileAsync(
-        urlDoArquivo(Number(id), peca),
-        destino,
-        { headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` } },
-      )
-
-      if (!(await Sharing.isAvailableAsync())) {
-        setEstado('erro')
-        setErro('Este aparelho não tem com o que abrir PDF.')
-        return
-      }
-
-      await Sharing.shareAsync(baixado.uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: nome,
-        UTI: 'com.adobe.pdf',
-      })
-      setEstado('pronto')
-    } catch (e) {
-      setEstado('erro')
-      setErro(
-        e instanceof Error && /40[13]/.test(e.message)
-          ? 'Este documento não está disponível para a sua conta.'
-          : 'Não foi possível baixar o documento. Verifique a conexão e tente de novo.',
-      )
-    }
+    // Transporte e mensagem de erro vêm de `lib/pdf`: é a mesma função do botão `AbrirPdf`,
+    // e foi consertar o timeout de 10 s do Android em dois lugares que a fez existir.
+    const problema = await abrirPdf({
+      url: urlDoArquivo(Number(id), peca),
+      arquivo: `relatorio-${id}-${peca}.pdf`,
+      titulo: nome,
+    })
+    setEstado(problema ? 'erro' : 'pronto')
+    setErro(problema)
   }
 
   return (

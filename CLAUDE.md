@@ -404,6 +404,17 @@ Detalhes que já custaram tempo:
   `version` do `app.json`. Subiu a `version`? Então precisa de build novo, não de OTA.
 - OTA cobre **só JS e assets**. Código nativo, permissão nova ou bump de SDK exigem
   `eas build --profile production`.
+- **⛔ MÓDULO NATIVO NÃO SE IMPORTA NO TOPO DE UM ARQUIVO QUE UMA ROTA CARREGA.** Corolário
+  da regra acima, e custou caro em 04/09/2026: `expo-screen-orientation` entrou junto com o
+  gráfico em tela cheia, a `version` do `app.json` seguiu em `0.1.0` — então todo OTA
+  publicado depois continuou alcançando APKs anteriores à biblioteca. `requireNativeModule`
+  lança na AVALIAÇÃO do módulo, antes de qualquer render: como `grafico-cheio.tsx` é
+  importado pelas três telas atrás do clique numa usina, o sintoma foi cirúrgico — as abas
+  abriam, a usina não, e o relato que chegou foi *"clico na usina e o app fecha ou trava"*.
+  Carregue por `lib/nativo.ts` (`moduloNativo`), use quando `!= null` e tenha um
+  comportamento honesto para a ausência: a função perdida degrada, a tela vive. E declare a
+  peça em `PECAS_NATIVAS` (`components/Atualizacao.tsx`), para o aparelho **dizer** que está
+  com pacote anterior em vez de a gente descobrir por dedução.
 - **"Tudo em dia" não prova que o OTA foi publicado.** Prova só que não há update *para o
   canal e a runtime daquele aparelho*. Canal errado, `runtimeVersion` diferente e "nada novo
   mesmo" produzem a mesma frase. Por isso a tela do avatar mostra canal, runtime, ID e data

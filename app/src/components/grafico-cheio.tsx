@@ -15,13 +15,30 @@
  * descubra o gesto — um controle invisível não é um controle.
  */
 
-import * as ScreenOrientation from 'expo-screen-orientation'
 import { useEffect, useState } from 'react'
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { moduloNativo } from '@/lib/nativo'
 import { cores, espaco, fontes, raio, tipo } from '@/theme/tokens'
+
+/**
+ * O girar da tela é NATIVO — e nativo não chega por OTA.
+ *
+ * `expo-screen-orientation` entrou depois do último APK distribuído, e importá-lo no topo
+ * deste arquivo derrubava as três telas que o carregam (a usina, os equipamentos dela e o
+ * equipamento) em todo aparelho com binário anterior. Carregado por aqui, o aparelho antigo
+ * perde só o girar: a folha abre em retrato, com pinça e botões funcionando.
+ */
+type Orientacao = typeof import('expo-screen-orientation')
+const orientacao = () =>
+  moduloNativo<Orientacao>('expo-screen-orientation', () =>
+    // `require` de propósito: `import` no topo é justamente o que derrubava a tela em
+    // binário sem o módulo, e `import()` assíncrono não serve dentro de um efeito.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('expo-screen-orientation'),
+  )
 
 /** Limites do zoom. Abaixo de 1 o gráfico ficaria menor que a tela — não há o que ganhar. */
 const MIN = 1
@@ -101,9 +118,11 @@ function TelaCheia({
    * primeira visita ao gráfico, e as listas passariam a girar sem que ninguém pedisse.
    */
   useEffect(() => {
-    void ScreenOrientation.unlockAsync()
+    const so = orientacao()
+    if (!so) return // aparelho sem o módulo: fica em retrato, e é só isso que se perde
+    void so.unlockAsync()
     return () => {
-      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+      void so.lockAsync(so.OrientationLock.PORTRAIT_UP)
     }
   }, [])
   const [zoom, setZoom] = useState(1)

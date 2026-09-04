@@ -94,13 +94,54 @@ api.interceptors.response.use(
   },
 )
 
-/** Mensagem de erro em português, pronta para a tela. O BFF sempre responde `detail`. */
+/**
+ * Mensagem de erro em português, pronta para a tela.
+ *
+ * O BFF responde `detail` em texto — mas o FastAPI, quando recusa a VALIDAÇÃO de um
+ * parâmetro (422), responde `detail` como uma **lista de objetos** (`[{type, loc, msg}]`).
+ * O antigo `as { detail?: string }` desligava a checagem do TypeScript e esse valor saía
+ * daqui como se fosse texto; entregue a um `<Text>`, o React derruba a tela com "Objects
+ * are not valid as a React child". Esta função é o funil de TODO erro exibido no app, então
+ * ela devolve texto de verdade — sempre.
+ */
 export function mensagemDeErro(erro: unknown): string {
   if (axios.isAxiosError(erro)) {
-    const detail = (erro.response?.data as { detail?: string } | undefined)?.detail
-    if (detail) return detail
+    const texto = detalheEmTexto((erro.response?.data as { detail?: unknown } | undefined)?.detail)
+    if (texto) return texto
     if (erro.code === 'ECONNABORTED') return 'A conexão demorou demais. Tente de novo.'
     if (!erro.response) return 'Sem conexão com a internet.'
   }
   return 'Não foi possível completar a operação.'
+}
+
+/**
+ * O `detail` de uma resposta de erro, achatado em uma frase.
+ *
+ * Exportado porque o download de PDF não passa pelo axios e precisa da mesma régua para
+ * mostrar o motivo que o servidor escreveu.
+ */
+export function detalheEmTexto(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail.trim() || null
+  if (Array.isArray(detail)) {
+    // 422 do FastAPI: uma entrada por campo recusado. O `msg` é a frase legível; o `loc`
+    // diz qual campo, e sem ele a frase ("Field required") não ajuda ninguém.
+    const frases = detail
+      .map((d) => {
+        if (typeof d === 'string') return d
+        if (d && typeof d === 'object') {
+          const msg = (d as { msg?: unknown }).msg
+          const loc = (d as { loc?: unknown }).loc
+          const campo = Array.isArray(loc) ? loc.filter((p) => typeof p === 'string').pop() : null
+          if (typeof msg === 'string') return campo ? `${campo}: ${msg}` : msg
+        }
+        return null
+      })
+      .filter((f): f is string => Boolean(f))
+    return frases.length ? frases.join(' · ') : null
+  }
+  if (detail && typeof detail === 'object') {
+    const msg = (detail as { msg?: unknown; detail?: unknown }).msg
+    if (typeof msg === 'string') return msg
+  }
+  return null
 }

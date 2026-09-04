@@ -21,6 +21,8 @@ import asyncio
 from datetime import date, datetime
 from typing import Any
 
+import httpx
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -63,6 +65,57 @@ class ManutencaoOut(BaseModel):
     #: por que está vazia em vez de parecer quebrada.
     usinas_com_manutencao: int = 0
     aviso: str | None = None
+
+
+def _erro_do_upstream(exc: Exception, contexto: str) -> HTTPException:
+    """Traduz uma falha do meuPlano preservando o QUE aconteceu.
+
+    O padrão antigo — `except Exception` e `HTTPException(502, ...)` — achatava tudo num só
+    número. O dono viu o resultado disso em 04/09/2026: um PDF que o upstream recusava por
+    PERMISSÃO chegava ao aplicativo como "o meuPlano não conseguiu gerar este PDF agora", uma
+    acusação de defeito onde havia uma questão de acesso — e nenhuma pista do que fazer.
+
+    A régua:
+
+    - **401** do upstream vira **502**: o token de serviço é NOSSO, não do dono da usina. Se
+      ele expirou, o problema é da ponte, e mandar 401 ao aplicativo o faria deslogar o
+      usuário por causa de uma credencial que não é dele.
+    - **403 / 404 / 413** passam com o status e a frase do upstream: são respostas que o
+      usuário precisa ler literalmente ("sem acesso", "não existe", "o arquivo tem 60 MB e o
+      armazenamento aceita 50").
+    - **timeout** vira **504**, que é o que de fato houve — e diz para tentar de novo.
+    - o resto vira 502 com o motivo anexado.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        detalhe = _detalhe_da_resposta(exc.response)
+        if status in (403, 404, 413):
+            return HTTPException(status, detalhe or f"{contexto}: o meuPlano respondeu {status}.")
+        if status == 401:
+            return HTTPException(502, f"{contexto}: a ponte com o meuPlano perdeu a sessão.")
+        return HTTPException(502, f"{contexto}: {detalhe or f'o meuPlano respondeu {status}'}.")
+    if isinstance(exc, httpx.TimeoutException):
+        return HTTPException(504, f"{contexto}: o meuPlano demorou demais para responder.")
+    return HTTPException(502, f"{contexto}: {exc}")
+
+
+def _detalhe_da_resposta(r: "httpx.Response") -> str | None:
+    """O `detail` que o meuPlano escreveu, em uma frase. Corpo não-JSON vira texto curto."""
+    try:
+        corpo = r.json()
+    except Exception:  # noqa: BLE001 — corpo binário ou HTML de proxy
+        texto = (r.text or "").strip()
+        return texto[:300] or None
+    if isinstance(corpo, dict):
+        detalhe = corpo.get("detail")
+        if isinstance(detalhe, str) and detalhe.strip():
+            return detalhe.strip()[:300]
+        if isinstance(detalhe, list):
+            partes = [d.get("msg") for d in detalhe
+                      if isinstance(d, dict) and isinstance(d.get("msg"), str)]
+            if partes:
+                return " · ".join(partes)[:300]
+    return None
 
 
 def _texto(valor: Any) -> str | None:
@@ -707,7 +760,7 @@ async def pdf_da_ordem(
         item = await cliente.gerar_pdf_os(so_id)
         conteudo = await cliente.baixar_pdf_cesta(item)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Não deu para gerar o PDF desta OS: {exc}") from exc
+        raise _erro_do_upstream(exc, "Não deu para gerar o PDF desta OS") from exc
     if not conteudo:
         raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
     return _pdf(conteudo, f"OS-{so_id}-{link.nome}.pdf".replace(" ", "-"))
@@ -826,7 +879,7 @@ async def ficha_da_tarefa(
     try:
         bruta = await cliente.ficha_da_tarefa(task_id)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Não deu para ler a ficha desta tarefa: {exc}") from exc
+        raise _erro_do_upstream(exc, "Não deu para ler a ficha desta tarefa") from exc
     return FichaOut.model_validate(bruta)
 
 
@@ -846,7 +899,7 @@ async def pdf_da_tarefa(
     try:
         conteudo = await cliente.pdf_da_tarefa(task_id)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Não deu para gerar o PDF desta tarefa: {exc}") from exc
+        raise _erro_do_upstream(exc, "Não deu para gerar o PDF desta tarefa") from exc
     if not conteudo:
         raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
     nome = (tarefa.get("name") or f"tarefa-{task_id}")[:60]
@@ -877,7 +930,7 @@ async def tarefas_da_celula(
         cliente = await integracoes.cliente_meuplano(db)
         brutas = await cliente.tarefas_do_item_no_mes(plan_item_id, mes)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Não deu para ler as tarefas deste mês: {exc}") from exc
+        raise _erro_do_upstream(exc, "Não deu para ler as tarefas deste mês") from exc
     # a tarefa tem de ser DESTA usina — o item do plano veio do cliente
     minhas = [t for t in brutas
               if isinstance(t, dict) and _inteiro(t.get("plant_id")) == link.mp_usina_id]
@@ -896,7 +949,7 @@ async def pdf_do_cronograma(
         cliente = await integracoes.cliente_meuplano(db)
         conteudo = await cliente.pdf_cronograma(link.mp_usina_id)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Não deu para gerar o cronograma em PDF: {exc}") from exc
+        raise _erro_do_upstream(exc, "Não deu para gerar o cronograma em PDF") from exc
     if not conteudo:
         raise HTTPException(502, "O meuPlano devolveu um PDF vazio.")
     return _pdf(conteudo, f"Cronograma-{link.nome}.pdf".replace(" ", "-"))

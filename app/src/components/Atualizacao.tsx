@@ -17,12 +17,32 @@
  * recarrega a cada salvamento —, e a tela diz isso em vez de fingir que procurou.
  */
 
+import Constants from 'expo-constants'
 import * as Updates from 'expo-updates'
 import { useState } from 'react'
 import { Linking, StyleSheet, Text, View } from 'react-native'
 
+import { ultimoErro } from '@/components/Barreira'
 import { Botao, Card, CabecalhoCard, Num } from '@/components/base'
+import { moduloNativo } from '@/lib/nativo'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
+
+/**
+ * Peças NATIVAS que entraram depois de algum APK já distribuído.
+ *
+ * Uma delas faltando não quebra mais nada (`moduloNativo` cuida disso), mas muda o que o
+ * aparelho consegue fazer — e é a resposta para "por que no meu celular não tem?". Sem esta
+ * linha, descobrir que um aparelho estava com binário anterior a uma biblioteca custou uma
+ * investigação inteira; com ela, cabe num print.
+ */
+const PECAS_NATIVAS: { nome: string; oQueFaz: string; carregar: () => unknown }[] = [
+  {
+    nome: 'expo-screen-orientation',
+    oQueFaz: 'girar a tela no gráfico ampliado',
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    carregar: () => require('expo-screen-orientation'),
+  },
+]
 
 /** Onde baixar o pacote novo quando o OTA não bastar. */
 const PAGINA_DE_BUILDS =
@@ -84,6 +104,7 @@ export function Atualizacao() {
 
   const canal = currentlyRunning.channel ?? (Updates.isEnabled ? '—' : 'desenvolvimento')
   const runtime = Updates.runtimeVersion ?? '—'
+  const faltando = PECAS_NATIVAS.filter((p) => moduloNativo(p.nome, p.carregar) === null)
 
   return (
     <Card>
@@ -104,6 +125,29 @@ export function Atualizacao() {
         <Linha rotulo="Publicado em" valor={dataDoConteudo(currentlyRunning)} />
         <Linha rotulo="Identificador" valor={idCurto(currentlyRunning.updateId)} />
         <Linha rotulo="Canal" valor={canal} />
+        {/* O APLICATIVO INSTALADO, que é outra coisa do conteúdo OTA acima: o OTA troca o
+            JavaScript, este número só muda quando se instala um pacote novo. */}
+        <Linha rotulo="Aplicativo instalado" valor={aplicativoInstalado()} />
+        {faltando.length > 0 ? (
+          <View style={[estilos.aviso, { borderColor: tons.alerta }]}>
+            <Text style={estilos.avisoTexto}>
+              Este aparelho está com um pacote anterior a {faltando.length === 1 ? 'uma peça' : 'algumas peças'} do
+              aplicativo: {faltando.map((f) => f.oQueFaz).join(', ')}. Tudo o mais funciona
+              normalmente; instalar a versão nova do aplicativo devolve {faltando.length === 1 ? 'essa função' : 'essas funções'}.
+            </Text>
+          </View>
+        ) : null}
+
+        {/* O ÚLTIMO ERRO DE TELA. Quem está com o celular na mão costuma sair da tela de
+            erro antes de ler a mensagem — e o relato que chega é "não abriu". Guardado
+            aqui, o motivo sobrevive ao caminho de volta. */}
+        {ultimoErro ? (
+          <View style={[estilos.aviso, { borderColor: tons.parado }]}>
+            <Text style={estilos.avisoTexto} selectable>
+              Uma tela não abriu {horaCurta(ultimoErro.quando)}: {ultimoErro.mensagem}
+            </Text>
+          </View>
+        ) : null}
 
         {isUpdateAvailable || isUpdatePending ? (
           <View style={[estilos.aviso, { borderColor: tons.alerta }]}>
@@ -194,6 +238,17 @@ function dataDoConteudo(atual: { createdAt?: Date }): string {
 function idCurto(id?: string): string {
   if (!id) return 'embutido no aplicativo'
   return id.slice(0, 8)
+}
+
+/** Versão e número do pacote instalado — o que identifica o APK, não o conteúdo OTA. */
+function aplicativoInstalado(): string {
+  const versao = Constants.expoConfig?.version ?? '—'
+  const build = Constants.expoConfig?.android?.versionCode ?? Constants.nativeBuildVersion
+  return build ? `${versao} (pacote ${build})` : versao
+}
+
+function horaCurta(d: Date): string {
+  return `às ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
