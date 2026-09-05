@@ -1011,7 +1011,14 @@ export function CartaoRegra({
   )
 }
 
-/** Os três desvios estruturais do período, com sinal. */
+/**
+ * Os desvios estruturais do período, com sinal: três de ENERGIA e dois de IRRADIAÇÃO.
+ *
+ * Os de irradiação são o que separa "o sol não veio" de "a usina não rendeu" — sem eles,
+ * um mês fraco tem duas explicações possíveis e nenhuma escrita. Só aparecem quando a
+ * usina tem irradiação de projeto cadastrada; sem ela, a linha some inteira, em vez de
+ * mostrar um travessão que ninguém sabe ler.
+ */
 export function CartaoDesvios({
   desvios,
 }: {
@@ -1019,6 +1026,8 @@ export function CartaoDesvios({
     medido_vs_projeto_pct: number | null
     medido_vs_previsto_pct: number | null
     previsto_vs_projeto_pct: number | null
+    hpoa_vs_projeto_pct: number | null
+    ghi_vs_projeto_pct: number | null
   }
 }) {
   const linhas = [
@@ -1040,6 +1049,26 @@ export function CartaoDesvios({
       detalhe: 'o efeito do clima — sol acima ou abaixo do que o projeto supôs',
       valor: desvios.previsto_vs_projeto_pct,
     },
+    ...(desvios.hpoa_vs_projeto_pct === null
+      ? []
+      : [
+          {
+            chave: 'hpoa',
+            titulo: 'Sol medido × projeto (plano dos módulos)',
+            detalhe: 'quanta irradiação chegou de fato, contra a que o projeto supôs',
+            valor: desvios.hpoa_vs_projeto_pct,
+          },
+        ]),
+    ...(desvios.ghi_vs_projeto_pct === null
+      ? []
+      : [
+          {
+            chave: 'ghi',
+            titulo: 'Sol medido × projeto (plano horizontal)',
+            detalhe: 'a mesma comparação no plano horizontal, como o projeto a declara',
+            valor: desvios.ghi_vs_projeto_pct,
+          },
+        ]),
   ]
 
   return (
@@ -1093,6 +1122,7 @@ export function BlocoMeteo({
     ghi: number | null
     razao: number | null
     hpoa_projeto: number | null
+    ghi_projeto: number | null
     t_amb_media: number | null
     t_amb_max: number | null
     t_mod_media: number | null
@@ -1120,7 +1150,13 @@ export function BlocoMeteo({
           rotulo="GHI (plano horizontal)"
           valor={`${numero(meteo.ghi, 1)} kWh/m²`}
           detalhe={
-            meteo.razao === null ? undefined : (
+            // O projeto, quando existe, é a comparação que importa; a razão entre os planos
+            // é curiosidade útil e fica como segunda opção.
+            meteo.ghi_projeto !== null ? (
+              <>
+                projeto <Num>{numero(meteo.ghi_projeto, 1)}</Num> kWh/m²
+              </>
+            ) : meteo.razao === null ? undefined : (
               <>
                 o plano inclinado ganha <Num>{numero(meteo.razao, 2)}</Num>×
               </>
@@ -1129,11 +1165,20 @@ export function BlocoMeteo({
         />
         {meteo.tem_sensor_temperatura ? (
           <>
+            {/* Um dos dois sensores pode faltar sozinho — e falta mesmo: em Porto Ferreira
+                o relé de ambiente só devolve o valor de fábrica (o servidor descarta a
+                série inteira e manda nulo) enquanto o do módulo mede. Sem este ramo, o
+                card sairia "— °C" ao lado de um número, que parece defeito da tela; com
+                ele, diz o que houve. */}
             <Kpi
               rotulo="Temperatura ambiente"
-              valor={`${numero(meteo.t_amb_media, 1)} °C`}
+              valor={
+                meteo.t_amb_media === null ? 'sem leitura' : `${numero(meteo.t_amb_media, 1)} °C`
+              }
               detalhe={
-                meteo.t_amb_max === null ? undefined : (
+                meteo.t_amb_media === null ? (
+                  'o sensor de ambiente não mediu no período'
+                ) : meteo.t_amb_max === null ? undefined : (
                   <>
                     máxima <Num>{numero(meteo.t_amb_max, 1)}</Num> °C
                   </>
@@ -1142,9 +1187,13 @@ export function BlocoMeteo({
             />
             <Kpi
               rotulo="Temperatura do módulo"
-              valor={`${numero(meteo.t_mod_media, 1)} °C`}
+              valor={
+                meteo.t_mod_media === null ? 'sem leitura' : `${numero(meteo.t_mod_media, 1)} °C`
+              }
               detalhe={
-                meteo.t_mod_max === null ? undefined : (
+                meteo.t_mod_media === null ? (
+                  'o sensor do módulo não mediu no período'
+                ) : meteo.t_mod_max === null ? undefined : (
                   <>
                     máxima <Num>{numero(meteo.t_mod_max, 1)}</Num> °C
                   </>

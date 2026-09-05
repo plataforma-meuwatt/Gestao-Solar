@@ -28,6 +28,42 @@
  * chega em PDF); o derating e a indisponibilidade do PVsyst (são parâmetros de ENTRADA do
  * projeto, não medição do período); e os botões de rolagem do cabeçalho, que são muleta de
  * página longa de operador.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────────
+ * CONFERÊNCIA CAMPO A CAMPO contra o dashboard de origem (05/09/2026)
+ *
+ * Feita bloco a bloco no código do meuWatt — `mw-fe/src/pages/DashboardPage.tsx` e
+ * `mw-fe/src/components/DashboardPage/` —, e não de memória: "todas as informações" era,
+ * até aqui, autoavaliação de quem construiu. Lá são cinco abas; quatro viraram os quatro
+ * recortes daqui, e a quinta (Relatório) é a fábrica de PDF que o dono mandou não trazer.
+ *
+ *   MENSAL → Mês. Os quatro KPIs de geração (MEDIDO INVERSORES · MEDIDO FRONTEIRA ·
+ *   PROJETO PVSYST · PREVISTO METEO) e os quatro de rendimento (PRODUTIVIDADE ·
+ *   PERFORMANCE RATIO · DISPONIB. REAL · DISPONIB. CONTRATUAL); a caixa que explica real ×
+ *   contratual e a parada ainda não classificada; o `PerdasCard` (nossos "Desvios do
+ *   período"); `ConcessionariaMensal` (a conta de energia); GERAÇÃO DIÁRIA com o tracejado
+ *   dos dias por vir; PERFORMANCE RATIO DIÁRIO sem barra no dia descartado; DESEMPENHO DO
+ *   MÊS / ATÉ HOJE (a rosca); TOTAIS com a tendência; "Condições do mês" (HPOA · GHI ·
+ *   TEMP. AMBIENTE · TEMP. MÓDULO) e TEMPERATURA DIA A DIA.
+ *   ANUAL → Ano. REALIZADO YTD (e o de fronteira), META YTD e PROJETO ANUAL, os quatro de
+ *   rendimento, `ConcessionariaAnual`, GERAÇÃO MENSAL, DETALHAMENTO MENSAL, a Timeline por
+ *   inversor com o aviso de disponibilidade TÉCNICA × energética, "Condições do ano",
+ *   TEMPERATURA POR MÊS e DETALHAMENTO METEOROLÓGICO MENSAL.
+ *   DIÁRIO → Dia. GERAÇÃO DO DIA · PICO · POTÊNCIA AGORA · DISPONIBILIDADE · PR DO DIA;
+ *   POTÊNCIA E IRRADIÂNCIA AO LONGO DO DIA; "Condições do dia" (HPOA agora, acumulada e
+ *   GHI); UNIDADES CONSUMIDORAS · GERAÇÃO HOJE; e os eventos.
+ *   MEDIDORES → Unidades. UCS ATIVAS · CAPACIDADE TOTAL · ENERGIA · MAIOR CONTRIBUINTE;
+ *   GERAÇÃO POR DIA DA UC; os três rankings (geração, PR com a referência de 80 %,
+ *   produtividade); DISPONIBILIDADE ENERGÉTICA POR UC; e a tabela POR UC com o faturado.
+ *
+ * A conferência achou UMA coisa de lá que não estava aqui, e ela foi trazida: o
+ * `PerdasCard` tem um segundo modo — quando a usina declara POA/GHI de projeto, ele troca
+ * as caixas de previsto por **GHI · MEDIDA vs PROJETO** e **POA · MEDIDA vs PROJETO**. É a
+ * comparação que separa "o sol não veio" de "a usina não rendeu". Aqui as duas entraram
+ * como linhas do cartão de desvios (`hpoa_vs_projeto_pct` e `ghi_vs_projeto_pct`),
+ * convivendo com as de energia em vez de substituí-las — e o servidor compara na MESMA
+ * janela do medido, senão o dia 15 de todo mês acusaria meio mês de sol contra um mês
+ * inteiro de projeto.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'

@@ -518,14 +518,20 @@ def test_sentinela_do_rele_de_temperatura_nao_vira_media(cenario):
     assert dia_do_sentinela["t_amb"] is None and dia_do_sentinela["t_mod"] is None
 
 
-def test_temperatura_plausivel_atravessa_como_veio(cenario):
-    """Corrigir medição que pode ser verdade seria inventar dado. Um relé mudo marcando
-    `0.0` é defeito de sensor — conserto na origem, não aqui."""
+def test_serie_toda_zero_e_rele_mudo_nao_vira_medicao(cenario):
+    """O OUTRO sentinela do mesmo relé. Filtrar só o −100 deixava o zero passar, e a tela do
+    cliente publicava "TEMPERATURA AMBIENTE 0,0 °C, máxima 0,0 °C" num agosto do interior
+    paulista. Medido no upstream em 2026: das 13 leituras de `t_amb`, doze são `0.0` e uma é
+    `-100.0` — nenhuma na faixa plausível. Sensor que mede, oscila."""
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(
         relatorio=_range(
             temperatura=[
                 {"t": "2026-08-02", "t_amb": 0.0, "t_amb_max": 0.0,
+                 "t_mod": None, "t_mod_max": None},
+                {"t": "2026-08-03", "t_amb": 0.0, "t_amb_max": 0.0,
+                 "t_mod": None, "t_mod_max": None},
+                {"t": "2026-08-04", "t_amb": -100.0, "t_amb_max": -100.0,
                  "t_mod": None, "t_mod_max": None},
             ]
         )
@@ -533,8 +539,120 @@ def test_temperatura_plausivel_atravessa_como_veio(cenario):
 
     meteo = _painel(http, usina, recorte="mes", referencia="2026-08-14")["meteo"]
 
-    assert meteo["t_amb_media"] == 0.0
+    assert meteo["t_amb_media"] is None, "sensor mudo não publica média"
+    assert meteo["t_amb_max"] is None
+    assert meteo["tem_sensor_temperatura"] is False
+    assert all(p["t_amb"] is None for p in meteo["pontos"])
+
+
+def test_rele_de_ambiente_mudo_nao_derruba_o_do_modulo(cenario):
+    """O caso real de Porto Ferreira: o de ambiente só devolve o valor de fábrica enquanto o
+    do módulo mede 33,8 °C. Some o campo mudo, não a meteorologia inteira."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            temperatura=[
+                {"t": "2026-08-02", "t_amb": 0.0, "t_amb_max": 0.0,
+                 "t_mod": 33.0, "t_mod_max": 45.0},
+                {"t": "2026-08-03", "t_amb": 0.0, "t_amb_max": 0.0,
+                 "t_mod": 34.6, "t_mod_max": 47.0},
+            ]
+        )
+    )
+
+    meteo = _painel(http, usina, recorte="mes", referencia="2026-08-14")["meteo"]
+
+    assert meteo["t_amb_media"] is None
+    assert meteo["t_mod_media"] == 33.8
+    assert meteo["t_mod_max"] == 47.0
     assert meteo["tem_sensor_temperatura"] is True
+
+
+def test_zero_em_serie_que_varia_atravessa_como_veio(cenario):
+    """A régua é POR SÉRIE de propósito. Zero grau existe — serra no inverno —, e descartá-lo
+    ponto a ponto jogaria fora medição de verdade. Uma leitura diferente na série e os zeros
+    voltam a valer: corrigir medição plausível seria inventar dado."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            temperatura=[
+                {"t": "2026-08-02", "t_amb": 0.0, "t_amb_max": 4.0,
+                 "t_mod": None, "t_mod_max": None},
+                {"t": "2026-08-03", "t_amb": 12.0, "t_amb_max": 18.0,
+                 "t_mod": None, "t_mod_max": None},
+            ]
+        )
+    )
+
+    meteo = _painel(http, usina, recorte="mes", referencia="2026-08-14")["meteo"]
+
+    assert meteo["t_amb_media"] == 6.0, "a média das duas, com o zero dentro"
+    assert meteo["tem_sensor_temperatura"] is True
+    dia_frio = next(p for p in meteo["pontos"] if p["chave"] == "2026-08-02")
+    assert dia_frio["t_amb"] == 0.0
+
+
+# ── a irradiação medida contra a do projeto ──────────────────────────────────
+
+
+def test_desvio_de_poa_vem_do_pvsyst_diario_na_janela_do_medido(cenario):
+    """A comparação que separa "o sol não veio" de "a usina não rendeu" — e que faltava.
+
+    A fonte preferida é o PVsyst DIÁRIO, somado só até o último dia medido: 14 dias × 5,2 =
+    72,8 kWh/m² de projeto contra 70,0 medidos (−3,85 %). Comparar com o mês inteiro (31 ×
+    5,2 = 161,2) devolveria "−57 % de sol" no dia 14 de todo mês, todo mês.
+    """
+    http, _, usina = cenario
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["meteo"]["hpoa_projeto"] == pytest.approx(72.8, abs=0.01)
+    assert c["desvios"]["hpoa_vs_projeto_pct"] == pytest.approx(-3.85, abs=0.01)
+    # GHI de projeto só existe digitado na página de projeto; sem ele, nada sai.
+    assert c["meteo"]["ghi_projeto"] is None
+    assert c["desvios"]["ghi_vs_projeto_pct"] is None
+
+
+def test_ghi_de_projeto_digitado_completa_a_comparacao(cenario):
+    """O GHI de projeto não tem série diária — vem do valor mensal da página de projeto,
+    rateado pela janela do medido: 60 × 14/31 = 27,10 kWh/m² contra os 61,6 medidos
+    (14 dias × 4,4). O desvio grande é o do cenário, não da conta."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(manual=_manual(ghi=60.0))
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["meteo"]["ghi_projeto"] == pytest.approx(27.10, abs=0.01), "mês em curso: rateado"
+    assert c["desvios"]["ghi_vs_projeto_pct"] == pytest.approx(127.31, abs=0.05)
+
+
+def test_sem_projeto_de_irradiacao_o_desvio_nao_sai(cenario):
+    """Sem PVsyst diário e sem POA/GHI digitados não há com o que comparar — e inventar uma
+    referência seria pior do que não ter o número. A linha some da tela, não vira travessão."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(pvsyst={"rows": [], "years": [], "count": 0})
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["meteo"]["hpoa_projeto"] is None and c["meteo"]["ghi_projeto"] is None
+    assert c["desvios"]["hpoa_vs_projeto_pct"] is None
+    assert c["desvios"]["ghi_vs_projeto_pct"] is None
+
+
+def test_no_mes_em_curso_a_irradiacao_digitada_e_prorateada(cenario):
+    """Sem série diária, o valor MENSAL digitado entra rateado pelo mesmo dia de corte do
+    projeto de energia: 65 × 14/31 = 29,35 kWh/m². Sem o rateio, meio mês de sol medido
+    apanharia de um mês inteiro de projeto."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        pvsyst={"rows": [], "years": [], "count": 0}, manual=_manual(poa=65.0)
+    )
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["em_curso"] is True and c["dia_de_corte"] == 14
+    assert c["meteo"]["hpoa_projeto"] == pytest.approx(29.35, abs=0.01)
+    assert c["desvios"]["hpoa_vs_projeto_pct"] > 0, "agosto teve mais sol do que o projeto supôs"
 
 
 # ── o previsto pela meteorologia ─────────────────────────────────────────────

@@ -885,10 +885,11 @@ async def unidades_da_usina(
 #    diagnóstico, e classificar isso como divergência de fatura mandaria o cliente cobrar
 #    da distribuidora um defeito do aparelho dele.
 #
-# 4. SENTINELA DE TEMPERATURA. O relé marca ausência com número (ver `TEMPERATURA_MIN_C`),
-#    e nem o mw-api nem o dashboard do meuWatt filtram. Só o que é fisicamente impossível
-#    é descartado; o resto atravessa como veio, porque corrigir medição plausível seria
-#    inventar dado.
+# 4. SENTINELA DE TEMPERATURA. O relé marca ausência com número — `-100.0` e `0.0` —, e nem
+#    o mw-api nem o dashboard do meuWatt filtram. Some o que é fisicamente impossível (por
+#    ponto) e o campo cuja série INTEIRA do período é zero cravado (por série, ver
+#    `TEMPERATURA_CAMPOS`); uma leitura plausível qualquer e tudo atravessa como veio,
+#    porque corrigir medição plausível seria inventar dado.
 
 
 #: Tolerância contratual da conciliação com a conta de energia, em pontos percentuais. É a
@@ -904,10 +905,27 @@ TOLERANCIA_CONCILIACAO_PCT = 1.0
 #: O corte aqui é o único que se sustenta em fato, não em palpite: −100 °C não existe em
 #: lugar nenhum do planeta (o recorde mundial de frio é −89,2 °C, na Antártida; o de
 #: calor, 56,7 °C). O que cai fora da faixa é ausência de leitura e vira nulo. O que está
-#: dentro atravessa como veio: "corrigir" medição plausível seria inventar dado, e o `0.0`
-#: de um relé mudo é defeito de sensor — conserto na origem, não aqui.
+#: dentro atravessa como veio: "corrigir" medição plausível seria inventar dado.
 TEMPERATURA_MIN_C = -90.0
 TEMPERATURA_MAX_C = 90.0
+
+#: O OUTRO SENTINELA DO MESMO RELÉ: `0.0` exato. Filtrar só o −100 deixava passar o zero, e
+#: o recorte `ano` de Porto Ferreira publicava "TEMPERATURA AMBIENTE 0,0 °C, máxima 0,0 °C"
+#: ao lado de "TEMPERATURA DO MÓDULO 33,8 °C" — e 0,0 nas linhas de julho e agosto da tabela
+#: meteorológica. Medido no upstream para 2026 inteiro: das 13 leituras de `t_amb` que
+#: existem, os únicos valores são `0.0` (12 vezes) e `-100.0` (1 vez); NENHUMA na faixa
+#: plausível. Zero graus num agosto do interior paulista é indefensável diante da diretoria
+#: do cliente, e num painel que em todo o resto sabe dizer "não sei" era o único número
+#: inventado.
+#:
+#: ⛔ A régua é POR SÉRIE, nunca por ponto — e é o que a torna honesta. Descartar todo `0.0`
+#: apagaria uma medição legítima (existe 0 °C em serra no inverno). O que não existe é uma
+#: série INTEIRA de zeros exatos: sensor que mede oscila. Então o campo é anulado apenas
+#: quando, depois de tirados os impossíveis, TUDO o que sobrou do período é zero exato. Uma
+#: única leitura diferente e os zeros voltam a valer, porque aí eles podem ser reais.
+#:
+#: O conserto do relé é na origem; aqui o dever é não repassar o defeito como medição.
+TEMPERATURA_CAMPOS = ("t_amb", "t_amb_max", "t_mod", "t_mod_max")
 
 #: Faixa plausível da perda entre o inversor e o ponto de entrega, em %. É perda de
 #: transformação e de linha; a referência de projeto do próprio meuWatt é 1,50 %, e nem
@@ -958,6 +976,14 @@ class DesviosOut(BaseModel):
     medido_vs_previsto_pct: float | None = None
     #: O efeito do clima: quanto a irradiação real afastou o previsto do projeto.
     previsto_vs_projeto_pct: float | None = None
+    #: A COMPARAÇÃO DE IRRADIAÇÃO — medida contra a do projeto, nos dois planos. É o que
+    #: separa "o sol não veio" de "a usina não rendeu": os três desvios acima comparam
+    #: energia, e sozinhos não dizem qual das duas coisas aconteceu. O dashboard de origem
+    #: mostra estas duas caixas no lugar das de previsto quando a usina tem POA/GHI de
+    #: projeto cadastrados; aqui elas convivem, porque esconder informação que existe é o
+    #: contrário do que o dono pediu ("com todas as informações").
+    hpoa_vs_projeto_pct: float | None = None
+    ghi_vs_projeto_pct: float | None = None
 
 
 class ConciliacaoOut(BaseModel):
@@ -1044,7 +1070,10 @@ class MeteoOut(BaseModel):
     ghi: float | None = None
     #: `hpoa ÷ ghi` — quanto o plano inclinado ganha sobre o horizontal.
     razao: float | None = None
+    #: A irradiação de PROJETO do período, na MESMA janela do medido (ver
+    #: `_irradiacao_de_projeto`). No plano dos módulos e no horizontal.
     hpoa_projeto: float | None = None
+    ghi_projeto: float | None = None
     t_amb_media: float | None = None
     t_amb_max: float | None = None
     t_mod_media: float | None = None
@@ -1289,15 +1318,34 @@ def _temperatura(valor: Any) -> float | None:
     return lido
 
 
+def _serie_muda(valores: list[float]) -> bool:
+    """A série inteira é `0.0` exato — o outro sentinela do relé (ver `TEMPERATURA_CAMPOS`).
+
+    Sensor que mede oscila. Um período em que TODA leitura sobrevivente é zero cravado não
+    está medindo: está repetindo o valor de fábrica. Uma única leitura diferente e a série
+    volta a valer inteira, zeros incluídos — aí eles podem ser frio de verdade.
+    """
+    return bool(valores) and all(v == 0.0 for v in valores)
+
+
 def _temperatura_por_dia(relatorio: Any) -> dict[str, dict[str, float | None]]:
-    return {
-        p["t"][:10]: {
-            campo: _temperatura(p.get(campo))
-            for campo in ("t_amb", "t_amb_max", "t_mod", "t_mod_max")
-        }
+    """`daily_temperature[]` → `{'YYYY-MM-DD': {campo: °C ou None}}`, já sem sentinela.
+
+    Duas peneiras, e as duas precisam existir: a da FAIXA tira o impossível ponto a ponto
+    (−100 °C), a da SÉRIE tira o relé mudo, que fala zero. Sozinha, a primeira deixava a
+    tela do cliente afirmar 0,0 °C de média e de máxima.
+    """
+    por_dia = {
+        p["t"][:10]: {campo: _temperatura(p.get(campo)) for campo in TEMPERATURA_CAMPOS}
         for p in _lista(_grafico(relatorio).get("daily_temperature"))
         if isinstance(p.get("t"), str) and len(p["t"]) >= 10
     }
+    for campo in TEMPERATURA_CAMPOS:
+        sobreviventes = [d[campo] for d in por_dia.values() if d[campo] is not None]
+        if _serie_muda(sobreviventes):
+            for d in por_dia.values():
+                d[campo] = None
+    return por_dia
 
 
 def _pr_por_dia(relatorio: Any) -> dict[str, float]:
@@ -1505,8 +1553,31 @@ def _soma(valores: list[float | None]) -> float | None:
     return round(sum(presentes), 2) if presentes else None
 
 
+def _irradiacao_de_projeto(
+    diario: float, manual: float | None, fator: float
+) -> float | None:
+    """A irradiação de projeto do período, na MESMA janela do medido.
+
+    Duas fontes, nesta ordem: a soma do PVsyst DIÁRIO já recortada pela janela (é a mais
+    exata, dia a dia) e, na falta dela, o valor MENSAL digitado na página de projeto,
+    prorateado pelo `fator` — que é o mesmo dia-de-corte ÷ dias-do-mês do projeto de
+    energia. Sem nenhuma das duas não há projeto de irradiação, e inventar um seria pior
+    do que não ter: o desvio simplesmente não sai.
+
+    A janela importa mais aqui do que parece. No mês em curso a irradiação MEDIDA é
+    parcial; comparar com o projeto do mês inteiro devolveria "−48 % de irradiação" no dia
+    15 de todo mês, todo mês.
+    """
+    if diario > 0:
+        return round(diario, 2)
+    if manual and manual > 0:
+        return round(manual * fator, 2)
+    return None
+
+
 def _meteo(
-    *, pontos: list[PontoMeteo], hpoa: float, ghi: float, hpoa_projeto: float
+    *, pontos: list[PontoMeteo], hpoa: float, ghi: float,
+    hpoa_projeto: float | None, ghi_projeto: float | None = None,
 ) -> MeteoOut:
     """Os KPIs de meteorologia, derivados dos pontos que já foram montados."""
     ambientes = [p.t_amb for p in pontos if p.t_amb is not None]
@@ -1518,7 +1589,8 @@ def _meteo(
         hpoa=_arredondar(hpoa) if hpoa > 0 else None,
         ghi=_arredondar(ghi) if ghi > 0 else None,
         razao=round(hpoa / ghi, 3) if hpoa > 0 and ghi > 0 else None,
-        hpoa_projeto=_arredondar(hpoa_projeto) if hpoa_projeto > 0 else None,
+        hpoa_projeto=_arredondar(hpoa_projeto) if hpoa_projeto else None,
+        ghi_projeto=_arredondar(ghi_projeto) if ghi_projeto else None,
         t_amb_media=_arredondar(sum(ambientes) / len(ambientes), 1) if ambientes else None,
         t_amb_max=_arredondar(max(ambientes), 1) if ambientes else None,
         t_mod_media=_arredondar(sum(modulos) / len(modulos), 1) if modulos else None,
@@ -1871,6 +1943,22 @@ def _painel_do_mes(
         else projeto
     )
 
+    # A IRRADIAÇÃO DE PROJETO, na mesma janela do medido — é o que permite separar "o sol
+    # não veio" de "a usina não rendeu". No mês em curso o PVsyst diário é somado só até o
+    # último dia medido; o valor mensal digitado, quando é a única fonte, entra prorateado
+    # pelo mesmo dia de corte do projeto de energia.
+    fator_do_periodo = (dia_de_corte / dias_no_mes) if (em_curso and dia_de_corte) else 1.0
+    globinc_na_janela = sum(
+        valor for chave, valor in globinc.items()
+        if (dia_globinc := _data(chave)) is not None
+        and dia_globinc.year == alvo.year and dia_globinc.month == alvo.month
+        and (not em_curso or dia_globinc <= fim_medido)
+    )
+    hpoa_projeto = _irradiacao_de_projeto(
+        globinc_na_janela, _numero(_dicionario(linha_manual).get("poa")), fator_do_periodo)
+    ghi_projeto = _irradiacao_de_projeto(
+        0.0, _numero(_dicionario(linha_manual).get("ghi")), fator_do_periodo)
+
     previsto = _previsto_manual(linha_manual, hpoa_medida, ghi_medida)
     origem: str | None = "manual_corrigido" if previsto is not None else None
     if previsto is None:
@@ -1928,6 +2016,8 @@ def _painel_do_mes(
             medido_vs_projeto_pct=_desvio(medido, proporcional),
             medido_vs_previsto_pct=_desvio(medido, previsto),
             previsto_vs_projeto_pct=_desvio(previsto, proporcional),
+            hpoa_vs_projeto_pct=_desvio(hpoa_medida or None, hpoa_projeto),
+            ghi_vs_projeto_pct=_desvio(ghi_medida or None, ghi_projeto),
         ),
         conciliacao=_conciliacao(
             _arredondar(fronteira_mwh, 3), faturado, parcial=fronteira_parcial
@@ -1948,11 +2038,8 @@ def _painel_do_mes(
             pontos=pontos,
             hpoa=hpoa_medida,
             ghi=ghi_medida,
-            hpoa_projeto=sum(
-                valor for chave, valor in globinc.items()
-                if (_data(chave) or date.min).month == alvo.month
-                and (_data(chave) or date.min).year == alvo.year
-            ),
+            hpoa_projeto=hpoa_projeto,
+            ghi_projeto=ghi_projeto,
         ),
         dias=dias,
         regra=_REGRA,
@@ -2239,6 +2326,21 @@ def _painel_do_ano(
     faturado_ytd = _soma([m.faturado_mwh for m in fechados])
     perda_fronteira, fronteira_parcial = _perda_ate_a_fronteira(fronteira_ytd_kwh, medido_ytd)
 
+    # A irradiação de projeto do ano acompanha a MEDIDA mês a mês: só entram os meses em que
+    # a estação mediu. Somar o projeto de doze meses contra a medição de sete devolveria uma
+    # "queda de irradiação" que é só o calendário. Onde não há PVsyst diário, vale o valor
+    # mensal digitado — nunca os dois, para não contar o mesmo mês duas vezes.
+    meses_com_hpoa = {mes for mes, valor in hpoa.items() if valor > 0}
+    meses_com_ghi = {mes for mes, valor in ghi.items() if valor > 0}
+    hpoa_projeto_ytd = _irradiacao_de_projeto(
+        sum(valor for mes, valor in hpoa_projeto.items() if mes in meses_com_hpoa),
+        sum((_numero(manual_do_ano.get(mes, {}).get("poa")) or 0.0) for mes in meses_com_hpoa),
+        1.0)
+    ghi_projeto_ytd = _irradiacao_de_projeto(
+        0.0,
+        sum((_numero(manual_do_ano.get(mes, {}).get("ghi")) or 0.0) for mes in meses_com_ghi),
+        1.0)
+
     capacidade = _capacidade(relatorio)
 
     return PainelOut(
@@ -2273,6 +2375,8 @@ def _painel_do_ano(
             medido_vs_projeto_pct=_desvio(medido_ytd, projeto_ytd),
             medido_vs_previsto_pct=_desvio(medido_ytd, previsto_ytd),
             previsto_vs_projeto_pct=_desvio(previsto_ytd, projeto_ytd),
+            hpoa_vs_projeto_pct=_desvio(sum(hpoa.values()) or None, hpoa_projeto_ytd),
+            ghi_vs_projeto_pct=_desvio(sum(ghi.values()) or None, ghi_projeto_ytd),
         ),
         conciliacao=_conciliacao(
             _arredondar(fronteira_ytd, 3), faturado_ytd, parcial=fronteira_parcial
@@ -2287,7 +2391,8 @@ def _painel_do_ano(
             pontos=pontos,
             hpoa=sum(hpoa.values()),
             ghi=sum(ghi.values()),
-            hpoa_projeto=sum(hpoa_projeto.values()),
+            hpoa_projeto=hpoa_projeto_ytd,
+            ghi_projeto=ghi_projeto_ytd,
         ),
         meses=meses,
         meses_disponiveis=disponiveis,

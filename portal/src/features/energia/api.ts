@@ -58,12 +58,19 @@ export type UsinaDetalhe = {
 
 /* ------------------------------------------------------------------ o painel */
 
-/** Os três desvios estruturais, COM SINAL: positivo = acima da referência. */
+/** Os desvios estruturais, COM SINAL: positivo = acima da referência. */
 export type Desvios = {
   medido_vs_projeto_pct: number | null
   medido_vs_previsto_pct: number | null
   /** O efeito do clima: quanto a irradiação real afastou o previsto do projeto. */
   previsto_vs_projeto_pct: number | null
+  /**
+   * A irradiação MEDIDA contra a do projeto, nos dois planos. É o que separa "o sol não
+   * veio" de "a usina não rendeu"; nulo quando a usina não tem irradiação de projeto
+   * cadastrada, e aí a linha nem aparece.
+   */
+  hpoa_vs_projeto_pct: number | null
+  ghi_vs_projeto_pct: number | null
 }
 
 export type Conciliacao = {
@@ -144,7 +151,9 @@ export type Meteo = {
   ghi: number | null
   /** `hpoa ÷ ghi` — quanto o plano inclinado ganha sobre o horizontal. */
   razao: number | null
+  /** A irradiação de PROJETO do período, na mesma janela do medido — nos dois planos. */
   hpoa_projeto: number | null
+  ghi_projeto: number | null
   t_amb_media: number | null
   t_amb_max: number | null
   t_mod_media: number | null

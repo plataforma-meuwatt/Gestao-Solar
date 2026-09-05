@@ -67,6 +67,7 @@ const METEO_VAZIA = {
   ghi: null,
   razao: null,
   hpoa_projeto: null,
+  ghi_projeto: null,
   t_amb_media: null,
   t_amb_max: null,
   t_mod_media: null,
@@ -103,6 +104,8 @@ function painel(parcial: Partial<Painel> = {}): Painel {
       medido_vs_projeto_pct: -3.5,
       medido_vs_previsto_pct: 1.2,
       previsto_vs_projeto_pct: -4.6,
+      hpoa_vs_projeto_pct: null,
+      ghi_vs_projeto_pct: null,
     },
     conciliacao: {
       fronteira_mwh: null,
@@ -357,6 +360,65 @@ describe('Painel de energia', () => {
     expect(
       screen.getByText(/O medidor do ponto de entrega não cobre o mesmo conjunto/),
     ).toBeTruthy()
+  })
+
+  it('o desvio de irradiação aparece quando há projeto, e some quando não há', async () => {
+    // É a comparação que separa "o sol não veio" de "a usina não rendeu" — sem ela um mês
+    // fraco tem duas explicações possíveis e nenhuma escrita. Sem projeto de irradiação a
+    // linha SOME: um travessão ali não informaria nada e ocuparia o lugar do que informa.
+    servidor([
+      ['plants/4', USINA],
+      ['painel?recorte=ano', painel({ recorte: 'ano' })],
+      [
+        'painel?recorte=mes',
+        painel({
+          desvios: {
+            medido_vs_projeto_pct: -3.5,
+            medido_vs_previsto_pct: 1.2,
+            previsto_vs_projeto_pct: -4.6,
+            hpoa_vs_projeto_pct: -3.85,
+            ghi_vs_projeto_pct: null,
+          },
+        }),
+      ],
+    ])
+    montar()
+
+    await screen.findByText('Sol medido × projeto (plano dos módulos)')
+    expect(screen.getByText('−3,9%')).toBeTruthy()
+    expect(screen.queryByText('Sol medido × projeto (plano horizontal)')).toBeNull()
+  })
+
+  it('sensor de ambiente mudo diz "sem leitura" — nunca um número que ninguém mediu', async () => {
+    // Porto Ferreira: o relé de ambiente só devolve o valor de fábrica (o servidor descarta
+    // a série inteira e manda nulo) enquanto o do módulo mede. Sem este ramo o card sairia
+    // "— °C" ao lado de um número, que parece defeito da tela em vez de sensor parado.
+    servidor([
+      ['plants/4', USINA],
+      ['painel?recorte=ano', painel({ recorte: 'ano' })],
+      [
+        'painel?recorte=mes',
+        painel({
+          meteo: {
+            ...METEO_VAZIA,
+            tem_estacao: true,
+            tem_sensor_temperatura: true,
+            hpoa: 120.4,
+            t_amb_media: null,
+            t_amb_max: null,
+            t_mod_media: 33.8,
+            t_mod_max: 47.2,
+          },
+        }),
+      ],
+    ])
+    montar()
+
+    await screen.findByText('Temperatura ambiente')
+    expect(screen.getByText('sem leitura')).toBeTruthy()
+    expect(screen.getByText('o sensor de ambiente não mediu no período')).toBeTruthy()
+    expect(screen.getByText('33,8 °C')).toBeTruthy()
+    expect(screen.queryByText('0,0 °C')).toBeNull()
   })
 
   it('previsto vindo da correção manual aparece com a procedência escrita', async () => {
