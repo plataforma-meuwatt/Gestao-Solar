@@ -18,6 +18,24 @@
  * diferença — desenhar as duas como ✓ — era exatamente o risco que o meuPlano recusou
  * correr, e não vamos reintroduzi-lo na última tela da cadeia.
  *
+ * **Blocos, não noventa e quatro linhas.** O contrato de Porto Ferreira tem 94 atividades.
+ * Planas numa grade de doze colunas, elas viram a análise equipamento a equipamento que o
+ * cliente não quer ler — e foi o que a captura de tela mostrou: quinze faixas cinzas
+ * chapadas, meses vazios, nada legível. As linhas chegam com `grupo` do servidor e a tela as
+ * recolhe: quinze blocos fechados, cada um dizendo quanto cumpriu e quanto está atrasado, e o
+ * detalhe atrás de um toque.
+ *
+ * **O laranja existe.** O meuPlano tem CINCO estados de célula, e o BFF só transforma três em
+ * booleano — `laranja` (venceu o mês, ainda está na janela de tolerância) não tem booleano
+ * nenhum e caía no mesmo ponto cinza do "no prazo". A atividade que ainda dá tempo de salvar
+ * ficava indistinguível da que nem venceu. A marca vem de `marcaDaCelula`, que lê o campo cru.
+ *
+ * **Dois números, e cada um com o seu rótulo.** "Cumpridas no ano" conta os doze meses,
+ * inclusive os que não chegaram; o recorte de vigência conta só o que já venceu dentro do
+ * contrato. Foi confundir os dois que produziu "13 de 270" numa tela e "41,9 %" na outra. A
+ * conta é feita no meuPlano e só repassada — aqui não se divide nada, e os dois aparecem
+ * juntos, cada um com o denominador colado.
+ *
  * A grade rola na horizontal porque doze colunas legíveis não cabem em 390 px, e
  * encolher a fonte até caber é como se perde a leitura de relance que a tela existe para
  * dar. A coluna do nome fica fixa à esquerda.
@@ -41,14 +59,22 @@ import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num } from '@/components/base'
 import { Tela } from '@/components/Tela'
 import {
+  agruparCronograma,
+  marcaDaCelula,
+  recorteDoCronograma,
+  TOM_DA_MARCA,
+  type Bloco,
+} from '@/features/manutencao-regras'
+import {
   tarefasDaCelula,
   urlDoPdfDoCronograma,
   useCronograma,
   type Celula,
+  type CronogramaOut,
   type LinhaCronograma,
   type Tarefa,
 } from '@/features/manutencao'
-import { inteiro } from '@/lib/format'
+import { inteiro, numero } from '@/lib/format'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 const LARGURA_NOME = 150
@@ -85,7 +111,7 @@ export default function Cronograma() {
               <>
                 {' · '}
                 <Num style={estilos.subNum}>{inteiro(c.feitos_ano)}</Num>
-                {` de ${inteiro(c.previsto_ano)} cumpridas`}
+                {` de ${inteiro(c.previsto_ano)} no ano`}
               </>
             ) : null}
           </Text>
@@ -117,6 +143,8 @@ export default function Cronograma() {
         <>
           {c.aviso ? <Text style={estilos.aviso}>{c.aviso}</Text> : null}
 
+          <RecorteDeVigencia cronograma={c} />
+
           <Card>
             <CabecalhoCard
               rotulo="Plano do contrato"
@@ -134,21 +162,26 @@ export default function Cronograma() {
             <Legenda />
           </Card>
 
-          <Card>
-            <CabecalhoCard rotulo="Cronograma em PDF" />
-            <Text style={estilos.explicacao}>
-              O plano anual completo, com a letra do estado em cada mês. O arquivo é
-              baixado e aberto no leitor do seu aparelho.
-            </Text>
-            <View style={estilos.espaco}>
-              <AbrirPdf
-                url={urlDoPdfDoCronograma(c.usina_id)}
-                arquivo={`cronograma-${c.usina_id}.pdf`}
-                titulo={`Cronograma — ${c.usina}`}
-                rotulo="Abrir o cronograma em PDF"
-              />
-            </View>
-          </Card>
+          {/* O JSON responde 200 com matriz vazia quando não há consolidação, mas o PDF
+              responde 404 — um arquivo não tem como avisar por dentro. O servidor diz se
+              há o que gerar, e sem isso o botão não existe em vez de dar erro. */}
+          {c.pdf_disponivel ? (
+            <Card>
+              <CabecalhoCard rotulo="Cronograma em PDF" />
+              <Text style={estilos.explicacao}>
+                O plano anual completo, com a letra do estado em cada mês. O arquivo é
+                baixado e aberto no leitor do seu aparelho.
+              </Text>
+              <View style={estilos.espaco}>
+                <AbrirPdf
+                  url={urlDoPdfDoCronograma(c.usina_id)}
+                  arquivo={`cronograma-${c.usina_id}.pdf`}
+                  titulo={`Cronograma — ${c.usina}`}
+                  rotulo="Abrir o cronograma em PDF"
+                />
+              </View>
+            </Card>
+          ) : null}
         </>
       )}
     </Tela>
@@ -166,6 +199,9 @@ export default function Cronograma() {
 function Grade({ cronograma: c }: { cronograma: { meses: string[]; linhas: LinhaCronograma[]; usina_id: number } }) {
   const nomesRef = useRef<ScrollView>(null)
   const celulasRef = useRef<ScrollView>(null)
+  // Fechados por padrão. Abrir todos devolveria as 94 linhas que esta tela existe para
+  // recolher; o cabeçalho de cada bloco já diz o que há dentro.
+  const [abertos, setAbertos] = useState<Record<string, true>>({})
   const [celulaAberta, setCelulaAberta] = useState<
     { linha: LinhaCronograma; mes: string; tarefas: Tarefa[] | null; erro: string | null } | null
   >(null)
@@ -196,6 +232,34 @@ function Grade({ cronograma: c }: { cronograma: { meses: string[]; linhas: Linha
     nomesRef.current?.scrollTo({ y: e.nativeEvent.contentOffset.y, animated: false })
   }
 
+  const blocos = agruparCronograma(c.linhas)
+
+  /*
+   * As duas colunas desenham a MESMA sequência de faixas, e por isso ela é montada uma vez
+   * só. Sem isto, um `if` a mais de um lado desalinharia nome e células — e a atividade
+   * apareceria com a marca da vizinha, que é o pior defeito possível numa tela de
+   * conformidade.
+   */
+  type Faixa =
+    | { tipo: 'bloco'; bloco: Bloco<LinhaCronograma> }
+    | { tipo: 'linha'; linha: LinhaCronograma; chave: string }
+
+  const faixas: Faixa[] = []
+  for (const b of blocos) {
+    faixas.push({ tipo: 'bloco', bloco: b })
+    if (abertos[b.grupo]) {
+      b.linhas.forEach((l, i) => faixas.push({ tipo: 'linha', linha: l, chave: `${b.grupo}#${i}` }))
+    }
+  }
+
+  const alternar = (grupo: string) =>
+    setAbertos((atual) => {
+      const proximo = { ...atual }
+      if (proximo[grupo]) delete proximo[grupo]
+      else proximo[grupo] = true
+      return proximo
+    })
+
   return (
     <>
       <View style={estilos.grade}>
@@ -211,16 +275,38 @@ function Grade({ cronograma: c }: { cronograma: { meses: string[]; linhas: Linha
             // quem arrasta é a área das células; esta coluna apenas acompanha
             scrollEnabled={false}
           >
-            {c.linhas.map((l, i) => (
-              <View key={`n${i}`} style={estilos.celulaNome}>
-                <Text style={estilos.nomeAtividade} numberOfLines={2}>
-                  {l.nome}
-                </Text>
-                {l.periodicidade ? (
-                  <Text style={estilos.periodicidade}>{l.periodicidade}</Text>
-                ) : null}
-              </View>
-            ))}
+            {faixas.map((f) =>
+              f.tipo === 'bloco' ? (
+                <Pressable
+                  key={`b:${f.bloco.grupo}`}
+                  style={({ pressed }) => [estilos.celulaBloco, pressed && estilos.celulaTocada]}
+                  onPress={() => alternar(f.bloco.grupo)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: Boolean(abertos[f.bloco.grupo]) }}
+                  accessibilityLabel={`${abertos[f.bloco.grupo] ? 'Recolher' : 'Abrir'} ${f.bloco.grupo}, ${f.bloco.linhas.length} atividades`}
+                >
+                  <Text style={estilos.seta}>{abertos[f.bloco.grupo] ? '▾' : '▸'}</Text>
+                  <View style={estilos.blocoMiolo}>
+                    <Text style={estilos.nomeBloco} numberOfLines={2}>
+                      {f.bloco.grupo}
+                    </Text>
+                    <Text style={estilos.blocoSub}>
+                      {f.bloco.linhas.length}
+                      {f.bloco.linhas.length === 1 ? ' atividade' : ' atividades'}
+                    </Text>
+                  </View>
+                </Pressable>
+              ) : (
+                <View key={`n:${f.chave}`} style={estilos.celulaNome}>
+                  <Text style={estilos.nomeAtividade} numberOfLines={2}>
+                    {f.linha.nome}
+                  </Text>
+                  {f.linha.periodicidade ? (
+                    <Text style={estilos.periodicidade}>{f.linha.periodicidade}</Text>
+                  ) : null}
+                </View>
+              ),
+            )}
           </ScrollView>
         </View>
 
@@ -248,13 +334,17 @@ function Grade({ cronograma: c }: { cronograma: { meses: string[]; linhas: Linha
               onScroll={sincronizar}
               scrollEventThrottle={16}
             >
-              {c.linhas.map((l, i) => (
-                <LinhaGrade
-                  key={`l${i}`}
-                  linha={l}
-                  onAbrirCelula={(mes) => abrirCelula(l, mes)}
-                />
-              ))}
+              {faixas.map((f) =>
+                f.tipo === 'bloco' ? (
+                  <ResumoDoBloco key={`rb:${f.bloco.grupo}`} bloco={f.bloco} meses={c.meses} />
+                ) : (
+                  <LinhaGrade
+                    key={`l:${f.chave}`}
+                    linha={f.linha}
+                    onAbrirCelula={(mes) => abrirCelula(f.linha, mes)}
+                  />
+                ),
+              )}
             </ScrollView>
           </View>
         </ScrollView>
@@ -382,33 +472,43 @@ function LinhaGrade({
 }
 
 /**
- * A marca de uma célula. Cinco estados, e a ordem dos testes importa: dispensado é
- * `verde_ressalva` e nunca deve cair no ramo de `feito`.
+ * A marca de uma célula. Quem decide qual é `marcaDaCelula` — a ordem dos testes é regra e
+ * está testada lá, não aqui. Isto é só o desenho de cada uma das seis.
  */
 function Marca({ celula: c }: { celula: Celula }) {
-  if (c.feito) {
+  const marca = marcaDaCelula(c)
+  if (marca === 'feito') {
     return (
-      <View style={[estilos.marca, { backgroundColor: tons.ok }]}>
+      <View style={[estilos.marca, { backgroundColor: tons[TOM_DA_MARCA.feito] }]}>
         <Text style={estilos.marcaTexto}>✓</Text>
       </View>
     )
   }
-  if (c.dispensado) {
+  if (marca === 'dispensado') {
     // Contorno, não preenchimento: cumprido por decisão não é cumprido por execução.
     return (
-      <View style={[estilos.marca, estilos.marcaVazada, { borderColor: tons.ok }]}>
-        <Text style={[estilos.marcaTextoVazado, { color: tons.ok }]}>~</Text>
+      <View style={[estilos.marca, estilos.marcaVazada, { borderColor: tons[TOM_DA_MARCA.dispensado] }]}>
+        <Text style={[estilos.marcaTextoVazado, { color: tons[TOM_DA_MARCA.dispensado] }]}>~</Text>
       </View>
     )
   }
-  if (c.atrasado) {
+  if (marca === 'atrasado') {
     return (
-      <View style={[estilos.marca, { backgroundColor: tons.parado }]}>
+      <View style={[estilos.marca, { backgroundColor: tons[TOM_DA_MARCA.atrasado] }]}>
         <Text style={estilos.marcaTexto}>!</Text>
       </View>
     )
   }
-  if (c.previsto > 0) {
+  if (marca === 'alerta') {
+    // Venceu o mês e ainda está na janela de tolerância. Antes caía no ponto cinza do "no
+    // prazo" — e era exatamente esta a atividade sobre a qual valia a pena ligar hoje.
+    return (
+      <View style={[estilos.marca, { backgroundColor: tons[TOM_DA_MARCA.alerta] }]}>
+        <Text style={estilos.marcaTexto}>•</Text>
+      </View>
+    )
+  }
+  if (marca === 'previsto') {
     // Previsto e ainda no prazo: um ponto, que não compete com ✓ nem com !.
     return <View style={estilos.ponto} />
   }
@@ -416,14 +516,90 @@ function Marca({ celula: c }: { celula: Celula }) {
   return <View style={estilos.vazio} />
 }
 
+/**
+ * A faixa do bloco fechado, do lado das células.
+ *
+ * Não é um resumo inventado: cada mês mostra a marca MAIS GRAVE das linhas do bloco naquele
+ * mês, na ordem atrasado → alerta → previsto → feito → dispensado. Um bloco recolhido nunca
+ * pode esconder um atraso — recolher é para tirar detalhe da frente, não notícia ruim.
+ */
+function ResumoDoBloco({ bloco, meses }: { bloco: Bloco<LinhaCronograma>; meses: string[] }) {
+  const GRAVIDADE = ['atrasado', 'alerta', 'previsto', 'feito', 'dispensado', 'vazio'] as const
+  return (
+    <View style={estilos.linhaBloco}>
+      {meses.map((m, i) => {
+        let pior: (typeof GRAVIDADE)[number] = 'vazio'
+        for (const l of bloco.linhas) {
+          const cel = l.meses[i]
+          if (!cel) continue
+          const marca = marcaDaCelula(cel)
+          if (GRAVIDADE.indexOf(marca) < GRAVIDADE.indexOf(pior)) pior = marca
+        }
+        return (
+          <View key={m} style={estilos.celula}>
+            {pior === 'vazio' ? (
+              <View style={estilos.vazio} />
+            ) : (
+              <View style={[estilos.pontoBloco, { backgroundColor: tons[TOM_DA_MARCA[pior]] }]} />
+            )}
+          </View>
+        )
+      })}
+      <View style={estilos.celulaTotal}>
+        <Num style={estilos.totalBloco}>
+          {bloco.feitos}/{bloco.previsto_ano}
+        </Num>
+      </View>
+    </View>
+  )
+}
+
 function Legenda() {
   return (
     <View style={estilos.legenda}>
-      <ItemLegenda cor={tons.ok} texto="Feito" />
-      <ItemLegenda cor={tons.ok} texto="Dispensado" vazado />
-      <ItemLegenda cor={tons.parado} texto="Atrasado" />
+      <ItemLegenda cor={tons[TOM_DA_MARCA.feito]} texto="Feito" />
+      <ItemLegenda cor={tons[TOM_DA_MARCA.dispensado]} texto="Dispensado" vazado />
+      <ItemLegenda cor={tons[TOM_DA_MARCA.alerta]} texto="Venceu o mês" />
+      <ItemLegenda cor={tons[TOM_DA_MARCA.atrasado]} texto="Atrasado" />
       <ItemLegenda cor={cores.textoFraco} texto="Previsto" ponto />
     </View>
+  )
+}
+
+/**
+ * O recorte de vigência — o número que responde "está sendo feito?".
+ *
+ * Ele vem PRONTO do meuPlano e é só repassado. O denominador viaja colado ao percentual
+ * ("13 de 31") porque foi a sua ausência que permitiu ler 41,9 % como se fosse do ano todo,
+ * ao lado de outra tela dizendo "13 de 270" para a mesma usina — sem uma única atividade
+ * atrasada. Sem recorte publicado, travessão: "0 %" seria um número que ninguém mediu.
+ */
+function RecorteDeVigencia({ cronograma: c }: { cronograma: CronogramaOut }) {
+  const r = recorteDoCronograma(c)
+  if (!r) return null
+  return (
+    <Card>
+      <CabecalhoCard
+        rotulo="Cumprimento do contrato"
+        direita={
+          r.ate ? (
+            <Text style={estilos.versao}>
+              até {mesCurto(r.ate)}/{anoDe(r.ate)}
+            </Text>
+          ) : undefined
+        }
+      />
+      <View style={estilos.recorteLinha}>
+        <Num style={estilos.recortePct}>{r.pct === null ? '—' : `${numero(r.pct, 1)}%`}</Num>
+        {r.fracao ? <Text style={estilos.recorteFracao}>{r.fracao}</Text> : null}
+      </View>
+      <Text style={estilos.recorteNota}>
+        Conta só os meses que já venceram dentro da vigência do contrato.
+        {r.noContrato !== null
+          ? ` O contrato prevê ${inteiro(r.noContrato)} no ano inteiro.`
+          : ''}
+      </Text>
+    </Card>
   )
 }
 
@@ -503,6 +679,41 @@ const estilos = StyleSheet.create({
   cabecalhoTotal: { width: 46, alignItems: 'center', paddingBottom: 3 },
   mesTexto: { fontFamily: fontes.ui, fontSize: 10, color: cores.textoRotulo },
   anoTexto: { fontFamily: fontes.ui, fontSize: 8, color: cores.textoFraco },
+
+  // O bloco fechado. Faixa da mesma altura da linha, para nome e células não desalinharem.
+  celulaBloco: {
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderTopWidth: 1,
+    borderTopColor: cores.borda,
+    paddingRight: espaco.xs,
+  },
+  seta: { fontFamily: fontes.ui, fontSize: 11, color: cores.textoRotulo, width: 12 },
+  blocoMiolo: { flex: 1, minWidth: 0 },
+  nomeBloco: { fontFamily: fontes.uiSemi, fontSize: 12, color: cores.textoForte, lineHeight: 15 },
+  blocoSub: { fontFamily: fontes.ui, fontSize: 9.5, color: cores.textoFraco },
+  linhaBloco: {
+    flexDirection: 'row',
+    height: 40,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: cores.borda,
+  },
+  pontoBloco: { width: 8, height: 8, borderRadius: 4 },
+  totalBloco: { fontSize: 11, color: cores.textoRotulo },
+
+  recorteLinha: { flexDirection: 'row', alignItems: 'baseline', gap: espaco.sm, marginTop: 2 },
+  recortePct: { ...tipo.kpiMedio },
+  recorteFracao: { fontFamily: fontes.mono, fontSize: 13, color: cores.textoRotulo },
+  recorteNota: {
+    fontFamily: fontes.ui,
+    fontSize: 11.5,
+    color: cores.textoFraco,
+    lineHeight: 16,
+    marginTop: 6,
+  },
 
   celulaNome: {
     height: 40,

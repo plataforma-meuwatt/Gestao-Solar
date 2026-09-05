@@ -65,6 +65,13 @@ export type Tarefa = {
   natureza: string | null
   /** Só quando existe ficha respondida. Tarefa de serviço não tem parecer. */
   parecer: string | null
+  /**
+   * A cor do parecer, DECIDIDA NO SERVIDOR. Três telas deduziam essa cor do texto, de três
+   * jeitos diferentes — o campo existe no BFF exatamente para acabar com isso. Nulo = sem
+   * parecer, ou parecer que ele não sabe classificar; nos dois casos o texto sai sem cor,
+   * nunca com uma cor chutada aqui.
+   */
+  parecer_tom: string | null
   /** A OS que executa a tarefa (a tela da tarefa é `/tarefa/{id}?os={os_id}`). */
   os_id?: number | null
   mes_contratual: string | null
@@ -82,9 +89,24 @@ export type Ordem = {
   usina: string
   /** `id` do vínculo NESTE sistema — é por ele que se navega, não pelo id do meuPlano. */
   usina_id: number
-  numero: number | null
+  /**
+   * Número do CONTRATO que rege a OS — **nunca** o número da ordem, que no meuPlano não
+   * existe (ela se identifica pelo `id`).
+   *
+   * O campo se chamava `numero` no BFF e foi renomeado justamente por isso. A tela daqui
+   * continuou lendo `o.numero`, e o guarda era `!== null`: como `undefined !== null` é
+   * verdadeiro, TODA ordem passou a imprimir "Contrato nº undefined" para o dono —
+   * aparecendo e sumindo conforme a leitura viesse do cache em disco ou da rede. Quem
+   * desenha a linha é `rotuloDoContrato`, que trata ausência e `null` do mesmo jeito.
+   */
+  contrato_numero: number | null
   objetivo: string
+  /** Rótulo PRONTO ("Serviços adicionais"). A tela não traduz código nenhum. */
   classificacao: string | null
+  /** O código cru por trás do rótulo, para auditoria. */
+  classificacao_codigo: string | null
+  /** A cor da classificação, decidida no servidor — corretiva é conserto, preventiva é rotina. */
+  classificacao_tom: string | null
   /** Código cru do meuPlano, para auditoria. A tela mostra `situacao`. */
   status: string | null
   /** A frase pronta: "Executada · aguardando verificação". Decidida no servidor. */
@@ -130,23 +152,65 @@ export type LinhaCronograma = {
   nome: string
   categoria: string | null
   periodicidade: string | null
+  /**
+   * Sob que bloco esta atividade aparece ("Subestação", "CFTV", "Inversores"…). O contrato
+   * de Porto Ferreira tem 94 linhas: planas, são a análise equipamento a equipamento que o
+   * cliente não quer; agrupadas por aqui e recolhidas, são quinze blocos legíveis. O BFF
+   * garante "Outras atividades" quando o plano não declarou grupo — nunca vazio.
+   */
+  grupo: string
   previsto_ano: number
   /** Conta feitos E dispensados: o dispensado saiu da conta do mês por decisão. */
   feitos: number
   meses: Celula[]
 }
 
+/** Um dos 12 meses da matriz, como o meuPlano o classificou. */
+export type MesEstado = {
+  mes: string
+  /** `fechado` (já venceu, dentro da vigência) · `corrente` · `futuro`. */
+  situacao: string | null
+  previsto: number | null
+  cumprido: number | null
+}
+
 export type CronogramaOut = {
   usina: string
   usina_id: number
+  /** O contrato de onde a matriz veio, e o rótulo dele. */
+  contrato_id: number | null
+  contrato: string | null
   /** DRAFT | CONSOLIDATED. Só o consolidado é o combinado com o cliente. */
   status: string | null
   versao: number | null
   /** 12 × "YYYY-MM". O mês 1 é a âncora do CONTRATO, não janeiro. */
   meses: string[]
   linhas: LinhaCronograma[]
+  /** O combinado do ANO INTEIRO, inclusive os meses que ainda nem chegaram. */
   previsto_ano: number
   feitos_ano: number
+
+  /* ── o recorte de vigência: chega PRONTO do meuPlano e é só repassado ──────────
+   *
+   * `previsto_ano` responde "o que foi combinado para o ano"; estes respondem "está sendo
+   * feito?". São perguntas diferentes, e confundi-las produziu "13 de 270" (4,8 %) numa
+   * tela e "41,9 %" na outra para a MESMA usina, que não tinha uma única atividade
+   * atrasada. A conta tem um dono só — o meuPlano, ao lado da régua que o Relatório de
+   * manutenção já usa. Aqui não se divide nada. */
+
+  /** Até que mês a conta olha ("YYYY-MM"). */
+  mes_referencia: string | null
+  /** O denominador honesto: o previsto nos meses JÁ vencidos dentro da vigência. */
+  previsto_ate_hoje: number | null
+  cumprido_ate_hoje: number | null
+  /** 0–100, como o meuPlano calculou. Nulo = ele não informou. */
+  pct_ate_hoje: number | null
+  /** Σ de X dos 12 meses — o "270", com o rótulo que o explica. */
+  previsto_no_contrato: number | null
+  meses_estado: MesEstado[]
+
+  /** Se a rota irmã do PDF tem o que gerar. Sem isto o botão só daria erro. */
+  pdf_disponivel: boolean
   aviso: string | null
 }
 

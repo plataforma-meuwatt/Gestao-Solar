@@ -2,8 +2,14 @@
  * Login.
  *
  * Entra-se com o **apelido**, não com o e-mail: a conta é do Gestão Solar, criada pelo
- * gestor no painel, e não a mesma do meuWatt ou do meuPlano. Daí a linha de apoio sob o
+ * gestor no painel, e não a mesma dos sistemas por trás. Daí a linha de apoio sob o
  * botão — sem ela, o dono da usina tentaria o e-mail e a senha que já conhece.
+ *
+ * A linha nomeia os SERVIÇOS ("monitoramento", "manutenção"), nunca os produtos. Quem
+ * entra aqui não tem conta neles, não sabe o nome deles e não tem a quem cobrar por eles;
+ * ler um nome próprio na primeira tela do aplicativo só levanta uma pergunta que este
+ * portal existe para não precisar responder. É a mesma régua do BFF, escrita em
+ * `bff/tests/test_vocabulario_do_cliente.py`.
  *
  * No erro os campos NÃO são limpos. Refazer o apelido inteiro por causa de uma senha
  * errada é o tipo de atrito que faz o usuário desistir na segunda tentativa.
@@ -147,7 +153,7 @@ export default function Login() {
             ? 'Entrando…'
             : __DEV__ && !preenchido
               ? 'Modo desenvolvimento: entra sem servidor. As telas ficam vazias — não há mais dados de exemplo.'
-              : 'Use o apelido e a senha que a Gestão Solar enviou. Não é o login do meuWatt nem do meuPlano.'}
+              : 'Use o apelido e a senha que a Gestão Solar enviou. Não é o mesmo login dos sistemas de monitoramento e de manutenção.'}
         </Text>
 
         {/* "Entrar com Google" e "Esqueci minha senha" saíram daqui: os dois eram botões

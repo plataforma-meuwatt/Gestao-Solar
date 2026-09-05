@@ -204,11 +204,18 @@ export default function UsinaDetalhe() {
       <Comparacao leitura={comparativo} />
 
       <Card>
+        {/* O SERVIÇO, nunca o produto que está por trás. O cliente não tem conta no
+            monitoramento nem no sistema de manutenção, não sabe o nome deles e não tem a
+            quem cobrar por eles — descobrir que existem dois outros sistemas por um chip
+            de canto de tela só levanta uma pergunta que este portal existe para não
+            precisar responder. É o mesmo vocabulário que o BFF já usa nas rotas do
+            cliente (`MONITORAMENTO` e `MANUTENCAO`, em `bff/app/api/v1/manutencao.py`),
+            e a régua está escrita em `bff/tests/test_vocabulario_do_cliente.py`. */}
         <CabecalhoCard
           rotulo="De onde vem"
           direita={
             <Text style={tipo.legenda}>
-              {[u.tem_meuwatt && 'meuWatt', u.tem_meuplano && 'meuPlano']
+              {[u.tem_meuwatt && 'Monitoramento', u.tem_meuplano && 'Manutenção']
                 .filter(Boolean)
                 .join(' · ') || '—'}
             </Text>

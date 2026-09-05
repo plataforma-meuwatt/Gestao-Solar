@@ -19,35 +19,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { AbrirPdf } from '@/components/AbrirPdf'
 import { CabecalhoCard, Card, Esqueleto, EstadoVazio, Num, StatusChip } from '@/components/base'
 import { Tela } from '@/components/Tela'
+import { rotuloDoContrato, tomValido } from '@/features/manutencao-regras'
 import { urlDoPdfDaOrdem, useOrdem, type Tarefa } from '@/features/manutencao'
 import { dataPorExtenso, duracao } from '@/lib/format'
-import { cores, espaco, fontes, tipo, tons, type Tom } from '@/theme/tokens'
-
-/** Corretiva é conserto (algo quebrou); preventiva é rotina cumprida. */
-function tomDaClasse(c: string | null): Tom {
-  const v = (c ?? '').toUpperCase()
-  if (v.includes('CORRETIVA')) return 'alerta'
-  if (v.includes('PREVENTIVA')) return 'ok'
-  return 'semDados'
-}
-
-function rotuloDaClasse(c: string | null): string {
-  if (!c) return 'sem classificação'
-  const limpo = c.replace(/_/g, ' ').toLowerCase()
-  return limpo.charAt(0).toUpperCase() + limpo.slice(1)
-}
-
-/** Ressalva não é reprovação, e nem uma nem outra é "aprovado". Três cores. */
-function tomDoParecer(p: string | null): Tom {
-  if (!p) return 'semDados'
-  if (/reprov/i.test(p)) return 'parado'
-  if (/ressalva/i.test(p)) return 'alerta'
-  return 'ok'
-}
+import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function OrdemDeServico() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const { dados: o, carregando, erro, offlineDesde, recarregar } = useOrdem(id)
+
+  const contrato = rotuloDoContrato(o?.contrato_numero)
 
   // Seções na ordem em que vieram — o servidor já ordenou por grupo e nome.
   const secoes = new Map<string, Tarefa[]>()
@@ -89,10 +70,11 @@ export default function OrdemDeServico() {
           <Card>
             <View style={estilos.topo}>
               <Text style={estilos.objetivo}>{o.objetivo}</Text>
-              <StatusChip
-                tom={tomDaClasse(o.classificacao)}
-                texto={rotuloDaClasse(o.classificacao)}
-              />
+              {/* Rótulo e cor são do servidor. Sem classificação, chip nenhum: um selo
+                  "sem classificação" ocupa o lugar de uma informação e não é uma. */}
+              {o.classificacao ? (
+                <StatusChip tom={tomValido(o.classificacao_tom)} texto={o.classificacao} />
+              ) : null}
             </View>
 
             {/* A situação é a frase do servidor, não o status cru: "Executada ·
@@ -103,7 +85,10 @@ export default function OrdemDeServico() {
 
             <View style={estilos.linhas}>
               <Linha rotulo="Técnico" valor={o.tecnico ?? '—'} />
-              {o.numero !== null ? <Linha rotulo="Contrato" valor={`nº ${o.numero}`} /> : null}
+              {/* `rotuloDoContrato` devolve `null` para ausente, `null` e `NaN` — os três
+                  casos que faziam a linha sair "Contrato nº undefined" desde a renomeação
+                  de `numero` para `contrato_numero` no servidor. */}
+              {contrato ? <Linha rotulo="Contrato" valor={contrato} /> : null}
               <Linha
                 rotulo="Agendada"
                 valor={o.agendada_para ? dataPorExtenso(o.agendada_para) : '—'}
@@ -201,8 +186,10 @@ function ItemTarefa({ tarefa: t, osId }: { tarefa: Tarefa; osId: number }) {
           {/* Situação só quando NÃO está feita: no item com ✓ a palavra "Executada"
               repete o que o próprio ✓ acabou de dizer. */}
           {!t.feita ? <Text style={estilos.situacaoTarefa}>{t.situacao}</Text> : null}
+          {/* A cor do parecer vem do servidor (`parecer_tom`). Três telas deduziam essa
+              cor do texto por conta própria, de três jeitos diferentes. */}
           {t.parecer ? (
-            <Text style={[estilos.parecer, { color: tons[tomDoParecer(t.parecer)] }]}>
+            <Text style={[estilos.parecer, { color: tons[tomValido(t.parecer_tom)] }]}>
               {t.parecer}
             </Text>
           ) : null}

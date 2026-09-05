@@ -21,7 +21,7 @@
 
 import { router } from 'expo-router'
 import { useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 
 import {
   Barra,
@@ -34,29 +34,28 @@ import {
   Num,
   StatusChip,
 } from '@/components/base'
+import { EscolhaEmLista, type Opcao } from '@/components/EscolhaEmLista'
 import { Tela } from '@/components/Tela'
+import { tomValido } from '@/features/manutencao-regras'
 import { useOrdens, type Ordem } from '@/features/manutencao'
+import { usePendencias } from '@/features/pendencias'
 import { dataPorExtenso, duracao, inteiro } from '@/lib/format'
 import { useAuth } from '@/store/auth'
-import { cores, espaco, fontes, tipo, type Tom } from '@/theme/tokens'
+import { cores, espaco, fontes, tipo } from '@/theme/tokens'
 
 /**
- * A classificação vem do meuPlano em caixa alta com underscore. O tom não é decoração:
- * corretiva é conserto (algo quebrou), preventiva é rotina cumprida. Ler a diferença de
- * relance é o valor desta tela.
+ * O selo da classificação — rótulo e cor JÁ decididos pelo servidor.
+ *
+ * Havia aqui, e na tela da OS, um par de funções que traduzia o código da classificação e
+ * escolhia a cor dele — duas cópias, e portanto dois resultados: `SERVICOS_ADICIONAIS` saía
+ * "Servicos adicionais" numa tela e "Serviços adicionais" na outra. O BFF manda
+ * `classificacao` pronta e `classificacao_tom` ao lado exatamente para isso não existir.
+ * Sem classificação, selo nenhum — um chip escrito "sem classificação" ocupa o lugar de um
+ * dado e não é um.
  */
-function tomDaClasse(c: string | null): Tom {
-  const v = (c ?? '').toUpperCase()
-  if (v.includes('CORRETIVA')) return 'alerta'
-  if (v.includes('PREVENTIVA')) return 'ok'
-  return 'semDados'
-}
-
-function rotuloDaClasse(c: string | null): string {
-  if (!c) return 'sem classificação'
-  // "SERVICOS_ADICIONAIS" → "Servicos adicionais". Sem isto o cartão vira um grito.
-  const limpo = c.replace(/_/g, ' ').toLowerCase()
-  return limpo.charAt(0).toUpperCase() + limpo.slice(1)
+function SeloDaClasse({ ordem: o }: { ordem: Ordem }) {
+  if (!o.classificacao) return null
+  return <StatusChip tom={tomValido(o.classificacao_tom)} texto={o.classificacao} />
 }
 
 function iniciaisDe(nome: string | undefined): string {
@@ -74,6 +73,9 @@ export default function Manutencao() {
   const usuario = useAuth((s) => s.usuario)
   const [usina, setUsina] = useState<string | null>(null)
   const { dados, carregando, erro, offlineDesde, recarregar } = useOrdens()
+  // Só o CONTADOR: a lista mora na tela própria. O cartão precisa dizer quantas são, senão
+  // é um botão que promete algo sem dizer se há o que ver atrás dele.
+  const { dados: pend } = usePendencias()
 
   /*
    * O filtro sai das PRÓPRIAS ordens, e não da lista de usinas do usuário.
@@ -83,6 +85,14 @@ export default function Manutencao() {
    * dado, então ela encolhe e cresce sozinha.
    */
   const usinasComOs = [...new Set((dados?.ordens ?? []).map((o) => o.usina))].sort()
+  const opcoesDeUsina: Opcao[] = [
+    { valor: null, rotulo: 'Todas as usinas', contagem: (dados?.ordens ?? []).length },
+    ...usinasComOs.map((u) => ({
+      valor: u,
+      rotulo: u,
+      contagem: (dados?.ordens ?? []).filter((o) => o.usina === u).length,
+    })),
+  ]
   // Filtro que aponta para usina que sumiu da lista é ignorado, em vez de esvaziar a
   // tela sem explicação.
   const filtro = usina && usinasComOs.includes(usina) ? usina : null
@@ -164,23 +174,20 @@ export default function Manutencao() {
         <>
           {dados.aviso ? <Text style={estilos.aviso}>{dados.aviso}</Text> : null}
 
-          {/* Só com mais de uma usina na lista: um filtro de uma opção é enfeite. */}
+          {/* Lista suspensa, nunca uma fileira de chips (regra do produto). A fileira que
+              havia aqui rolava para fora da tela a partir da quarta usina, escondendo as
+              opções — e com a contagem ao lado o dono sabe para onde a escolha leva antes
+              de tocar. Só com mais de uma usina: um filtro de uma opção é enfeite. */}
           {usinasComOs.length > 1 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={estilos.filtros}
-            >
-              <Filtro rotulo="Todas" ativo={filtro === null} onPress={() => setUsina(null)} />
-              {usinasComOs.map((u) => (
-                <Filtro
-                  key={u}
-                  rotulo={u}
-                  ativo={filtro === u}
-                  onPress={() => setUsina(filtro === u ? null : u)}
-                />
-              ))}
-            </ScrollView>
+            <View style={estilos.filtros}>
+              <EscolhaEmLista
+                rotulo="Usina"
+                titulo="Ver as ordens de qual usina"
+                valor={filtro}
+                aoEscolher={setUsina}
+                opcoes={opcoesDeUsina}
+              />
+            </View>
           ) : null}
 
           {emCurso ? <CardEmCurso ordem={emCurso} /> : null}
@@ -200,6 +207,25 @@ export default function Manutencao() {
             </Card>
           ) : null}
 
+          {/* A outra metade da pergunta: o cronograma diz o que foi cumprido, isto diz o
+              que ficou pendente. `abertas` nulo = alguma usina não respondeu, e um total
+              parcial que parece completo é pior do que nenhum — a linha vai sem valor. */}
+          <Card>
+            <CabecalhoCard rotulo="Pendências" />
+            <LinhaNavegacao
+              titulo="O que ficou pendente"
+              valor={pend?.abertas != null ? `${pend.abertas} em aberto` : undefined}
+              tomValor={pend?.prazo_vencido ? 'parado' : undefined}
+              onPress={() => router.push('/pendencias')}
+            />
+            {pend?.prazo_vencido ? (
+              <Text style={estilos.pendAviso}>
+                <Num style={estilos.pendNum}>{pend.prazo_vencido}</Num>
+                {' com prazo vencido'}
+              </Text>
+            ) : null}
+          </Card>
+
           {demais.length > 0 ? (
             <Text style={estilos.secao}>{emCurso ? 'Outras ordens' : 'Ordens de serviço'}</Text>
           ) : null}
@@ -218,24 +244,6 @@ export default function Manutencao() {
   )
 }
 
-function Filtro({
-  rotulo,
-  ativo,
-  onPress,
-}: {
-  rotulo: string
-  ativo: boolean
-  onPress: () => void
-}) {
-  return (
-    <Pressable onPress={onPress} style={[estilos.filtro, ativo && estilos.filtroAtivo]}>
-      <Text style={[estilos.filtroTexto, ativo && estilos.filtroTextoAtivo]} numberOfLines={1}>
-        {rotulo}
-      </Text>
-    </Pressable>
-  )
-}
-
 /**
  * A OS em curso, em destaque.
  *
@@ -251,7 +259,7 @@ function CardEmCurso({ ordem: o }: { ordem: Ordem }) {
       <Card>
         <View style={estilos.emCursoTopo}>
           <Text style={estilos.rotuloAgora}>Acontecendo agora</Text>
-          <StatusChip tom={tomDaClasse(o.classificacao)} texto={rotuloDaClasse(o.classificacao)} />
+          <SeloDaClasse ordem={o} />
         </View>
 
         <Text style={estilos.objetivoGrande}>{o.objetivo}</Text>
@@ -306,7 +314,7 @@ function CardOrdem({ ordem: o }: { ordem: Ordem }) {
 
         <View style={estilos.selos}>
           <StatusChip tom={o.tom} texto={o.situacao} />
-          <StatusChip tom={tomDaClasse(o.classificacao)} texto={rotuloDaClasse(o.classificacao)} />
+          <SeloDaClasse ordem={o} />
         </View>
 
         <View style={estilos.linhas}>
@@ -336,19 +344,14 @@ const estilos = StyleSheet.create({
   espaco: { marginTop: espaco.sm },
   aviso: { ...tipo.fraco, paddingHorizontal: espaco.xs },
 
-  filtros: { gap: espaco.xs, paddingHorizontal: espaco.xs, paddingVertical: 2 },
-  filtro: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: cores.borda,
-    backgroundColor: cores.superficie,
-    maxWidth: 200,
+  filtros: { paddingHorizontal: espaco.xs, paddingBottom: espaco.xs },
+  pendAviso: {
+    fontFamily: fontes.ui,
+    fontSize: 11.5,
+    color: cores.textoFraco,
+    marginTop: 6,
   },
-  filtroAtivo: { backgroundColor: cores.ambar, borderColor: cores.ambar },
-  filtroTexto: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoCorpo },
-  filtroTextoAtivo: { color: cores.fundo },
+  pendNum: { fontSize: 12, color: cores.textoForte },
 
   secao: {
     fontFamily: fontes.ui,
