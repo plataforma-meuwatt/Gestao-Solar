@@ -21,7 +21,9 @@ Três decisões que valem ser ditas:
   porque ela não falhou.
 - **A forma da resposta é registrada.** Junto do status vai a lista de campos que voltaram.
   É o que faz aparecer a mudança silenciosa: a rota responde 200, o app quebra, e o
-  motivo é que `total_generation_kwh` virou outra coisa.
+  motivo é que `total_generation_kwh` virou outra coisa. Onde o que interessa mora
+  **dentro** de um envelope, registrar não basta — aí a rota declara `campos_exigidos` e a
+  falta de um deles vira vermelho com o nome escrito.
 """
 
 import time
@@ -63,6 +65,19 @@ class Rota:
     #: Só considera itens em que este campo tem valor. Serve para pular os itens
     #: incompletos de uma lista — um contrato sem usina não ajuda ninguém.
     captura_exige: str | None = None
+    #: A FORMA de que este lado depende, campo a campo, como caminho dentro da resposta:
+    #: `reports[].files[].size_bytes` = dentro da lista `reports`, dentro da lista `files`
+    #: de um item, o campo `size_bytes`. Faltar um deles pinta a rota de VERMELHO com o
+    #: nome escrito.
+    #:
+    #: Serve para a família de rotas cujo modo de falha não é sumir: é responder 200 com
+    #: um campo renomeado, e a tela abrir vazia sem erro nenhum. `_resumir` sozinho não
+    #: pega isso quando o que interessa está DENTRO de um envelope — em `/reports/portal`
+    #: ele registraria `["reports"]` e nada mais.
+    #:
+    #: É **presença de chave**, nunca valor: a sonda vigia forma, e valor de cliente não
+    #: tem por que aparecer numa tela de infraestrutura.
+    campos_exigidos: tuple[str, ...] = ()
     #: Motivo de não exercitar. Preenchido = a rota entra na lista e sai da execução.
     sonda: bool = True
     nao_sondada_porque: str | None = None
@@ -138,6 +153,37 @@ MEUWATT: list[Rota] = [
     Rota("mw.bills", "GET", "/plants/{slug}/utility-bills",
          "Faturas da concessionária — o MWh faturado por UC, na conciliação do Painel",
          essencial=False, params={"year": "{ano}"}),
+    # A aba "Baixar dados" do portal do cliente: as opções dizem o que ESTA usina tem
+    # (inversores, colunas da estação, leitores da fronteira, PR, retenção e tetos), e é
+    # o que permite a tela desabilitar o impossível com o motivo escrito em vez de
+    # oferecer e devolver 400 depois da espera. Secundária: é uma aba a menos, não uma
+    # ponte quebrada — e ela é o LADO BARATO do par (1,2 s medidos contra os 35,6 s da
+    # geração do arquivo).
+    #
+    # ⚠ Com FORMA exigida, e não só "respondeu 200". O modo de falha desta família não é
+    # sumir: é responder 200 com um campo renomeado, e a tela abrir sem inversor nenhum
+    # para escolher, sem teto para impedir o pedido grande demais e sem a data a partir da
+    # qual o acervo existe — três defeitos calados, porque `_resumir` sozinho registraria
+    # `["plant", "skids", …]` e ficaria verde. Os três caminhos abaixo são exatamente os
+    # que `exportacao._opcoes` lê e a tela consome.
+    Rota("mw.export_options", "GET", "/plants/{slug}/exports/raw/options",
+         "O que a aba Baixar dados pode oferecer nesta usina", essencial=False,
+         campos_exigidos=(
+             "skids[].slots[].key",
+             "limites.max_celulas",
+             "retencao.snapshots_desde",
+         )),
+    Rota("mw.export_raw", "POST", "/plants/{slug}/exports/raw",
+         "O .xlsx com os dados brutos da usina, na aba Baixar dados", essencial=False,
+         sonda=False,
+         nao_sondada_porque="Dois motivos, e os dois medidos. O executor da sonda chama "
+                            "`request(metodo, url, params=...)` e NUNCA envia corpo JSON: "
+                            "um POST sem corpo responde 422 e apareceria como vermelho "
+                            "por culpa da sonda, que é exatamente o falso alarme que ela "
+                            "existe para não produzir. E cada sondagem queimaria uma das "
+                            "10 vagas por minuto do limite (que é por IP: todo o portal "
+                            "sai pelo mesmo endereço) e até 35,6 s do worker único do "
+                            "meuWatt. A tela exercita sob demanda, com a seleção real."),
     Rota("mw.users", "GET", "/admin/users",
          "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
     Rota("mw.user_plants", "GET", "/admin/user-plants",
@@ -147,19 +193,43 @@ MEUWATT: list[Rota] = [
     # Não é: a mw-api aceita administrador explicitamente (ver `portal_relatorios` em
     # `clients/meuwatt.py`), e a chamada real com o token de serviço devolve 200 com os
     # fechamentos de TODAS as usinas. Medido no dia em que esta linha foi corrigida.
+    #
+    # ⚠ E ela ficou FORA da varredura por causa disso — decisão certa pela razão certa, com
+    # a consequência errada: a rota que sustenta a aba de Relatórios inteira nunca era
+    # exercitada, e o modo de falha desta família é justamente o que passa por baixo do
+    # alarme (200, `files[].kind` vira outra coisa, a aba esvazia e nada acende). Ela volta
+    # a ser sondada, mas vigiando **forma**: os campos abaixo são exatamente o que
+    # `api/v1/documents.py` lê de cada fechamento.
+    #
+    # O que o verde aqui prova: a resposta ainda tem a forma de que o BFF depende.
+    # O que ele NÃO prova: que o cliente enxerga os relatórios DELE — com o token de
+    # serviço (administrador) a rota devolve a pré-visualização do gestor, com os
+    # fechamentos de todas as usinas. Esse recorte é do BFF, por `mw_plant_slug`, e é o
+    # `documents.py` que o faz. Secundária de propósito: forma quebrada é alarme, não
+    # ponte caída.
     Rota("mw.portal", "GET", "/reports/portal",
          "Relatórios publicados no Portal do Cliente", essencial=False,
-         sonda=False,
-         nao_sondada_porque="Com o token de serviço ela devolve a PRÉ-VISUALIZAÇÃO do "
-                            "gestor — os fechamentos de todas as usinas —, e não o que um "
-                            "cliente vê. Um verde aqui não diria que o cliente enxerga os "
-                            "relatórios dele, que é a pergunta de quem abre esta tela."),
+         campos_exigidos=(
+             "reports[].id",
+             "reports[].plant_slug",
+             "reports[].period",
+             "reports[].date_from",
+             "reports[].date_to",
+             "reports[].sent_at",
+             "reports[].files[].kind",
+             "reports[].files[].filename",
+             # O peso do arquivo: quem está no 3G decide baixar por ele. Medido em
+             # 05/09/2026 — 3 arquivos publicados, os três com `size_bytes` preenchido.
+             "reports[].files[].size_bytes",
+         )),
     Rota("mw.portal_arquivo", "GET", "/reports/{report_id}/files/{kind}",
          "Os PDFs de um fechamento publicado: geração, paradas e o resumo executivo",
          essencial=False,
          sonda=False,
-         nao_sondada_porque="O id do fechamento só sai de `/reports/portal`, que a sonda "
-                            "não chama (acima). E é um download de arquivo, não JSON."),
+         nao_sondada_porque="É o PDF de um cliente, baixado inteiro a cada varredura — e o "
+                            "id sai de dentro de `reports[]`, que a conferência de forma "
+                            "lê mas não colhe. A tela de Relatórios exercita sob demanda, "
+                            "com o fechamento que a pessoa abriu."),
     Rota("mw.login", "POST", "/auth/login",
          "O login com a credencial do PRÓPRIO usuário, uma vez, ao entrar",
          sonda=False,
@@ -432,6 +502,60 @@ def _resumir(corpo: Any) -> tuple[int | None, list[str]]:
     return None, []
 
 
+def _achar_campo(no: Any, partes: list[str]) -> str:
+    """`ok` · `falta` · `vazio` para um caminho dentro da resposta.
+
+    `vazio` é a terceira resposta que evita o falso alarme: um fechamento sem arquivo
+    publicado é estado normal (medido em 05/09/2026 — 2 de 7 fechamentos tinham peça), e
+    pintar de vermelho a rota porque ninguém publicou PDF seria mandar investigar uma
+    decisão de quem publica. Por isso a busca percorre a lista inteira até achar um item
+    que resolva o resto do caminho: o primeiro item sem `files` não condena os outros.
+    """
+    segmento = partes[0]
+
+    if segmento.endswith("[]"):
+        nome = segmento[:-2]
+        if not isinstance(no, dict) or not isinstance(no.get(nome), list):
+            return "falta"
+        itens = no[nome]
+        if not itens:
+            return "vazio"
+        veredito = "vazio"
+        for item in itens:
+            resultado = _achar_campo(item, partes[1:])
+            if resultado == "ok":
+                return "ok"
+            if resultado == "falta":
+                veredito = "falta"
+        return veredito
+
+    if not isinstance(no, dict) or segmento not in no:
+        return "falta"
+    if len(partes) == 1:
+        # Presença da chave, não valor: `size_bytes: null` é forma intacta, e o valor de
+        # um cliente não tem por que atravessar para a tela de infraestrutura.
+        return "ok"
+    return _achar_campo(no[segmento], partes[1:])
+
+
+def _conferir_forma(
+    corpo: Any, exigidos: tuple[str, ...]
+) -> tuple[list[str], list[str], list[str]]:
+    """(confirmados, faltando, sem_itens) para a forma declarada da rota."""
+    confirmados: list[str] = []
+    faltando: list[str] = []
+    sem_itens: list[str] = []
+    for caminho in exigidos:
+        veredito = _achar_campo(corpo, caminho.split("."))
+        if veredito == "ok":
+            confirmados.append(caminho)
+        elif veredito == "falta":
+            faltando.append(caminho)
+        else:
+            sem_itens.append(caminho)
+    return confirmados, faltando, sem_itens
+
+
 def _colher(corpo: Any, campos: dict[str, str], exige: str | None = None) -> dict[str, Any]:
     """Os valores pedidos, todos do **mesmo item** da resposta.
 
@@ -520,6 +644,30 @@ async def _bater(
         # 200 com lista vazia não é erro, mas é a causa mais comum de tela vazia sem
         # mensagem — merece aparecer escrito.
         base.detalhe = "Respondeu, mas sem nenhum item."
+
+    if rota.campos_exigidos:
+        confirmados, faltando, sem_itens = _conferir_forma(corpo, rota.campos_exigidos)
+        # Os campos conferidos substituem o retrato do envelope: em `/reports/portal` o
+        # `_resumir` registra `["plants", "reports"]`, que não diz nada sobre o que quebra.
+        base.campos = confirmados or base.campos
+        if faltando:
+            base.situacao = "falhou"
+            base.detalhe = (
+                "Respondeu " + str(resposta.status_code) + ", mas a forma mudou: "
+                + ", ".join(faltando) + " não veio."
+            )
+            # Corpo de forma quebrada não alimenta as rotas seguintes: um parâmetro colhido
+            # daqui produziria um vermelho a mais, por culpa da sonda.
+            return base, None
+        if sem_itens:
+            base.detalhe = (
+                "A forma bateu no que veio. Não deu para conferir "
+                + ", ".join(sem_itens)
+                + " — não veio nenhum item nesse nível."
+            )
+        else:
+            base.detalhe = f"Forma conferida: {len(confirmados)} campos."
+
     return base, corpo
 
 

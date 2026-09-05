@@ -35,6 +35,7 @@ import {
   ArrowLeftRight,
   CalendarDays,
   ClipboardList,
+  Download,
   FileText,
   Gauge,
   LayoutGrid,
@@ -90,6 +91,12 @@ export const SECOES: ItemDeSecao[] = [
   },
   { fim: '/energia', rotulo: 'Painel', icone: Gauge, familia: 'geracao' },
   { fim: '/energia/paradas', rotulo: 'Paradas', icone: AlertTriangle, familia: 'geracao' },
+  // O único rótulo que é VERBO, e de propósito: as três irmãs da família são leituras
+  // (Painel, Paradas, Geração), e daqui se sai com um ARQUIVO, não com um número na tela. Não
+  // mora em Relatórios porque aquela tela é a única de família `geral` justamente por guardar
+  // as duas — e a exportação é só geração (não há uma linha de manutenção no contrato do
+  // meuWatt). Também não é entrada de carteira: a rota do monitoramento existe POR usina.
+  { fim: '/energia/dados', rotulo: 'Baixar dados', icone: Download, familia: 'geracao' },
   {
     fim: '/comparar/manutencao',
     rotulo: 'Manutenção das usinas',

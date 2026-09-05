@@ -1,145 +1,45 @@
 /**
- * Abrir um documento.
+ * Ponte permanente: `/documento/{id}` → `/relatorio/{id}`.
  *
- * Esta tela já foi duas coisas erradas. Primeiro uma **maquete**: duas folhas A4
- * desenhadas com blocos de texto falsos e um "3 de 13" idêntico para todo cliente.
- * Depois uma `WebView` apontada para o PDF — o que parecia certo e é pior, porque falha
- * em silêncio: **o WebView do Android não renderiza PDF**. O `onLoadEnd` dispara mesmo
- * assim, a tela sai do carregando, e o dono fica olhando uma folha branca para um
- * documento que existe e está autorizado.
+ * A tela mudou de nome junto com a aba, e o nome do arquivo **é** a rota no expo-router.
+ * Este arquivo não desenha nada: ele existe porque link salvo não pode virar rota morta e
+ * o expo-router não redireciona sozinho. Nada no repositório gera `gestaosolar://documento/12`
+ * hoje — não há listener de push, conferido —, mas o esquema `gestaosolar` é público e o
+ * endereço é válido por construção desde que a tela existe. Quem guardou um, guardou.
  *
- * Enquanto não houver o visualizador embutido que o CLAUDE.md descreve (pdf.js dentro de
- * WebView, com a biblioteca em disco para funcionar sem rede), o caminho honesto é este:
- * **baixar o arquivo e entregá-lo ao share sheet do sistema**, que sabe abrir PDF em
- * qualquer aparelho. A tela diz o que vai fazer antes de fazer, e diz quando falha.
+ * O que importa aqui é **preservar os parâmetros**: sem eles, um link antigo de
+ * `/documento/36?tipo=resumo` chegaria à tela nova pedindo a peça errada — abriria o
+ * Relatório de Geração de um fechamento que só tem o Resumo Executivo, e o servidor
+ * responderia 404 numa peça que o dono nunca pediu. Por isso o redirecionamento repassa
+ * **tudo** o que veio, e não só `tipo`: a lista pode acrescentar um parâmetro amanhã e a
+ * ponte não precisa saber o nome dele.
  *
- * O download passa pelo BFF com a sessão em cabeçalho — nunca na URL, que entra em log de
- * servidor e em histórico.
+ * `<Redirect>` e não `router.replace` num efeito: o redirecionamento acontece na primeira
+ * renderização, sem um quadro de tela vazia entre as duas rotas.
  */
 
-import { router, useLocalSearchParams } from 'expo-router'
-import { useState } from 'react'
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Redirect, useLocalSearchParams } from 'expo-router'
 
-import { Botao, EstadoVazio } from '@/components/base'
-import { urlDoArquivo } from '@/features/documentos'
-import { abrirPdf } from '@/lib/pdf'
-import { cores, espaco, fontes, TOQUE_MIN } from '@/theme/tokens'
+/**
+ * Para onde vai um endereço antigo — função pura, para o teste conferir o desvio de
+ * verdade em vez de procurar palavras no arquivo.
+ */
+export function destinoDaPonte(parametros: Record<string, string | string[] | undefined>): string {
+  const { id, ...resto } = parametros
 
-const NOME_DA_PECA: Record<string, string> = {
-  geracao: 'Relatório de Geração',
-  paradas: 'Anexo de Paradas',
-}
-
-type Estado = 'pronto' | 'baixando' | 'erro'
-
-export default function Documento() {
-  const { id, tipo } = useLocalSearchParams<{ id: string; tipo?: string }>()
-  const insets = useSafeAreaInsets()
-  const [estado, setEstado] = useState<Estado>('pronto')
-  const [erro, setErro] = useState<string | null>(null)
-
-  const peca = tipo ?? 'geracao'
-  const nome = NOME_DA_PECA[peca] ?? 'Documento'
-
-  async function abrir() {
-    if (!id) return
-    setEstado('baixando')
-    setErro(null)
-    // Transporte e mensagem de erro vêm de `lib/pdf`: é a mesma função do botão `AbrirPdf`,
-    // e foi consertar o timeout de 10 s do Android em dois lugares que a fez existir.
-    const problema = await abrirPdf({
-      url: urlDoArquivo(Number(id), peca),
-      arquivo: `relatorio-${id}-${peca}.pdf`,
-      titulo: nome,
-    })
-    setEstado(problema ? 'erro' : 'pronto')
-    setErro(problema)
+  const consulta = new URLSearchParams()
+  for (const [chave, valor] of Object.entries(resto)) {
+    // `useLocalSearchParams` devolve um array quando o mesmo nome aparece duas vezes na
+    // URL. Repassar cada ocorrência mantém a URL idêntica à que a pessoa guardou.
+    for (const item of Array.isArray(valor) ? valor : [valor]) {
+      if (item !== undefined) consulta.append(chave, item)
+    }
   }
 
-  return (
-    <View style={[estilos.raiz, { paddingTop: insets.top }]}>
-      <View style={estilos.barra}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={estilos.voltar}>
-          <View style={estilos.seta} />
-        </Pressable>
-        <Text style={estilos.titulo} numberOfLines={1}>
-          {nome}
-        </Text>
-      </View>
-
-      {estado === 'erro' ? (
-        <View style={estilos.centro}>
-          <EstadoVazio
-            tom="parado"
-            titulo="Não deu para abrir"
-            descricao={erro ?? 'Documento indisponível.'}
-            acao={{ titulo: 'Tentar de novo', onPress: () => void abrir() }}
-          />
-        </View>
-      ) : (
-        <View style={estilos.centro}>
-          <View style={estilos.miolo}>
-            <Text style={estilos.explicacao}>
-              O documento será baixado e aberto no leitor de PDF do seu aparelho.
-            </Text>
-            {estado === 'baixando' ? (
-              <View style={estilos.carregando}>
-                <ActivityIndicator color={cores.ambar} />
-                <Text style={estilos.carregandoTexto}>Baixando…</Text>
-              </View>
-            ) : (
-              <Botao titulo="Abrir documento" onPress={() => void abrir()} />
-            )}
-            {Platform.OS === 'web' ? (
-              <Text style={estilos.nota}>No navegador, o arquivo abre em outra aba.</Text>
-            ) : null}
-          </View>
-        </View>
-      )}
-    </View>
-  )
+  const cauda = consulta.toString()
+  return `/relatorio/${encodeURIComponent(String(id ?? ''))}${cauda ? `?${cauda}` : ''}`
 }
 
-const estilos = StyleSheet.create({
-  raiz: { flex: 1, backgroundColor: cores.fundo },
-  barra: {
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: espaco.md,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: cores.bordaFraca,
-  },
-  voltar: { width: 26, height: TOQUE_MIN, justifyContent: 'center' },
-  seta: {
-    width: 11,
-    height: 11,
-    borderLeftWidth: 2,
-    borderBottomWidth: 2,
-    borderColor: cores.textoForte,
-    transform: [{ rotate: '45deg' }],
-    marginLeft: 4,
-  },
-  titulo: { flex: 1, fontFamily: fontes.uiSemi, fontSize: 14.5, color: cores.textoForte },
-
-  centro: { flex: 1, justifyContent: 'center', paddingHorizontal: espaco.lg },
-  miolo: { gap: espaco.md },
-  explicacao: {
-    fontFamily: fontes.ui,
-    fontSize: 13.5,
-    color: cores.textoCorpo,
-    lineHeight: 20,
-    textAlign: 'center',
-  },
-  carregando: { alignItems: 'center', gap: 10, paddingVertical: espaco.sm },
-  carregandoTexto: { fontFamily: fontes.ui, fontSize: 12.5, color: cores.textoRotulo },
-  nota: {
-    fontFamily: fontes.ui,
-    fontSize: 11.5,
-    color: cores.textoRotulo,
-    textAlign: 'center',
-  },
-})
+export default function PonteDocumento() {
+  return <Redirect href={destinoDaPonte(useLocalSearchParams())} />
+}

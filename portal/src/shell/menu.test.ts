@@ -23,7 +23,9 @@
  *   resposta certa pelo caminho errado, de modo que no dia em que o Painel mudasse de sufixo
  *   o comparativo passaria a mandar o cliente para outra família sem nada quebrar; (c)
  *   escolher uma usina a partir de "Comparar manutenção" tem de cair no Cronograma dela, e
- *   não no painel de energia.
+ *   não no painel de energia;
+ * - **"Baixar dados" é seção DE USINA da família Geração** — o bloco no fim deste arquivo diz
+ *   por quê, e guarda os quatro defeitos que a entrada carrega.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -184,15 +186,87 @@ describe('os comparativos de carteira', () => {
   })
 
   it('as seções de usina são as mesmas de antes — nada saiu do menu', () => {
-    // A entrada dos comparativos não pode ter empurrado nenhuma seção para fora: o catálogo
-    // de usina continua com as seis de sempre, na mesma ordem.
+    // Nem os comparativos nem "Baixar dados" podem ter empurrado uma seção para fora: o
+    // catálogo de usina cresce no fim da família a que a entrada nova pertence, e o resto
+    // fica exatamente na ordem de sempre.
     expect(secoesDaUsina().map((s) => s.fim)).toEqual([
       '/energia',
       '/energia/paradas',
+      '/energia/dados',
       '/manutencao/cronograma',
       '/manutencao/ordens',
       '/manutencao/pendencias',
       '/relatorios',
     ])
+  })
+})
+
+/**
+ * "Baixar dados" — a exportação de dados brutos da usina (`/energia/dados`).
+ *
+ * Quatro defeitos moram nesta entrada, e cada um tem o seu teste:
+ *
+ * - **o pai engole o filho.** `/usinas/3/energia/dados` contém `/energia/`, então a busca por
+ *   sufixo o reconheceria como "Painel" se a ordem do mais específico para o menos falhasse —
+ *   e trocar de usina a partir da tela de exportação mandaria o cliente para o painel da
+ *   outra. É o mesmo defeito que Paradas já guarda, e ele volta a cada filho novo de
+ *   `/energia`;
+ * - **a família errada.** A rota do monitoramento é `POST /plants/{slug}/exports/raw`: existe
+ *   POR USINA, e o arquivo é só de geração. Entrada de carteira prometeria uma exportação da
+ *   carteira inteira que não existe; família `geral` a jogaria no balaio de Relatórios, que é
+ *   `geral` justamente por guardar as duas — e ali a lista vazia de fechamentos publicados e
+ *   a ausência de dados brutos pareceriam o mesmo problema;
+ * - **o endereço sem usina.** Sendo seção de usina, `paraDaSecao` tem de colá-la em
+ *   `/usinas/:id` e devolver `null` quando não há usina escolhida — montar
+ *   `/usinas/null/energia/dados` levaria o cliente a uma tela em branco;
+ * - **o ícone repetido.** No trilho estreito (768–1024 px) não cabe rótulo, e o ícone é a
+ *   única âncora: repetir o `Zap` do cabeçalho da família, ou o `FileText` de Relatórios,
+ *   apagaria a distinção exatamente onde ela é a única coisa que resta.
+ */
+describe('a entrada Baixar dados', () => {
+  const dados = SECOES.find((s) => s.fim === '/energia/dados')
+
+  it('é a quarta da Geração de energia, logo depois de Paradas', () => {
+    expect(secoesDaFamilia('geracao').map((s) => s.fim)).toEqual([
+      '/comparar/energia',
+      '/energia',
+      '/energia/paradas',
+      '/energia/dados',
+    ])
+  })
+
+  it('é seção DE USINA e o rótulo é o verbo — dali se sai com um arquivo', () => {
+    expect(dados).toBeDefined()
+    expect(dados!.carteira).toBeUndefined()
+    expect(dados!.familia).toBe('geracao')
+    expect(dados!.rotulo).toBe('Baixar dados')
+    expect(secoesDaUsina().some((s) => s.fim === '/energia/dados')).toBe(true)
+  })
+
+  it('o Painel não a engole — nem ela às telas mais fundas dele', () => {
+    expect(sufixoDaSecao('/usinas/3/energia/dados')).toBe('/energia/dados')
+    // E as irmãs continuam respondendo por si.
+    expect(sufixoDaSecao('/usinas/3/energia')).toBe('/energia')
+    expect(sufixoDaSecao('/usinas/3/energia/paradas')).toBe('/energia/paradas')
+  })
+
+  it('o endereço é colado no /usinas/:id — e some sem usina', () => {
+    expect(paraDaSecao(dados!, 7)).toBe('/usinas/7/energia/dados')
+    expect(paraDaSecao(dados!, null)).toBeNull()
+    // Não é carteira: `ehDaCarteira` tem de continuar dizendo não.
+    expect(ehDaCarteira('/usinas/7/energia/dados')).toBe(false)
+  })
+
+  it('não exige casamento exato, e não tira o do Painel', () => {
+    // Nada mora debaixo dela; o Painel, esse sim, tem duas seções debaixo.
+    expect(casamentoExato('/energia/dados')).toBe(false)
+    expect(casamentoExato('/energia')).toBe(true)
+  })
+
+  it('o ícone é só dela — no trilho estreito ele é a única âncora', () => {
+    const grupo = GRUPOS.find((g) => g.familia === 'geracao')
+    expect(dados!.icone).not.toBe(grupo?.icone)
+    const irmas = SECOES.filter((s) => s.fim !== '/energia/dados')
+    for (const s of irmas) expect(s.icone).not.toBe(dados!.icone)
   })
 })

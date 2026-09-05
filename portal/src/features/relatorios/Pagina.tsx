@@ -23,6 +23,12 @@
  * falha de um apagar o outro, e é o caso que acontece primeiro (contrato novo, fichas já
  * geradas).
  *
+ * **Energia — e a ponte para a planilha.** Muita gente vem procurar aqui os números brutos
+ * para trabalhar no Excel, e é o instinto certo: é nesta tela que se buscam arquivos. Mas
+ * aquilo é só GERAÇÃO e mora em `/energia/dados` ("Baixar dados"). No pé da aba fica uma
+ * linha dizendo onde é — `PonteParaDados`, fora do `Tela4Estados`, porque a lista de
+ * fechamentos vazia é justamente quando saber disso mais importa.
+ *
  * Só a aba aberta é montada. Ler as quatro origens de uma vez custaria caro à toa — o
  * inventário de fichas mede o tamanho de cada PDF no armazenamento — e o cliente que veio
  * buscar o fechamento de agosto não pediu nada disso.
@@ -42,9 +48,19 @@
  * envio sem apagar os arquivos — por isso o reenvio é preciso mesmo onde o PDF já existiu.)
  */
 
-import { useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
-import { Aviso, Botao, Cartao, Num, Pagina, Segmentado, Tela4Estados, Vazio } from '@/components/base'
+import {
+  Aviso,
+  Botao,
+  Cartao,
+  LinhaNavegacao,
+  Num,
+  Pagina,
+  Segmentado,
+  Tela4Estados,
+  Vazio,
+} from '@/components/base'
 import { dataCurta, dataPorExtenso } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
 import {
@@ -58,6 +74,7 @@ import {
 } from '@/features/relatorios/api'
 import { PacoteDeFichas } from '@/features/relatorios/PacoteDeFichas'
 import { RelatorioManutencao, useBaixarPdf } from '@/features/relatorios/RelatorioManutencao'
+import { SECOES, paraDaSecao } from '@/shell/menu'
 
 const TITULO = 'Relatórios'
 const PERGUNTA = 'O que eu levo para a diretoria?'
@@ -102,7 +119,10 @@ export default function Relatorios() {
       acoes={<Segmentado opcoes={ABAS} valor={aba} onEscolher={escolher} />}
     >
       {aba === 'energia' ? (
-        <DocumentosPublicados usinaId={usinaId} />
+        <div className="space-y-10">
+          <DocumentosPublicados usinaId={usinaId} />
+          <PonteParaDados usinaId={usinaId} />
+        </div>
       ) : (
         <div className="space-y-10">
           <RelatorioManutencao usinaId={usinaId} />
@@ -114,6 +134,43 @@ export default function Relatorios() {
 }
 
 /* ------------------------------------------------------------------ energia */
+
+/**
+ * A ponte para "Baixar dados" — a tela que NÃO mora aqui.
+ *
+ * Procurar a planilha em Relatórios é o instinto certo: é aqui que o cliente vem quando
+ * precisa de um arquivo. Mas a exportação de dados brutos é só de GERAÇÃO (o contrato do
+ * meuWatt não tem uma linha de manutenção), e esta tela é a única de família `geral`
+ * justamente por guardar as duas — pôr a planilha dentro dela faria "nenhum fechamento
+ * publicado" e "sem dados brutos" parecerem o mesmo problema, quando são coisas opostas:
+ * aqui só entra o PDF que a equipe PUBLICOU; lá nada foi publicado, o cliente é quem monta.
+ *
+ * Então em vez de uma segunda tela, uma linha que **diz onde mora** — a regra da casa
+ * aplicada à navegação. Ela fica FORA do `Tela4Estados`: a lista de fechamentos vazia (ou
+ * fora do ar) é exatamente o momento em que o cliente mais precisa saber que os números
+ * existem noutro lugar.
+ *
+ * O endereço vem de `paraDaSecao`, nunca de `/usinas/${id}/energia/dados` escrito à mão —
+ * foi a concatenação crua que já mandou item de menu para uma rota que só existe como
+ * redirecionamento. Sem a entrada no catálogo (ou sem usina), não há destino e a linha não
+ * aparece: seta sem clique é promessa que o portal não cumpre.
+ */
+function PonteParaDados({ usinaId }: { usinaId: number }) {
+  const navegar = useNavigate()
+  const secao = SECOES.find((s) => s.fim === '/energia/dados')
+  const para = secao ? paraDaSecao(secao, usinaId) : null
+  if (para === null) return null
+
+  return (
+    <Cartao>
+      <LinhaNavegacao
+        titulo="Baixar dados desta usina"
+        detalhe="Precisa dos números para a sua planilha? A exportação em XLSX fica na Geração de energia."
+        aoAbrir={() => navegar(para)}
+      />
+    </Cartao>
+  )
+}
 
 /** O nome que o cliente lê. Kind desconhecido sai com o nome que o servidor mandou. */
 function nomeDaPeca(tipo: string, arquivo: ArquivoDoDocumento | null): string {

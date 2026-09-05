@@ -55,9 +55,12 @@ export default function LayoutAbas() {
     >
       <Tabs.Screen name="index" options={{ title: 'Início', tabBarIcon: icone(IconeInicio) }} />
       <Tabs.Screen name="usinas" options={{ title: 'Usinas', tabBarIcon: icone(IconeUsinas) }} />
+      {/* O `name` é o nome do ARQUIVO da rota (`(tabs)/relatorios.tsx`), não o rótulo.
+          Trocar um sem o outro no mesmo commit faz a aba sumir da barra — e as quatro
+          restantes se embaralharem, porque a ordem é a desta lista. */}
       <Tabs.Screen
-        name="documentos"
-        options={{ title: 'Documentos', tabBarIcon: icone(IconeDocumentos) }}
+        name="relatorios"
+        options={{ title: 'Relatórios', tabBarIcon: icone(IconeDocumentos) }}
       />
       <Tabs.Screen
         name="manutencao"

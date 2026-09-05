@@ -15,10 +15,13 @@ métodos devolvem `dict` cru e a tradução para o formato do app fica nos servi
 lugar só.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
 
 import httpx
+from pydantic import BaseModel
 
 from app.clients.http import sessao
 from app.core.config import get_settings
@@ -450,3 +453,88 @@ class MeuWattClient:
         )
         r.raise_for_status()
         return r.content
+
+    # ------------------------------------------------- exportação de dados brutos
+
+    async def export_options(self, slug: str) -> dict[str, Any]:
+        """O que ESTA usina pode oferecer na tela "Baixar dados".
+
+        `RawExportOptions{plant, skids[], estacao, fronteira, sistema, retencao, limites}`
+        — os inversores por skid, quais colunas a estação realmente coleta, os leitores da
+        fronteira, se há PR, desde quando existe cada acervo e os tetos de dias por passo.
+
+        É o que permite a tela dizer *"esta usina não tem estação solarimétrica"* em vez de
+        oferecer o bloco e devolver um 400 depois de meio minuto de espera. Barata: 1,2 s a
+        2,1 s medidos em Porto Ferreira (a maior do escopo, 20 inversores, 05/09/2026),
+        contra os 35,6 s da geração do arquivo — daí o teto de 20 s aqui, curto o bastante
+        para a tela não ficar pendurada numa fonte que já provou responder rápido.
+
+        E ela **não** entra no balde de 10/minuto: o `@limiter.limit` da mw-api está só no
+        POST — provado, com três `options` seguidas depois do balde esgotado respondendo
+        200. A tela pode reabrir à vontade.
+        """
+        return await self._get(f"/plants/{slug}/exports/raw/options", timeout=20.0)
+
+    @asynccontextmanager
+    async def export_raw(
+        self, slug: str, pedido: BaseModel
+    ) -> AsyncIterator[httpx.Response]:
+        """O `.xlsx` da seleção, ABERTO e ainda não lido.
+
+        Contexto assíncrono, e não `-> bytes`, pelo mesmo motivo de
+        `MeuPlanoClient.vc_fichas_pacote`: ler a resposta inteira de uma vez guardaria o
+        arquivo na memória deste processo e de novo na do corpo que o portal devolve. O teto do
+        servidor é o orçamento de células (2.000.000), que a ~2,78 bytes/célula medidos dá
+        ≈ 5,3 MiB por arquivo — não é o monstro que se temia, mas o risco no Railway nunca
+        foi um arquivo: é N clientes × 5 MiB ao mesmo tempo. Quem chama repassa os pedaços.
+
+        **O fluxo aqui não adianta o primeiro byte, e é honesto dizê-lo.** A mw-api gera o
+        XLSX inteiro antes de responder (`to_thread(write_xlsx)` → `FileResponse` de um
+        temporário, com `Content-Length` e sem `chunked`): medido no pior caso que ela
+        aceita (5 min × 31 d, todos os blocos de Porto Ferreira), o CABEÇALHO chega aos
+        35,6 s, e o corpo — 2.511.408 B (2,40 MiB) em 212 pedaços — transfere em 1,4 s
+        depois dele. Fluxo aqui serve para não SEGURAR os bytes, não para o cliente vê-los
+        mais cedo.
+
+        ⚠ O pedido que se temia — 366 dias em passo de 1 h com todos os blocos — **não
+        existe**: a retenção dos snapshots é de 183 dias e a mw-api o recusa em 2,2 s com
+        `fora_da_retencao`. O maior pedido de 1 h que sobrevive é o de 183 dias (18,7 s de
+        cabeçalho, 0,66 MiB). O pior caso VERDADEIRO é o de 31 d × 5 min acima.
+
+        Daí o prazo de LEITURA de 120 s, explícito. O cliente é construído sem `timeout` em
+        `integracoes.cliente_meuwatt` e cai nos 30 s da assinatura — que REPROVAM o pior
+        pedido permitido: pelo caminho normal esta exportação estouraria `ReadTimeout`
+        antes de o servidor terminar. E as medições do MESMO pedido (35,6 s, 34,3 s,
+        27,2 s) mostram que a margem contra 30 s não é só apertada, é instável — na última
+        ela já não existe. O precedente já estava no arquivo (`arquivo_relatorio` passa
+        60 s explícito); 120 s é a folga para usina maior ou Timescale fria. **Conectar
+        continua curto (5 s)**: destino fora do ar tem de falhar depressa, não em dois
+        minutos.
+
+        O `pedido` é um modelo Pydantic já validado — nunca um `dict` repassado cru. O
+        `{slug}` é interpolado numa URL chamada com a credencial de serviço, e é a mesma
+        forma que já custou caro em `documents.py` (`../../../admin/users` normalizava e
+        devolvia os bytes): quem chama resolve o slug a partir de `PlantLink`, e o corpo
+        atravessa tipado porque o BFF não pode ser o lugar por onde entra o que ninguém
+        olhou. `exclude_none=True` porque **bloco ausente não entra no arquivo** — mandar
+        `"estacao": null` é dizer a mesma coisa, mas depender do upstream tratar nulo como
+        ausente é apostar numa gentileza que o contrato não promete.
+        """
+        jwt = await self._token_servico()
+        c = sessao(self.base_url, self._timeout)
+        async with c.stream(
+            "POST",
+            f"{self.base_url}/plants/{slug}/exports/raw",
+            headers={"Authorization": f"Bearer {jwt}"},
+            json=pedido.model_dump(mode="json", exclude_none=True),
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0),
+        ) as r:
+            if r.status_code >= 400:
+                # O corpo do erro é JSON curto — 400 traz `{"detail": {motivo, message}}`
+                # e o 429 do limite traz `{"error": ...}`. Lê-se inteiro para que a razão
+                # chegue a quem traduz; só o caminho FELIZ é que não pode ser materializado.
+                await r.aread()
+                if r.status_code == 401:
+                    self._service_token = None
+                r.raise_for_status()
+            yield r

@@ -42,6 +42,12 @@ const PECAS_NATIVAS: { nome: string; oQueFaz: string; carregar: () => unknown }[
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     carregar: () => require('expo-screen-orientation'),
   },
+  {
+    nome: 'react-native-webview',
+    oQueFaz: 'ler o PDF dentro do aplicativo',
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    carregar: () => require('react-native-webview'),
+  },
 ]
 
 /** Onde baixar o pacote novo quando o OTA não bastar. */

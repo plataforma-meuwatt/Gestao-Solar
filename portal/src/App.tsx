@@ -53,6 +53,10 @@ const VisaoGeral = lazyRetry(() => import('@/features/visao-geral/Pagina'))
 // lugar onde a tela morava, que envelhece na primeira reorganização de menu.
 const Energia = lazyRetry(() => import('@/features/energia/Pagina'))
 const Paradas = lazyRetry(() => import('@/features/paradas/Pagina'))
+// A exportação de dados brutos. Fica na Geração — e não em Relatórios, que é `geral` por
+// guardar as DUAS famílias — porque o contrato de exportação do meuWatt não tem uma linha de
+// manutenção. Ver `shell/menu.ts` e `docs/TELAS.md` (P.10).
+const BaixarDados = lazyRetry(() => import('@/features/dados/Pagina'))
 // Manutenção.
 const Cronograma = lazyRetry(() => import('@/features/cronograma/Pagina'))
 const Ordens = lazyRetry(() => import('@/features/ordens/Pagina'))
@@ -164,6 +168,7 @@ export function App() {
               {/* Geração de energia */}
               <Route path="/usinas/:id/energia" element={<Energia />} />
               <Route path="/usinas/:id/energia/paradas" element={<Paradas />} />
+              <Route path="/usinas/:id/energia/dados" element={<BaixarDados />} />
 
               {/* Manutenção */}
               <Route path="/usinas/:id/manutencao/cronograma" element={<Cronograma />} />

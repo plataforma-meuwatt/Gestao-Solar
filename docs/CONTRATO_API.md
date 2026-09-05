@@ -198,6 +198,184 @@ Histórico de paradas, agrupado por dia.
 
 ---
 
+## Baixar dados — a planilha da usina
+
+Duas rotas, em `bff/app/api/v1/exportacao.py`. Repassam a exportação de dados brutos da
+mw-api (`GET|POST /plants/{slug}/exports/raw*`) para o cliente do portal.
+
+**O que atravessa é o arquivo, não o conteúdo.** O XLSX nasce no meuWatt, que é quem tem
+as séries e quem escreve a aba **Leia-me** (unidades, fonte de cada coluna, mapa das
+séries, avisos). O BFF autoriza, traduz o vocabulário do pedido e repassa bytes. Remontar
+a planilha aqui seria o erro que `pacotes.py` já recusou por escrito.
+
+**A usina é identificada pelo `usina_id` do vínculo (`PlantLink`), nunca pelo slug.** O
+`{slug}` do meuWatt é interpolado numa URL chamada com a credencial de serviço — a mesma
+forma que já custou caro em `documents.py`, onde `../../../admin/users` normalizava e
+devolvia os bytes. Ele sai de `PlantLink.mw_plant_slug`, resolvido no banco, e **não
+aparece em nenhuma resposta**. Fora do escopo: **404, nunca 403** — "proibido" confirmaria
+que aquela usina existe. Usina sem monitoramento (é o caso de UFV Leme, `mw_plant_slug`
+nulo) também dá 404.
+
+### `GET /energia/dados/opcoes?usina_id=` — *no ar*
+
+O que **esta** usina pode oferecer, e com que tetos. É o que permite a tela desabilitar o
+impossível **dizendo o motivo** em vez de sumir com a linha — e a cadeia importa: sem
+estação não há irradiação, e sem irradiação não se calcula PR.
+
+```json
+{
+  "usina": { "id": 4, "nome": "Porto Ferreira", "capacidade_kwp": 7402.5 },
+  "skids": [
+    { "id": 56, "nome": "SKID-01", "capacidade_kwp": 1480.5,
+      "series": [ { "chave": "slot:170", "rotulo": "Inv 13",
+                    "numero_serie": "GR2579042017", "capacidade_kwp": 375.06 } ] }
+  ],
+  "estacao": { "disponivel": true,
+               "colunas": { "poa": true, "ghi": true, "temp_modulo": false,
+                            "temp_ambiente": false, "vento": false, "umidade": false },
+               "temp_ambiente_rele": true },
+  "leitores": [ { "id": 14, "nome": "Leitor Concessionaria Porto Ferreira SKID 1" } ],
+  "sistema": { "pr": true, "produtividade": true },
+  "retencao": { "snapshots_desde": "2026-03-06", "ssu_desde": "2024-09-05" },
+  "limites": { "native": 7, "5m": 31, "15m": 92, "1h": 366, "1d": 366,
+               "max_celulas": 2000000 }
+}
+```
+
+- **`chave`** (`slot:170`, `inv:7`) é **transporte**: é o que volta em `inversores.series`.
+  A tela mostra `rotulo`. Ninguém acorda querendo `slot:12`.
+- **`estacao.colunas` é coluna a coluna** porque a ausência tem de ser dita: a estação de
+  Porto Ferreira mede POA e GHI e não mede vento. Oferecer "clima" inteiro produziria uma
+  coluna vazia sem explicação, que é como "não medimos" vira "deu zero".
+- **`retencao` não é limite do arquivo — é ausência de dado**, e pertence ao seletor de
+  período. Antes de `snapshots_desde` a leitura fina não existe mais; antes de `ssu_desde`,
+  a do medidor. **A saída existe e o servidor a garante**: a checagem inteira de retenção
+  está dentro de `if step != "1d"` — o total por dia não tem prazo.
+- **`limites` vem do servidor**, não de uma constante nossa: dois números para a mesma
+  pergunta divergiriam no primeiro ajuste feito do outro lado.
+- O `plant.name` e o `slug` do meuWatt ficam de fora. A mesma usina não pode sair com um
+  nome aqui e outro na aba ao lado; o nome que o cliente reconhece é o do vínculo.
+
+Medido em 05/09/2026, Porto Ferreira, pelo caminho do portal: **200 em 5,6 s** (1,6 s
+contra a mw-api direto).
+
+### `POST /energia/dados/arquivo?usina_id=` — *no ar*
+
+O `.xlsx` da seleção. Corpo tipado (`PedidoIn`), espelho em português de
+`RawExportRequest`:
+
+```json
+{
+  "inicio": "2026-08-01",
+  "fim": "2026-08-31",
+  "hora_inicio": "00:00",
+  "hora_fim": "23:59",
+  "passo": "15m",
+  "inversores": { "variaveis": ["geracao"], "agrupamento": "lista", "series": null },
+  "estacao":    { "variaveis": ["poa", "ghi"] },
+  "fronteira":  { "variaveis": ["energia"], "agrupamento": "leitor" },
+  "sistema":    { "variaveis": ["pr", "produtividade"], "agrupamento": "usina" }
+}
+```
+
+- `passo` ∈ `native` | `5m` | `15m` | `1h` | `1d`.
+- **Os quatro blocos são opcionais, e bloco ausente não entra no arquivo.** Nenhum bloco =
+  `sem_blocos`, recusado pelo upstream — repetir a regra aqui daria duas respostas para a
+  mesma pergunta no dia em que uma das duas mudasse.
+- `hora_inicio`/`hora_fim` são do **primeiro** e do **último** dia, em BRT; a janela é
+  contínua e o fim é inclusivo do minuto. Ignorados quando `passo` é `1d`.
+- **`series: null` ≠ lista vazia ≠ lista completa.** Nulo é "não mexi": o inversor
+  comissionado no meio do período entra sozinho. Uma lista explícita congela o conjunto no
+  que a tela viu. Vazia seria "nenhuma série" — um arquivo sem colunas.
+- ⚠ **POST que só LÊ.** O método é por **tamanho da seleção** (500 chaves de série não
+  cabem numa query string), nunca por efeito: nada é criado, alterado ou apagado, nem aqui
+  nem lá. Fica dito para o dia em que entrar auditoria por método e o verbo mentir sozinho.
+  A consequência prática é que **não dá para baixar com `<a href>`**: o cliente faz `fetch`
+  com `Authorization` e vira `Blob`. Token em URL vai para log.
+
+Resposta `200`: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+`Content-Disposition: attachment` com o nome **deste** produto
+(`dados-porto-ferreira-2026-08-01_2026-08-31-15m.xlsx`, e não o `meuwatt_<slug>_…` de lá),
+mais `filename*` em UTF-8. Atravessa em `StreamingResponse` sobre `httpx.stream` — o
+padrão de `pacotes.py`, não o `Response(content=…)` dos PDFs unitários.
+
+**A espera é do meuWatt, e é honesto dizê-lo.** A mw-api gera o arquivo inteiro antes de
+responder (`to_thread(write_xlsx)` → `FileResponse` de temporário): o fluxo aqui serve
+para **não segurar os bytes**, não para o cliente vê-los mais cedo. Prazo de **leitura de
+120 s** explícito no cliente, com **conexão curta (5 s)** — o default de 30 s da assinatura
+de `MeuWattClient` reprova nos dois pedidos mais pesados permitidos (34,3 s e 34,0 s
+medidos contra a mw-api). Não há job, id nem endpoint de andamento: a rota é síncrona, e
+por isso a tela mostra barra indeterminada e tempo decorrido, nunca porcentagem.
+
+#### Erro — o `motivo` no primeiro nível
+
+```json
+{ "detail": "O monitoramento recusou este pedido.", "motivo": "passo_excede_limite" }
+```
+
+Corpo **achatado**, e não `HTTPException` (que embrulharia tudo em `detail`): a tela lê o
+`motivo` para escolher entre **`Erro`, com "Tentar de novo"**, e **`Aviso`, sem** — repetir
+um `muito_grande` dá exatamente o mesmo resultado, e oferecer o botão seria crueldade.
+
+| `motivo` | quando | natureza |
+|---|---|---|
+| `periodo_invalido` | fim antes do início, ou período no futuro | regra |
+| `passo_excede_limite` | mais dias do que o passo aceita (7/31/92/366/366) | regra |
+| `fora_da_retencao` | passo sub-diário antes do acervo — **a saída é o passo `1d`** | ausência de dado |
+| `bloco_indisponivel` | a usina não tem estação, medidor, PR…; ou `status` fora do passo nativo | ausência de equipamento |
+| `sem_blocos` | nenhum bloco escolhido | regra |
+| `muito_grande` | estouraria o orçamento de 2.000.000 de células | regra |
+| `muitos_pedidos` | **nosso**, no `429`: o balde do meuWatt (10/minuto) estourou | espera |
+
+⛔ **O `message` do upstream não é ecoado.** Ele foi escrito para o operador da mw-api e
+fala em balde, snapshots e SSU. Só o vocabulário conhecido atravessa: um motivo novo lá
+chega como `"motivo": null`, e não como uma palavra crua que a tela não sabe traduzir.
+
+O `429` merece nota. O balde da mw-api é **por IP** (`key_func=get_remote_address`), não
+por token — todo o portal sai pelo mesmo egress, então são 10 exportações por minuto para
+todos os clientes somados. O corpo de lá vem em `{"error": …}`, que `detalhe_do_upstream`
+não alcança, e **sem `Retry-After`** (medido). Daqui sai `429` com
+`motivo: "muitos_pedidos"` e `Retry-After: 60` — o teto da janela, não o tempo exato de
+espera. Não é erro do pedido: é espera, e por isso tem nome próprio em vez de virar mais
+um 502.
+
+#### Como se prova que isto funciona
+
+`bff/scripts/conferir_exportacao.py`. Sobe o BFF local num uvicorn próprio, emite o JWT de
+um cliente real, pede pelas **duas rotas acima** e **abre o arquivo com `openpyxl`** — não
+basta 200 com bytes. Medido em 05/09/2026, Porto Ferreira, agosto/2026 a 15 min:
+
+| conferência | medido |
+|---|---|
+| abas | `['Leia-me', 'Inversores']` |
+| linhas da aba de dado | **2.977** = 2.976 (31 dias × 96 baldes) + cabeçalho |
+| colunas | **22** = o instante + 20 inversores + total da usina |
+| tamanho | 184.220 bytes |
+| cabeçalho / corpo / total | 10,9 s / 0,6 s / **11,5 s** |
+| 92 dias a 5 min | **400 `passo_excede_limite` em 2,4 s** — não 34 s |
+
+E uma conferência que é REGRA 0 dentro do arquivo: à meia-noite as células vêm **vazias,
+nunca zero** — quem somar a coluna no Excel não conta madrugada como produção medida. O
+próprio Leia-me diz isso ao cliente, com estas palavras (lidas do arquivo baixado):
+
+> **Início (BRT)** — Início do intervalo. *Vazio = sem leitura no intervalo; 0 = zero medido.*
+
+É por isso que a tela pode ser curta. A mesma aba traz o fuso, a definição de cada grandeza
+("Energia = soma dos incrementos do odômetro diário do inversor dentro do intervalo (kWh).
+Nunca é média nem integral da potência"), o mapa `rótulo → skid · serial · kWp` das 20
+séries, os parâmetros dos leitores e a retenção. **O arquivo se explica sozinho** — repetir
+isso na tela seria a segunda resposta para a mesma pergunta.
+
+📌 Observação para o dono, não corrigida aqui: o Leia-me traz *"Gerado por"* com o nome de
+quem assina a **credencial de serviço** (o dono do PAT), não o do cliente que baixou — o
+`export_raw` de lá lê `auth.user.name`. Não vaza segredo, mas nomeia uma pessoa de dentro
+num arquivo que o cliente arquiva. A correção é na mw-api, não no BFF.
+
+O `openpyxl` não está no `requirements.txt`: o BFF não lê planilha nenhuma, repassa bytes.
+É ferramenta de conferência (`pip install openpyxl`).
+
+---
+
 ## Manutenção
 
 A aba responde três perguntas do dono, nesta ordem: **está sendo feita?** (a OS de agora),
@@ -370,32 +548,144 @@ O cronograma anual em PDF, com a letra do estado em cada célula (`D` para dispe
 
 ---
 
-## Documentos
+## Relatórios
 
-### `GET /documents?tipo=&plant_id=`
+> Esta seção chamava-se **Documentos** e descrevia uma API que **nunca existiu**:
+> `?tipo=relatorio|os|cronograma`, `tamanho_bytes`, e um `POST /documents/generate` que
+> dispararia Chromium headless com fila de *jobs*. Nada disso foi construído — e um
+> contrato que descreve o que não existe é pior que contrato nenhum, porque manda quem
+> escreve a tela codificar contra um fantasma. O que segue foi **medido** contra a conta
+> do dono (usuário 2, 7 usinas) em 05/09/2026.
 
-`tipo`: `relatorio` | `os` | `cronograma`.
+### `GET /documents?usina_id=` — *no ar*
+
+O acervo de relatórios **publicados** pelo monitoramento, de todas as usinas da pessoa,
+mais recentes primeiro. `usina_id` é o `id` do vínculo **neste** sistema; fora do escopo
+responde **404** (dizer "proibido" confirmaria que a usina existe).
 
 ```json
-[
-  { "id": "mw-report-1841", "tipo": "relatorio", "titulo": "Relatório de Geração",
-    "periodo": "Julho 2026", "emitido_em": "2026-08-03", "tamanho_bytes": 2841022,
-    "plant_id": 3 }
-]
+{
+  "documentos": [
+    { "id": 35, "nome": "Relatório Mensal — Porto Ferreira — Agosto 2026",
+      "usina": "Porto Ferreira", "plant_id": 4,
+      "periodo": "MENSAL", "de": "2026-08-01", "ate": "2026-08-31",
+      "publicado_em": "2026-09-05T12:56:09.914048Z",
+      "competencia": "2026-08", "ano": null,
+      "arquivos": [
+        { "tipo": "geracao", "nome": "Relatorio-Geracao….pdf", "bytes": 2686172 },
+        { "tipo": "paradas", "nome": "Anexo-Paradas….pdf",     "bytes": 2604352 }
+      ] }
+  ],
+  "aviso": null
+}
 ```
 
-### `POST /documents/generate`
+**`competencia` é o eixo do tempo, e ela sai de `de` — nunca de `publicado_em`.** A lista
+vem ordenada pela data de ENVIO, e os fechamentos 35 e 36 cobrem **agosto** e foram
+publicados em **05/09**: agrupar pelo campo da ordenação poria agosto na gaveta de
+setembro. É `@computed_field`, então não existe maneira de a competência discordar do `de`
+do mesmo documento. O `ANUAL` não tem competência (ele cobre doze meses, e trancá-lo em
+janeiro o esconderia dos outros onze) — ele responde por `ano`. Exatamente um dos dois é
+preenchido, sempre.
+
+`arquivos[].tipo` é `geracao` · `paradas` · `resumo`, e é o mesmo valor que
+`/documents/{id}/file` aceita. **Peça ausente é estado normal**: o fechamento 36 tem só o
+Resumo Executivo. `bytes` é o peso declarado pelo upstream e confere com o
+`Content-Length` do download; **nulo é ausência, nunca `0`**.
+
+**Não há filtro de mês no servidor, de propósito.** O acervo inteiro desta conta são
+1.564 bytes e `usina_id` não poupa uma ida (o `/reports/portal` busca tudo de qualquer
+jeito). Um filtro por combinação custaria um arquivo de cache e uma primeira busca fria
+POR escolha — quem está em campo perderia o offline exatamente na interação nova. O corte
+é do cliente, sobre o array que ele já tem em disco.
+
+Serve `ETag`; `If-None-Match` responde **304** com corpo vazio.
+
+### `GET /documents/{id}/file?tipo=geracao|paradas|resumo` — *no ar*
+
+Bytes do PDF, `Content-Type: application/pdf`. A autorização é **refeita** aqui, e não
+herdada da listagem: sem isso, trocar o número na URL baixaria o relatório de outro
+cliente. O `tipo` é fechado (`Literal`) porque ele é interpolado na URL do upstream, numa
+chamada feita com token de administrador — como texto livre, `../../../admin/users`
+normalizava para outra rota da mw-api e devolvia os bytes.
+
+**404** quando o relatório foi despublicado ou a peça retirada dele (o upstream responde
+403 e 404 nesses dois casos, e achatá-los num 503 mandaria a pessoa procurar defeito onde
+houve decisão de quem publica).
+
+### `GET /relatorios/ano?ano=YYYY` — *no ar*
+
+A grade `usina × mês` do ano — geração e manutenção lado a lado —, **numa ida só**. `ano`
+ausente = o ano corrente no fuso das usinas. Serve `ETag`/**304**.
 
 ```json
-{ "tipo": "mensal", "plant_id": 3, "competencia": "2026-07" }
+{
+  "ano": 2026,
+  "meses": ["2026-01", "…", "2026-12"],
+  "usinas": [
+    { "id": 4, "nome": "Porto Ferreira",
+      "tem_monitoramento": true, "tem_manutencao": true,
+      "contrato": "O&M UFV PORTO FERREIRA", "contrato_id": 698,
+      "cronograma_status": "CONSOLIDATED", "cronograma_versao": 1,
+      "mes_referencia": "2026-09", "previsto_ate_hoje": 31,
+      "cumprido_ate_hoje": 13, "pct_ate_hoje": 41.9, "previsto_no_contrato": 269,
+      "meses": [
+        { "mes": "2026-01", "energia": { "estado": "sem_fechamento", "pecas": [] } },
+        { "mes": "2026-08",
+          "energia": { "estado": "publicado", "documento_id": 35,
+                       "publicado_em": "2026-09-05T12:56:09.914048+00:00",
+                       "pecas": [ { "tipo": "geracao", "nome": "…", "bytes": 2686172 } ] },
+          "manutencao": { "situacao": "fechado", "previsto": 13, "cumprido": 13 } }
+      ],
+      "anual": {
+        "energia": { "disponivel": false, "estado": "sem_fechamento",
+                     "motivo": "O monitoramento ainda não publica fechamento anual." },
+        "manutencao": { "disponivel": true, "de": "2026-01", "ate": "2026-09" }
+      } }
+  ]
+}
 ```
 
-Dispara o Chromium headless. Responde `202` com `{"job_id": "..."}`;
-`GET /documents/jobs/{job_id}` devolve `{"estado": "processando|pronto|erro", "documento_id": "..."}`.
+**A rota não faz uma única conta de conformidade.** `situacao`/`previsto`/`cumprido` de
+cada célula são o `meses_estado` do meuPlano repassado cru, e os cinco campos do recorte
+de vigência chegam prontos. Medido: `previsto_ate_hoje` de Porto Ferreira é **31**, que é
+13 (agosto, `fechado`) **+ 18** (setembro, `corrente` — o `mes_referencia`). Quem somasse
+só os meses `fechado` chegaria a 13 e mostraria 100 % onde o meuPlano diz 41,9 %. Foi essa
+aritmética recomeçada num segundo lugar que produziu **"13 de 270" numa tela e "41,9 %" na
+outra**. A régua "até hoje" inclui o mês em curso, e ela é de lá.
 
-### `GET /documents/{id}/file`
+`manutencao` **ausente** = o mês não pertence ao contrato. O contrato de Porto Ferreira vai
+de 2026-08 a 2027-07: de janeiro a julho não há nada combinado, e um bloco de zeros ali se
+leria como "estava previsto e não foi feito".
 
-Bytes do PDF, `Content-Type: application/pdf`.
+`energia.estado` tem **cinco** valores, porque são cinco situações diferentes que a tela
+desenha diferente — hoje ela tem uma frase muda para duas delas e nenhuma para a terceira:
+
+| estado | o que é |
+|---|---|
+| `publicado` | há fechamento e ele tem ao menos uma peça para abrir |
+| `fechamento_sem_arquivo` | o fechamento existe e está **sem peça nenhuma** — 4 dos 6 do acervo de hoje |
+| `sem_fechamento` | o mês não foi fechado. A única das cinco que é ausência de dado |
+| `sem_monitoramento` | a usina não está ligada ao meuWatt; não há de onde vir |
+| `indisponivel` | a ponte não respondeu **neste** pedido. "Não sabemos" ≠ "não tem" |
+
+`anual.manutencao` é a **janela** que `/manutencao/relatorio` cobriria — nunca um mês
+futuro. Medido: pedir `de=2026-01&ate=2026-12` hoje responde **400 "ate não pode ser um mês
+futuro."**. Enquanto o ano corre, "o ano" é `janeiro..mês corrente`, e a tela imprime a
+janela ao lado do número. `anual.energia` diz que **não existe**: a aba Anual do meuWatt
+cria a linha, mas o gerador de PDF de lá só roda para MENSAL, e em produção há zero linhas
+ANUAL — botão morto seria pior que a frase.
+
+Nulos **não viajam** (`response_model_exclude_none`): a grade é 84 células e a maioria é
+ausência. Medido na carteira real: **15.724 B com os nulos escritos, 9.863 B sem**. Zero
+continua saindo — `previsto: 0` e `disponivel: false` são resposta, não ausência.
+
+`aviso` é **por usina** (a queda de uma não pode apagar as outras seis); o `aviso` do topo
+é só da geração, que é uma ida única para a carteira inteira.
+
+Nenhum PDF sai desta rota: ela diz **onde há** documento e **que janela** o relatório
+cobre. Os bytes continuam em `/documents/{id}/file` e `/manutencao/relatorio/pdf`, onde a
+autorização é refeita.
 
 ---
 

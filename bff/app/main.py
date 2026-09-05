@@ -31,6 +31,7 @@ from app.api.v1 import (
     documents,
     energia,
     equipamentos,
+    exportacao,
     avisos,
     home,
     manutencao,
@@ -43,6 +44,7 @@ from app.api.v1 import (
     pendencias,
     plants,
     relatorio,
+    relatorios_ano,
     resumo,
 )
 from app.clients import http as http_upstream
@@ -147,8 +149,10 @@ app.include_router(permissoes.router)
 app.include_router(avisos.router)
 app.include_router(documents.router)
 app.include_router(energia.router)
+app.include_router(exportacao.router)
 app.include_router(resumo.router)
 app.include_router(relatorio.router)
+app.include_router(relatorios_ano.router)
 app.include_router(carteira.router)
 
 

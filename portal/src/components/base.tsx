@@ -457,7 +457,135 @@ export function Segmentado<T extends string | number>({
 
 /* ------------------------------------------------------------------ combobox */
 
-export type Opcao = { valor: string; rotulo: string; detalhe?: string }
+/**
+ * Uma opção da lista suspensa.
+ *
+ * `desabilitada` existe porque o portal precisa dizer o que **esta** usina não tem — "sem
+ * estação solarimétrica", e a ausência derivada "sem estação não há irradiação, e sem
+ * irradiação não se calcula PR". Sumir com a linha faria o cliente concluir que o portal
+ * não oferece, quando o fato é sobre a usina dele.
+ *
+ * O tipo é uma união de propósito: **não dá para desabilitar sem escrever o motivo**, que
+ * viaja no `detalhe`. Botão desabilitado sem frase é uma parede sem porta — e essa é a
+ * espécie de defeito que o `tsc` pode pegar em vez de a revisão de diff deixar passar.
+ */
+export type Opcao =
+  | { valor: string; rotulo: string; detalhe?: string; desabilitada?: false }
+  | { valor: string; rotulo: string; detalhe: string; desabilitada: true }
+
+/**
+ * Monta a opção decidindo o estado: **o que desabilita é o próprio motivo**.
+ *
+ * Existe para a lista que se monta num `map`, em que cada item pode estar indisponível por
+ * uma razão diferente — sem isto, o jeito curto de escrever é `desabilitada: boolean` com
+ * `detalhe: string | undefined`, que é a mesma parede sem porta com outra roupa (e é o que
+ * o tipo acima recusa, de propósito). Aqui não há como desabilitar sem dizer por quê: o
+ * motivo é o argumento que desabilita.
+ *
+ * `motivo` nulo ou vazio devolve a opção normal, com o `detalhe` que ela já tinha.
+ */
+export function opcao(
+  base: { valor: string; rotulo: string; detalhe?: string },
+  motivo?: string | null,
+): Opcao {
+  return motivo ? { ...base, detalhe: motivo, desabilitada: true } : base
+}
+
+/**
+ * Fechar por clique-fora e por ESC — o comportamento é o mesmo nas duas listas suspensas,
+ * e duas cópias divergiriam no dia em que uma delas ganhasse um ajuste.
+ */
+function useFechaFora(aberto: boolean, setAberto: (v: boolean) => void) {
+  const caixa = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!aberto) return
+    const fora = (e: MouseEvent) => {
+      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false)
+    }
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAberto(false)
+    }
+    document.addEventListener('mousedown', fora)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', fora)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [aberto, setAberto])
+  return caixa
+}
+
+/** Filtra por rótulo E por detalhe: o número de série é o que a pessoa tem na mão. */
+function filtrar(opcoes: Opcao[], busca: string) {
+  const t = busca.trim().toLowerCase()
+  if (!t) return opcoes
+  return opcoes.filter(
+    (o) => o.rotulo.toLowerCase().includes(t) || (o.detalhe ?? '').toLowerCase().includes(t),
+  )
+}
+
+/**
+ * A linha da lista, nas duas peças.
+ *
+ * A opção desabilitada continua na lista, continua achável pela busca e continua legível —
+ * o que ela perde é o clique. É um `<button disabled>` de verdade, e não um `onClick`
+ * omitido: a garantia tem de ser estrutural, senão volta no primeiro refactor.
+ */
+function LinhaDeOpcao({
+  opcao,
+  marcada,
+  comMarca,
+  aoTocar,
+}: {
+  opcao: Opcao
+  marcada: boolean
+  comMarca: boolean
+  aoTocar?: () => void
+}) {
+  const desabilitada = opcao.desabilitada === true
+  const conteudo = (
+    <>
+      {comMarca ? (
+        <span aria-hidden className="w-4 shrink-0 text-ambar-texto">
+          {marcada ? '✓' : ''}
+        </span>
+      ) : null}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{opcao.rotulo}</span>
+        {opcao.detalhe ? (
+          <span className="block truncate text-xs text-fraco">{opcao.detalhe}</span>
+        ) : null}
+      </span>
+    </>
+  )
+  const base = 'flex w-full items-start gap-2 px-3 py-2 text-left text-sm'
+  if (desabilitada) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-disabled
+        {...(comMarca ? { role: 'checkbox', 'aria-checked': false } : {})}
+        className={`${base} cursor-not-allowed text-fraco`}
+      >
+        {conteudo}
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={aoTocar}
+      {...(comMarca ? { role: 'checkbox', 'aria-checked': marcada } : {})}
+      className={`${base} hover:bg-superficie-alta ${marcada ? 'text-ambar-texto' : 'text-corpo'}`}
+    >
+      {conteudo}
+    </button>
+  )
+}
+
+/** A caixa de busca só aparece quando a lista é grande o bastante para se procurar nela. */
+const BUSCA_A_PARTIR_DE = 6
 
 /**
  * Lista suspensa PESQUISÁVEL — a única forma de escolher entre muitas opções neste produto.
@@ -482,32 +610,10 @@ export function Combobox({
 }) {
   const [aberto, setAberto] = useState(false)
   const [busca, setBusca] = useState('')
-  const caixa = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!aberto) return
-    const fora = (e: MouseEvent) => {
-      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false)
-    }
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setAberto(false)
-    }
-    document.addEventListener('mousedown', fora)
-    document.addEventListener('keydown', esc)
-    return () => {
-      document.removeEventListener('mousedown', fora)
-      document.removeEventListener('keydown', esc)
-    }
-  }, [aberto])
+  const caixa = useFechaFora(aberto, setAberto)
 
   const escolhida = opcoes.find((o) => o.valor === valor) ?? null
-  const filtradas = useMemo(() => {
-    const t = busca.trim().toLowerCase()
-    if (!t) return opcoes
-    return opcoes.filter(
-      (o) => o.rotulo.toLowerCase().includes(t) || (o.detalhe ?? '').toLowerCase().includes(t),
-    )
-  }, [opcoes, busca])
+  const filtradas = useMemo(() => filtrar(opcoes, busca), [opcoes, busca])
 
   return (
     <div ref={caixa} className={`relative ${className}`}>
@@ -529,7 +635,7 @@ export function Combobox({
         <div
           className={`absolute z-30 mt-1 ${larguraMenu} max-w-[90vw] overflow-hidden rounded-card border border-borda-forte bg-painel shadow-xl`}
         >
-          {opcoes.length > 6 ? (
+          {opcoes.length > BUSCA_A_PARTIR_DE ? (
             <input
               autoFocus
               value={busca}
@@ -544,23 +650,175 @@ export function Combobox({
             ) : (
               filtradas.map((o) => (
                 <li key={o.valor}>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <LinhaDeOpcao
+                    opcao={o}
+                    marcada={o.valor === valor}
+                    comMarca={false}
+                    aoTocar={() => {
                       onEscolher(o.valor)
                       setAberto(false)
                     }}
-                    className={`block w-full px-3 py-2 text-left text-sm hover:bg-superficie-alta ${
-                      o.valor === valor ? 'text-ambar-texto' : 'text-corpo'
-                    }`}
-                  >
-                    <span className="block truncate">{o.rotulo}</span>
-                    {o.detalhe ? <span className="block truncate text-xs text-fraco">{o.detalhe}</span> : null}
-                  </button>
+                  />
                 </li>
               ))
             )}
           </ul>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * A MESMA lista suspensa pesquisável, com múltipla escolha — para quando a pergunta é
+ * "quais destes?" e a resposta pode ter 1 ou 500 itens (os inversores de uma usina).
+ *
+ * Existe porque as duas saídas fáceis são proibidas aqui: fileira de caixinhas não escala e
+ * é chip com outro nome (a tela do meuWatt faz assim; não se copia isso), e
+ * `select multiple` não fala português em todo navegador nem se busca por teclado.
+ *
+ * **`valor === null` é "não mexi", e não é a mesma coisa que listar todos.** Na exportação
+ * de dados isso decide um fato: com `series: null` o inversor comissionado no meio do
+ * período entra sozinho no arquivo; com a lista explícita, não entra. Por isso o gatilho
+ * escreve as duas de formas diferentes — "todos · 20 inversores" (a regra) contra "20 de 20
+ * inversores" (a lista) — e desmarcar um item a partir de `null` MATERIALIZA a lista, que é
+ * o que a pessoa acabou de dizer que queria.
+ *
+ * `[]` é o terceiro estado, "nenhum". Se ele é um pedido válido, quem decide é a tela — uma
+ * peça do design system não sabe se a lista vazia é um filtro legítimo ou um pedido quebrado.
+ */
+export function ComboboxMulti({
+  opcoes,
+  valor,
+  onEscolher,
+  substantivo = 'itens',
+  rotuloTodos = 'todos',
+  notaTodos,
+  className = '',
+  larguraMenu = 'w-72',
+}: {
+  opcoes: Opcao[]
+  /** `null` = "não mexi" (todos, inclusive o que aparecer depois). `[]` = nenhum. */
+  valor: string[] | null
+  onEscolher: (v: string[] | null) => void
+  /** O plural do que se escolhe: "4 de 20 **inversores**". */
+  substantivo?: string
+  /** O gênero muda com o substantivo: "todas · 7 usinas". */
+  rotuloTodos?: string
+  /** Uma frase curta dizendo o que "todos" significa nesta tela. */
+  notaTodos?: string
+  className?: string
+  larguraMenu?: string
+}) {
+  const [aberto, setAberto] = useState(false)
+  const [busca, setBusca] = useState('')
+  const caixa = useFechaFora(aberto, setAberto)
+
+  // Só o que é escolhível entra na conta e em "todos": uma opção desabilitada é uma coisa
+  // que esta usina não tem, e ela nunca pode entrar numa lista explícita enviada ao servidor.
+  const disponiveis = useMemo(() => opcoes.filter((o) => o.desabilitada !== true), [opcoes])
+  const total = disponiveis.length
+  const marcados = useMemo(() => new Set(valor === null ? [] : valor), [valor])
+  const estaMarcada = (v: string) => valor === null || marcados.has(v)
+
+  // A ordem se fixa na ABERTURA do menu, não a cada clique: com os escolhidos subindo ao
+  // topo em tempo real, o item seguinte pula para debaixo do cursor e a pessoa marca o
+  // errado. Aqui a lista se acomoda quando ela fecha e abre de novo.
+  const ordemDeAbertura = useRef<Set<string>>(new Set())
+  const abrir = () => {
+    ordemDeAbertura.current = new Set(valor === null ? disponiveis.map((o) => o.valor) : valor)
+    setBusca('')
+    setAberto(true)
+  }
+
+  const filtradas = useMemo(() => filtrar(opcoes, busca), [opcoes, busca])
+  // `valor` está nas dependências de propósito, embora a ordem não dependa dele: quem segura
+  // a ordem é a FOTO da abertura, e não o memo deixar de recalcular. Sem ele aqui, a
+  // estabilidade viria de uma dependência esquecida — e a lista voltaria a dançar no dia em
+  // que alguém (ou o corretor automático do lint) completasse a lista.
+  const ordenadas = useMemo(() => {
+    const peso = (o: Opcao) => (ordemDeAbertura.current.has(o.valor) ? 0 : 1)
+    return [...filtradas].sort((a, b) => peso(a) - peso(b))
+  }, [filtradas, aberto, valor])
+
+  const alternar = (v: string) => {
+    if (valor === null) {
+      // Materializa: "todos menos este" é uma lista, e é exatamente o que ela acabou de pedir.
+      onEscolher(disponiveis.filter((o) => o.valor !== v).map((o) => o.valor))
+      return
+    }
+    onEscolher(marcados.has(v) ? valor.filter((x) => x !== v) : [...valor, v])
+  }
+
+  const gatilho =
+    valor === null
+      ? `${rotuloTodos} · ${total} ${substantivo}`
+      : `${valor.length} de ${total} ${substantivo}`
+
+  return (
+    <div ref={caixa} className={`relative ${className}`}>
+      <button
+        type="button"
+        aria-expanded={aberto}
+        onClick={() => (aberto ? setAberto(false) : abrir())}
+        className="flex min-h-[38px] w-full items-center justify-between gap-2 rounded-campo border border-borda bg-superficie px-3 text-sm text-corpo hover:bg-superficie-alta"
+      >
+        <span className="truncate">{gatilho}</span>
+        <span aria-hidden className="text-fraco">
+          ▾
+        </span>
+      </button>
+
+      {aberto ? (
+        <div
+          className={`absolute z-30 mt-1 ${larguraMenu} max-w-[90vw] overflow-hidden rounded-card border border-borda-forte bg-painel shadow-xl`}
+        >
+          {opcoes.length > BUSCA_A_PARTIR_DE ? (
+            <input
+              autoFocus
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar…"
+              className="w-full border-b border-borda bg-transparent px-3 py-2 text-sm text-corpo outline-none placeholder:text-fraco"
+            />
+          ) : null}
+          <ul className="max-h-72 overflow-auto py-1">
+            {ordenadas.length === 0 ? (
+              <li className="px-3 py-2 text-sm text-fraco">Nada encontrado.</li>
+            ) : (
+              ordenadas.map((o) => (
+                <li key={o.valor}>
+                  <LinhaDeOpcao
+                    opcao={o}
+                    marcada={estaMarcada(o.valor)}
+                    comMarca
+                    aoTocar={() => alternar(o.valor)}
+                  />
+                </li>
+              ))
+            )}
+          </ul>
+          <div className="border-t border-borda px-3 py-2">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={valor === null}
+                onClick={() => onEscolher(null)}
+                className="text-sm text-ambar-texto disabled:cursor-not-allowed disabled:text-fraco"
+              >
+                {rotuloTodos}
+              </button>
+              <button
+                type="button"
+                disabled={valor !== null && valor.length === 0}
+                onClick={() => onEscolher([])}
+                className="text-sm text-fraco hover:text-corpo disabled:cursor-not-allowed"
+              >
+                Limpar
+              </button>
+            </div>
+            {notaTodos ? <p className="mt-1 text-xs text-fraco">{notaTodos}</p> : null}
+          </div>
         </div>
       ) : null}
     </div>

@@ -42,6 +42,50 @@ def conectado(db):
     return linha
 
 
+#: A forma de `/reports/portal` como o meuWatt responde — medida em 05/09/2026: envelope
+#: `{plants, reports}`, 7 fechamentos, e só 2 deles com arquivo publicado. O fechamento sem
+#: `files` vem PRIMEIRO de propósito: é o estado real, e é o que prova que a conferência
+#: procura um item que resolva o caminho em vez de julgar pelo primeiro da lista.
+PORTAL_COMO_HOJE = {
+    "plants": [{"slug": "porto-ferreira"}],
+    "reports": [
+        {
+            "id": 33, "plant_slug": "porto-ferreira", "name": "Maio/2026",
+            "period": "MENSAL", "date_from": "2026-05-01", "date_to": "2026-05-31",
+            "sent_at": "2026-06-03T12:00:00Z", "files": [],
+        },
+        {
+            "id": 35, "plant_slug": "porto-ferreira", "name": "Agosto/2026",
+            "period": "MENSAL", "date_from": "2026-08-01", "date_to": "2026-08-31",
+            "sent_at": "2026-09-05T12:00:00Z",
+            "files": [
+                {"kind": "geracao", "filename": "geracao.pdf", "size_bytes": 2686172,
+                 "content_type": "application/pdf", "uploaded_at": "2026-09-05T11:00:00Z"},
+            ],
+        },
+    ],
+}
+
+
+#: As opções de "Baixar dados" como o meuWatt as devolve — recortadas de Porto Ferreira em
+#: 05/09/2026, com os três caminhos que a rota declara em `campos_exigidos`: a chave do
+#: inversor (sem ela a tela abre sem ninguém para escolher), o orçamento de células (sem ele
+#: a tela não impede o pedido grande demais) e a data a partir da qual o acervo fino existe.
+OPCOES_COMO_HOJE = {
+    "plant": {"id": 9378, "slug": "porto-ferreira", "name": "Porto Ferreira",
+              "capacity_kwp": 7402.5},
+    "skids": [{"id": 1, "name": "SKID-01", "capacity_kwp": 1500.2,
+               "slots": [{"key": "slot:170", "label": "Inv 13",
+                          "serial_number": "GR2579042017", "capacity_kwp": 375.06}]}],
+    "estacao": {"disponivel": True, "colunas": {"poa": True}, "temp_ambiente_rele": True},
+    "fronteira": {"leitores": [{"id": 14, "name": "Leitor SKID 1"}]},
+    "sistema": {"pr": True, "produtividade": True},
+    "retencao": {"snapshots_desde": "2026-03-06", "ssu_desde": "2024-09-05"},
+    "limites": {"native": 7, "5m": 31, "15m": 92, "1h": 366, "1d": 366,
+                "max_celulas": 2000000},
+}
+
+
 def _tudo_responde(mock):
     """O caminho feliz: as duas rotas de descoberta e o resto em cima do slug achado."""
     mock.get(f"{BASE}/auth/me").respond(
@@ -53,11 +97,18 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(
         200, json=[{"id": 1, "label": "INV-01"}]
     )
+    # Também antes do curinga, e pelo mesmo motivo: a rota de opções declara `campos_exigidos`,
+    # então `{"total_generation_kwh": …}` a pintaria de VERMELHO por culpa do teste — e o
+    # caminho feliz deixaria de ser feliz sem que nada estivesse errado no produto.
+    mock.get(f"{BASE}/plants/porto-ferreira/exports/raw/options").respond(
+        200, json=OPCOES_COMO_HOJE
+    )
     mock.route(url__startswith=f"{BASE}/plants/porto-ferreira").respond(
         200, json={"total_generation_kwh": 120.5}
     )
     mock.get(f"{BASE}/admin/users").respond(200, json=[{"id": 1, "email": "a@b.com"}])
     mock.get(f"{BASE}/admin/user-plants").respond(200, json=[{"user_id": 1, "plant_id": 1}])
+    mock.get(f"{BASE}/reports/portal").respond(200, json=PORTAL_COMO_HOJE)
 
 
 @respx.mock
@@ -91,6 +142,9 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
     respx.mock.get(f"{BASE}/plants").respond(200, json=[])
     respx.mock.get(f"{BASE}/admin/users").respond(200, json=[])
     respx.mock.get(f"{BASE}/admin/user-plants").respond(200, json=[])
+    # O portal não depende do slug — ele é exercitado mesmo sem usina nenhuma, e responde
+    # o acervo vazio, que é o estado coerente com esta conta.
+    respx.mock.get(f"{BASE}/reports/portal").respond(200, json={"plants": [], "reports": []})
 
     v = await sonda.varrer(db, Produto.MEUWATT)
 
@@ -158,19 +212,23 @@ async def test_as_rotas_fora_da_varredura_nao_sao_chamadas(db, conectado):
     """Declaradas e não exercitadas, com o motivo. Omiti-las daria a impressão de que a
     lista está completa.
 
-    O exemplo é `mw.portal`, e o nome deste teste dizia "efeito colateral" — que NÃO é o
-    caso dela: é um GET que não muda nada. Ela fica fora por outra razão, escrita no
-    catálogo (com o token de serviço responde a pré-visualização do gestor, não a vista do
-    cliente). Rota com efeito colateral de verdade é `mw.login`, que é POST.
+    O exemplo era `mw.portal` até 05/09/2026, quando ela voltou para a varredura (vigiando
+    forma). O exemplo passa a ser `mw.portal_arquivo`, que fica fora pela razão que não
+    mudou: é o PDF de um cliente, baixado inteiro a cada varredura. Rota com efeito
+    colateral de verdade é `mw.login`, que é POST — e também está aqui.
     """
     _tudo_responde(respx.mock)
 
     v = await sonda.varrer(db, Produto.MEUWATT)
 
-    portal = next(r for r in v.rotas if r.chave == "mw.portal")
-    assert portal.situacao == "nao_sondada" and portal.detalhe
+    arquivo = next(r for r in v.rotas if r.chave == "mw.portal_arquivo")
+    assert arquivo.situacao == "nao_sondada" and arquivo.detalhe
+    login = next(r for r in v.rotas if r.chave == "mw.login")
+    assert login.situacao == "nao_sondada" and login.detalhe
     # A prova é o que NÃO foi para a rede.
-    assert all("/reports/portal" not in str(c.request.url) for c in respx.mock.calls)
+    chamadas = [str(c.request.url) for c in respx.mock.calls]
+    assert all("/files/" not in u for u in chamadas)
+    assert all("/auth/login" not in u for u in chamadas)
 
 
 @respx.mock
