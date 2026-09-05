@@ -102,11 +102,31 @@ def _cliente(produto: Produto, base_url: str, token: str) -> MeuWattClient | Meu
     return classe(base_url=base_url.rstrip("/"), token=token)
 
 
+def _exigir_credencial(integracao, produto_nome: str) -> None:
+    """Uma ponte ATIVA sem credencial nenhuma é configuração pela metade — e precisa dizer isso.
+
+    Sem esta guarda, `decifrar(None)` estoura com `'NoneType' object has no attribute 'encode'`,
+    que atravessa a ponte inteira e chega ao cliente como **"meuWatt indisponível: 'NoneType'
+    object has no attribute 'encode'"** — uma frase que não diz o que houve nem o que fazer.
+    Aconteceu em 04/09/2026, na tela de Energia do portal do cliente: o produto do outro lado
+    estava no ar e o que faltava era a credencial gravada aqui.
+
+    A frase certa aponta o lugar do conserto: quem lê é a equipe, e o conserto é reconectar em
+    Painel → Conexões.
+    """
+    if not integracao.token_cifrado and not integracao.senha_cifrada:
+        raise RuntimeError(
+            f"A conexão com o {produto_nome} está ativa mas sem credencial gravada. "
+            f"Reconecte em Painel → Conexões."
+        )
+
+
 async def cliente_meuwatt(db: Session) -> MeuWattClient:
     """Cliente já autenticado com o que estiver gravado — token, de preferência."""
     integracao = obter(db, Produto.MEUWATT)
     if integracao is None or not integracao.ativa:
         raise RuntimeError("A ponte com o meuWatt não está configurada.")
+    _exigir_credencial(integracao, "meuWatt")
     if integracao.token_cifrado:
         return MeuWattClient(
             base_url=integracao.base_url, token=decifrar(integracao.token_cifrado)
@@ -136,6 +156,7 @@ async def cliente_meuplano(db: Session) -> MeuPlanoClient:
     integracao = obter(db, Produto.MEUPLANO)
     if integracao is None or not integracao.ativa:
         raise RuntimeError("A ponte com o meuPlano não está configurada.")
+    _exigir_credencial(integracao, "meuPlano")
 
     chave = (integracao.base_url, integracao.token_cifrado, integracao.usuario_servico,
              integracao.senha_cifrada)
