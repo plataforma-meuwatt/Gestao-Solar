@@ -322,6 +322,13 @@ export type PreparoDeFichas = {
   erros: Record<string, unknown>[]
   ja_em_andamento: boolean
   expira_em: number | null
+  /**
+   * O andamento veio da CONFERÊNCIA no armazenamento, e não de quem está trabalhando —
+   * acontece quando o preparo foi aberto em outro servidor do meuPlano, que roda com mais
+   * de uma réplica. O número é verdadeiro; o que ninguém garante é que alguém segue
+   * gerando. A tela oferece "preparar de novo" nesse caso, em vez de girar sem fim.
+   */
+  conferido_no_armazenamento: boolean
   aviso: string | null
 }
 

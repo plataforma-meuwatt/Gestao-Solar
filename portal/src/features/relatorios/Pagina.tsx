@@ -30,6 +30,16 @@
  * Nenhum PDF é link comum. As rotas de arquivo do BFF exigem a sessão em CABEÇALHO, e a saída
  * fácil — token na query string — é a proibida: endereço entra em log e em histórico. Por
  * isso tudo passa por `abrirPdf`/`baixarArquivo` (fetch + Bearer + blob).
+ *
+ * ⚠ POR QUE A ABA ENERGIA AINDA ABRE VAZIA (medido em 05/09/2026, no upstream real). O
+ * caminho está inteiro deste lado: o BFF aceita as três peças (`geracao`, `paradas`,
+ * `resumo`), recusa qualquer outra com 422, e a tela nomeia cada uma. O que não existe é o
+ * ARQUIVO: `GET /reports/portal` do meuWatt devolve hoje cinco fechamentos — Tietê, Ouro
+ * Fino, Pirapozinho, Pereiras e Pirassununga —, **todos com `sent_at` preenchido e todos com
+ * `files: []`**. Nenhum PDF publicado. Isso não se conserta em código: alguém com perfil de
+ * administrador no meuWatt precisa regerar e enviar os fechamentos. Até lá, o vazio que esta
+ * tela mostra é a verdade medida, não uma falha a caçar aqui. (Reabrir um fechamento zera o
+ * envio sem apagar os arquivos — por isso o reenvio é preciso mesmo onde o PDF já existiu.)
  */
 
 import { useParams, useSearchParams } from 'react-router-dom'

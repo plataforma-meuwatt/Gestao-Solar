@@ -194,6 +194,12 @@ class PreparoOut(BaseModel):
     ja_em_andamento: bool = False
     #: Segundos até o meuPlano esquecer este preparo. É o limite útil do acompanhamento.
     expira_em: int | None = None
+    #: O andamento foi CONFERIDO no armazenamento em vez de lido de quem está trabalhando —
+    #: acontece quando o preparo foi aberto em outra réplica do meuPlano (ou o servidor
+    #: reiniciou entre um poll e outro). O número é verdadeiro; o que ninguém garante é que
+    #: alguém segue gerando. A tela usa isto para oferecer "preparar de novo" em vez de
+    #: girar sem fim atrás de um trabalho que pode ter morrido.
+    conferido_no_armazenamento: bool = False
     aviso: str | None = None
 
 
@@ -546,6 +552,7 @@ async def andamento_do_preparo(
         erro=erro,
         erros=erros,
         expira_em=_inteiro(bruto.get("expira_em")),
+        conferido_no_armazenamento=bool(bruto.get("conferido_no_armazenamento")),
         aviso=(
             erro
             or (
@@ -553,6 +560,10 @@ async def andamento_do_preparo(
                 if erros
                 else None
             )
+            # O upstream explica, com as palavras dele, quando o andamento veio da
+            # conferência no armazenamento. Repassar em vez de reescrever: quem sabe por que
+            # o número pode não subir é quem o conferiu.
+            or _texto(bruto.get("aviso"))
         ),
     )
 

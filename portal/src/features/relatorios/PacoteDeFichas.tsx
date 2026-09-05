@@ -505,10 +505,24 @@ function Acoes({
             ) : null}
           </div>
           <Barra pct={pct} />
-          <p className="text-xs text-fraco">
-            Pode fechar esta aba: o preparo corre no servidor e o que já foi gerado é
-            reaproveitado.
-          </p>
+          {estado.conferido_no_armazenamento ? (
+            // O andamento veio da CONFERÊNCIA no armazenamento: o preparo foi aberto em
+            // outro servidor do meuPlano (que roda com mais de uma réplica) ou o servidor
+            // reiniciou entre um pedido e outro. O número é real e sobe sozinho enquanto
+            // alguém gera — mas se quem trabalhava morreu, ele para. Por isso a saída fica
+            // aqui, à mão: sem ela, a barra giraria para sempre.
+            <div className="space-y-2">
+              <Aviso>{estado.aviso ?? 'Andamento conferido no armazenamento.'}</Aviso>
+              <Botao onClick={aoPreparar} desabilitado={preparando}>
+                {preparando ? 'Mandando preparar…' : 'Preparar de novo'}
+              </Botao>
+            </div>
+          ) : (
+            <p className="text-xs text-fraco">
+              Pode fechar esta aba: o preparo corre no servidor e o que já foi gerado é
+              reaproveitado.
+            </p>
+          )}
         </div>
       )
     }

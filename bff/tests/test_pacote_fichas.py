@@ -428,6 +428,29 @@ async def test_preparo_expirado_manda_preparar_de_novo(db, dono, minha, ponte):
     assert e.value.status_code == 404 and "de novo" in e.value.detail
 
 
+@respx.mock
+async def test_andamento_conferido_noutra_replica_chega_com_a_saida_a_mao(db, dono, minha, ponte):
+    """O meuPlano roda com mais de uma réplica e o preparo vive na memória de quem o abriu.
+    Quando o poll cai noutra instância, ela CONFERE o andamento no armazenamento em vez de
+    dar 404 — e diz que conferiu. A tela precisa dos dois campos: o número, que é verdadeiro,
+    e o aviso, que é o que lhe permite oferecer "preparar de novo" em vez de girar sem fim
+    atrás de um trabalho que pode ter morrido junto com a réplica."""
+    respx.mock.get(f"{VC}/{minha.mp_usina_id}/fichas/preparo/p-9").respond(
+        200,
+        json={"total": 17, "prontas": 14, "concluido": False, "status": "running",
+              "conferido_no_armazenamento": True,
+              "aviso": "Andamento conferido no armazenamento (quem está preparando é outro "
+                       "servidor). Se o número parar de subir, peça para preparar de novo."},
+    )
+
+    saida = await andamento_do_preparo(preparo_id="p-9", usina_id=minha.id,
+                                       db=db, usuario=dono)
+
+    assert saida.conferido_no_armazenamento is True
+    assert saida.estado == "andando" and saida.prontas == 14 and saida.total == 17
+    assert saida.aviso and "outro servidor" in saida.aviso
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # O pacote
 # ══════════════════════════════════════════════════════════════════════════════

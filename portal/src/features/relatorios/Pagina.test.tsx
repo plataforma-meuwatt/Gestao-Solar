@@ -205,6 +205,7 @@ const PREPARO_ANDANDO: PreparoDeFichas = {
   erros: [],
   ja_em_andamento: false,
   expira_em: 3600,
+  conferido_no_armazenamento: false,
   aviso: null,
 }
 
@@ -213,6 +214,20 @@ const PREPARO_PRONTO: PreparoDeFichas = {
   prontas: 17,
   concluido: true,
   estado: 'pronto',
+}
+
+/**
+ * O andamento veio da CONFERÊNCIA no armazenamento: o preparo foi aberto em outro servidor
+ * do meuPlano, que roda com mais de uma réplica. O número é verdadeiro; quem trabalhava pode
+ * já ter morrido — por isso a saída precisa estar à mão, senão a barra gira sem fim.
+ */
+const PREPARO_CONFERIDO: PreparoDeFichas = {
+  ...PREPARO_ANDANDO,
+  prontas: 14,
+  conferido_no_armazenamento: true,
+  aviso:
+    'Andamento conferido no armazenamento (quem está preparando é outro servidor). Se o ' +
+    'número parar de subir, peça para preparar de novo.',
 }
 
 /**
@@ -577,6 +592,26 @@ describe('Relatórios · Manutenção · pacote de fichas', () => {
     const andamento = await screen.findByText(/Preparando as fichas/)
     expect(andamento.textContent).toContain('10')
     expect(andamento.textContent).toContain('17')
+  })
+
+  it('andamento conferido noutro servidor mostra o aviso e deixa a saída à mão', async () => {
+    // O meuPlano roda com mais de uma réplica e o preparo vive na memória de quem o abriu.
+    // Antes, o poll caído noutra instância dava 404 e a tela dizia "expirou" no meio de um
+    // trabalho que ia bem; agora ela recebe o andamento real, marcado. O que ninguém pode
+    // garantir é que alguém segue gerando — daí o botão, para a barra não girar para sempre.
+    servidor({ fichas: inventario({ prontas: 10 }), preparo: PREPARO_CONFERIDO })
+    vi.spyOn(api, 'post').mockResolvedValue({ data: PREPARO_CONFERIDO } as never)
+    montar('manutencao')
+
+    fireEvent.click(await screen.findByRole('button', { name: /Preparar 7 ficha/ }))
+
+    const andamento = await screen.findByText(/Preparando as fichas/)
+    expect(andamento.textContent).toContain('14')
+    expect(screen.getByText(/outro servidor/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Preparar de novo/ })).toBeTruthy()
+    // E o download continua fechado: faltam fichas, e pacote parcial é o defeito que esta
+    // tela inteira existe para não ter.
+    expect(screen.queryByText(/Baixar 17 ficha/)).toBeNull()
   })
 
   it('preparo concluído libera o download do pacote', async () => {
