@@ -240,7 +240,7 @@ function TarefasDoMes({
                     {t.os_id === null ? null : (
                       <button
                         type="button"
-                        onClick={() => navigate(`/usinas/${usinaId}/ordens/${t.os_id}`)}
+                        onClick={() => navigate(`/usinas/${usinaId}/manutencao/ordens/${t.os_id}`)}
                         className="text-ambar-texto transition hover:brightness-110"
                       >
                         ver a ordem de serviço ›

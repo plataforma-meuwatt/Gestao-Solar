@@ -78,7 +78,7 @@ export type DocumentoPendencia = {
  * A ordem de serviço vinculada, como a pendência a mostra.
  *
  * É um recorte do `OrdemOut` do BFF — só o que cabe numa linha de "quem resolve isto". A
- * tela da OS (`/usinas/:id/ordens/:osId`) tem o resto.
+ * tela da OS (`/usinas/:id/manutencao/ordens/:osId`) tem o resto.
  */
 export type OrdemVinculada = {
   id: number

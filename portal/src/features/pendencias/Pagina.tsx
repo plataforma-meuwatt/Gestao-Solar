@@ -225,7 +225,7 @@ export default function Pendencias() {
   const leitura = useLeitura<PendenciasOut>(caminhoDaLista(usinaId), { ativo: usinaValida })
 
   const aberta = cid ? Number(cid) : null
-  const base = `/usinas/${usinaId}/pendencias`
+  const base = `/usinas/${usinaId}/manutencao/pendencias`
 
   if (!usinaValida) {
     return (

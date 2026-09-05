@@ -1,261 +1,256 @@
 /**
- * Energia da usina — UMA pergunta: **gerei o que era esperado?**
+ * O PAINEL de geração — a mesma resposta que o time de operação lê no meuWatt, recortada
+ * para o cliente corporativo.
  *
- * A tela é a resposta em três alturas, de cima para baixo:
+ * Quatro recortes da MESMA pergunta ("gerei o que era esperado?"), em um controle
+ * segmentado: **Dia**, **Mês**, **Ano** e **Unidades**. As unidades consumidoras são um
+ * recorte, e não um item de menu, porque a pergunta é a mesma — só a lente muda.
  *
- * 1. **De relance** — o que a usina faz agora, hoje, no mês e no ano, cada período contra a
- *    meta do projeto (o PVsyst cadastrado no meuWatt). Sem meta, o portal DIZ "sem meta
- *    cadastrada": inventar régua é pior que não ter régua.
- * 2. **Por que** — PR, disponibilidade real e contratual e a energia perdida em paradas, com
- *    o caminho para a lista de paradas do período.
- * 3. **Como foi** — a curva do dia (com irradiação quando há estação), as barras do mês ou do
- *    ano com o esperado sobreposto, e os últimos 24 meses contra a meta e contra o ano
- *    anterior.
+ * Três decisões de tela que não devem ser "simplificadas" depois:
  *
- * Duas decisões que não devem ser "simplificadas" depois:
+ * **Uma referência só.** Os quatro recortes andam no MESMO ponto do tempo: quem foi ver o
+ * dia 12 de março e troca para Mês continua em março. Dois relógios na mesma tela fariam o
+ * cliente comparar períodos diferentes sem perceber.
  *
- * **Uma referência só.** Dia, Mês e Ano andam no MESMO ponto do tempo: quem foi ver o dia 12
- * de março e troca para Mês continua em março. Dois relógios na mesma tela fariam o cliente
- * comparar períodos diferentes sem perceber.
+ * **O seletor de mês pula o mês vazio.** A lista de meses com medição vem do painel ANUAL
+ * (`meses_disponiveis`) — é assim que o próprio meuWatt faz, o Anual alimentando o seletor
+ * do Mensal. Mês sem medição aparece na lista, mas desabilitado e dizendo por quê: sumir
+ * com ele esconderia do cliente que aquele mês não foi medido, e deixá-lo clicável abriria
+ * uma tela vazia que se lê como falha do portal.
  *
- * **Ausência nunca vira zero.** Todo número passa pelos formatadores de `lib/format`, que
- * escrevem "—" para nulo, e ponto sem leitura não vira barra rasteira no gráfico. "Não
- * medimos" e "não gerou" são afirmações diferentes, e a segunda vale dinheiro numa reunião de
- * contrato.
+ * **Aqui não se gera PDF.** A aba Relatório do meuWatt (a fábrica de PDF, com os botões de
+ * imprimir e salvar) ficou de fora por pedido do dono. Os três documentos consolidados —
+ * Geração, Paradas e o Resumo Executivo — o cliente baixa em Relatórios, prontos, sem ter
+ * de montar nada.
  *
- * Fora do escopo por desenho: aparelho a aparelho, relé, string e comparativo interno. Isso é
- * análise de manutenção — trabalho da equipe, na ferramenta da equipe. Aqui o cliente
- * corporativo vê energia.
+ * Também ficaram de fora, com motivo: o ranking de causas, o detalhamento parada a parada e
+ * o desvio entre inversores (não são do painel — vivem dentro do Anexo de Paradas, que
+ * chega em PDF); o derating e a indisponibilidade do PVsyst (são parâmetros de ENTRADA do
+ * projeto, não medição do período); e os botões de rolagem do cabeçalho, que são muleta de
+ * página longa de operador.
  */
 
-import { useMemo, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
 
 import {
-  Aviso,
-  Barra,
-  Botao,
   CabecalhoCard,
   Cartao,
-  Esqueleto,
-  GraficoBarras,
-  GraficoHistorico,
-  GraficoLinha,
-  Kpi,
-  LinhaNavegacao,
-  Num,
-  Pagina,
+  PassoPeriodo,
+  Pagina as Casco,
+  Segmentado,
   Selo,
   Tela4Estados,
   Vazio,
-  type MesDoHistorico,
-  type PontoBarra,
 } from '@/components/base'
 import { SeletorPeriodo } from '@/components/SeletorPeriodo'
-import { competenciaCurta, energia, numero, porcento, potencia } from '@/lib/format'
-import { hojeIso, rotuloDoPeriodo, type Recorte } from '@/lib/periodo'
-import type { Leitura } from '@/lib/leitura'
+import { competencia } from '@/lib/format'
+import {
+  MESES,
+  competenciaDe,
+  competenciaParaIso,
+  hojeIso,
+  passaDeHoje,
+  passo,
+  rotuloDoPeriodo,
+  type Recorte,
+} from '@/lib/periodo'
+
 import {
   ehUsinaAusente,
-  useCurva,
-  useDesempenho,
-  useGeracao,
-  useHistorico,
+  useDia,
+  usePainel,
+  useUnidades,
   useUsinaDetalhe,
-  type Desempenho,
+  type Aba,
+  type RecortePainel,
   type UsinaDetalhe,
 } from './api'
+import { AbaAno } from './Ano'
+import { AbaDia } from './Dia'
+import { AbaMes } from './Mes'
+import { AbaUnidades } from './Unidades'
+import { Bloco, capacidade } from './graficos'
+
+const ABAS: { valor: Aba; rotulo: string }[] = [
+  { valor: 'dia', rotulo: 'Dia' },
+  { valor: 'mes', rotulo: 'Mês' },
+  { valor: 'ano', rotulo: 'Ano' },
+  { valor: 'unidades', rotulo: 'Unidades' },
+]
+
+const RECORTES_DA_UNIDADE: { valor: RecortePainel; rotulo: string }[] = [
+  { valor: 'mes', rotulo: 'No mês' },
+  { valor: 'ano', rotulo: 'No ano' },
+]
+
+/* ------------------------------------------------------------------ mês */
 
 /**
- * Capacidade instalada — kWp abaixo de 1 MWp, MWp acima.
+ * O seletor de mês: passo ‹ ›, lista dos doze meses do ano e o mês vazio DESABILITADO.
  *
- * `potencia()` de `lib/format` não serve: ela escreveria "3,00 MW" onde a unidade é MWp, e
- * potência instantânea e capacidade instalada são grandezas que ninguém deve confundir numa
- * tela que compara as duas lado a lado. Se uma segunda tela precisar disto, sobe para
- * `lib/format`.
- */
-function capacidade(kwp: number | null): string {
-  if (kwp === null) return '—'
-  return kwp >= 1000 ? `${numero(kwp / 1000, 2)} MWp` : `${numero(kwp, 1)} kWp`
-}
-
-/**
- * Um bloco que depende da própria leitura: esqueleto, erro com "Tentar de novo", conteúdo.
+ * `disponiveis` nulo significa "ninguém consultou" — e aí tudo o que já aconteceu fica
+ * liberado, que é o comportamento honesto: travar por falta de informação seria impedir o
+ * cliente de olhar um mês que talvez tenha dado.
  *
- * O quarto estado (offline) fica no nível da PÁGINA — quando a rede cai, cai para todas as
- * leituras ao mesmo tempo, e repetir o selo em cada cartão viraria ruído sobre o mesmo fato.
+ * As setas PULAM o mês vazio quando a lista existe. Sem isso, andar para trás num ano com
+ * cinco meses sem medição exigiria cinco cliques que abrem cinco telas vazias.
  */
-function Bloco<T>({
-  leitura,
-  altura = 200,
-  children,
+function SeletorDeMes({
+  referencia,
+  onReferencia,
+  disponiveis,
 }: {
-  leitura: Leitura<T>
-  altura?: number
-  children: (dados: T) => ReactNode
+  referencia: string
+  onReferencia: (iso: string) => void
+  disponiveis: string[] | null
 }) {
-  if (leitura.carregando) return <Esqueleto altura={altura} />
-  if (leitura.dados === null) {
-    return (
-      <div>
-        <p className="text-sm text-tom-parado">
-          {leitura.erro ?? 'O servidor não devolveu dados para este período.'}
-        </p>
-        <div className="mt-3">
-          <Botao variante="secundario" onClick={leitura.recarregar}>
-            Tentar de novo
-          </Botao>
-        </div>
-      </div>
-    )
-  }
-  return <>{children(leitura.dados)}</>
-}
+  const [aberto, setAberto] = useState(false)
+  const caixa = useRef<HTMLDivElement>(null)
 
-/**
- * O KPI de um período contra a meta do projeto.
- *
- * O tom e a frase (`Dentro do esperado`, `Sem meta de projeto cadastrada`) vêm do SERVIDOR —
- * a régua de 95%/85% é a mesma do BFF, do aplicativo e do meuWatt, e recalculá-la aqui criaria
- * uma segunda verdade sobre a mesma usina.
- */
-function KpiDoPeriodo({
-  rotulo,
-  periodo,
-  leitura,
-}: {
-  rotulo: string
-  periodo: string
-  leitura: Leitura<Desempenho>
-}) {
-  if (leitura.carregando) {
-    return (
-      <div>
-        <div className="text-xs uppercase tracking-wide text-rotulo">{rotulo}</div>
-        <div className="mt-2">
-          <Esqueleto altura={34} largura="70%" />
-        </div>
-      </div>
-    )
+  useEffect(() => {
+    if (!aberto) return
+    const fora = (e: MouseEvent) => {
+      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false)
+    }
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAberto(false)
+    }
+    document.addEventListener('mousedown', fora)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', fora)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [aberto])
+
+  const conjunto = disponiveis === null ? null : new Set(disponiveis)
+  const temDado = (iso: string) => conjunto === null || conjunto.has(competenciaDe(iso))
+
+  /** O próximo mês com medição naquela direção; nulo quando não há nenhum. */
+  const vizinho = (direcao: 1 | -1): string | null => {
+    let candidato = passo(referencia, 'mes', direcao)
+    // Doze passos cobrem um ano inteiro de meses vazios; além disso o ano muda e o painel
+    // anual daquele ano é outra leitura, que a seta não tem como consultar daqui.
+    for (let i = 0; i < 12; i += 1) {
+      if (passaDeHoje(candidato, 'mes')) return null
+      if (temDado(candidato)) return candidato
+      candidato = passo(candidato, 'mes', direcao)
+    }
+    return null
   }
 
-  const d = leitura.dados
-  if (d === null) {
-    return (
-      <Kpi
-        rotulo={rotulo}
-        valor="—"
-        tamanho="grande"
-        detalhe={<span className="text-tom-parado">{leitura.erro ?? 'Não deu para ler.'}</span>}
-      />
-    )
-  }
+  const anterior = vizinho(-1)
+  const proximo = vizinho(1)
+
+  const ano = referencia.slice(0, 4)
+  const mesesDoAno = MESES.map((_, i) => `${ano}-${String(i + 1).padStart(2, '0')}`).filter(
+    (c) => !passaDeHoje(competenciaParaIso(c), 'mes'),
+  )
 
   return (
-    <div className="min-w-0">
-      <Kpi
-        rotulo={rotulo}
-        valor={energia(d.energia_kwh)}
-        tamanho="grande"
-        detalhe={
-          d.pct_do_projeto === null ? (
-            periodo
-          ) : (
-            <>
-              {periodo} · esperado <Num>{energia(d.esperado_projeto_kwh)}</Num>
-            </>
-          )
-        }
+    <div ref={caixa} className="relative flex items-center gap-2">
+      <PassoPeriodo
+        rotulo={rotuloDoPeriodo(referencia, 'mes')}
+        aoVoltar={() => {
+          if (anterior) onReferencia(anterior)
+        }}
+        aoAvancar={() => {
+          if (proximo) onReferencia(proximo)
+        }}
+        podeAvancar={proximo !== null}
       />
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Selo tom={d.tom}>
-          {d.pct_do_projeto === null ? d.situacao : `${porcento(d.pct_do_projeto)} do projeto`}
-        </Selo>
-        {d.pct_do_projeto === null ? null : (
-          <span className="text-xs text-fraco">{d.situacao}</span>
-        )}
-      </div>
-      {/* Quando o monitoramento não tem leitura do período inteiro, o servidor compara só os
-          meses medidos — e DIZ isso aqui. Sem a frase, "no ano" pareceria o ano fechado, que
-          é justamente a leitura errada que fazia a mesma usina sair verde no mês e vermelha
-          no ano.
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-label="Escolher o mês"
+        className="min-h-[38px] rounded-campo border border-borda bg-superficie px-3 text-sm text-corpo hover:bg-superficie-alta"
+      >
+        Escolher mês ▾
+      </button>
 
-          A frase aparece INTEIRA, em quantas linhas precisar. Estava com `truncate` e só se
-          completava no tooltip: sobre um gráfico com cinco meses sem barra, quem lia sem
-          passar o mouse — o modo normal de ler um número grande — via um selo verde de ano
-          inteiro sustentado por quatro meses. A ressalva que torna o número honesto não pode
-          ser a parte escondida; empurrar o cartão dois milímetros é o preço certo. */}
-      {d.cobertura ? (
-        <p className="mt-1 text-xs leading-snug text-fraco">{d.cobertura}</p>
+      {aberto ? (
+        <div className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-card border border-borda-forte bg-painel shadow-xl">
+          <ul className="max-h-80 overflow-auto py-1">
+            {mesesDoAno.map((c) => {
+              const iso = competenciaParaIso(c)
+              const habilitado = temDado(iso)
+              const escolhido = competenciaDe(referencia) === c
+              return (
+                <li key={c}>
+                  <button
+                    type="button"
+                    disabled={!habilitado}
+                    onClick={() => {
+                      onReferencia(iso)
+                      setAberto(false)
+                    }}
+                    className={`block w-full px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-40 ${
+                      escolhido ? 'text-ambar-texto' : 'text-corpo'
+                    } ${habilitado ? 'hover:bg-superficie-alta' : ''}`}
+                  >
+                    <span className="block">{competencia(c)}</span>
+                    {habilitado ? null : (
+                      <span className="block text-xs text-fraco">sem medição neste mês</span>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       ) : null}
     </div>
   )
 }
 
-export default function Usina() {
+/* ------------------------------------------------------------------ página */
+
+export default function PainelDeEnergia() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const idUsina = Number(id)
   const valida = Number.isFinite(idUsina) && idUsina > 0
 
-  // Uma referência só para os três recortes — ver o cabeçalho do arquivo.
-  const [recorte, setRecorte] = useState<Recorte>('dia')
+  const [aba, setAba] = useState<Aba>('mes')
+  const [recorteUnidades, setRecorteUnidades] = useState<RecortePainel>('mes')
   const [referencia, setReferencia] = useState<string>(hojeIso())
 
   const usina = useUsinaDetalhe(idUsina, valida)
-  const mes = useDesempenho(idUsina, 'mes', referencia, valida)
-  const ano = useDesempenho(idUsina, 'ano', referencia, valida)
-  const geracao = useGeracao(idUsina, recorte, referencia, valida)
-  const curva = useCurva(idUsina, referencia, valida && recorte === 'dia')
-  const historico = useHistorico(idUsina, 24, valida)
 
+  const painelMes = usePainel(idUsina, 'mes', referencia, valida && aba === 'mes')
   /**
-   * As barras do período.
-   *
-   * No recorte MÊS cada barra é um dia, e o esperado NÃO é sobreposto: a meta do projeto é
-   * mensal, e reparti-la por dia inventaria uma expectativa diária que ninguém cadastrou.
-   *
-   * No recorte ANO o eixo vem dos meses do desempenho (que já traz a meta de cada um), e a
-   * altura de cada barra é o medido do mesmo mês. Mês sem leitura fica NULO — sem barra, e
-   * não uma barra no chão.
+   * O painel do ANO serve a duas coisas com UMA leitura: é o conteúdo da aba Ano e é a
+   * fonte de `meses_disponiveis` para o seletor de mês. A chave de cache normaliza a
+   * referência para 1º de janeiro (ver `referenciaDoRecorte`), então andar de agosto para
+   * setembro não repete o pedido — o ano é o mesmo.
    */
-  const barras: PontoBarra[] = useMemo(() => {
-    const pontos = geracao.dados?.pontos ?? []
-    if (recorte !== 'ano') {
-      return pontos.map((p) => ({ rotulo: p.rotulo, valor: p.kwh }))
-    }
-    const medido = new Map(pontos.map((p) => [p.chave, p.kwh]))
-    const meses = ano.dados?.meses ?? []
-    if (meses.length === 0) {
-      return pontos.map((p) => ({ rotulo: p.rotulo, valor: p.kwh }))
-    }
-    return meses.map((m) => ({
-      rotulo: competenciaCurta(m.mes),
-      valor: medido.get(m.mes) ?? m.energia_kwh,
-      esperado: m.esperado_projeto_kwh,
-    }))
-  }, [recorte, geracao.dados, ano.dados])
-
-  const serieLonga: MesDoHistorico[] = useMemo(
-    () =>
-      (historico.dados?.meses ?? []).map((m) => ({
-        mes: m.mes,
-        rotulo: competenciaCurta(m.mes),
-        medido: m.energia_kwh,
-        esperado: m.esperado_projeto_kwh,
-        anoAnterior: m.ano_anterior_kwh,
-      })),
-    [historico.dados],
+  const painelAno = usePainel(idUsina, 'ano', referencia, valida && aba !== 'dia')
+  const dia = useDia(idUsina, referencia, valida && aba === 'dia')
+  const unidades = useUnidades(
+    idUsina,
+    recorteUnidades,
+    referencia,
+    valida && aba === 'unidades',
   )
+
+  const disponiveis = painelAno.dados?.meses_disponiveis ?? null
+
+  /** Qual passo de período a aba pede. As unidades herdam o do próprio recorte. */
+  const recortePasso: Recorte = useMemo(() => {
+    if (aba === 'dia') return 'dia'
+    if (aba === 'ano') return 'ano'
+    if (aba === 'mes') return 'mes'
+    return recorteUnidades
+  }, [aba, recorteUnidades])
 
   if (!valida) {
     return (
-      <Pagina titulo="Energia">
+      <Casco titulo="Painel">
         <Vazio
           titulo="Usina não encontrada"
           descricao="O endereço não aponta para uma usina. Escolha uma usina na barra do topo."
         />
-      </Pagina>
+      </Casco>
     )
   }
 
@@ -263,23 +258,21 @@ export default function Usina() {
   // vermelho com "Tentar de novo" — repetir não faz a usina aparecer.
   if (ehUsinaAusente(usina)) {
     return (
-      <Pagina titulo="Energia">
+      <Casco titulo="Painel">
         <Vazio titulo="Usina não encontrada" descricao={usina.erro ?? undefined} />
-      </Pagina>
+      </Casco>
     )
   }
 
   const nome = usina.dados?.nome
   const local = [usina.dados?.cidade, usina.dados?.uf].filter(Boolean).join(', ')
-  const periodoMes = rotuloDoPeriodo(referencia, 'mes')
-  const periodoAno = rotuloDoPeriodo(referencia, 'ano')
 
   return (
-    <Pagina
-      titulo={nome ?? 'Energia'}
+    <Casco
+      titulo={nome ?? 'Painel'}
       subtitulo={
         <>
-          Energia
+          Geração de energia · Painel
           {local ? ` · ${local}` : ''}
           {/* A capacidade só entra quando o cadastro tem: "— kWp" no subtítulo é ruído. */}
           {usina.dados && usina.dados.capacidade_kwp !== null
@@ -292,194 +285,77 @@ export default function Usina() {
       <Tela4Estados leitura={usina}>
         {(u: UsinaDetalhe) => (
           <>
-            {u.aviso ? <Aviso>{u.aviso}</Aviso> : null}
-
+            {/* Os controles ficam SEMPRE visíveis, inclusive enquanto a leitura chega:
+                escondê-los faria o cliente perder o lugar a cada passo no tempo. */}
             <Cartao>
-              <CabecalhoCard
-                rotulo="Gerou o esperado?"
-                direita={u.fora_da_janela_solar ? 'fora da janela solar' : undefined}
-              />
-              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="min-w-0">
-                  <Kpi
-                    rotulo="Agora"
-                    valor={potencia(u.potencia_kw)}
-                    tamanho="grande"
-                    detalhe={`de ${capacidade(u.capacidade_kwp)}`}
-                  />
-                  {/* A barra só existe quando HÁ percentual: uma barra vazia se lê como zero,
-                      e "não sabemos quanto da capacidade está em uso" não é "nada em uso". */}
-                  {u.pct_capacidade === null ? null : (
-                    <div className="mt-3 max-w-[12rem]">
-                      <div className="mb-1 text-xs text-fraco">
-                        <Num>{porcento(u.pct_capacidade, 0)}</Num> da capacidade
-                      </div>
-                      <Barra pct={u.pct_capacidade} tom={u.tom} />
-                    </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Segmentado opcoes={ABAS} valor={aba} onEscolher={setAba} />
+                <div className="flex flex-wrap items-center gap-2">
+                  {aba === 'unidades' ? (
+                    <Segmentado
+                      opcoes={RECORTES_DA_UNIDADE}
+                      valor={recorteUnidades}
+                      onEscolher={setRecorteUnidades}
+                    />
+                  ) : null}
+                  {recortePasso === 'mes' ? (
+                    <SeletorDeMes
+                      referencia={referencia}
+                      onReferencia={setReferencia}
+                      disponiveis={disponiveis}
+                    />
+                  ) : (
+                    <SeletorPeriodo
+                      recorte={recortePasso}
+                      referencia={referencia}
+                      onReferencia={setReferencia}
+                      recortes={[recortePasso]}
+                    />
                   )}
                 </div>
-
-                {/* "Hoje" é HOJE, e não o dia escolhido no seletor: é o único número desta
-                    faixa que não anda no tempo, e o rótulo diz isso. O dia escolhido tem a
-                    curva logo abaixo — é lá que se olha um dia passado. */}
-                <Kpi
-                  rotulo="Hoje"
-                  valor={energia(u.energia_hoje_kwh)}
-                  tamanho="grande"
-                  detalhe={
-                    u.disponibilidade_pct === null ? undefined : (
-                      <>
-                        disponibilidade <Num>{porcento(u.disponibilidade_pct)}</Num>
-                      </>
-                    )
-                  }
-                />
-
-                <KpiDoPeriodo rotulo="No mês" periodo={periodoMes} leitura={mes} />
-                <KpiDoPeriodo rotulo="No ano" periodo={periodoAno} leitura={ano} />
               </div>
+              {/* O aviso da usina (do BFF) vale para todos os recortes — mora aqui, não
+                  repetido em cada aba. */}
+              {u.aviso ? <p className="mt-3 text-sm text-tom-alerta">{u.aviso}</p> : null}
             </Cartao>
 
-            <Cartao>
-              <CabecalhoCard rotulo={`Qualidade · ${periodoMes}`} />
-              <Bloco leitura={mes} altura={120}>
-                {(d) => (
-                  <>
-                    {d.aviso ? (
-                      <div className="mb-3">
-                        <Aviso>{d.aviso}</Aviso>
-                      </div>
-                    ) : null}
-                    <div className="grid gap-6 sm:grid-cols-3">
-                      <Kpi
-                        rotulo="Performance ratio"
-                        valor={porcento(d.pr_pct)}
-                        detalhe={d.pr_pct === null ? 'sem irradiação medida' : undefined}
-                      />
-                      <Kpi rotulo="Disponibilidade real" valor={porcento(d.disponibilidade_real_pct)} />
-                      <Kpi
-                        rotulo="Disponibilidade contratual"
-                        valor={porcento(d.disponibilidade_contratual_pct)}
-                      />
-                    </div>
-                    <div className="mt-4">
-                      <LinhaNavegacao
-                        titulo="Energia perdida em paradas"
-                        detalhe="ver as paradas do período"
-                        valor={energia(d.perdas_paradas_kwh)}
-                        tomValor={
-                          d.perdas_paradas_kwh !== null && d.perdas_paradas_kwh > 0
-                            ? 'parado'
-                            : undefined
-                        }
-                        aoAbrir={() => navigate(`/usinas/${idUsina}/paradas`)}
-                      />
-                    </div>
-                  </>
-                )}
+            {aba === 'dia' ? (
+              <Bloco leitura={dia} altura={280}>
+                {(d) => <AbaDia dia={d} />}
               </Bloco>
-            </Cartao>
+            ) : null}
 
-            <Cartao>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-rotulo">
-                  Como foi o período
-                </h2>
-                {/* Os controles ficam SEMPRE visíveis, inclusive enquanto a leitura chega:
-                    escondê-los faria o cliente perder o lugar a cada passo no tempo. */}
-                <SeletorPeriodo
-                  recorte={recorte}
-                  referencia={referencia}
-                  onRecorte={setRecorte}
-                  onReferencia={setReferencia}
-                />
-              </div>
-
-              {recorte === 'dia' ? (
-                <Bloco leitura={curva} altura={240}>
-                  {(c) => (
-                    <>
-                      {c.aviso ? (
-                        <div className="mb-3">
-                          <Aviso>{c.aviso}</Aviso>
-                        </div>
-                      ) : null}
-                      {c.pontos.length >= 2 ? (
-                        <>
-                          <GraficoLinha pontos={c.pontos} />
-                          <div className="mt-2 flex flex-wrap gap-4 text-xs text-fraco">
-                            <span>
-                              pico de potência <Num>{potencia(c.pico_kw)}</Num>
-                            </span>
-                            {c.tem_estacao ? (
-                              <span>
-                                pico de irradiação <Num>{numero(c.pico_poa, 0)}</Num> W/m²
-                              </span>
-                            ) : (
-                              <span>
-                                Esta usina não tem estação solarimétrica — só a potência é medida.
-                              </span>
-                            )}
-                          </div>
-                        </>
-                      ) : (
-                        <p className="text-sm text-fraco">
-                          Sem leitura de potência neste dia.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </Bloco>
-              ) : (
-                <Bloco leitura={geracao} altura={240}>
-                  {(g) => (
-                    <>
-                      {g.aviso ? (
-                        <div className="mb-3">
-                          <Aviso>{g.aviso}</Aviso>
-                        </div>
-                      ) : null}
-                      <div className="mb-3">
-                        <Kpi
-                          rotulo={recorte === 'ano' ? `Total de ${periodoAno}` : `Total de ${periodoMes}`}
-                          valor={energia(g.total_kwh)}
-                        />
-                      </div>
-                      {barras.length > 0 ? (
-                        <GraficoBarras pontos={barras} />
-                      ) : (
-                        <p className="text-sm text-fraco">
-                          O monitoramento não devolveu geração para este período.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </Bloco>
-              )}
-            </Cartao>
-
-            <Cartao>
-              <CabecalhoCard rotulo="Últimos 24 meses" />
-              <Bloco leitura={historico} altura={240}>
-                {(h) => (
-                  <>
-                    {h.aviso ? (
-                      <div className="mb-3">
-                        <Aviso>{h.aviso}</Aviso>
-                      </div>
-                    ) : null}
-                    {serieLonga.length > 0 ? (
-                      <GraficoHistorico meses={serieLonga} />
-                    ) : (
-                      <p className="text-sm text-fraco">Sem histórico para esta usina.</p>
-                    )}
-                  </>
-                )}
+            {aba === 'mes' ? (
+              <Bloco leitura={painelMes} altura={280}>
+                {(p) => <AbaMes painel={p} />}
               </Bloco>
+            ) : null}
+
+            {aba === 'ano' ? (
+              <Bloco leitura={painelAno} altura={280}>
+                {(p) => <AbaAno painel={p} />}
+              </Bloco>
+            ) : null}
+
+            {aba === 'unidades' ? (
+              <Bloco leitura={unidades} altura={280}>
+                {(dados) => <AbaUnidades unidades={dados} />}
+              </Bloco>
+            ) : null}
+
+            {/* Um lembrete curto, no pé: o que esta tela NÃO faz, para o cliente não
+                procurar aqui o que está em Relatórios. */}
+            <Cartao>
+              <CabecalhoCard rotulo="Os documentos do período" />
+              <p className="text-sm text-fraco">
+                Este painel mostra a operação; ele não monta documento. O relatório de geração,
+                o anexo de paradas e o resumo executivo do fechamento ficam em{' '}
+                <strong className="text-corpo">Relatórios</strong>, prontos para baixar.
+              </p>
             </Cartao>
           </>
         )}
       </Tela4Estados>
-    </Pagina>
+    </Casco>
   )
 }

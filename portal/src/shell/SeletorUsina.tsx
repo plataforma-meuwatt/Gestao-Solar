@@ -20,7 +20,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 import { Combobox } from '@/components/base'
 import { useLeitura } from '@/lib/leitura'
-import { secaoDoCaminho } from '@/shell/menu'
+import { sufixoDaSecao } from '@/shell/menu'
 import { useAuth } from '@/store/auth'
 import { useUsina } from '@/store/usina'
 
@@ -61,7 +61,7 @@ export function SeletorUsina({ atual }: { atual: number | null }) {
     return (
       <button
         type="button"
-        onClick={() => navigate(`/usinas/${unica.id}${secaoDoCaminho(local.pathname)}`)}
+        onClick={() => navigate(`/usinas/${unica.id}${sufixoDaSecao(local.pathname)}`)}
         className="truncate text-sm text-corpo hover:text-forte"
         title={unica.nome}
       >
@@ -77,7 +77,7 @@ export function SeletorUsina({ atual }: { atual: number | null }) {
       onEscolher={(valor) => {
         const novo = Number(valor)
         escolher(novo, usuario?.id ?? null)
-        navigate(`/usinas/${novo}${secaoDoCaminho(local.pathname)}`)
+        navigate(`/usinas/${novo}${sufixoDaSecao(local.pathname)}`)
       }}
       placeholder="Escolher usina…"
       className="w-full max-w-[18rem]"

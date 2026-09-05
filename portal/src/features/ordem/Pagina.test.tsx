@@ -11,12 +11,22 @@
  *    tem de oferecer o caminho de volta em vez de "Tentar de novo" numa porta que não abre.
  * 4. **Duração ausente é "—", nunca zero** — e o PDF sai por botão, nunca por link com o
  *    endereço da API (token em URL entra em log).
+ * 5. **A tarefa ABRE, e o botão do PDF não navega.** A linha virou link para a ficha; se o
+ *    clique no botão passasse pelo link, quem quisesse o arquivo trocaria de tela. Tarefa sem
+ *    `id` continua sem link e sem botão — destino inexistente não pode parecer clicável.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// O download real abre aba e fala com a rede; aqui só interessa QUE ele foi chamado, com que
+// caminho, e que a tela não navegou junto.
+const abrirPdfFalso = vi.hoisted(() =>
+  vi.fn(async (_caminho: string, _nome: string, _opcoes?: { prazoMs?: number }) => {}),
+)
+vi.mock('@/lib/arquivo', () => ({ abrirPdf: abrirPdfFalso }))
 
 import { api } from '@/lib/api'
 import { identificarCache, limparCache } from '@/lib/leitura'
@@ -71,13 +81,27 @@ function resposta(parcial: Partial<Ordem>): Ordem {
   }
 }
 
+/** Onde a navegação parou — é assim que se prova que um clique levou (ou não levou) a tela. */
+let caminhoAtual = ''
+function Espia() {
+  caminhoAtual = useLocation().pathname
+  return null
+}
+
 function montar() {
   const cliente = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return render(
     <QueryClientProvider client={cliente}>
-      <MemoryRouter initialEntries={['/usinas/7/ordens/55']}>
+      {/* O endereço é o de verdade, com a família no meio (`/manutencao/ordens`): montar o
+          teste no endereço antigo esconderia justamente o que a separação mudou. */}
+      <MemoryRouter initialEntries={['/usinas/7/manutencao/ordens/55']}>
+        <Espia />
         <Routes>
-          <Route path="/usinas/:id/ordens/:osId" element={<Pagina />} />
+          <Route path="/usinas/:id/manutencao/ordens/:osId" element={<Pagina />} />
+          <Route
+            path="/usinas/:id/manutencao/ordens/:osId/tarefas/:taskId"
+            element={<p>a ficha da tarefa</p>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -96,6 +120,10 @@ describe('tela de uma ordem de serviço', () => {
   beforeEach(() => {
     localStorage.clear()
     identificarCache(7)
+    caminhoAtual = ''
+    // O dublê é criado uma vez (hoisted) e sobrevive ao `restoreAllMocks`; sem limpar, a
+    // contagem de um caso apareceria no seguinte.
+    abrirPdfFalso.mockClear()
   })
 
   afterEach(() => {
@@ -237,7 +265,7 @@ describe('tela de uma ordem de serviço', () => {
     // cobre esse segundo de repique, senão o teste julga a tela ainda no esqueleto.
     expect(await screen.findByText('Ordem de serviço não encontrada', {}, { timeout: 5000 })).toBeTruthy()
     const volta = screen.getByText('Ver as ordens de serviço') as HTMLAnchorElement
-    expect(volta.getAttribute('href')).toBe('/usinas/7/ordens')
+    expect(volta.getAttribute('href')).toBe('/usinas/7/manutencao/ordens')
     // "Tentar de novo" é para rede caída; aqui insistir não abriria nada.
     expect(screen.queryByText('Tentar de novo')).toBeNull()
   })
@@ -257,10 +285,62 @@ describe('tela de uma ordem de serviço', () => {
     const { container } = montar()
 
     expect(await screen.findByText('Abrir a OS em PDF')).toBeTruthy()
-    expect(screen.getAllByText('Ficha em PDF').length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: 'Ficha em PDF' }).length).toBeGreaterThan(0)
     const comApi = [...container.querySelectorAll('a')].filter((a) =>
       (a.getAttribute('href') ?? '').includes('/api/'),
     )
     expect(comApi.length).toBe(0)
+  })
+
+  it('clicar no nome da tarefa abre a ficha daquela tarefa', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({ itens: [tarefa({ id: 6710, nome: 'Termografia' })] }),
+    })
+    montar()
+
+    const nome = await screen.findByText('Termografia')
+    const link = nome.closest('a') as HTMLAnchorElement
+    // Os TRÊS ids no endereço: a ficha precisa da usina (para o escopo), da OS e da tarefa.
+    expect(link.getAttribute('href')).toBe('/usinas/7/manutencao/ordens/55/tarefas/6710')
+
+    fireEvent.click(nome)
+    expect(await screen.findByText('a ficha da tarefa')).toBeTruthy()
+    expect(caminhoAtual).toBe('/usinas/7/manutencao/ordens/55/tarefas/6710')
+  })
+
+  it('clicar em "Ficha em PDF" abre o arquivo e NÃO troca de tela', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({ itens: [tarefa({ id: 6710, nome: 'Termografia' })] }),
+    })
+    montar()
+
+    // Pelo PAPEL, e não pelo texto: a busca por texto já casou com um TÍTULO DE CARTÃO em vez
+    // deste botão — o cartão de baixo se chamava "Ficha em PDF" e hoje se chama "A ordem em
+    // PDF", mas é a busca por papel que impede o engano de voltar.
+    fireEvent.click(await screen.findByRole('button', { name: 'Ficha em PDF' }))
+
+    await waitFor(() => expect(abrirPdfFalso).toHaveBeenCalled())
+    expect(abrirPdfFalso.mock.calls[0][0]).toBe('/api/v1/manutencao/ordens/55/tarefas/6710/pdf')
+    // O botão é irmão do link, não filho: o clique não sobe para a navegação.
+    expect(caminhoAtual).toBe('/usinas/7/manutencao/ordens/55')
+    expect(screen.queryByText('a ficha da tarefa')).toBeNull()
+  })
+
+  it('tarefa sem id não vira link nem ganha botão', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: resposta({ itens: [tarefa({ id: null, nome: 'Item sem identificador' })] }),
+    })
+    const { container } = montar()
+
+    const nome = await screen.findByText('Item sem identificador')
+    expect(nome.closest('a')).toBeNull()
+    // Sem id não há PDF de tarefa: o único botão da tela é o da OS inteira.
+    expect(screen.queryByRole('button', { name: 'Ficha em PDF' })).toBeNull()
+    expect(screen.getByText('Abrir a OS em PDF')).toBeTruthy()
+    // E nada de "›" prometendo um destino que não existe.
+    const paraTarefas = [...container.querySelectorAll('a')].filter((a) =>
+      (a.getAttribute('href') ?? '').includes('/tarefas/'),
+    )
+    expect(paraTarefas.length).toBe(0)
   })
 })

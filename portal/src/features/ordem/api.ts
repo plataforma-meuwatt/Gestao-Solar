@@ -93,6 +93,23 @@ export function useOrdem(osId: string | undefined): Leitura<Ordem> {
 }
 
 /**
+ * O endereço da FICHA de uma tarefa — a tela, não o arquivo.
+ *
+ * É rota do portal (`/usinas/:id/manutencao/ordens/:osId/tarefas/:taskId`), e por isso leva a
+ * usina: o `:id` da URL é o vínculo NESTE sistema (`Ordem.usina_id`), não a usina do meuPlano.
+ * Sai daqui, e não escrito à mão na tela, porque o endereço nomeia a família ("manutencao") —
+ * montá-lo em cada ponto de uso é o que faz um deles envelhecer sozinho depois de uma
+ * reorganização de menu.
+ */
+export function caminhoDaTarefa(
+  usinaId: string | number,
+  osId: string | number,
+  tarefaId: number,
+): string {
+  return `/usinas/${usinaId}/manutencao/ordens/${osId}/tarefas/${tarefaId}`
+}
+
+/**
  * Os PDFs não passam pelo cache nem pelo axios: são baixados com a sessão em CABEÇALHO
  * (`lib/arquivo.ts`). Aqui saem só os caminhos — `baseURL` é assunto do downloader.
  */

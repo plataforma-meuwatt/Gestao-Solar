@@ -1,32 +1,35 @@
 /**
- * O que a tela de Energia lê do BFF — e nada além disso.
+ * O que o Painel de energia lê do BFF — e nada além disso.
  *
- * Cinco leituras, todas do mesmo assunto ("quanto esta usina gerou e era para gerar"):
+ * Quatro leituras, todas do mesmo assunto ("quanto esta usina gerou e era para gerar"):
  *
- * - `plants/{id}` — quem é a usina, como está agora e quanto gerou hoje;
- * - `plants/{id}/desempenho?recorte=mes|ano` — medido × esperado do PROJETO (a meta cadastrada
- *   no meuWatt), com PR, disponibilidade e perda por parada;
- * - `plants/{id}/geracao?recorte=mes|ano` — a série de barras do período escolhido;
- * - `plants/{id}/curva?dia=` — a potência do dia, com irradiação quando há estação;
- * - `plants/{id}/historico?meses=24` — a série longa, contra a meta e contra o ano anterior.
+ * - `plants/{id}` — quem é a usina (nome, cidade, capacidade) e como ela está agora. É só o
+ *   cabeçalho da página; os números do painel vêm das outras três.
+ * - `energia/usinas/{id}/painel?recorte=mes|ano` — o dashboard do mês e o do ano: geração,
+ *   performance, desvios, conciliação com a conta de energia, série diária/mensal,
+ *   meteorologia e (no ano) a linha do tempo por inversor.
+ * - `energia/usinas/{id}/dia?data=` — a operação de um dia: números, curva, eventos e UCs.
+ * - `energia/usinas/{id}/unidades?recorte=mes|ano` — o comparativo entre unidades
+ *   consumidoras. **Endereço próprio, não `?recorte=unidades`**: a tela carrega o
+ *   comparativo sem arrastar o painel inteiro junto.
  *
- * Os tipos são o espelho dos schemas do BFF (`bff/app/api/v1/plants.py`), com uma regra que
+ * Os tipos são o espelho dos schemas de `bff/app/api/v1/energia.py`, com uma regra que
  * atravessa todos: **`null` é ausência, e ausência não é zero.** Onde o BFF escreve
  * `float | None`, aqui é `number | null`, e a tela imprime "—". Coalescer nulo para zero
  * transformaria "não medimos" em "não gerou" no meio de uma reunião de contrato.
  *
- * O que NÃO está aqui é tão deliberado quanto o que está: equipamento, relé, string e
- * comparativo são análise de manutenção, trabalho da equipe. O cliente corporativo pediu
- * energia; a ficha do aparelho continua no lugar dela, para quem a executa.
+ * O que NÃO está aqui é tão deliberado quanto o que está: o número de série do inversor, o
+ * id do transformador e as bandeiras internas de descarte de PR ficam do lado de lá da
+ * ponte, por decisão do BFF. A UC é identificada por NOME e por um índice estável da
+ * resposta; o inversor, pela etiqueta da posição.
  */
 
 import { useLeitura, type Leitura } from '@/lib/leitura'
-import type { Recorte } from '@/lib/periodo'
 
-/* ------------------------------------------------------------------ tipos */
+/* ------------------------------------------------------------------ a usina */
 
 /**
- * A usina como o portal a mostra.
+ * A usina como o cabeçalho da página a mostra.
  *
  * É um subconjunto declarado do `UsinaDetalheOut` do BFF: os campos de contagem de aparelho
  * existem na resposta e ficam de fora do tipo de propósito — o que não é lido aqui não pode
@@ -53,148 +56,369 @@ export type UsinaDetalhe = {
   aviso: string | null
 }
 
-export type MesDesempenho = {
-  /** `YYYY-MM`. */
-  mes: string
-  energia_kwh: number | null
-  esperado_projeto_kwh: number | null
-  disponibilidade_contratual_pct: number | null
-  perdas_kwh: number | null
+/* ------------------------------------------------------------------ o painel */
+
+/** Os três desvios estruturais, COM SINAL: positivo = acima da referência. */
+export type Desvios = {
+  medido_vs_projeto_pct: number | null
+  medido_vs_previsto_pct: number | null
+  /** O efeito do clima: quanto a irradiação real afastou o previsto do projeto. */
+  previsto_vs_projeto_pct: number | null
 }
 
-export type Desempenho = {
-  recorte: string
-  inicio: string
-  fim: string
-  energia_kwh: number | null
-  /** A meta do PROJETO (PVsyst) somada no período. Nulo = ninguém cadastrou. */
-  esperado_projeto_kwh: number | null
-  pct_do_projeto: number | null
+export type Conciliacao = {
+  fronteira_mwh: number | null
+  faturado_mwh: number | null
+  diferenca_mwh: number | null
+  diferenca_pct: number | null
+  /**
+   * `Conciliado` · `Pequena divergência` · `Divergência relevante`. Nulo quando falta um dos
+   * dois lados (fatura ainda não emitida é ESTADO, não erro) e nulo também quando a
+   * fronteira é parcial — classificar cobertura incompleta como divergência mandaria o
+   * cliente cobrar da distribuidora um defeito do medidor dele.
+   */
+  situacao: string | null
+  tolerancia_pct: number
+}
+
+export type Totais = {
+  medido_kwh: number | null
+  projeto_kwh: number | null
+  /** O projeto rateado pelos dias decorridos — comparar mês inteiro com meio mês acusaria
+   *  de doente uma usina em dia. */
+  projeto_ate_hoje_kwh: number | null
+  /** Projeção linear do fechamento, só no período em curso. Prever o passado não é previsão. */
+  tendencia_kwh: number | null
+}
+
+export type DiaDoMes = {
+  dia: number
+  data: string
+  medido_kwh: number | null
+  projeto_kwh: number | null
+  /** Nulo quando o dia não tem PR. Dia sem PR NÃO vira 0%. */
+  pr_pct: number | null
+  /** O monitoramento descartou a leitura por implausibilidade — a tela escreve "descartada". */
+  pr_descartado: boolean
+  /** O que faz a barra sair tracejada em vez de rasteira. */
+  futuro: boolean
+}
+
+export type MesDoAno = {
+  /** `YYYY-MM`. */
+  mes: string
+  rotulo: string
+  medido_kwh: number | null
+  projeto_kwh: number | null
+  previsto_kwh: number | null
+  desvio_vs_projeto_pct: number | null
   pr_pct: number | null
   disponibilidade_real_pct: number | null
   disponibilidade_contratual_pct: number | null
-  /** Zero aqui é medição legítima (houve dado, não houve perda); nulo é ausência. */
-  perdas_paradas_kwh: number | null
-  /** Só no recorte `ano`: um item por mês, com o esperado ao lado. */
-  meses: MesDesempenho[]
-  tom: string
-  situacao: string
-  aviso: string | null
-  /**
-   * O que a comparação cobriu, quando cobriu menos do que o período pedido.
-   *
-   * Separado do `aviso` de propósito: aviso é coisa que deu errado; isto é a leitura certa
-   * de um período só parcialmente medido ("comparação feita só com os meses que têm medição
-   * (jun a set de 2026)"). Sem a frase, "no ano" parece o ano fechado — foi assim que a
-   * mesma usina apareceu verde no mês e vermelha no ano, na mesma tela.
-   */
-  cobertura: string | null
+  perdida_kwh: number | null
+  perdida_externa_kwh: number | null
+  fronteira_mwh: number | null
+  faturado_mwh: number | null
+  em_curso: boolean
+  futuro: boolean
 }
 
-export type PontoGeracao = {
-  /** `YYYY-MM-DD` no recorte mês, `YYYY-MM` no recorte ano. */
+export type PontoMeteo = {
+  /** `YYYY-MM-DD` no mês, `YYYY-MM` no ano. */
   chave: string
-  /** Rótulo curto pronto para o eixo ("07", "Jul"). */
   rotulo: string
-  kwh: number
+  hpoa: number | null
+  hpoa_projeto: number | null
+  ghi: number | null
+  t_amb: number | null
+  t_mod: number | null
+  t_mod_max: number | null
 }
 
-export type Geracao = {
+export type Meteo = {
+  /** Sem estação não há irradiação medida — e sem ela não há PR. É o portão que faz a tela
+   *  esconder o bloco em vez de desenhar quatro travessões. */
+  tem_estacao: boolean
+  tem_sensor_temperatura: boolean
+  hpoa: number | null
+  ghi: number | null
+  /** `hpoa ÷ ghi` — quanto o plano inclinado ganha sobre o horizontal. */
+  razao: number | null
+  hpoa_projeto: number | null
+  t_amb_media: number | null
+  t_amb_max: number | null
+  t_mod_media: number | null
+  t_mod_max: number | null
+  pontos: PontoMeteo[]
+}
+
+/** Um trecho contínuo de dias no mesmo estado — as duas pontas incluídas. */
+export type FaixaTecnica = {
+  de: string
+  ate: string
+  dias: number
+  /** `operando` · `potencia_zero` · `falha_comunicacao` · `nao_instalado` · `sem_dado`. */
+  estado: string
+}
+
+export type InversorTecnico = {
+  /** A etiqueta da POSIÇÃO. Nunca o número de série. */
+  nome: string
+  disponibilidade_pct: number | null
+  faixas: FaixaTecnica[]
+}
+
+/**
+ * Tempo de pé por inversor — uma régua DIFERENTE da dos cartões.
+ *
+ * O `aviso` vem escrito do servidor e é obrigatório na tela: os cartões medem
+ * disponibilidade ENERGÉTICA (kWh perdidos) e esta mede TEMPO. Publicá-los lado a lado sem
+ * dizer isso entregaria dois percentuais contraditórios num documento de teor contratual.
+ */
+export type DisponibilidadeTecnica = {
+  aviso: string
+  primeiro_dia: string
+  ultimo_dia: string
+  inversores: InversorTecnico[]
+}
+
+/** As fórmulas em linguagem de cliente. A tela imprime; não recalcula nada. */
+export type Regra = {
+  disponibilidade: string
+  contratual: string
+  perda_distribuida: string
+  origem: string
+}
+
+export type Painel = {
   recorte: string
+  referencia: string
   inicio: string
   fim: string
-  total_kwh: number | null
-  pontos: PontoGeracao[]
+  rotulo: string
+  /** Período ainda aberto — há dias futuros, e o fechamento é projeção. */
+  em_curso: boolean
+  /** Dia do mês até onde há medição. Nulo em período fechado. */
+  dia_de_corte: number | null
+
+  capacidade_kwp: number | null
+
+  medido_inversores_kwh: number | null
+  /** A medição do OUTRO aparelho (SSU), no ponto de entrega. Nulo sem medidor. */
+  medido_fronteira_kwh: number | null
+  /** Só sai quando a diferença entre os dois é fisicamente uma perda. */
+  perda_inv_fronteira_pct: number | null
+  /**
+   * A fronteira não cobre a mesma usina que os inversores (medidor instalado no meio do
+   * período, medidor a menos, leitura falhada). O número continua sendo medição — a tela o
+   * rotula como parcial e NÃO desenha a perda, porque a diferença não é perda.
+   */
+  fronteira_parcial: boolean
+  projeto_kwh: number | null
+  projeto_proporcional_kwh: number | null
+  previsto_kwh: number | null
+  /** `pvsyst_diario` ou `manual_corrigido` — de onde veio o previsto. */
+  previsto_origem: string | null
+
+  produtividade_kwh_kwp: number | null
+  pr_pct: number | null
+  disponibilidade_real_pct: number | null
+  disponibilidade_contratual_pct: number | null
+  /** Paradas ainda sem causa classificada. Enquanto houver, a contratual está incompleta. */
+  paradas_pendentes: number
+  perdida_kwh: number | null
+  perdida_externa_kwh: number | null
+
+  desvios: Desvios
+  conciliacao: Conciliacao
+  totais: Totais
+  meteo: Meteo
+  regra: Regra
+
+  dias: DiaDoMes[]
+  meses: MesDoAno[]
+
+  /**
+   * Os meses do ano que TÊM medição, para o seletor pular os vazios. Vem preenchido só no
+   * recorte `ano`. Nulo = "não consultado neste recorte" e a tela libera os meses passados;
+   * `[]` = consultado e nenhum mês tem dado.
+   */
+  meses_disponiveis: string[] | null
+
+  disponibilidade_tecnica: DisponibilidadeTecnica | null
+
   aviso: string | null
 }
 
-export type PontoDaCurva = {
+/* ------------------------------------------------------------------ o dia */
+
+export type PontoCurva = {
   hora: string
   kw: number
-  /** Irradiação no plano dos módulos, W/m². Nulo quando a usina não tem estação. */
+  /** Irradiância no plano dos módulos, W/m². Nulo quando a usina não tem estação. */
   poa: number | null
 }
 
-export type Curva = {
+export type EventoDoDia = {
+  hora: string
+  /** A etiqueta do slot dada pelo operador. O número de série NUNCA sai do BFF. */
+  inversor: string
+  evento: string
+  duracao_min: number | null
+  resolvido_em: string | null
+  em_curso: boolean
+}
+
+export type UnidadeDoDia = {
+  /** Índice estável desta UC dentro da resposta — é por ele que a tela a referencia. */
+  indice: number
+  nome: string
+  kwp: number | null
+  inversores: number
+  potencia_agora_kw: number | null
+  pct_capacidade: number | null
+  energia_kwh: number | null
+  ok: number
+  total: number
+  /** Potência média em cada fatia de 15 min, alinhada a `faisca_horas`. Nulo numa posição
+   *  = a UC não reportou naquela fatia; é lacuna, não zero. */
+  faisca: (number | null)[]
+}
+
+export type Dia = {
   dia: string
-  pontos: PontoDaCurva[]
+  gerado_kwh: number | null
   pico_kw: number | null
-  pico_poa: number | null
-  /** `false` faz a tela DIZER que não há estação, em vez de desenhar curva rasteira. */
+  pico_hora: string | null
+  potencia_agora_kw: number | null
+  inversores_gerando: number | null
+  inversores_total: number | null
+  disponibilidade_pct: number | null
+  /** Nulo quando não há estação **ou** quando o meuWatt descartou a leitura — e aí
+   *  `pr_descartado` é `true`, para a tela escrever "descartada" em vez de desenhar zero. */
+  pr_pct: number | null
+  pr_descartado: boolean
+  hpoa_agora: number | null
+  hpoa_acumulada: number | null
+  ghi_acumulada: number | null
   tem_estacao: boolean
+  curva: PontoCurva[]
+  /** Vazio = operação sem incidentes. É estado, não falta de dado. */
+  eventos: EventoDoDia[]
+  ucs: UnidadeDoDia[]
+  /** As horas das fatias da faísca — uma só para todas as UCs, na mesma escala de tempo. */
+  faisca_horas: string[]
   aviso: string | null
 }
 
-export type MesHistorico = {
-  mes: string
-  energia_kwh: number | null
-  esperado_projeto_kwh: number | null
-  /** O mesmo mês do ano anterior — a régua do diretor quando não há meta cadastrada. */
-  ano_anterior_kwh: number | null
-  perdas_kwh: number | null
+/* ------------------------------------------------------------------ unidades */
+
+export type SerieDaUnidade = {
+  indice: number
+  nome: string
+  /** Um valor por dia de `serie_dias`. Nulo = sem leitura naquele dia. */
+  valores: (number | null)[]
 }
 
-export type Historico = {
+export type UnidadeDoPeriodo = {
+  indice: number
+  nome: string
+  capacidade_kwp: number | null
+  inversores: number
+  geracao_kwh: number | null
+  share_pct: number | null
+  produtividade: number | null
+  /** Nulo quando o monitoramento não pareou o dado — nunca 0. */
+  pr_pct: number | null
+  disponibilidade_real_pct: number | null
+  disponibilidade_contratual_pct: number | null
+  /** Nulo = fatura ainda não emitida, que é estado e não erro. */
+  faturado_mwh: number | null
+}
+
+export type Unidades = {
+  recorte: string
   inicio: string
   fim: string
-  meses: MesHistorico[]
+  ucs_ativas: number
+  capacidade_total_kwp: number | null
+  energia_periodo_kwh: number | null
+  maior: { nome: string; share_pct: number | null } | null
+  ucs: UnidadeDoPeriodo[]
+  serie_dias: string[]
+  serie: SerieDaUnidade[]
+  /** Os rankings saem prontos do servidor, como a ordem dos `indice`, para as três listas
+   *  não divergirem entre telas. */
+  ranking_geracao: number[]
+  ranking_pr: number[]
+  ranking_produtividade: number[]
+  pr_referencia_pct: number
+  /** Nulo = nenhuma fatura emitida para o período. "Parcial" = faltam UCs. */
+  faturas_situacao: string | null
   aviso: string | null
 }
 
 /* ------------------------------------------------------------------ leituras */
 
+/** As quatro abas do Painel. `unidades` tem recorte próprio (mês ou ano). */
+export type Aba = 'dia' | 'mes' | 'ano' | 'unidades'
+
+/** O recorte de período que o painel e as unidades aceitam. */
+export type RecortePainel = 'mes' | 'ano'
+
 /**
- * A chave de cache carrega o período.
+ * A referência normalizada para a chave de cache.
  *
- * Assim voltar para agosto reabre agosto na hora, com o que já foi lido, e a rede só confirma.
- * Sem o período na chave, andar no tempo sobrescreveria o cache a cada passo e o caminho de
- * volta ficaria vazio — que é o oposto do que o cache existe para fazer.
+ * No recorte `ano` o BFF só usa o ANO da referência. Sem normalizar, andar de agosto para
+ * setembro criaria duas chaves de cache para a MESMA resposta — e, pior, o seletor de mês
+ * (que lê `meses_disponiveis` do painel anual) pediria o ano inteiro de novo a cada troca
+ * de mês. Com a normalização, a aba Ano e o seletor da aba Mês compartilham uma leitura só.
  */
+export function referenciaDoRecorte(recorte: RecortePainel, referencia: string): string {
+  return recorte === 'ano' ? `${referencia.slice(0, 4)}-01-01` : referencia
+}
+
 export function useUsinaDetalhe(id: number, ativo = true): Leitura<UsinaDetalhe> {
   return useLeitura<UsinaDetalhe>(`plants/${id}`, { ativo })
 }
 
-export function useDesempenho(
-  id: number,
-  recorte: 'mes' | 'ano',
-  referencia: string,
-  ativo = true,
-): Leitura<Desempenho> {
-  return useLeitura<Desempenho>(
-    `plants/${id}/desempenho?recorte=${recorte}&referencia=${referencia}`,
-    { ativo },
-  )
-}
-
-export function useGeracao(
-  id: number,
-  recorte: Recorte,
-  referencia: string,
-  ativo = true,
-): Leitura<Geracao> {
-  return useLeitura<Geracao>(`plants/${id}/geracao?recorte=${recorte}&referencia=${referencia}`, {
-    // O recorte `dia` não tem série de geração (é a curva); a leitura fica desligada em vez de
-    // pedir ao BFF um recorte que ele recusa com 400.
-    ativo: ativo && recorte !== 'dia',
-  })
-}
-
-export function useCurva(id: number, dia: string, ativo = true): Leitura<Curva> {
-  return useLeitura<Curva>(`plants/${id}/curva?dia=${dia}`, { ativo })
-}
-
 /**
- * Os últimos 24 meses.
+ * O painel do mês ou do ano.
  *
- * Prazo maior porque, lá atrás, isto vira várias leituras de um ano civil no meuWatt (o teto
- * de 366 dias do upstream) mais o ano anterior da comparação. Com o prazo padrão, a série
- * longa seria a única coisa da tela a falhar por tempo, e justamente na primeira abertura.
+ * Prazo maior que o padrão: lá atrás isto é uma leitura do `generation/range` do meuWatt
+ * cruzada com o projeto, a fronteira e as faturas — e, no ano, mais uma conferência de
+ * disponibilidade por mês medido. Com o prazo padrão de 30 s, o painel seria a única coisa
+ * da tela a falhar por tempo, e justamente na primeira abertura do dia (o upstream cacheia
+ * dez minutos; a primeira leitura é a cara).
  */
-export function useHistorico(id: number, meses = 24, ativo = true): Leitura<Historico> {
-  return useLeitura<Historico>(`plants/${id}/historico?meses=${meses}`, {
+export function usePainel(
+  id: number,
+  recorte: RecortePainel,
+  referencia: string,
+  ativo = true,
+): Leitura<Painel> {
+  const ref = referenciaDoRecorte(recorte, referencia)
+  return useLeitura<Painel>(`energia/usinas/${id}/painel?recorte=${recorte}&referencia=${ref}`, {
     ativo,
-    prazoMs: 60_000,
+    prazoMs: 90_000,
   })
+}
+
+export function useDia(id: number, dia: string, ativo = true): Leitura<Dia> {
+  return useLeitura<Dia>(`energia/usinas/${id}/dia?data=${dia}`, { ativo, prazoMs: 60_000 })
+}
+
+export function useUnidades(
+  id: number,
+  recorte: RecortePainel,
+  referencia: string,
+  ativo = true,
+): Leitura<Unidades> {
+  const ref = referenciaDoRecorte(recorte, referencia)
+  return useLeitura<Unidades>(
+    `energia/usinas/${id}/unidades?recorte=${recorte}&referencia=${ref}`,
+    { ativo, prazoMs: 90_000 },
+  )
 }
 
 /* ------------------------------------------------------------------ ausência */
@@ -202,16 +426,13 @@ export function useHistorico(id: number, meses = 24, ativo = true): Leitura<Hist
 /**
  * A usina não existe para este cliente — ou não é monitorada.
  *
- * Os dois casos vêm do BFF como 404 com frase própria (`_usina_no_escopo` e
- * `_usina_monitorada`, em `bff/app/api/v1/plants.py`), e os dois pedem a MESMA tela: um vazio
- * que explica, não um erro vermelho com "Tentar de novo" — tentar de novo não vai fazer a
- * usina aparecer, e o botão só empurra o cliente a repetir o que não pode dar certo.
+ * Os dois casos vêm do BFF como 404 com frase própria, e os dois pedem a MESMA tela: um
+ * vazio que explica, não um erro vermelho com "Tentar de novo" — tentar de novo não vai
+ * fazer a usina aparecer.
  *
- * Quem decide é o STATUS, não a frase. A primeira versão casava o texto do `detail`, e isso
- * pendurava a tela na prosa do BFF: bastava reescrever "Esta usina não está ligada ao
- * monitoramento." — como aconteceu quando os nomes dos produtos saíram das mensagens do
- * cliente — para a tela cair no erro genérico, sem nada quebrar e sem ninguém notar.
- * `Leitura.status` nasceu deste caso.
+ * Quem decide é o STATUS, não a frase. Casar o texto do `detail` pendurava a tela na prosa
+ * do BFF: bastava reescrever a mensagem para a tela cair no erro genérico, sem nada quebrar
+ * e sem ninguém notar. `Leitura.status` nasceu deste caso.
  */
 export function ehUsinaAusente(leitura: Leitura<unknown>): boolean {
   return leitura.dados === null && leitura.status === 404

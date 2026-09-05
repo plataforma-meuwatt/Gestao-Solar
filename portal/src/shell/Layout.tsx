@@ -2,7 +2,7 @@
  * O casco do portal: barra superior com a usina, navegação lateral, rodapé com a hora.
  *
  * A decisão que organiza tudo: **a usina é o contexto, não uma tela.** O cliente escolhe a
- * usina uma vez, no alto, e as seções (Energia, Paradas, Cronograma, Ordens, Pendências,
+ * usina uma vez, no alto, e as seções (Painel, Paradas, Cronograma, Ordens, Pendências,
  * Relatórios) são recortes daquela usina. Trocar de usina mantém a MESMA seção — quem estava
  * comparando o cronograma de uma continua no cronograma da outra, que é exatamente o que um
  * diretor com cinco usinas faz.
@@ -15,11 +15,17 @@
  * os rótulos e obrigariam a abreviar. À esquerda elas cabem por extenso, que é o que um
  * portal corporativo pede.
  *
- * **Três larguras, uma navegação só** (a lista vive em `shell/menu.ts`): a partir de 1024 px
- * a barra mostra ícone e rótulo; entre 768 px e 1024 px vira um trilho de ícones (com o nome
- * no `title`, nunca ícone anônimo); abaixo de 768 px ela sai da tela e o botão "Menu" abre a
- * gaveta. O painel do gestor é desktop-only porque é ferramenta de escritório; este portal é
- * aberto por um diretor que pode estar num notebook pequeno ou num tablet, em reunião.
+ * **Duas famílias, não uma fileira.** Geração de energia e Manutenção respondem perguntas
+ * diferentes e têm donos diferentes na empresa do cliente, então cada uma tem cabeçalho
+ * próprio (a lista e os grupos vivem em `shell/menu.ts`). A separação tem de sobreviver às
+ * TRÊS larguras — era no trilho de ícones, justamente onde não cabe rótulo, que ela sumia:
+ * lá cada família ganha um ícone-cabeçalho com o nome no `title` e um separador.
+ *
+ * **Três larguras, uma navegação só**: a partir de 1024 px a barra mostra ícone e rótulo;
+ * entre 768 px e 1024 px vira um trilho de ícones (com o nome no `title`, nunca ícone
+ * anônimo); abaixo de 768 px ela sai da tela e o botão "Menu" abre a gaveta. O painel do
+ * gestor é desktop-only porque é ferramenta de escritório; este portal é aberto por um
+ * diretor que pode estar num notebook pequeno ou num tablet, em reunião.
  */
 
 import { Component, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -28,7 +34,7 @@ import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-rout
 
 import { AtualizadoAs, Cartao, Erro } from '@/components/base'
 import { useLeitura } from '@/lib/leitura'
-import { SECOES, VISAO_GERAL } from '@/shell/menu'
+import { GRUPOS, SECAO_PADRAO, VISAO_GERAL, casamentoExato, secoesDaFamilia } from '@/shell/menu'
 import { SeletorUsina, type UsinasOut } from '@/shell/SeletorUsina'
 import { useAuth } from '@/store/auth'
 import { useUsina } from '@/store/usina'
@@ -133,7 +139,9 @@ export function Layout() {
   // Visão geral responde a primeira pergunta ("como está tudo?") e continua sendo a raiz.
   const usinaUnica = usinas.length === 1 ? usinas[0].id : null
   useEffect(() => {
-    if (usinaUnica && local.pathname === '/') navigate(`/usinas/${usinaUnica}`, { replace: true })
+    if (usinaUnica && local.pathname === '/') {
+      navigate(`/usinas/${usinaUnica}${SECAO_PADRAO}`, { replace: true })
+    }
   }, [usinaUnica, local.pathname, navigate])
 
   // Fecha a gaveta ao navegar: no celular ela cobre a tela, e deixá-la aberta esconderia
@@ -164,20 +172,48 @@ export function Layout() {
           {soIcone ? null : (
             <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">Esta usina</p>
           )}
-          <ul className="space-y-0.5">
-            {SECOES.map((s) => (
-              <li key={s.fim || 'energia'}>
-                <Link
-                  para={`/usinas/${atual}${s.fim}`}
-                  rotulo={s.rotulo}
-                  Icone={s.icone}
-                  fim={s.fim === ''}
-                  soIcone={soIcone}
-                  aoNavegar={aoNavegar}
-                />
-              </li>
-            ))}
-          </ul>
+          {GRUPOS.map((grupo, i) => {
+            const itens = secoesDaFamilia(grupo.familia)
+            if (itens.length === 0) return null
+            const CabecalhoIcone = grupo.icone
+            return (
+              <div
+                key={grupo.familia}
+                className={i === 0 ? '' : 'mt-3 border-t border-borda-fraca pt-3'}
+              >
+                {soIcone ? (
+                  CabecalhoIcone ? (
+                    <div
+                      className="flex justify-center pb-1 text-rotulo"
+                      title={grupo.nome ?? undefined}
+                    >
+                      <CabecalhoIcone size={14} aria-hidden />
+                      <span className="sr-only">{grupo.nome}</span>
+                    </div>
+                  ) : null
+                ) : grupo.nome ? (
+                  <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-rotulo">
+                    {grupo.nome}
+                  </p>
+                ) : null}
+
+                <ul className="space-y-0.5">
+                  {itens.map((s) => (
+                    <li key={s.fim}>
+                      <Link
+                        para={`/usinas/${atual}${s.fim}`}
+                        rotulo={s.rotulo}
+                        Icone={s.icone}
+                        fim={casamentoExato(s.fim)}
+                        soIcone={soIcone}
+                        aoNavegar={aoNavegar}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
         </>
       ) : soIcone ? null : (
         <p className="px-3 text-sm text-fraco">Escolha uma usina para ver as seções dela.</p>
@@ -208,7 +244,10 @@ export function Layout() {
             <IconeMenu size={20} aria-hidden />
           </button>
 
-          <NavLink to={usinaUnica ? `/usinas/${usinaUnica}` : '/'} className="shrink-0">
+          <NavLink
+            to={usinaUnica ? `/usinas/${usinaUnica}${SECAO_PADRAO}` : '/'}
+            className="shrink-0"
+          >
             <span className="text-base font-semibold tracking-tight text-forte">Gestão Solar</span>
           </NavLink>
 

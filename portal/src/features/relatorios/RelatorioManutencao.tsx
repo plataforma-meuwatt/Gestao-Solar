@@ -550,7 +550,7 @@ function Conteudo({
               <CartaoDaOrdem
                 key={o.id}
                 o={o}
-                aoAbrir={() => navegar(`/usinas/${usinaId}/ordens/${o.id}`)}
+                aoAbrir={() => navegar(`/usinas/${usinaId}/manutencao/ordens/${o.id}`)}
               />
             ))}
           </div>
@@ -564,7 +564,7 @@ function Conteudo({
               <CartaoDaOrdem
                 key={o.id}
                 o={o}
-                aoAbrir={() => navegar(`/usinas/${usinaId}/ordens/${o.id}`)}
+                aoAbrir={() => navegar(`/usinas/${usinaId}/manutencao/ordens/${o.id}`)}
               />
             ))}
           </div>
@@ -630,7 +630,9 @@ function Conteudo({
                   linhas={dados.problemas.por_os}
                   chave={(p) => (p.os_id === null ? p.objetivo : p.os_id)}
                   aoClicar={(p) =>
-                    p.os_id === null ? undefined : navegar(`/usinas/${usinaId}/ordens/${p.os_id}`)
+                    p.os_id === null
+                      ? undefined
+                      : navegar(`/usinas/${usinaId}/manutencao/ordens/${p.os_id}`)
                   }
                 />
               </div>
@@ -652,8 +654,8 @@ function Conteudo({
             aoAbrir={(p) =>
               navegar(
                 p.id === null
-                  ? `/usinas/${usinaId}/pendencias`
-                  : `/usinas/${usinaId}/pendencias/${p.id}`,
+                  ? `/usinas/${usinaId}/manutencao/pendencias`
+                  : `/usinas/${usinaId}/manutencao/pendencias/${p.id}`,
               )
             }
           />
@@ -664,8 +666,8 @@ function Conteudo({
             aoAbrir={(p) =>
               navegar(
                 p.id === null
-                  ? `/usinas/${usinaId}/pendencias`
-                  : `/usinas/${usinaId}/pendencias/${p.id}`,
+                  ? `/usinas/${usinaId}/manutencao/pendencias`
+                  : `/usinas/${usinaId}/manutencao/pendencias/${p.id}`,
               )
             }
           />

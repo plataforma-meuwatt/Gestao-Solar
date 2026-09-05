@@ -1,7 +1,7 @@
 /**
  * Uma ordem de serviço — "o que foi feito nesta OS, item por item, e como terminou?".
  *
- * A lista (`/usinas/:id/ordens`) responde "está sendo feito?". Esta tela responde a pergunta
+ * A lista (`/usinas/:id/manutencao/ordens`) responde "está sendo feito?". Esta responde a
  * seguinte, que é a que o cliente faz quando a fatura da manutenção chega — e só ela.
  *
  * Três decisões que moldam o desenho:
@@ -11,10 +11,12 @@
  * verificação" e manda o tom junto (`bff/app/api/v1/manutencao.py`, `SITUACAO`). Traduzir de
  * novo aqui criaria uma segunda verdade sobre a mesma OS.
  *
- * **Nada de medição, checklist ou foto na tela.** Análise de equipamento é trabalho da equipe
- * de O&M, não do diretor que abre o portal — foi o pedido do dono ("ele só quer saber se está
- * sendo feito"). Quem quiser o detalhe abre o PDF da tarefa, que é o laudo, gerado pela mesma
- * fonte no meuPlano.
+ * **Aqui não entra medição, checklist nem foto — mas a tarefa ABRE.** Esta tela continua sendo
+ * o resumo ("está sendo feito?"); o detalhe de cada item mora na ficha da tarefa, uma tela
+ * própria (`/usinas/:id/manutencao/ordens/:osId/tarefas/:taskId`). Até aqui a linha da tarefa
+ * era uma div com um botão de PDF ao lado — a mesma queixa que o dono já tinha feito do
+ * aplicativo, "as tarefas não são clicáveis, são como checklist". Agora a linha é um link e o
+ * botão continua onde estava: ele deixa de ser a ÚNICA saída, não some.
  *
  * **`itens` nulo ≠ `itens` vazio.** O BFF devolve o cabeçalho da OS mesmo quando a busca das
  * tarefas falha, e nesse caso `itens` vem nulo. Dizer "esta ordem não tem tarefas" numa falha
@@ -45,6 +47,7 @@ import { mensagemDeErro } from '@/lib/api'
 import { abrirPdf } from '@/lib/arquivo'
 import { dataPorExtenso, duracao, inteiro } from '@/lib/format'
 import {
+  caminhoDaTarefa,
   caminhoDoPdfDaOrdem,
   caminhoDoPdfDaTarefa,
   ehNaoEncontrada,
@@ -74,7 +77,9 @@ export default function Ordem() {
   const [baixando, setBaixando] = useState<string | null>(null)
   const [erroPdf, setErroPdf] = useState<string | null>(null)
 
-  const voltar = id ? `/usinas/${id}/ordens` : '/'
+  // O endereço novo, com a família no meio. O antigo (`/usinas/:id/ordens`) ainda funciona por
+  // redirecionamento, mas mandar o cliente para ele daria um salto visível a cada clique.
+  const voltar = id ? `/usinas/${id}/manutencao/ordens` : '/'
 
   /**
    * Chamado direto do `onClick`: `abrirPdf` abre a aba no ato do gesto e só depois a aponta
@@ -150,10 +155,23 @@ export default function Ordem() {
 
             <Cabecalho ordem={o} />
 
-            <Tarefas ordem={o} osId={osId ?? String(o.id)} baixando={baixando} aoAbrirPdf={abrir} />
+            <Tarefas
+              ordem={o}
+              // Sem o `:id` da URL vale o vínculo que a própria OS declara — é o mesmo número.
+              usinaId={id ?? String(o.usina_id)}
+              osId={osId ?? String(o.id)}
+              baixando={baixando}
+              aoAbrirPdf={abrir}
+            />
 
             <Cartao>
-              <CabecalhoCard rotulo="Ficha em PDF" />
+              {/*
+                "A ordem em PDF", e não "Ficha em PDF": a ficha é de UMA tarefa e tem botão
+                próprio em cada linha lá em cima. Os dois rótulos iguais na mesma tela liam-se
+                como o mesmo arquivo — e chegaram a fazer a busca por texto de um teste casar
+                com o título do cartão em vez do botão da tarefa.
+              */}
+              <CabecalhoCard rotulo="A ordem em PDF" />
               <p className="text-sm text-corpo">
                 A ordem completa, com as tarefas e as fichas preenchidas pelo técnico. O arquivo
                 abre em outra aba do navegador.
@@ -237,11 +255,13 @@ function Cabecalho({ ordem: o }: { ordem: OrdemDeServico }) {
 
 function Tarefas({
   ordem: o,
+  usinaId,
   osId,
   baixando,
   aoAbrirPdf,
 }: {
   ordem: OrdemDeServico
+  usinaId: string
   osId: string
   baixando: string | null
   aoAbrirPdf: (chave: string, caminho: string, nome: string) => Promise<void>
@@ -276,7 +296,13 @@ function Tarefas({
               <ul>
                 {itens.map((t, i) => (
                   <li key={t.id ?? `${secao}-${i}`}>
-                    <ItemTarefa tarefa={t} osId={osId} baixando={baixando} aoAbrirPdf={aoAbrirPdf} />
+                    <ItemTarefa
+                      tarefa={t}
+                      usinaId={usinaId}
+                      osId={osId}
+                      baixando={baixando}
+                      aoAbrirPdf={aoAbrirPdf}
+                    />
                   </li>
                 ))}
               </ul>
@@ -288,21 +314,34 @@ function Tarefas({
   )
 }
 
+/**
+ * Uma linha da lista: o link para a ficha da tarefa, com o botão do PDF ao lado.
+ *
+ * O botão é IRMÃO do link, não filho: clique nele não passa pelo link, e não é preciso barrar
+ * a propagação de nada. Botão dentro de âncora, além de HTML inválido, é o desenho em que um
+ * clique mal calculado abre a tela quando o cliente queria o arquivo.
+ *
+ * Tarefa sem `id` (caso raro do upstream) não vira link nem ganha botão, e também não recebe
+ * o "›": destino que não existe não pode parecer clicável.
+ */
 function ItemTarefa({
   tarefa: t,
+  usinaId,
   osId,
   baixando,
   aoAbrirPdf,
 }: {
   tarefa: Tarefa
+  usinaId: string
   osId: string
   baixando: string | null
   aoAbrirPdf: (chave: string, caminho: string, nome: string) => Promise<void>
 }) {
   const tarefaId = t.id
   const chave = `t-${tarefaId}`
-  return (
-    <div className="flex items-start gap-3 border-b border-borda-fraca py-3 last:border-0">
+
+  const corpo = (
+    <>
       {/* O ✓ vem do servidor (`feita`), não de comparar textos de status aqui. */}
       <span
         aria-hidden
@@ -313,20 +352,43 @@ function ItemTarefa({
         {t.feita ? '✓' : ''}
       </span>
 
-      <div className="min-w-0 flex-1">
-        <p className={`text-sm ${t.feita ? 'text-corpo' : 'text-fraco'}`}>{t.nome}</p>
-        {t.equipamento ? <p className="mt-0.5 text-xs text-fraco">{t.equipamento}</p> : null}
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm ${t.feita ? 'text-corpo' : 'text-fraco'}`}>{t.nome}</span>
+        {t.equipamento ? (
+          <span className="mt-0.5 block text-xs text-fraco">{t.equipamento}</span>
+        ) : null}
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <span className="mt-1.5 flex flex-wrap items-center gap-2">
           {/* Situação só quando NÃO está feita: no item com ✓ a palavra "Executada" repete o
               que o próprio ✓ acabou de dizer. */}
           {t.feita ? null : <span className="text-xs text-rotulo">{t.situacao}</span>}
           {t.parecer ? <Selo tom={t.parecer_tom ?? 'semDados'}>{t.parecer}</Selo> : null}
-        </div>
-      </div>
+        </span>
+      </span>
 
-      {/* Tarefa sem `id` (caso raro do upstream) fica sem botão: um botão que não leva a lugar
-          nenhum é pior do que nenhum botão. */}
+      {tarefaId === null ? null : (
+        <span aria-hidden className="mt-0.5 shrink-0 text-fraco">
+          ›
+        </span>
+      )}
+    </>
+  )
+
+  const linha = 'flex min-w-0 flex-1 items-start gap-3 text-left'
+
+  return (
+    <div className="flex items-start gap-3 border-b border-borda-fraca py-3 last:border-0">
+      {tarefaId === null ? (
+        <div className={linha}>{corpo}</div>
+      ) : (
+        <Link
+          to={caminhoDaTarefa(usinaId, osId, tarefaId)}
+          className={`${linha} transition hover:text-forte`}
+        >
+          {corpo}
+        </Link>
+      )}
+
       {tarefaId === null ? null : (
         <Botao
           variante="secundario"

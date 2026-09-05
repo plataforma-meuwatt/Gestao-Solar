@@ -10,9 +10,9 @@
  * (documentos publicados e a ordem de serviço que resolve). Nada de editar, comentar ou
  * aprovar: aqui o cliente lê o andamento do que cobrou.
  *
- * O endereço é próprio (`/usinas/:id/pendencias/:cid`), então um link colado no e-mail abre
- * a lista E a gaveta certa — por isso a leitura do detalhe é independente da lista: se a
- * lista falhar, a gaveta ainda abre.
+ * O endereço é próprio (`/usinas/:id/manutencao/pendencias/:cid`), então um link colado no
+ * e-mail abre a lista E a gaveta certa — por isso a leitura do detalhe é independente da
+ * lista: se a lista falhar, a gaveta ainda abre.
  */
 
 import { useState, type ReactNode } from 'react'
@@ -273,7 +273,7 @@ export function Drawer({
             <Conteudo
               pendencia={d}
               usinaId={usinaId}
-              aoAbrirOrdem={(osId) => navigate(`/usinas/${usinaId}/ordens/${osId}`)}
+              aoAbrirOrdem={(osId) => navigate(`/usinas/${usinaId}/manutencao/ordens/${osId}`)}
             />
           )}
         </Tela4Estados>

@@ -77,7 +77,7 @@ export default function Ordens() {
   // ("não há nada em andamento") em vez de ser jogado de volta a cada atualização.
   const [escolhido, setEscolhido] = useState<Bloco | null>(null)
 
-  const abrir = (o: Ordem) => navigate(`/usinas/${o.usina_id}/ordens/${o.id}`)
+  const abrir = (o: Ordem) => navigate(`/usinas/${o.usina_id}/manutencao/ordens/${o.id}`)
 
   return (
     <Pagina
