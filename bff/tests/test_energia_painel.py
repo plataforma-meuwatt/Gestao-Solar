@@ -198,7 +198,13 @@ def _manual(**campos) -> dict:
 
 
 class ClienteFalso:
-    """O meuWatt sem rede. Qualquer resposta pode ser uma exceção a lançar."""
+    """O meuWatt sem rede. Qualquer resposta pode ser uma exceção a lançar.
+
+    `por_mes` responde às leituras de UM mês com um relatório próprio — é como o upstream
+    de verdade se comporta, e o motivo de o painel do ano conferir mês a mês: o cabeçalho
+    do `range` de agosto e o `monthly_summaries` do `range` do ano DISCORDAM (medido em
+    Porto Ferreira: 99,89 % contra 99,99 %).
+    """
 
     def __init__(
         self,
@@ -207,16 +213,21 @@ class ClienteFalso:
         manual=None,
         fronteira=None,
         faturas=None,
+        por_mes=None,
     ):
         self.relatorio = relatorio if relatorio is not None else _range()
         self.pvsyst_resposta = pvsyst if pvsyst is not None else _pvsyst()
         self.manual_resposta = manual if manual is not None else {"year": 2026, "rows": []}
         self.fronteira_resposta = fronteira if fronteira is not None else {}
         self.faturas_resposta = faturas if faturas is not None else []
+        self.por_mes = por_mes or {}
         self.chamadas: list[tuple] = []
 
     async def geracao_periodo(self, slug, inicio, fim):
         self.chamadas.append(("range", inicio, fim))
+        de_um_mes_so = inicio.day == 1 and (inicio.year, inicio.month) == (fim.year, fim.month)
+        if de_um_mes_so and inicio.month in self.por_mes:
+            return _devolver(self.por_mes[inicio.month])
         return _devolver(self.relatorio)
 
     async def pvsyst(self, slug, inicio, fim):
@@ -418,17 +429,112 @@ def test_mes_sem_fatura_e_estado_e_nao_erro(cenario):
 def test_a_conciliacao_classifica_pela_tolerancia_declarada(cenario):
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(
-        fronteira={8: 100.0},
-        faturas=[{"transformer_id": 11, "year": 2026, "month": 8, "billed_mwh": 99.5}],
+        fronteira={8: 9.653},
+        faturas=[{"transformer_id": 11, "year": 2026, "month": 8, "billed_mwh": 9.6}],
     )
 
     conciliacao = _painel(http, usina, recorte="mes", referencia="2026-08-14")["conciliacao"]
 
-    assert conciliacao["faturado_mwh"] == 99.5
-    assert conciliacao["diferenca_mwh"] == 0.5
-    assert conciliacao["diferenca_pct"] == 0.5
+    assert conciliacao["faturado_mwh"] == 9.6
+    assert conciliacao["diferenca_mwh"] == 0.053
+    assert conciliacao["diferenca_pct"] == 0.55
     assert conciliacao["situacao"] == "Conciliado"
     assert conciliacao["tolerancia_pct"] == 1.0
+
+
+# ── a fronteira que não cobre a usina inteira ────────────────────────────────
+
+
+def test_fronteira_que_nao_cobre_a_usina_nao_vira_perda(cenario):
+    """Medido em Porto Ferreira, agosto de 2026: 846 MWh na fronteira contra 1.065 MWh nos
+    inversores. Isso não é perda de 20,5 % — perda entre o inversor e o ponto de entrega é
+    de transformação e de linha, e a referência do próprio projeto é 1,50 %. É o medidor
+    cobrindo menos que a usina, e publicar a diferença como perda seria repetir, com
+    número de verdade, o `medido × 0,987` que o meuWatt removeu."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(fronteira={8: 7.8})  # 7,8 MWh contra 9,8 medidos
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["fronteira_parcial"] is True
+    assert c["perda_inv_fronteira_pct"] is None
+    assert c["medido_fronteira_kwh"] == 7800.0, "o que o medidor mediu continua valendo"
+
+
+def test_fronteira_parcial_nao_acusa_a_distribuidora_de_divergencia(cenario):
+    """Classificar cobertura incompleta do medidor como "divergência relevante" mandaria o
+    cliente cobrar da distribuidora um erro que é do aparelho dele."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        fronteira={8: 7.8},
+        faturas=[{"transformer_id": 11, "year": 2026, "month": 8, "billed_mwh": 9.6}],
+    )
+
+    conciliacao = _painel(http, usina, recorte="mes", referencia="2026-08-14")["conciliacao"]
+
+    assert conciliacao["situacao"] is None
+    assert conciliacao["diferenca_mwh"] is None and conciliacao["diferenca_pct"] is None
+    assert conciliacao["fronteira_mwh"] == 7.8 and conciliacao["faturado_mwh"] == 9.6
+
+
+def test_fronteira_dentro_da_faixa_de_perda_nao_e_parcial(cenario):
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(fronteira={8: 9.653})
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["fronteira_parcial"] is False and c["perda_inv_fronteira_pct"] == 1.5
+
+
+# ── a temperatura sentinela ──────────────────────────────────────────────────
+
+
+def test_sentinela_do_rele_de_temperatura_nao_vira_media(cenario):
+    """A série real de Porto Ferreira em agosto de 2026: sete leituras, seis em `0.0` e
+    uma em `-100.0`. Somadas, publicavam **−14,3 °C** como temperatura ambiente do mês.
+    −100 °C não existe em lugar nenhum do planeta; é o relé dizendo "não medi"."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            temperatura=[
+                {"t": "2026-08-02", "t_amb": 21.0, "t_amb_max": 30.0,
+                 "t_mod": 35.5, "t_mod_max": 48.9},
+                {"t": "2026-08-03", "t_amb": -100.0, "t_amb_max": -100.0,
+                 "t_mod": -100.0, "t_mod_max": -100.0},
+                {"t": "2026-08-06", "t_amb": 23.0, "t_amb_max": 32.0,
+                 "t_mod": 36.1, "t_mod_max": 49.8},
+            ]
+        )
+    )
+
+    meteo = _painel(http, usina, recorte="mes", referencia="2026-08-14")["meteo"]
+
+    assert meteo["t_amb_media"] == 22.0, "média das DUAS leituras de verdade"
+    assert meteo["t_mod_media"] == 35.8
+    assert meteo["t_mod_max"] == 49.8
+    dia_do_sentinela = next(
+        p for p in meteo["pontos"] if p["chave"] == "2026-08-03"
+    )
+    assert dia_do_sentinela["t_amb"] is None and dia_do_sentinela["t_mod"] is None
+
+
+def test_temperatura_plausivel_atravessa_como_veio(cenario):
+    """Corrigir medição que pode ser verdade seria inventar dado. Um relé mudo marcando
+    `0.0` é defeito de sensor — conserto na origem, não aqui."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            temperatura=[
+                {"t": "2026-08-02", "t_amb": 0.0, "t_amb_max": 0.0,
+                 "t_mod": None, "t_mod_max": None},
+            ]
+        )
+    )
+
+    meteo = _painel(http, usina, recorte="mes", referencia="2026-08-14")["meteo"]
+
+    assert meteo["t_amb_media"] == 0.0
+    assert meteo["tem_sensor_temperatura"] is True
 
 
 # ── o previsto pela meteorologia ─────────────────────────────────────────────
@@ -507,20 +613,133 @@ def _range_do_ano() -> dict:
     )
 
 
-def test_o_ano_traz_a_disponibilidade_de_cada_mes_do_rollup_do_servidor(cenario):
-    """A régua é a MESMA de `/plants/{id}/desempenho`: `monthly_summaries[]`. O meuWatt
-    tem um segundo caminho, que re-deriva de `daily_summaries` e discorda em pontos
-    percentuais — dois números para o mesmo mês no mesmo portal seria o pior resultado."""
+def _mes_conferido(chave: str, disponibilidade: float, contratual: float) -> dict:
+    """O `range` de UM mês, como o upstream o devolve — cabeçalho próprio, que é o que
+    `/plants/{id}/desempenho` publica."""
+    return _range(
+        start_date=f"{chave}-01",
+        availability_real_pct=disponibilidade,
+        availability_contratual_pct=contratual,
+    )
+
+
+def test_a_disponibilidade_do_mes_no_ano_e_a_mesma_que_o_cliente_ve_no_mes(cenario):
+    """O número de teor contratual não pode mudar conforme a aba.
+
+    O `monthly_summaries` do `range` do ANO e o cabeçalho do `range` daquele MÊS discordam
+    — medido em Porto Ferreira, agosto de 2026: 99,99 % contra 99,89 %. É o cabeçalho que
+    o recorte `mes` mostra e que `/plants/{id}/desempenho` publica desde sempre; logo é ele
+    que a linha do ano tem de repetir, senão o cliente lê dois números para o mesmo mês.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range_do_ano(),
+        por_mes={
+            6: _mes_conferido("2026-06", 96.91, 96.91),
+            7: _mes_conferido("2026-07", 97.2, 99.74),
+            8: _mes_conferido("2026-08", 99.89, 99.89),
+        },
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    meses = {m["mes"]: m for m in c["meses"]}
+
+    assert meses["2026-08"]["disponibilidade_real_pct"] == 99.89, "o rollup dizia 99,0"
+    assert meses["2026-07"]["disponibilidade_contratual_pct"] == 99.74
+    assert meses["2026-06"]["disponibilidade_real_pct"] == 96.91
+    assert meses["2026-01"]["disponibilidade_real_pct"] is None, "mês sem medição é ausência"
+    assert meses["2026-06"]["medido_kwh"] == 12000.0
+
+
+def test_o_acumulado_do_ano_usa_uma_janela_so(cenario):
+    """`medido_inversores_kwh` do ano soma só os meses FECHADOS; a fronteira e a fatura
+    acompanham. Somar a fronteira do ano inteiro poria dois acumulados de janelas
+    diferentes na mesma faixa de cartões — e inventaria uma perda (aqui, negativa) do
+    tamanho do mês em curso."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range_do_ano(),
+        fronteira={6: 11.8, 7: 10.85, 8: 6.9},  # agosto está em curso
+        faturas=[
+            {"transformer_id": 11, "year": 2026, "month": mes, "billed_mwh": mwh}
+            for mes, mwh in ((6, 11.75), (7, 10.8), (8, 6.85))
+        ],
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert c["medido_inversores_kwh"] == 23000.0, "junho + julho"
+    assert c["medido_fronteira_kwh"] == 22650.0, "a mesma janela do medido"
+    assert c["perda_inv_fronteira_pct"] == 1.52, "22,65 MWh de fronteira contra 23 MWh"
+    assert c["fronteira_parcial"] is False
+    assert c["conciliacao"]["fronteira_mwh"] == 22.65
+    assert c["conciliacao"]["faturado_mwh"] == 22.55, "agosto ainda não tem fatura fechada"
+    assert c["conciliacao"]["situacao"] == "Conciliado"
+
+
+def test_o_ano_cheio_e_conferido_sem_travar_na_fila(cenario):
+    """Doze meses medidos passam pelo portão de quatro em quatro — e chegam inteiros."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            start_date="2026-01-01",
+            end_date="2026-08-14",
+            mensais=[
+                {"month": f"2026-{m:02d}", "generation_kwh": 1000.0 * m, "lost_kwh": 10.0,
+                 "lost_externa_kwh": 0.0, "availability_real_pct": 90.0,
+                 "availability_contratual_pct": 90.0}
+                for m in range(1, 13)
+            ],
+        ),
+        por_mes={m: _mes_conferido(f"2026-{m:02d}", 90.0 + m / 10, 95.0) for m in range(1, 13)},
+    )
+
+    meses = {
+        m["mes"]: m
+        for m in _painel(http, usina, recorte="ano", referencia="2026-08-14")["meses"]
+    }
+
+    # Agosto é o mês em curso e setembro em diante ainda não começou: sem leitura a fazer.
+    for numero in range(1, 9):
+        chave = f"2026-{numero:02d}"
+        assert meses[chave]["disponibilidade_real_pct"] == 90.0 + numero / 10, chave
+    assert meses["2026-09"]["disponibilidade_real_pct"] == 90.0, "futuro cai no rollup"
+
+
+def test_so_os_meses_medidos_sao_conferidos(cenario):
+    """Doze leituras por causa de uma tela seria pressão gratuita — e os meses anteriores
+    ao início da série não têm o que conferir."""
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(relatorio=_range_do_ano())
 
-    meses = {m["mes"]: m for m in _painel(http, usina, recorte="ano", referencia="2026-08-14")["meses"]}
+    _painel(http, usina, recorte="ano", referencia="2026-08-14")
 
-    assert meses["2026-06"]["disponibilidade_real_pct"] == 96.91
-    assert meses["2026-06"]["disponibilidade_contratual_pct"] == 97.53
-    assert meses["2026-07"]["disponibilidade_real_pct"] == 98.4
-    assert meses["2026-01"]["disponibilidade_real_pct"] is None, "mês sem rollup é ausência"
-    assert meses["2026-06"]["medido_kwh"] == 12000.0
+    mensais = [
+        c for c in caixa["cliente"].chamadas
+        if c[0] == "range" and c[1].day == 1 and c[1].month == c[2].month
+    ]
+    assert sorted(c[1].month for c in mensais) == [6, 7, 8]
+
+
+def test_mes_que_nao_responde_cai_no_rollup_em_vez_de_sumir(cenario):
+    """A conferência é uma melhoria, não uma dependência: uma leitura que falha devolve a
+    linha ao rollup, e a tabela do ano continua inteira."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range_do_ano(),
+        por_mes={
+            6: RuntimeError("o monitoramento não respondeu"),
+            8: _mes_conferido("2026-08", 99.89, 99.89),
+        },
+    )
+
+    meses = {
+        m["mes"]: m
+        for m in _painel(http, usina, recorte="ano", referencia="2026-08-14")["meses"]
+    }
+
+    assert meses["2026-06"]["disponibilidade_real_pct"] == 96.91, "veio do rollup"
+    assert meses["2026-08"]["disponibilidade_real_pct"] == 99.89, "veio da conferência"
 
 
 def test_o_acumulado_do_ano_soma_so_os_meses_fechados(cenario):

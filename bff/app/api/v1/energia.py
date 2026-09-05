@@ -309,19 +309,34 @@ def _grupos_de_uc(
         if sn:
             alvo["sns"].append(sn)
 
-    if orfaos is not None:
-        # O grupo órfão não vem pronto do upstream: capacidade e energia saem da soma
-        # dos próprios inversores, que é a única fonte que ele tem.
-        capacidades = [_numero(i.get("capacity_kwp")) for i in orfaos["membros"]]
-        energias = [
-            _numero(i.get("daily_yield_kwh")) if "daily_yield_kwh" in i
-            else _numero(i.get("total_yield_kwh"))
-            for i in orfaos["membros"]
-        ]
-        conhecidas = [c for c in capacidades if c is not None]
-        medidas = [e for e in energias if e is not None]
-        orfaos["kwp"] = sum(conhecidas) if conhecidas else None
-        orfaos["energia_kwh"] = sum(medidas) if medidas else None
+    # Energia e capacidade que o monitoramento NÃO trouxe prontas saem da soma dos
+    # próprios inversores do grupo. Vale para o "Sem UC", que nunca vem pronto — é a
+    # única fonte que ele tem —, e vale também para uma UC de verdade cujo transformador
+    # veio sem `total_yield_kwh`: sem isso ela sairia em travessão com os inversores dela
+    # medindo, e a soma das UCs deixaria de fechar com a geração da usina, que é
+    # justamente a conferência que o dono faz de olho. Sobrepor número que o upstream JÁ
+    # deu seria o contrário — duas contas para o mesmo valor, divergindo com o tempo.
+    for grupo in grupos:
+        if not grupo["membros"]:
+            continue
+        if grupo["energia_kwh"] is None:
+            medidas = [
+                e
+                for e in (
+                    _numero(i.get("daily_yield_kwh")) if "daily_yield_kwh" in i
+                    else _numero(i.get("total_yield_kwh"))
+                    for i in grupo["membros"]
+                )
+                if e is not None
+            ]
+            grupo["energia_kwh"] = sum(medidas) if medidas else None
+        if grupo["kwp"] is None:
+            conhecidas = [
+                c
+                for c in (_numero(i.get("capacity_kwp")) for i in grupo["membros"])
+                if c is not None
+            ]
+            grupo["kwp"] = sum(conhecidas) if conhecidas else None
 
     return grupos
 
@@ -671,8 +686,10 @@ def unidades_do_periodo(
 ) -> UnidadesOut:
     """O comparativo por UC a partir do `generation/range` — sem tocar na rede.
 
-    Está fora da rota de propósito: o painel de energia (recorte `unidades`) e esta rota
-    respondem à mesma pergunta, e duas contas separadas divergiriam com o tempo.
+    Está fora da rota de propósito: é o quarto recorte do painel de energia — a mesma
+    pergunta do Mensal e do Anual, vista por unidade consumidora — e ganhou endereço
+    próprio para a tela carregá-lo sem arrastar o resto do painel. A conta mora aqui, em
+    um lugar só: duas contas para o mesmo comparativo divergiriam com o tempo.
     """
     saida = UnidadesOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
     grupos = _grupos_de_uc(
@@ -683,12 +700,8 @@ def unidades_do_periodo(
     total_gerado = 0.0
     tem_geracao = False
     for grupo in grupos:
-        # No range, a energia da UC pode não vir pronta para o grupo órfão — a soma dos
-        # membros é o que ele tem.
-        if grupo["energia_kwh"] is None and grupo["membros"]:
-            medidas = [_numero(i.get("total_yield_kwh")) for i in grupo["membros"]]
-            medidas = [m for m in medidas if m is not None]
-            grupo["energia_kwh"] = sum(medidas) if medidas else None
+        # A energia que o upstream não trouxe pronta já veio somada dos membros dentro de
+        # `_grupos_de_uc` — refazê-la aqui seria a segunda conta do mesmo número.
         if grupo["energia_kwh"] is not None:
             total_gerado += grupo["energia_kwh"]
             tem_geracao = True
@@ -810,7 +823,10 @@ async def unidades_da_usina(
 
     relatorio, faturas = await asyncio.gather(
         cliente.geracao_periodo(link.mw_plant_slug, inicio, fim),
-        cliente.faturas_concessionaria(link.mw_plant_slug),
+        # Mês e ano cabem sempre dentro de um ano civil, então o ano vai no pedido: sem
+        # ele o upstream devolve o histórico inteiro de faturas para o BFF recortar um
+        # ano dele.
+        cliente.faturas_concessionaria(link.mw_plant_slug, inicio.year),
         return_exceptions=True,
     )
     if isinstance(relatorio, BaseException) or not isinstance(relatorio, dict):
@@ -840,28 +856,78 @@ async def unidades_da_usina(
 # que não é nosso. Um ano de uma usina de vinte inversores também é payload grande; o
 # upstream limita a 366 dias e cacheia dez minutos porque a resposta é cara.
 #
-# DUAS DECISÕES DECLARADAS, porque cada uma tinha duas saídas defensáveis:
+# QUATRO DECISÕES DECLARADAS, porque cada uma tinha duas saídas defensáveis:
 #
-# 1. DISPONIBILIDADE. Vale o número PRONTO do upstream (`availability_real_pct`,
-#    `availability_contratual_pct` e, por mês, `monthly_summaries[]`) — a mesma régua que
-#    `/plants/{id}/desempenho` já usa. Existe um segundo caminho no meuWatt (re-derivar de
-#    `daily_summaries`, que soma `max(relatório, parada)`) e os dois discordam em pontos
-#    percentuais no mesmo mês. Um painel novo que contradissesse a tela de desempenho do
-#    mesmo portal seria pior do que qualquer imprecisão: o cliente veria dois números para
-#    o mesmo mês sem ter como saber qual vale. O campo `regra` viaja na resposta para a
-#    tela declarar a fórmula ao lado do número.
+# 1. DISPONIBILIDADE. Vale o número PRONTO do upstream (`availability_real_pct` e
+#    `availability_contratual_pct`) — a mesma régua que `/plants/{id}/desempenho` já usa.
+#    Nada é recalculado aqui; existe um segundo caminho no meuWatt (re-derivar de
+#    `daily_summaries`) e os dois discordam em pontos percentuais no mesmo mês.
+#
+#    O detalhe que só a produção revelou: o `monthly_summaries[]` do `range` do ANO **não
+#    é** esse número. Em Porto Ferreira, agosto de 2026, o rollup do ano dizia 99,99 % e o
+#    cabeçalho do `range` de agosto — o que a tela de desempenho publica — dizia 99,89 %.
+#    Ler o rollup faria o cliente ver um valor no mês e outro no ano para o MESMO mês, num
+#    número de teor contratual. Por isso a linha do ano é CONFERIDA mês a mês
+#    (`_conferir_disponibilidade_mensal`): as mesmas leituras que o recorte `mes` faz, em
+#    paralelo, só nos meses medidos, com o rollup de rede de segurança. O campo `regra`
+#    viaja na resposta para a tela declarar a fórmula ao lado do número.
 #
 # 2. PREVISTO PELA METEOROLOGIA. Sai sempre que existir, com `previsto_origem` dizendo se
 #    veio do PVsyst diário ou da correção manual (EARRAY × irradiação medida ÷ irradiação
 #    do projeto). O meuWatt esconde o card quando a origem é a manual; aqui ele aparece
 #    com a procedência escrita, porque esconder do cliente um número que existe é pior do
 #    que mostrá-lo dizendo de onde veio. Ausente continua ausente — nulo, nunca zero.
+#
+# 3. FRONTEIRA QUE NÃO COBRE A USINA. O total do medidor é real e pode ser PARCIAL (ver
+#    `PERDA_FRONTEIRA_MAX_PCT`). Quando a diferença para os inversores não cabe numa perda
+#    de transformação e linha, o número continua saindo — é medição —, mas marcado com
+#    `fronteira_parcial` e sem a subtração: chamar 20 % de "perda" seria inventar um
+#    diagnóstico, e classificar isso como divergência de fatura mandaria o cliente cobrar
+#    da distribuidora um defeito do aparelho dele.
+#
+# 4. SENTINELA DE TEMPERATURA. O relé marca ausência com número (ver `TEMPERATURA_MIN_C`),
+#    e nem o mw-api nem o dashboard do meuWatt filtram. Só o que é fisicamente impossível
+#    é descartado; o resto atravessa como veio, porque corrigir medição plausível seria
+#    inventar dado.
 
 
 #: Tolerância contratual da conciliação com a conta de energia, em pontos percentuais. É a
 #: mesma do meuWatt, e vai na resposta para a tela escrevê-la ao lado do resultado em vez
 #: de repetir a constante em TypeScript.
 TOLERANCIA_CONCILIACAO_PCT = 1.0
+
+#: Faixa terrestre da temperatura, em °C. O relé de temperatura marca ausência com
+#: SENTINELA NUMÉRICA, e nem o mw-api nem o dashboard do meuWatt a filtram. Porto
+#: Ferreira, agosto de 2026, devolveu sete leituras — seis em `0.0` e uma em `-100.0` — e
+#: a média que sairia na tela do cliente era **−14,3 °C**.
+#:
+#: O corte aqui é o único que se sustenta em fato, não em palpite: −100 °C não existe em
+#: lugar nenhum do planeta (o recorde mundial de frio é −89,2 °C, na Antártida; o de
+#: calor, 56,7 °C). O que cai fora da faixa é ausência de leitura e vira nulo. O que está
+#: dentro atravessa como veio: "corrigir" medição plausível seria inventar dado, e o `0.0`
+#: de um relé mudo é defeito de sensor — conserto na origem, não aqui.
+TEMPERATURA_MIN_C = -90.0
+TEMPERATURA_MAX_C = 90.0
+
+#: Faixa plausível da perda entre o inversor e o ponto de entrega, em %. É perda de
+#: transformação e de linha; a referência de projeto do próprio meuWatt é 1,50 %, e nem
+#: uma usina malcuidada chega a dois dígitos.
+#:
+#: Fora desta faixa os dois números não estão medindo o mesmo conjunto. O total da
+#: fronteira vem de `MAX(leitura) − MIN(leitura)` por medidor dentro do mês (mw-api,
+#: `ssu-readers/monthly-totals`): medidor instalado no meio do período, medidor a menos ou
+#: leitura falhada devolvem um total REAL e PARCIAL. Porto Ferreira mediu 846 MWh na
+#: fronteira contra 1.065 MWh nos inversores em agosto de 2026 — "perda de 20,5 %" — e
+#: 166 MWh contra 963 MWh em julho, que daria "perda de 82,8 %". Publicar isso como perda
+#: repetiria, com número de verdade, o erro do antigo `medido × 0,987` que o meuWatt
+#: removeu: um número inventado vestido de medição.
+PERDA_FRONTEIRA_MIN_PCT = -1.0
+PERDA_FRONTEIRA_MAX_PCT = 10.0
+
+#: Quantos meses do recorte `ano` são conferidos ao mesmo tempo. A leitura de cada mês é a
+#: MESMA que o recorte `mes` faz — o upstream a cacheia por dez minutos, e as duas telas
+#: se aproveitam —, mas doze pedidos simultâneos por causa de uma tela é pressão gratuita.
+CONFERENCIAS_SIMULTANEAS = 4
 
 #: A janela em que um inversor DEVE estar de pé. Fora dela ele está desligado por projeto,
 #: não por defeito — contar a noite como indisponibilidade pintaria de vermelho toda usina
@@ -902,7 +968,9 @@ class ConciliacaoOut(BaseModel):
     diferenca_mwh: float | None = None
     diferenca_pct: float | None = None
     #: `Conciliado` · `Pequena divergência` · `Divergência relevante`. Nulo quando falta um
-    #: dos dois lados — fatura ainda não emitida é ESTADO, não erro.
+    #: dos dois lados — fatura ainda não emitida é ESTADO, não erro — e nulo também quando
+    #: a fronteira é parcial: classificar cobertura incompleta como "divergência relevante"
+    #: mandaria o cliente cobrar da distribuidora um erro que é do medidor dele.
     situacao: str | None = None
     tolerancia_pct: float = TOLERANCIA_CONCILIACAO_PCT
 
@@ -1054,8 +1122,14 @@ class PainelOut(BaseModel):
     #: o antigo `medido × 0,987`, que o próprio meuWatt removeu por ser um número
     #: inventado vestido de medição.
     medido_fronteira_kwh: float | None = None
-    #: Quanto se perde entre o inversor e a fronteira, em %. Só com os dois medidos.
+    #: Quanto se perde entre o inversor e a fronteira, em %. Só com os dois medidos, e só
+    #: quando a diferença entre eles é fisicamente uma perda (ver `PERDA_FRONTEIRA_MAX_PCT`).
     perda_inv_fronteira_pct: float | None = None
+    #: A fronteira medida NÃO cobre a mesma usina que os inversores — medidor instalado no
+    #: meio do período, medidor a menos, leitura falhada. O número continua saindo, porque
+    #: é medição de verdade, mas a tela precisa rotulá-lo como parcial e não pode subtraí-lo
+    #: do medido: a diferença não é perda.
+    fronteira_parcial: bool = False
     projeto_kwh: float | None = None
     projeto_proporcional_kwh: float | None = None
     previsto_kwh: float | None = None
@@ -1203,10 +1277,22 @@ def _irradiacao_por_dia(relatorio: Any) -> dict[str, tuple[float | None, float |
     }
 
 
+def _temperatura(valor: Any) -> float | None:
+    """Temperatura, ou nada. Leitura fora da faixa terrestre é o sentinela do relé.
+
+    Ver `TEMPERATURA_MIN_C`: a série chega com `-100.0` no lugar de "não mediu", e uma
+    média com esse valor dentro publicaria como medição um número que não existe.
+    """
+    lido = _numero(valor)
+    if lido is None or not (TEMPERATURA_MIN_C <= lido <= TEMPERATURA_MAX_C):
+        return None
+    return lido
+
+
 def _temperatura_por_dia(relatorio: Any) -> dict[str, dict[str, float | None]]:
     return {
         p["t"][:10]: {
-            campo: _numero(p.get(campo))
+            campo: _temperatura(p.get(campo))
             for campo in ("t_amb", "t_amb_max", "t_mod", "t_mod_max")
         }
         for p in _lista(_grafico(relatorio).get("daily_temperature"))
@@ -1351,10 +1437,29 @@ def _situacao_da_conciliacao(diferenca_pct: float | None) -> str | None:
     return "Divergência relevante"
 
 
-def _conciliacao(fronteira_mwh: float | None, faturado_mwh: float | None) -> ConciliacaoOut:
+def _perda_ate_a_fronteira(
+    fronteira_kwh: float | None, medido_kwh: float | None
+) -> tuple[float | None, bool]:
+    """`(perda em %, a fronteira é parcial?)` — ver `PERDA_FRONTEIRA_MAX_PCT`.
+
+    Faltar um dos dois lados é ausência, não cobertura parcial: sem medidor de fronteira a
+    usina simplesmente não tem esse número, e dizer "parcial" ali seria acusar de defeito
+    um aparelho que não existe.
+    """
+    if fronteira_kwh is None or not medido_kwh or medido_kwh <= 0:
+        return None, False
+    perda = round((1 - fronteira_kwh / medido_kwh) * 100, 2)
+    if PERDA_FRONTEIRA_MIN_PCT <= perda <= PERDA_FRONTEIRA_MAX_PCT:
+        return perda, False
+    return None, True
+
+
+def _conciliacao(
+    fronteira_mwh: float | None, faturado_mwh: float | None, *, parcial: bool = False
+) -> ConciliacaoOut:
     diferenca = (
         round(fronteira_mwh - faturado_mwh, 3)
-        if fronteira_mwh is not None and faturado_mwh is not None
+        if fronteira_mwh is not None and faturado_mwh is not None and not parcial
         else None
     )
     pct = (
@@ -1643,8 +1748,7 @@ async def painel_de_geracao(
     if not _tem_medicao(relatorio):
         avisos.append("o monitoramento não tem medição neste período")
 
-    montar = _painel_do_mes if recorte == "mes" else _painel_do_ano
-    painel = montar(
+    comum = dict(
         alvo=alvo,
         inicio=inicio,
         fim=fim,
@@ -1657,6 +1761,19 @@ async def painel_de_geracao(
         fronteira=fronteira if isinstance(fronteira, dict) else {},
         faturas=faturas,
     )
+    if recorte == "mes":
+        painel = _painel_do_mes(**comum)
+    else:
+        painel = _painel_do_ano(
+            **comum,
+            disponibilidade_mensal=await _conferir_disponibilidade_mensal(
+                cliente,
+                link.mw_plant_slug,
+                sorted(_medido_por_mes(relatorio, alvo.year)),
+                alvo.year,
+                hoje,
+            ),
+        )
     if avisos:
         painel.aviso = "Faltou parte dos dados: " + " · ".join(avisos) + "."
     return painel
@@ -1774,6 +1891,7 @@ def _painel_do_mes(
 
     fronteira_mwh = _fronteira_do_mes(fronteira, alvo.month)
     fronteira_kwh = fronteira_mwh * 1000 if fronteira_mwh is not None else None
+    perda_fronteira, fronteira_parcial = _perda_ate_a_fronteira(fronteira_kwh, medido)
     faturado = _faturado_por_mes(faturas).get(alvo.month)
     capacidade = _capacidade(relatorio)
 
@@ -1788,11 +1906,8 @@ def _painel_do_mes(
         capacidade_kwp=capacidade,
         medido_inversores_kwh=_arredondar(medido),
         medido_fronteira_kwh=_arredondar(fronteira_kwh),
-        perda_inv_fronteira_pct=(
-            round((1 - fronteira_kwh / medido) * 100, 2)
-            if fronteira_kwh is not None and medido and medido > 0
-            else None
-        ),
+        perda_inv_fronteira_pct=perda_fronteira,
+        fronteira_parcial=fronteira_parcial,
         projeto_kwh=_arredondar(projeto),
         projeto_proporcional_kwh=_arredondar(proporcional),
         previsto_kwh=_arredondar(previsto),
@@ -1814,7 +1929,9 @@ def _painel_do_mes(
             medido_vs_previsto_pct=_desvio(medido, previsto),
             previsto_vs_projeto_pct=_desvio(previsto, proporcional),
         ),
-        conciliacao=_conciliacao(_arredondar(fronteira_mwh, 3), faturado),
+        conciliacao=_conciliacao(
+            _arredondar(fronteira_mwh, 3), faturado, parcial=fronteira_parcial
+        ),
         totais=TotaisOut(
             medido_kwh=_arredondar(medido),
             projeto_kwh=_arredondar(projeto),
@@ -1845,6 +1962,87 @@ def _painel_do_mes(
 # ── recorte ANO ─────────────────────────────────────────────────────────────
 
 
+def _medido_por_mes(relatorio: Any, ano: int) -> dict[int, float]:
+    """Quanto cada mês do ano mediu, em kWh. Mês sem medição fica FORA do mapa.
+
+    O rollup do servidor (`monthly_summaries`) manda, e os buckets diários entram só onde
+    ele não cobre — assim o mês não some por falta de detalhe.
+
+    Mês MEDIDO é mês com geração acima de zero. O rollup traz linha para os meses
+    anteriores ao início da série com `generation_kwh: 0.0` — Porto Ferreira, cuja medição
+    começa em junho, devolve janeiro a maio zerados. Aceitar esse zero como medição
+    colocaria cinco meses inexistentes no seletor, publicaria "gerou 0 kWh" onde ninguém
+    mediu e pintaria −100 % de desvio contra o projeto.
+    """
+    do_rollup: dict[int, float] = {}
+    for chave, linha in _mensais(relatorio).items():
+        mes = _data(f"{chave}-01")
+        valor = _numero(_dicionario(linha).get("generation_kwh"))
+        if mes and mes.year == ano and valor is not None:
+            do_rollup[mes.month] = valor
+
+    do_diario: dict[int, float] = {}
+    for chave, linha in _diarios(relatorio).items():
+        dia = _data(chave)
+        if dia and dia.year == ano:
+            gerado = _numero(linha.get("generation_kwh")) or 0.0
+            do_diario[dia.month] = do_diario.get(dia.month, 0.0) + gerado
+
+    saida: dict[int, float] = {}
+    for numero in range(1, 13):
+        medido = do_rollup.get(numero)
+        if medido is None:
+            medido = do_diario.get(numero)
+        if medido is not None and medido > 0:
+            saida[numero] = medido
+    return saida
+
+
+async def _conferir_disponibilidade_mensal(
+    cliente: Any, slug: str, meses: list[int], ano: int, hoje: date
+) -> dict[int, tuple[float | None, float | None]]:
+    """A disponibilidade de cada mês medido, pela régua de quem já está no ar.
+
+    **Por que uma leitura por mês, e não o rollup que já veio junto.** O `monthly_summaries`
+    do `range` do ANO e o cabeçalho do `range` daquele MÊS discordam — e é o cabeçalho que
+    `/plants/{id}/desempenho` publica desde sempre. Medido em Porto Ferreira, agosto de
+    2026: cabeçalho 99,89 %, rollup 99,99 %. Sem esta conferência o cliente abriria o mês
+    de agosto lendo 99,89 % e o ano lendo 99,99 % na linha de agosto — o produto se
+    contradizendo dentro da mesma tela, num número de teor contratual.
+
+    Não dá para reproduzir o cabeçalho a partir do que o `range` do ano traz: nem os
+    diários nem o rollup o explicam sozinhos (em julho o cabeçalho segue o rollup; em
+    agosto, os diários). O upstream compõe as duas fontes lá dentro, e a única maneira
+    honesta de exibir o mesmo número é pedir o mesmo número.
+
+    É barato: só os meses que TÊM medição, em paralelo, e são exatamente as leituras que o
+    recorte `mes` faz — o upstream as cacheia por dez minutos e as duas telas se
+    aproveitam. Porto Ferreira/2026: quatro leituras, 0,75 s. Mês que falhar volta sem
+    resposta e o chamador cai no rollup.
+    """
+    portao = asyncio.Semaphore(CONFERENCIAS_SIMULTANEAS)
+
+    async def _de_um_mes(numero: int) -> tuple[int, Any]:
+        primeiro = date(ano, numero, 1)
+        if primeiro > hoje:  # mês que ainda não começou não tem o que conferir
+            return numero, None
+        ultimo = date(ano, numero, monthrange(ano, numero)[1])
+        async with portao:
+            try:
+                return numero, await cliente.geracao_periodo(slug, primeiro, min(ultimo, hoje))
+            except Exception:  # noqa: BLE001 — mês que falha cai no rollup, sem derrubar a tela
+                return numero, None
+
+    saida: dict[int, tuple[float | None, float | None]] = {}
+    for numero, relatorio in await asyncio.gather(*(_de_um_mes(m) for m in meses)):
+        if isinstance(relatorio, dict) and _tem_medicao(relatorio):
+            saida[numero] = (
+                _numero(relatorio.get("availability_real_pct")),
+                _numero(relatorio.get("availability_contratual_pct")),
+            )
+    return saida
+
+
 def _painel_do_ano(
     *,
     alvo: date,
@@ -1858,13 +2056,16 @@ def _painel_do_ano(
     manual: Any,
     fronteira: dict[Any, Any],
     faturas: Any,
+    disponibilidade_mensal: dict[int, tuple[float | None, float | None]] | None = None,
 ) -> PainelOut:
     ano = alvo.year
+    conferida = disponibilidade_mensal or {}
     manual_do_ano = _manual_por_mes(manual)
     derating = {mes: linha.get("derating") for mes, linha in manual_do_ano.items()}
 
     diarios = _diarios(relatorio)
     mensais = _mensais(relatorio)
+    medidos = _medido_por_mes(relatorio, ano)
     irradiacao = _irradiacao_por_dia(relatorio)
     temperatura = _temperatura_por_dia(relatorio)
     faturado_do_ano = _faturado_por_mes(faturas)
@@ -1879,7 +2080,6 @@ def _painel_do_ano(
     modulos_max: dict[int, float] = {}
     pr_numerador: dict[int, float] = {}
     pr_denominador: dict[int, float] = {}
-    medido_diario: dict[int, float] = {}
     perdida_diaria: dict[int, float] = {}
     perdida_ext_diaria: dict[int, float] = {}
     dias_com_dado: set[str] = set()
@@ -1898,7 +2098,6 @@ def _painel_do_ano(
         if not (dia := _no_ano(chave)):
             continue
         gerado = _numero(linha.get("generation_kwh")) or 0.0
-        medido_diario[dia.month] = medido_diario.get(dia.month, 0.0) + gerado
         perdida_diaria[dia.month] = perdida_diaria.get(dia.month, 0.0) + (
             _numero(linha.get("lost_kwh")) or 0.0
         )
@@ -1944,26 +2143,18 @@ def _painel_do_ano(
         futuro = primeiro > hoje
         mes_em_curso = not futuro and ultimo > hoje
 
-        # A geração e a perda vêm do rollup canônico do servidor (`monthly_summaries`) — a
-        # mesma fonte da disponibilidade dos cartões. Os buckets do diário entram só onde
-        # o rollup não cobre, para o mês não sumir por falta de detalhe.
+        # A geração e a perda vêm do rollup canônico do servidor (`monthly_summaries`), com
+        # os buckets do diário entrando só onde ele não cobre. A régua de "mês medido" mora
+        # em `_medido_por_mes`, para o seletor e a linha da tabela nunca discordarem.
         rollup = mensais.get(chave_mes)
-        medido = _numero(_dicionario(rollup).get("generation_kwh"))
-        if medido is None:
-            medido = medido_diario.get(numero)
-        # Mês MEDIDO é mês com geração acima de zero. O rollup do upstream traz linha para
-        # os meses anteriores ao início da série com `generation_kwh: 0.0` — Porto
-        # Ferreira, cuja medição começa em junho, devolve janeiro a maio zerados. Aceitar
-        # esse zero como medição colocaria cinco meses inexistentes no seletor, publicaria
-        # "gerou 0 kWh" onde ninguém mediu e pintaria −100% de desvio contra o projeto.
-        if medido is not None and medido <= 0:
-            medido = None
+        medido = medidos.get(numero)
         if medido is not None:
             disponiveis.append(chave_mes)
         # Perda e disponibilidade acompanham a medição: sem mês medido não há o que ter
-        # perdido, e a linha zerada do rollup traria 100% de disponibilidade num mês em
+        # perdido, e a linha zerada do rollup traria 100 % de disponibilidade num mês em
         # que a usina nem estava sendo monitorada.
         perdida = perdida_ext = None
+        real = contratual = None
         if medido is not None:
             perdida = _numero(_dicionario(rollup).get("lost_kwh"))
             if perdida is None:
@@ -1971,6 +2162,14 @@ def _painel_do_ano(
             perdida_ext = _numero(_dicionario(rollup).get("lost_externa_kwh"))
             if perdida_ext is None:
                 perdida_ext = perdida_ext_diaria.get(numero)
+            # A conferência mês a mês manda (ver `_conferir_disponibilidade_mensal`): é o
+            # mesmo número que o recorte `mes` e `/plants/{id}/desempenho` publicam. O
+            # rollup é a rede de segurança de quando aquela leitura não veio.
+            real, contratual = conferida.get(numero) or (None, None)
+            if real is None:
+                real = _numero(_dicionario(rollup).get("availability_real_pct"))
+            if contratual is None:
+                contratual = _numero(_dicionario(rollup).get("availability_contratual_pct"))
 
         linha_manual = manual_do_ano.get(numero)
         earray = _numero(_dicionario(linha_manual).get("e_array")) or 0.0
@@ -1992,12 +2191,8 @@ def _painel_do_ano(
                     _arredondar(pr_numerador[numero] / pr_denominador[numero] * 100, 1)
                     if pr_denominador.get(numero) else None
                 ),
-                disponibilidade_real_pct=_numero(
-                    _dicionario(rollup).get("availability_real_pct")
-                ),
-                disponibilidade_contratual_pct=_numero(
-                    _dicionario(rollup).get("availability_contratual_pct")
-                ),
+                disponibilidade_real_pct=real,
+                disponibilidade_contratual_pct=contratual,
                 perdida_kwh=_arredondar(perdida),
                 perdida_externa_kwh=_arredondar(perdida_ext),
                 fronteira_mwh=_arredondar(fronteira_mes, 3),
@@ -2035,8 +2230,14 @@ def _painel_do_ano(
     projeto_ytd = _soma([m.projeto_kwh for m in fechados])
     projeto_ano = _soma([m.projeto_kwh for m in meses])
     previsto_ytd = _soma([m.previsto_kwh for m in meses if m.medido_kwh is not None])
-    fronteira_ytd = _soma([m.fronteira_mwh for m in meses])
+    # A fronteira e a fatura seguem a MESMA janela do medido — os meses fechados. Somar a
+    # fronteira do ano inteiro poria lado a lado, na mesma faixa de cartões, um acumulado
+    # com o mês em curso e outro sem ele; e na conciliação inflaria a diferença com um mês
+    # cuja fatura a distribuidora ainda nem emitiu.
+    fronteira_ytd = _soma([m.fronteira_mwh for m in fechados])
     fronteira_ytd_kwh = fronteira_ytd * 1000 if fronteira_ytd is not None else None
+    faturado_ytd = _soma([m.faturado_mwh for m in fechados])
+    perda_fronteira, fronteira_parcial = _perda_ate_a_fronteira(fronteira_ytd_kwh, medido_ytd)
 
     capacidade = _capacidade(relatorio)
 
@@ -2050,11 +2251,8 @@ def _painel_do_ano(
         capacidade_kwp=capacidade,
         medido_inversores_kwh=medido_ytd,
         medido_fronteira_kwh=_arredondar(fronteira_ytd_kwh),
-        perda_inv_fronteira_pct=(
-            round((1 - fronteira_ytd_kwh / medido_ytd) * 100, 2)
-            if fronteira_ytd_kwh is not None and medido_ytd and medido_ytd > 0
-            else None
-        ),
+        perda_inv_fronteira_pct=perda_fronteira,
+        fronteira_parcial=fronteira_parcial,
         projeto_kwh=projeto_ytd,
         projeto_proporcional_kwh=projeto_ytd,
         previsto_kwh=previsto_ytd,
@@ -2077,7 +2275,7 @@ def _painel_do_ano(
             previsto_vs_projeto_pct=_desvio(previsto_ytd, projeto_ytd),
         ),
         conciliacao=_conciliacao(
-            _arredondar(fronteira_ytd, 3), _soma([m.faturado_mwh for m in meses])
+            _arredondar(fronteira_ytd, 3), faturado_ytd, parcial=fronteira_parcial
         ),
         totais=TotaisOut(
             medido_kwh=medido_ytd,

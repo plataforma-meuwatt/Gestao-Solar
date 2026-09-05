@@ -154,9 +154,15 @@ async def test_a_fronteira_esta_no_catalogo_e_e_exercitada_com_o_ano(db, conecta
 
 
 @respx.mock
-async def test_as_rotas_com_efeito_colateral_nao_sao_chamadas(db, conectado):
+async def test_as_rotas_fora_da_varredura_nao_sao_chamadas(db, conectado):
     """Declaradas e não exercitadas, com o motivo. Omiti-las daria a impressão de que a
-    lista está completa."""
+    lista está completa.
+
+    O exemplo é `mw.portal`, e o nome deste teste dizia "efeito colateral" — que NÃO é o
+    caso dela: é um GET que não muda nada. Ela fica fora por outra razão, escrita no
+    catálogo (com o token de serviço responde a pré-visualização do gestor, não a vista do
+    cliente). Rota com efeito colateral de verdade é `mw.login`, que é POST.
+    """
     _tudo_responde(respx.mock)
 
     v = await sonda.varrer(db, Produto.MEUWATT)

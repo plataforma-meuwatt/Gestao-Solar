@@ -198,8 +198,11 @@ class ClienteFalso:
             raise self.range_resposta
         return self.range_resposta
 
-    async def faturas_concessionaria(self, slug):
-        self.chamadas.append(("faturas",))
+    async def faturas_concessionaria(self, slug, ano=None):
+        # A assinatura espelha a do cliente de verdade: o ano é opcional lá, e um dublê
+        # que não o aceitasse esconderia justamente a chamada que arrasta o histórico
+        # inteiro de faturas.
+        self.chamadas.append(("faturas", ano))
         if isinstance(self.faturas_resposta, BaseException):
             raise self.faturas_resposta
         return self.faturas_resposta
@@ -336,6 +339,37 @@ def test_inversor_sem_transformador_aparece_em_sem_uc(cenario):
     assert orfa["energia_kwh"] == 500.0
     assert orfa["kwp"] == 100.0 and orfa["total"] == 1
     assert abs(sum(u["energia_kwh"] for u in c["ucs"]) - c["gerado_kwh"]) < 0.01
+
+
+def test_uc_sem_energia_pronta_soma_pelos_inversores_dela(cenario):
+    """A UC existe, os inversores dela mediram, e o transformador veio sem
+    `total_yield_kwh` — que é campo do upstream e pode faltar. Sem a soma pelos membros a
+    linha sairia em travessão com o dado na mão, e a conferência de olho ("a soma das UCs
+    bate com a geração") acusaria uma perda que não houve."""
+    http, caixa, usina = cenario
+    diario = _diario()
+    diario["transformers"][0].pop("total_yield_kwh")
+    caixa["cliente"] = ClienteFalso(diario=diario)
+
+    c = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}").json()
+
+    assert c["ucs"][0]["energia_kwh"] == 2000.0, "1100 + 900 dos inversores da SKID 01"
+    assert abs(sum(u["energia_kwh"] for u in c["ucs"]) - c["gerado_kwh"]) < 0.01
+
+
+def test_uc_sem_nenhuma_leitura_continua_em_travessao(cenario):
+    """O contrário do teste acima: sem o número no transformador e sem inversor que
+    tenha medido, a energia é ausência de verdade — e ausência vira `None`, nunca zero."""
+    http, caixa, usina = cenario
+    diario = _diario()
+    diario["transformers"][0].pop("total_yield_kwh")
+    for inv in diario["inverters"][:2]:
+        inv["daily_yield_kwh"] = None
+    caixa["cliente"] = ClienteFalso(diario=diario)
+
+    c = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}").json()
+
+    assert c["ucs"][0]["energia_kwh"] is None
 
 
 # ── eventos ──────────────────────────────────────────────────────────────────

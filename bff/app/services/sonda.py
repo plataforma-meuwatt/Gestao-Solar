@@ -131,14 +131,21 @@ MEUWATT: list[Rota] = [
          "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
     Rota("mw.user_plants", "GET", "/admin/user-plants",
          "Quais usinas cada conta enxerga — as sugestões de concessão"),
+    # ⚠ A razão escrita aqui até 05/09/2026 era FALSA — dizia que a rota é restrita a
+    # `plant_owner` e que "um 403 com o token de serviço seria o comportamento correto".
+    # Não é: a mw-api aceita administrador explicitamente (ver `portal_relatorios` em
+    # `clients/meuwatt.py`), e a chamada real com o token de serviço devolve 200 com os
+    # fechamentos de TODAS as usinas. Medido no dia em que esta linha foi corrigida.
     Rota("mw.portal", "GET", "/reports/portal",
          "Relatórios publicados no Portal do Cliente", essencial=False,
          sonda=False,
-         nao_sondada_porque="Exige o token do próprio dono da usina (é restrita a "
-                            "plant_owner). Com o token de serviço, um 403 aqui seria o "
-                            "comportamento correto e apareceria como falha."),
+         nao_sondada_porque="Com o token de serviço ela devolve a PRÉ-VISUALIZAÇÃO do "
+                            "gestor — os fechamentos de todas as usinas —, e não o que um "
+                            "cliente vê. Um verde aqui não diria que o cliente enxerga os "
+                            "relatórios dele, que é a pergunta de quem abre esta tela."),
     Rota("mw.portal_arquivo", "GET", "/reports/{report_id}/files/{kind}",
-         "Os PDFs de geração e de paradas de um fechamento publicado", essencial=False,
+         "Os PDFs de um fechamento publicado: geração, paradas e o resumo executivo",
+         essencial=False,
          sonda=False,
          nao_sondada_porque="O id do fechamento só sai de `/reports/portal`, que a sonda "
                             "não chama (acima). E é um download de arquivo, não JSON."),

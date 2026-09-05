@@ -306,6 +306,22 @@ def test_inversor_sem_transformador_aparece_em_sem_uc(cenario):
     assert abs(sum(u["geracao_kwh"] for u in c["ucs"]) - c["energia_periodo_kwh"]) < 0.01
 
 
+def test_uc_sem_energia_pronta_soma_pelos_inversores_dela(cenario):
+    """Mesma régua do recorte do dia, e de propósito: a soma pelos membros mora dentro do
+    agrupamento por UC, que serve aos dois — duas contas para o mesmo número divergiriam
+    com o tempo. Aqui ela também sustenta o share, que sai da participação de cada UC."""
+    http, caixa, usina = cenario
+    relatorio = _range()
+    relatorio["transformers"][0].pop("total_yield_kwh")
+    caixa["cliente"] = ClienteFalso(range_=relatorio)
+
+    c = _pedir(http, usina)
+
+    assert c["ucs"][0]["geracao_kwh"] == 60_000.0, "30.000 + 30.000 da SKID 01"
+    assert c["ucs"][0]["share_pct"] == 60.0
+    assert c["energia_periodo_kwh"] == 100_000.0
+
+
 # ── a conta de energia ───────────────────────────────────────────────────────
 
 
@@ -383,6 +399,16 @@ def test_recorte_ano_pede_o_ano_inteiro_ate_hoje(cenario):
 
     assert (c["inicio"], c["fim"]) == ("2026-01-01", "2026-08-14")
     assert ("range", date(2026, 1, 1), HOJE) in caixa["cliente"].chamadas
+
+
+def test_a_conta_de_energia_e_pedida_pelo_ano_do_periodo(cenario):
+    """Mês e ano cabem sempre num ano civil. Sem o ano no pedido o upstream devolve o
+    histórico inteiro de faturas para o BFF recortar um ano dele."""
+    http, caixa, usina = cenario
+
+    _pedir(http, usina)
+
+    assert ("faturas", 2026) in caixa["cliente"].chamadas
 
 
 def test_recorte_invalido_e_recusado(cenario):

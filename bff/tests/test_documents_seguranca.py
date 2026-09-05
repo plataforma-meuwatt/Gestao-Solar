@@ -288,3 +288,80 @@ async def test_usina_sem_meuwatt_avisa_em_vez_de_vazar(db, usinas, dono_com_duas
     # A frase nomeia o SERVIÇO ausente, nunca o produto (ver `test_vocabulario_do_cliente.py`).
     assert saida.aviso and "monitoramento" in saida.aviso
     assert "meuWatt" not in saida.aviso
+
+
+# ── a recusa acontece na PORTA, e o navegador precisa ler isso ───────────────
+#
+# Os testes acima olham a assinatura da rota e o cliente. Falta a prova de ponta a ponta:
+# o que volta para quem pediu. Ela importa porque as duas trancas falam línguas
+# diferentes. Se um dia a rota deixasse o texto livre passar, o cliente ainda recusaria —
+# mas por `MeuWattError`, que aqui vira **503 "Não foi possível baixar"**, a frase de
+# indisponibilidade: o defeito de segurança chegaria à tela disfarçado de queda do
+# monitoramento. O **422** do FastAPI é o que diz a verdade — o pedido é que está errado —
+# e é dado ANTES de o token de serviço tocar a mw-api.
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api.v1 import documents
+from app.core.db import get_db
+from app.core.security import criar_token
+
+
+@pytest.fixture
+def http(db, dono_com_duas_usinas):
+    """Só o router de documentos, com o banco do teste — a mesma postura dos testes de
+    energia: um router alheio quebrado no meio de uma edição não derruba este arquivo."""
+    aplicacao = FastAPI()
+    aplicacao.include_router(documents.router)
+    aplicacao.dependency_overrides[get_db] = lambda: db
+    cliente = TestClient(aplicacao)
+    token, _ = criar_token(dono_com_duas_usinas.id)
+    cliente.headers["Authorization"] = f"Bearer {token}"
+    return cliente
+
+
+@pytest.mark.parametrize(
+    "veneno",
+    [
+        TRAVESSIA,
+        "../admin",
+        "..%2f..%2fadmin",
+        "geracao/../../plants",
+        "GERACAO",
+        "relatorio.pdf",
+        "",
+    ],
+)
+def test_tipo_fora_da_lista_e_422_sem_ir_ao_upstream(http, com_download, veneno):
+    """O ataque original, visto de fora: 422, e o meuWatt nem é chamado."""
+    espiao = com_download()
+
+    r = http.get("/api/v1/documents/4/file", params={"tipo": veneno})
+
+    assert r.status_code == 422, r.text
+    assert espiao.pedidos == [], "o valor recusado não pode ter atravessado a ponte"
+
+
+@pytest.mark.parametrize("peca", ["geracao", "paradas", "resumo"])
+def test_as_tres_pecas_atravessam_a_validacao(http, com_download, peca):
+    """O outro lado da mesma tranca: a lista é fechada, mas as três peças do fechamento
+    passam. Um 422 aqui seria o Resumo Executivo recusado de novo — o defeito que este
+    item veio corrigir."""
+    com_download()
+
+    r = http.get("/api/v1/documents/4/file", params={"tipo": peca})
+
+    assert r.status_code != 422, f"a peça '{peca}' voltou a ser recusada na porta"
+
+
+def test_o_resumo_executivo_chega_ao_navegador_como_pdf(http, com_download):
+    """Ponta a ponta: o pedido do dono era ver os TRÊS PDFs, e este era o que faltava."""
+    com_download()
+
+    r = http.get("/api/v1/documents/4/file", params={"tipo": "resumo"})
+
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content.startswith(b"%PDF-")
+    assert "relatorio-4-resumo.pdf" in r.headers["content-disposition"]
