@@ -403,13 +403,24 @@ export function naOrdemDoRanking<T extends { id: number; nome: string }>(
  * topo da lista JÁ é o 1º não há o que explicar, e a frase seria ruído.
  */
 export function legendaDoPosto(ranking: RankingOut | null): string | null {
-  if (!ranking || ranking.ordem !== 'asc') return null
+  // Sem posto na tela (ver `posicoesDo`) não há o que legendar — a frase explicaria uma
+  // coluna que não existe, e ainda escreveria "1º" numa tela que decidiu não dar medalha.
+  if (!ranking || ranking.ordem !== 'asc' || ranking.itens.length < 2) return null
   return 'A lista abre pelo maior valor; o posto é o do ranking do servidor, em que 1º é o menor.'
 }
 
-/** A posição de cada usina num ranking, para a tela carimbar o posto sem recontar nada. */
+/**
+ * A posição de cada usina num ranking, para a tela carimbar o posto sem recontar nada.
+ *
+ * **Com menos de duas colocadas não há posto nenhum.** "1º" numa lista de um é um pódio de
+ * uma pessoa: em setembro, a única usina com cronograma publicado recebia a medalha do
+ * ranking de atraso enquanto o ranking de cumprimento ao lado voltava com ZERO posições e a
+ * coluna inteira em travessão. Classificação exige alguém para ficar atrás.
+ */
 export function posicoesDo(ranking: RankingOut | null): Map<number, ItemRankingOut> {
-  return new Map((ranking?.itens ?? []).map((i) => [i.usina_id, i]))
+  const itens = ranking?.itens ?? []
+  if (itens.length < 2) return new Map()
+  return new Map(itens.map((i) => [i.usina_id, i]))
 }
 
 /**

@@ -980,4 +980,36 @@ describe('os dois comparativos no menu e nas rotas', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/comparar/manutencao'))
     expect(window.location.search).toBe('?ordenar=cumprimento')
   })
+
+  it('ranking com UMA colocada não dá medalha a ninguém', async () => {
+    // O DEFEITO que o dono viu: em setembro, a única usina com cronograma publicado
+    // recebia "1º" no ranking de atraso enquanto o ranking de cumprimento ao lado voltava
+    // com ZERO posições e a coluna inteira em travessão. Um pódio de uma pessoa não é
+    // classificação — classificar exige alguém para ficar atrás.
+    const so_uma = respostaManutencao()
+    so_uma.manutencao!.rankings = [
+      { ...RANK_ATRASO, itens: [RANK_ATRASO.itens[0]] },
+      ...so_uma.manutencao!.rankings.slice(1),
+    ]
+    // O 2º argumento é o da MANUTENÇÃO: o 1º é a energia, e passar no lugar errado deixaria
+    // a tela lendo a resposta padrão de seis colocadas.
+    servidor(respostaEnergia(), so_uma)
+    const { container } = montar(CompararManutencao, '/comparar/manutencao')
+    await screen.findByText('Qual usina está mais atrasada na manutenção?')
+
+    const POSTO = '[title="Posição no ranking do servidor"]'
+    expect(container.querySelectorAll(POSTO)).toHaveLength(0)
+    // E a legenda do posto sai junto: ela explicaria uma coluna que não existe — e ainda
+    // escreveria "1º" numa tela que acabou de decidir não dar medalha a ninguém.
+    expect(container.textContent).not.toContain('1º é o menor')
+
+    // E o contraste: com duas ou mais, o posto volta.
+    cleanup()
+    servidor()
+    const cheio = montar(CompararManutencao, '/comparar/manutencao')
+    await screen.findByText('Qual usina está mais atrasada na manutenção?')
+    await waitFor(() =>
+      expect(cheio.container.querySelectorAll(POSTO).length).toBeGreaterThan(1),
+    )
+  })
 })
