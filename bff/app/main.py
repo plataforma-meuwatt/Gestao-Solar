@@ -27,6 +27,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.v1 import (
     auth,
     billing,
+    carteira,
     documents,
     energia,
     equipamentos,
@@ -148,6 +149,7 @@ app.include_router(documents.router)
 app.include_router(energia.router)
 app.include_router(resumo.router)
 app.include_router(relatorio.router)
+app.include_router(carteira.router)
 
 
 @app.get("/health", tags=["infra"])

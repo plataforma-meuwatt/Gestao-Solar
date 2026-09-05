@@ -103,6 +103,17 @@ MEUWATT: list[Rota] = [
     Rota("mw.breakdowns", "GET", "/plants/{slug}/breakdowns/range",
          "Paradas do portal — fonte primária; se falhar, o BFF troca sozinho para alerts",
          params={"start": "{semana_passada}", "end": "{hoje}"}),
+    # As duas seções do fechamento do mês (`/energia/usinas/{id}/relatorio-mes`): as
+    # considerações escritas pela operação e a timeline curada das paradas. Mês sem
+    # curadoria responde 200 com `show_in_report=false` — estado normal, não erro: a seção
+    # simplesmente não aparece naquele mês, então nenhuma das duas é essencial.
+    Rota("mw.observations", "GET", "/plants/{slug}/observations",
+         "As considerações gerais do mês, na aba Relatório do painel de energia",
+         essencial=False,
+         params={"period": "MENSAL", "date_from": "{primeiro_do_mes}"}),
+    Rota("mw.paradas_timeline", "GET", "/plants/{slug}/paradas-timeline",
+         "A timeline curada das paradas do mês, na aba Relatório do painel de energia",
+         essencial=False, params={"year": "{ano}", "month": "{mes_numero}"}),
     Rota("mw.trip_events", "GET", "/plants/{slug}/relays/{relay_id}/trip-events",
          "Histórico de flags do relé de proteção, na tela de Equipamentos",
          essencial=False, sonda=False,
@@ -577,6 +588,10 @@ async def varrer(db: Session, produto: Produto) -> Varredura:
         "hoje": hoje.isoformat(),
         "semana_passada": (hoje - timedelta(days=7)).isoformat(),
         "ano": str(hoje.year),
+        # As duas seções do fechamento do mês pedem a data e o mês SEPARADOS — uma em
+        # `date_from=YYYY-MM-DD`, a outra em `month=9`.
+        "primeiro_do_mes": primeiro_do_mes.isoformat(),
+        "mes_numero": str(hoje.month),
         "mes_atual": hoje.strftime("%Y-%m"),
         "mes_passado": (primeiro_do_mes - timedelta(days=1)).strftime("%Y-%m"),
     }

@@ -5,9 +5,11 @@ lá, a pendência, igual tem no meuPlano, mas de forma mais simples"*. No meuPla
 um container do funil global (`kind=pendencia`) com etapa, checklist, feed, subitens e
 documentos. Aqui sai só o que responde à pergunta do cliente corporativo: **em que etapa está,
 quando mexeram por último, o que a equipe respondeu, o que foi publicado e que OS resolve**.
-Checklist, subitens e feed ficam de fora de propósito — não é falta, é o "mais simples".
+Checklist e feed ficam de fora de propósito — não é falta, é o "mais simples". Subitem de
+pai compartilhável aparece na LISTA (é uma cobrança que o cliente pode ver), pendurado no pai
+por `parent_id`; o que não existe é o conteúdo dele dentro do detalhe do pai.
 
-Três decisões que moldam este arquivo:
+Quatro decisões que moldam este arquivo:
 
 **Duas cercas, não uma.** O meuPlano corta pelo `shareable` na rota `visao-cliente`, mas o
 token de serviço deste BFF é de uma conta da Splendor — e `_filtrar_compartilhaveis` do
@@ -25,6 +27,15 @@ aquele `did` entre os publicados — e a sessão viaja no cabeçalho, nunca na U
 **O HTML rico não entra no portal.** `parecer_html` é saída do editor do meuPlano; injetá-lo
 no DOM do portal do cliente seria abrir a porta para o que quer que alguém tenha colado lá.
 Vira texto com as quebras preservadas, e a tela mostra com `white-space: pre-line`.
+
+**O prazo da pendência NÃO é o `end_date`.** No meuPlano, quem escreve o prazo de uma
+pendência escreve em `extra.previsao_conclusao` — a coluna "Prazo" da lista, o campo do
+detalhe e o board público leem `extra.previsao_conclusao || end_date`, nessa ordem
+(`ContainerListView.tsx:225`, `PublicPendenciasView.tsx:99`, `pendencias_public.py:225`).
+Este BFF lia só o `end_date`: pendência com previsão preenchida e sem `end_date` saía sem
+prazo, nunca podia vencer, e o cartão do portal dizia **"Prazo vencido: 0"** com a
+pendência atrasada visível na tabela logo abaixo. A régua agora é única (`_prazo`) e é a
+mesma do meuPlano — dois lugares que respondem "qual é o prazo?" têm de dar a mesma data.
 """
 
 import asyncio
@@ -50,6 +61,7 @@ from app.api.v1.manutencao import (
     _usinas_com_manutencao,
 )
 from app.api.v1.plants import _instante_medida, usinas_do_usuario
+from app.core.datas import BRT
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
@@ -89,6 +101,31 @@ TOM_DA_CRITICIDADE: dict[str, str] = {
     "BAIXA": "semDados",
 }
 
+#: A ORDEM da criticidade, do pior para o melhor — crescente, para a tela poder ordenar por
+#: ela sem conhecer o vocabulário. Sai do servidor pela mesma razão que `situacao` e `tom`:
+#: se a tela remontasse a escala, "média" acabaria depois de "baixa" em algum lugar (ordem
+#: alfabética) e as duas telas ordenariam a mesma lista de jeitos diferentes.
+CRITICIDADE_RANK: dict[str, int] = {"CRITICA": 0, "ALTA": 1, "MEDIA": 2, "BAIXA": 3}
+
+#: Sem criticidade declarada — ou com um código novo que este BFF ainda não conhece — vai
+#: para o FIM da ordem, e não para fora dela: a pendência tem de continuar aparecendo.
+SEM_CRITICIDADE_RANK = 4
+
+#: A coluna do kanban do cliente. Deriva SÓ do status, nunca do prazo: `situacao` troca para
+#: "Prazo vencido" quando a data passou, e uma coluna que seguisse a frase faria a pendência
+#: atrasada sumir das três colunas do quadro. O vermelho é `tom`; a coluna é onde ela mora.
+#: Estado desconhecido cai em "aguardando" (ninguém confirmou que andou) — assim toda
+#: pendência compartilhada mora em exatamente uma coluna e as contagens fecham com o total.
+COLUNA_DA_PENDENCIA: dict[str, str] = {
+    "ABERTO": "aguardando",
+    "EM_ANDAMENTO": "em_andamento",
+    "CONCLUIDO": "concluida",
+}
+
+#: Há quanto tempo ninguém mexe. É o que responde "isto está parado?" — a data crua obriga o
+#: leitor a fazer a conta, e cada tela faria com um fuso diferente.
+FAIXAS_PARADA = ("hoje", "7d", "30d", "+30d")
+
 
 class PendenciaOut(BaseModel):
     id: int
@@ -110,15 +147,39 @@ class PendenciaOut(BaseModel):
     status: str | None = None
     situacao: str
     tom: str
+    #: Em qual das TRÊS colunas do quadro esta pendência mora: `aguardando`, `em_andamento`
+    #: ou `concluida`. Não é `situacao` minúscula — ver `COLUNA_DA_PENDENCIA`: a pendência
+    #: com prazo vencido continua em "aguardando", só que pintada de vermelho.
+    coluna: str
     criticidade: str | None = None
     criticidade_tom: str | None = None
+    #: A posição da criticidade na escala (0 = crítica … 4 = sem criticidade declarada).
+    #: Ordenar por ela é crescente. Nunca nulo: sem criticidade a pendência vai para o fim
+    #: da ordenação, e não some dela.
+    criticidade_rank: int = SEM_CRITICIDADE_RANK
     responsavel: str | None = None
     aberta_em: datetime | None = None
-    #: `end_date` do container. Vermelho só quando passou E a pendência não concluiu — é o
-    #: `tom` que carrega essa regra, não a tela.
+    #: O prazo combinado: `extra.previsao_conclusao` e, na falta dele, `end_date` — a mesma
+    #: ordem que o meuPlano usa na coluna "Prazo" e no board público. Vermelho só quando
+    #: passou E a pendência não concluiu — é o `tom` que carrega essa regra, não a tela.
     prazo: date | None = None
     ultima_atividade_em: datetime | None = None
+    #: `hoje` | `7d` | `30d` | `+30d` — há quanto tempo ninguém mexe, derivado de
+    #: `ultima_atividade_em` no fuso da usina. Nulo quando não há atividade datada: aí a
+    #: tela mostra travessão, e não "+30d", que seria uma acusação inventada.
+    faixa_parada: str | None = None
     concluida_em: datetime | None = None
+    #: O equipamento principal (o 1º vinculado), como o card do meuPlano mostra.
+    equipamento: str | None = None
+    #: Quantos equipamentos ao todo — o card diz "principal +N". Nulo = o upstream não
+    #: contou; zero é "nenhum equipamento vinculado", que é outra coisa.
+    equip_count: int | None = None
+    #: Subitem: o id da pendência-mãe. O meuPlano permite UM nível, e o cliente vê o filho
+    #: quando o pai é compartilhável — sem isto ele aparece solto, como se fosse outra
+    #: cobrança.
+    parent_id: int | None = None
+    #: Quantos subitens esta pendência tem.
+    child_count: int | None = None
     #: Quantos documentos PUBLICADOS ao cliente. Nulo = o upstream não contou.
     documentos: int | None = None
     os_count: int | None = None
@@ -131,6 +192,15 @@ class PendenciasOut(BaseModel):
     abertas: int | None = None
     concluidas: int | None = None
     prazo_vencido: int | None = None
+    #: As três colunas do quadro, contadas AQUI. `aguardando + em_andamento + concluidas`
+    #: fecha com `total` por construção (ver `COLUNA_DA_PENDENCIA`): os cartões do topo e as
+    #: colunas do kanban descrevem o MESMO conjunto, e o cliente não pode somar as colunas e
+    #: achar um número diferente do cartão.
+    aguardando: int | None = None
+    em_andamento: int | None = None
+    #: O que ELE cobrou e ainda não voltou — o recorte que abre a tela. `abertas` conta o
+    #: time todo; esta conta só o que leva a marca do cliente.
+    cobradas_abertas: int | None = None
     pendencias: list[PendenciaOut] = []
     usinas_com_manutencao: int = 0
     aviso: str | None = None
@@ -170,10 +240,28 @@ def _situacao_da_pendencia(o: dict[str, Any], hoje: date) -> tuple[str | None, s
         return None, "Sem situação", "semDados"
     frase = SITUACAO_PENDENCIA.get(chave, chave.replace("_", " ").capitalize())
     tom = TOM_DA_PENDENCIA.get(chave, "semDados")
-    prazo = _data(o.get("end_date"))
+    prazo = _prazo(o)
     if chave not in CONCLUIDA and prazo is not None and prazo < hoje:
         return cru, "Prazo vencido", "parado"
     return cru, frase, tom
+
+
+def _prazo(o: dict[str, Any]) -> date | None:
+    """O prazo combinado da pendência — `extra.previsao_conclusao`, `end_date` na falta dele.
+
+    Esta ordem não é escolha nossa: é a do meuPlano. Lá quem digita o prazo de uma pendência
+    digita a *previsão de conclusão*, que fica no `extra`; `end_date` é o campo genérico do
+    contêiner, herdado do funil, e na maioria das pendências está vazio. Ler só o `end_date`
+    (o que este arquivo fazia) tinha duas consequências, e as duas apareceram no portal: a
+    coluna Prazo saía em travessão para pendência que TEM prazo, e o cartão "Prazo vencido"
+    marcava **0** com pendências atrasadas na tabela logo abaixo.
+    """
+    extra = o.get("extra")
+    if isinstance(extra, dict):
+        previsao = _data(extra.get("previsao_conclusao"))
+        if previsao is not None:
+            return previsao
+    return _data(o.get("end_date"))
 
 
 def _data(valor: Any) -> date | None:
@@ -194,11 +282,49 @@ def _data(valor: Any) -> date | None:
         return instante.date() if instante else None
 
 
-def _criticidade(o: dict[str, Any]) -> tuple[str | None, str | None]:
+def _criticidade(o: dict[str, Any]) -> tuple[str | None, str | None, int]:
+    """`(código, tom, posição na escala)`. Código novo mantém o rótulo cru na tela e vai para
+    o fim da ordem — some da ordenação seria pior do que aparecer por último."""
     cru = _texto(o.get("criticidade"))
     if cru is None:
-        return None, None
-    return cru, TOM_DA_CRITICIDADE.get(cru.strip().upper())
+        return None, None, SEM_CRITICIDADE_RANK
+    chave = cru.strip().upper()
+    return cru, TOM_DA_CRITICIDADE.get(chave), CRITICIDADE_RANK.get(chave, SEM_CRITICIDADE_RANK)
+
+
+def _faixa_parada(ultima: datetime | None, hoje: date) -> str | None:
+    """Há quanto tempo ninguém mexe, em quatro faixas.
+
+    A data é lida no fuso da usina (BRT): o comentário das 22h de ontem chega como 01h UTC
+    de hoje, e contá-lo em UTC diria "hoje" para uma coisa que aconteceu ontem à noite.
+    Sem `ultima_atividade_em` a faixa é NULA — dizer "+30d" seria acusar a equipe de
+    abandono a partir de um campo que o upstream simplesmente não mandou.
+    """
+    if ultima is None:
+        return None
+    dias = (hoje - ultima.astimezone(BRT).date()).days
+    if dias <= 0:
+        return "hoje"
+    if dias <= 7:
+        return "7d"
+    if dias <= 30:
+        return "30d"
+    return "+30d"
+
+
+def _concluida(p: PendenciaOut) -> bool:
+    return (p.status or "").strip().upper() in CONCLUIDA
+
+
+def _vencida(p: PendenciaOut, hoje: date) -> bool:
+    """A régua do cartão "Prazo vencido" — a MESMA do `tom` de cada linha.
+
+    Contá-la aqui a partir do `prazo` já resolvido (e não de `end_date` cru, nem do `tom`
+    por acaso) é o que garante que o cartão e as linhas vermelhas da tabela falem do mesmo
+    conjunto. Concluída fora do prazo não conta: já foi resolvida, e pintá-la de vermelho
+    faria o cliente cobrar de novo o que já aconteceu.
+    """
+    return p.prazo is not None and p.prazo < hoje and not _concluida(p)
 
 
 def _responsavel(o: dict[str, Any]) -> str | None:
@@ -232,8 +358,19 @@ def _cobrada(o: dict[str, Any]) -> bool:
 
 
 def _pendencia_out(o: dict[str, Any], link: PlantLink, hoje: date | None = None) -> PendenciaOut:
-    cru, frase, tom = _situacao_da_pendencia(o, hoje or date.today())
-    criticidade, criticidade_tom = _criticidade(o)
+    """O container do meuPlano recortado nos campos que o cliente pode ver.
+
+    Cada campo é ESCOLHIDO um a um, de propósito. O upstream (`visao-cliente`) devolve o
+    `ContainerOut` inteiro — com `extra`, `fields`, `delegados`, `created_by`, `req_done`,
+    `processo_de_*`, `tags`. Repassar o objeto (ou herdar campo por `model_config`) faria o
+    portal do cliente ganhar campo interno na primeira vez que o meuPlano acrescentasse um,
+    sem ninguém reparar. `test_pendencias_filtros.py` lista as chaves e reprova se alguma
+    dessas aparecer.
+    """
+    hoje = hoje or date.today()
+    cru, frase, tom = _situacao_da_pendencia(o, hoje)
+    criticidade, criticidade_tom, criticidade_rank = _criticidade(o)
+    ultima = _instante_medida(o.get("last_activity_at"))
     return PendenciaOut(
         id=_inteiro(o.get("id")) or 0,
         numero=_inteiro(o.get("numero")),
@@ -245,15 +382,24 @@ def _pendencia_out(o: dict[str, Any], link: PlantLink, hoje: date | None = None)
         status=cru,
         situacao=frase,
         tom=tom,
+        coluna=COLUNA_DA_PENDENCIA.get((cru or "").strip().upper(), "aguardando"),
         criticidade=criticidade,
         criticidade_tom=criticidade_tom,
+        criticidade_rank=criticidade_rank,
         responsavel=_responsavel(o),
         aberta_em=_instante_medida(o.get("created_at")),
-        prazo=_data(o.get("end_date")),
-        ultima_atividade_em=_instante_medida(o.get("last_activity_at")),
+        prazo=_prazo(o),
+        ultima_atividade_em=ultima,
+        faixa_parada=_faixa_parada(ultima, hoje),
         # O container não guarda "concluída em"; só sai quando o upstream souber dizer.
         # Usar `last_activity_at` no lugar seria inventar uma data.
         concluida_em=_instante_medida(o.get("concluida_em") or o.get("closed_at")),
+        # `principal` é o 1º equipamento vinculado; `equipment_label` é o do campo antigo de
+        # equipamento único — o próprio meuPlano já cai de um para o outro.
+        equipamento=_texto(o.get("principal")) or _texto(o.get("equipment_label")),
+        equip_count=_inteiro(o.get("equip_count")),
+        parent_id=_inteiro(o.get("parent_id")),
+        child_count=_inteiro(o.get("child_count")),
         documentos=_inteiro(o.get("doc_count")),
         os_count=_inteiro(o.get("os_count")),
     )
@@ -397,9 +543,16 @@ async def listar_pendencias(
         return saida
 
     saida.total = len(itens)
-    saida.concluidas = sum(1 for p in itens if (p.status or "").strip().upper() in CONCLUIDA)
+    saida.concluidas = sum(1 for p in itens if p.coluna == "concluida")
+    saida.em_andamento = sum(1 for p in itens if p.coluna == "em_andamento")
+    # Por subtração, e não por uma terceira contagem: assim as três colunas fecham com o
+    # total mesmo que o meuPlano ganhe um estado que este BFF ainda não conhece.
+    saida.aguardando = saida.total - saida.concluidas - saida.em_andamento
     saida.abertas = saida.total - saida.concluidas
-    saida.prazo_vencido = sum(1 for p in itens if p.tom == "parado")
+    saida.prazo_vencido = sum(1 for p in itens if _vencida(p, hoje))
+    saida.cobradas_abertas = sum(
+        1 for p in itens if p.cobrada_pelo_cliente and p.coluna != "concluida"
+    )
     if not itens:
         saida.aviso = "Nenhuma pendência compartilhada nas suas usinas."
     return saida

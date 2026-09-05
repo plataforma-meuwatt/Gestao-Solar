@@ -336,6 +336,84 @@ class MeuWattClient:
             if isinstance(f, dict)
         ]
 
+    #: O que pode sair de uma parada CLASSIFICADA. A `AlertDetail` do upstream é o
+    #: registro de trabalho da equipe: ela carrega o número de série do inversor, o
+    #: `inverter_id`, o número da ordem de serviço, as notas do operador
+    #: (`observacoes`, `acknowledgement_note`, `suppression_note`), quem classificou e
+    #: quem editou a perda. Nada disso é do dono da usina — e o recorte fica AQUI, e não
+    #: em quem chama, pelo mesmo motivo de `CAMPOS_DA_FATURA`: a PII não pode depender
+    #: de cada chamador lembrar de descartá-la.
+    #:
+    #: `motivo`/`origem`/`causa` são a classificação que dá LASTRO à disponibilidade
+    #: contratual — sem elas o portal publica um número de teor contratual sem nenhuma
+    #: justificativa ao lado. `is_external_cause` é o que separa "foi a manutenção" de
+    #: "estava fora do alcance dela". `daily_losses` são as fatias por dia BRT do motor
+    #: (Σ = a perda da parada), e é o que permite recortar ao mês uma parada que
+    #: atravessa a virada sem estimar nada.
+    CAMPOS_DA_PARADA = (
+        "id",
+        "kind",
+        "started_at",
+        "resolved_at",
+        "is_active",
+        "duration_minutes",
+        "estimated_loss_kwh",
+        "daily_losses",
+        "motivo",
+        "origem",
+        "causa",
+        "is_external_cause",
+        "manual_group_id",
+        "transformer_name",
+    )
+
+    async def paradas_classificadas(self, slug: str) -> list[dict[str, Any]]:
+        """As paradas da usina com a CLASSIFICAÇÃO do operador, recortadas.
+
+        Vem de `alerts?status=all` (paginado por `alertas_todos`) e não de
+        `breakdowns/range`: a linha do `range` não traz `motivo` nem
+        `is_external_cause` — que são justamente o motivo desta leitura existir. Sem
+        filtro de período, como a fonte; o corte por data fica com quem chama, pela
+        mesma régua de `api/v1/paradas.py` (o dia BRT de `started_at`).
+        """
+        return [
+            {campo: a.get(campo) for campo in self.CAMPOS_DA_PARADA}
+            for a in await self.alertas_todos(slug, status="all")
+            if isinstance(a, dict)
+        ]
+
+    async def observacoes(
+        self, slug: str, periodo: str, de: date
+    ) -> list[dict[str, Any]]:
+        """As observações que a equipe escreveu para aquele período do relatório.
+
+        `periodo` é o vocabulário do upstream (`DIÁRIO | SEMANAL | MENSAL | ANUAL`) e
+        `de` é o primeiro dia da janela — a chave (usina, seção, período, início) é o
+        que separa a caixa de abril da de maio.
+
+        **Só leitura.** Escrever é trabalho de operação e não tem por que atravessar
+        para o portal do cliente: o que não existe no cliente não vaza por descuido de
+        rota nova (mesma postura de `/{id}/pdf` das faturas).
+        """
+        corpo = await self._get(
+            f"/plants/{slug}/observations", period=periodo, date_from=de.isoformat()
+        )
+        itens = corpo.get("observations") if isinstance(corpo, dict) else corpo
+        if not isinstance(itens, list):
+            return []
+        return [i for i in itens if isinstance(i, dict)]
+
+    async def timeline_de_paradas(self, slug: str, ano: int, mes: int) -> dict[str, Any]:
+        """A timeline CURADA das paradas do mês — a história contada por quem esteve lá.
+
+        O upstream devolve `show_in_report=False` e `milestones=[]` para o mês que
+        ninguém curou, e é assim que ele chega aqui: **mês sem curadoria é estado
+        normal, não erro** — a seção simplesmente não existe naquele mês.
+        """
+        return await self._get(
+            f"/plants/{slug}/paradas-timeline", year=int(ano), month=int(mes)
+        )
+
     async def portal_relatorios(self, token: str | None = None) -> dict[str, Any]:
         """Portal do Cliente: relatórios publicados.
 

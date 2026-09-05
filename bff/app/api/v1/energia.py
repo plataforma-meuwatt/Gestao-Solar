@@ -49,6 +49,7 @@ from app.api.v1.plants import (
     _usina_monitorada,
 )
 from app.core.datas import BRT
+from app.core.datas import agora as agora_na_usina
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
@@ -2893,3 +2894,707 @@ def _origem_do_previsto_anual(
         if _previsto_manual(linha, hpoa.get(mes, 0.0), ghi.get(mes, 0.0)) is not None:
             return "manual_corrigido"
     return projeto_origem
+
+
+# ── o fechamento do mês ─────────────────────────────────────────────────────
+#
+# A §1 e a §5 da aba Relatório do meuWatt, e nada mais. Não é um sexto recorte da mesma
+# pergunta: é **a resposta**, e ela só existe travada no MÊS.
+#
+# O que entra é o que as outras quatro abas NÃO respondem:
+#
+# - **energia potencial** (medido + perdido em paradas) e o desvio dela contra o projeto —
+#   o único par de números do meuWatt inteiro que separa "faltou sol" de "a usina parou".
+#   Hoje o cliente lê `−7 %` na aba Mês e não tem como saber de qual dos dois se trata;
+# - **as causas e os eventos com a classificação** — sem elas a
+#   `disponibilidade_contratual_pct` que o portal já publica é um número de teor contratual
+#   sem nenhuma justificativa ao lado;
+# - **as horas paradas COM o denominador** — `141h38 de 4.090h possíveis`. Um absoluto sem
+#   denominador em documento contratual é sempre lido para o lado mais alarmante;
+# - **as considerações gerais do mês**, somente leitura. É a única coisa da aba que não é
+#   aritmética: todo o resto o cliente infere, isto ele não pode;
+# - **a timeline curada**, quando existe. Mês sem curadoria não tem a seção — é o
+#   comportamento certo, não uma limitação.
+#
+# Fica DELIBERADAMENTE de fora tudo o que já é Mês / Ano / Unidades / comparativo (os
+# gráficos diários, os rankings por UC, skid e inversor) e **a fábrica de PDF inteira**:
+# capa, contracapa, branding, QR, cabeçalho corrente, ganchos de impressão. O dono foi
+# explícito — "os dashs do meuWatt SEM a opção de gerar PDF, mas com todas as informações".
+# O painel mostra número VIVO do mês que o cliente está olhando; a tela Relatórios entrega
+# documento FECHADO e assinado. Republicar o PDF aqui seria a terceira cópia do mesmo
+# conteúdo, e a que envelhece.
+#
+# ⚠️ **A perda tem UMA fonte.** `perdida_kwh` é o `summary.total_lost_kwh` que já sustenta
+# a nossa disponibilidade — não a conta paralela do `useReportParadas` do meuWatt, que
+# recorta ao período e é suppression-aware e por isso DIVERGE dela (medido na Pirapozinho:
+# cabeçalho 30,98 MWh contra donut 29,90 MWh). As causas são lidas dos alertas, que é outra
+# janela, e **por isso a resposta declara as duas** (`perda_origem`, `causas_origem`,
+# `causas_total_kwh`, `causas_conferem`) em vez de reescalar uma pela outra: rateio produz
+# um número que ninguém mediu, e a casa proíbe número inventado. Quando os dois não podem
+# ser o mesmo, a tela diz de que janela cada um saiu.
+
+
+#: Período do vocabulário do upstream para as observações. O fechamento é sempre mensal.
+PERIODO_MENSAL = "MENSAL"
+
+#: A seção da caixa de texto que é dirigida AO CLIENTE. As outras (`dash:detalhamento`,
+#: `dash:ucs`, `dash:paradas`, `dash:meteo`, `dash:desvio`) são conversa interna de
+#: operação e não atravessam — só esta é o fechamento que o dono lê.
+SECAO_DAS_CONSIDERACOES = "dash:gerais"
+
+#: Rótulo da parada que o operador ainda não classificou. Não é uma causa: é a ausência
+#: dela, e escondê-la do ranking esconderia justamente a energia sem explicação.
+SEM_CLASSIFICACAO = "Não classificada"
+
+#: Rótulo do inversor que PRODUZIU abaixo dos pares. Não é parada — os kWh contam, as
+#: horas offline não (o aparelho estava ligado).
+BAIXA_GERACAO = "Baixa geração"
+
+#: Tolerância, em %, entre a perda do monitoramento e a soma das causas lidas dos alertas.
+#: Acima dela `causas_conferem` sai falso e a tela é obrigada a dizer de que janela cada
+#: número saiu.
+TOLERANCIA_DAS_CAUSAS_PCT = 1.0
+
+
+class CausaOut(BaseModel):
+    """Uma fatia do ranking de causas — por que a usina parou e quanto isso custou."""
+
+    categoria: str
+    eventos: int
+    #: Energia perdida atribuída a esta causa, recortada ao mês. `None` = o upstream não
+    #: trouxe o número em nenhum dos eventos da categoria.
+    energia_kwh: float | None = None
+    #: Horas paradas somadas por inversor afetado. `None` quando algum evento da categoria
+    #: veio sem duração — somar só os que têm faria a conta parecer menor do que foi.
+    horas: float | None = None
+    #: A causa estava fora do alcance da manutenção. É o que a contratual desconta.
+    externa: bool = False
+    #: `False` = o operador ainda não classificou estes eventos.
+    classificada: bool = False
+
+
+class EventoDeParada(BaseModel):
+    """Uma parada do mês, com a causa e a classificação.
+
+    **A contagem é por parada, não por evento agrupado por escopo.** O agrupamento
+    "usina / skid / inversor" do meuWatt mora no front dele e nos endpoints
+    `/shadow-breakdowns`, que respondem 403 ao nosso token de serviço — replicá-lo daqui
+    seria inventar um segundo detector, que divergiria do primeiro na primeira mudança.
+    """
+
+    #: Dia BRT de início, `YYYY-MM-DD`. É o mesmo critério de recorte de
+    #: `api/v1/paradas.py` (`stopped_at::date`), para as duas telas cortarem igual.
+    inicio: str
+    #: Dia BRT do fim. `None` = ainda em aberto.
+    fim: str | None = None
+    em_aberto: bool = False
+    #: `parada` (inversor sem produzir) ou `degradacao` (produzindo abaixo dos pares).
+    tipo: str = "parada"
+    #: A UC afetada, pelo nome. `None` = o upstream não resolveu o transformador.
+    unidade: str | None = None
+    #: O motivo classificado pelo operador. `None` = ainda não classificada.
+    causa: str | None = None
+    origem: str | None = None
+    externa: bool = False
+    classificada: bool = False
+    #: Quantos inversores a parada atingiu. Só passa de 1 quando o próprio meuWatt agrupou
+    #: as linhas (`manual_group_id`, que é agrupamento PERSISTIDO no banco dele).
+    inversores_afetados: int = 1
+    horas: float | None = None
+    energia_kwh: float | None = None
+
+
+class MarcoOut(BaseModel):
+    """Um card da timeline curada. Conteúdo 100 % autorado pela operação."""
+
+    id: str
+    #: Instante do marco, ISO. Hora 00:00 = marco "de dia inteiro".
+    em: str
+    #: `parada | retomada | normalizado | recorrente | degradacao | manutencao | info`.
+    tom: str
+    chip: str
+    titulo: str
+    sub: str | None = None
+    #: Os marcos do MESMO evento compartilham o grupo (parada → retomada → normalizado).
+    grupo: str | None = None
+
+
+class TimelineOut(BaseModel):
+    #: O operador ligou a seção para este mês. `False` = a seção não existe no mês, e a
+    #: tela não desenha uma espinha vazia.
+    exibir: bool = False
+    marcos: list[MarcoOut] = []
+
+
+class ConsideracoesOut(BaseModel):
+    """O fechamento narrativo do mês, escrito pela equipe. Somente leitura no portal:
+    escrever é trabalho de operação."""
+
+    texto: str
+    autor: str | None = None
+    #: Instante da última edição, ISO.
+    em: str | None = None
+
+
+class RegraDoFechamentoOut(BaseModel):
+    potencial: str
+    perda: str
+    horas: str
+    causas: str
+
+
+class RelatorioMesOut(BaseModel):
+    referencia: str
+    inicio: str
+    fim: str
+    rotulo: str
+    em_curso: bool = False
+    dia_de_corte: int | None = None
+
+    # ── os números que vêm do painel, sem recontar ───────────────────────
+    #: Cópia do painel do mesmo mês — está aqui para o potencial ser CONFERÍVEL na própria
+    #: resposta, não para ser uma segunda medição.
+    medido_inversores_kwh: float | None = None
+    perdida_kwh: float | None = None
+    projeto_proporcional_kwh: float | None = None
+    medido_vs_projeto_pct: float | None = None
+
+    # ── o par que separa clima de parada ─────────────────────────────────
+    #: `medido + perdido em paradas` — o que a usina teria entregue se não tivesse parado.
+    potencial_kwh: float | None = None
+    #: `(potencial − projeto) ÷ projeto`, em %. O cartão mais valioso da aba: com ele bom e
+    #: o `medido_vs_projeto_pct` ruim, o mês foi de paradas — não de falta de sol.
+    potencial_vs_projeto_pct: float | None = None
+
+    #: Quanto da geração do mês se perdeu: `perdida ÷ (base + perdida)`, em %.
+    perda_pct: float | None = None
+    #: `fronteira` ou `inversor` — sobre qual medição o percentual acima foi tirado. A
+    #: fronteira manda quando existe e cobre o mês inteiro; sai declarado porque as duas
+    #: bases dão números diferentes para a mesma pergunta.
+    perda_base: str | None = None
+    #: De onde veio `perdida_kwh`. É o mesmo número que sustenta a disponibilidade.
+    perda_origem: str | None = None
+
+    # ── a régua do tempo ─────────────────────────────────────────────────
+    #: Horas paradas somadas por inversor afetado, no recorte diurno. `None` quando algum
+    #: evento veio sem duração.
+    horas_paradas: float | None = None
+    #: O denominador: horas de sol decorridas × nº de inversores. Sem ele, `141h` soam
+    #: como uma semana parada.
+    horas_possiveis: float | None = None
+    #: Quantos inversores entraram no denominador. O percentual nunca sai sem ele.
+    inversores_considerados: int | None = None
+    #: Eventos cuja duração o monitoramento não soube calcular — é o motivo de
+    #: `horas_paradas` sair em travessão.
+    eventos_sem_duracao: int = 0
+
+    # ── o porquê ─────────────────────────────────────────────────────────
+    causas: list[CausaOut] = []
+    eventos: list[EventoDeParada] = []
+    #: `alertas` = as paradas foram lidas; `None` = não foram, e `causas`/`eventos` vazios
+    #: significam "não sei", não "não parou".
+    paradas_origem: str | None = None
+    #: A soma de `causas[].energia_kwh`. Vem de OUTRA janela que a `perdida_kwh`.
+    causas_total_kwh: float | None = None
+    causas_origem: str | None = None
+    #: As duas leituras da mesma perda batem dentro de `TOLERANCIA_DAS_CAUSAS_PCT`.
+    #: `None` = falta um dos lados para comparar.
+    causas_conferem: bool | None = None
+    eventos_agrupamento: str
+
+    consideracoes: ConsideracoesOut | None = None
+    timeline: TimelineOut = TimelineOut()
+
+    regra: RegraDoFechamentoOut
+    aviso: str | None = None
+
+
+_REGRA_DO_FECHAMENTO = RegraDoFechamentoOut(
+    potencial=(
+        "Energia potencial = energia medida + energia perdida em paradas. É o que a usina "
+        "teria entregue se não tivesse parado."
+    ),
+    perda=(
+        "A energia perdida é a mesma que sustenta a disponibilidade do portal — um número "
+        "só para a mesma pergunta."
+    ),
+    horas=(
+        "As horas paradas somam o tempo de CADA inversor afetado, só no período diurno: "
+        "uma parada de 1h que atinge 3 inversores soma 3h. O total possível é multiplicado "
+        "pela mesma régua — horas de sol decorridas × nº de inversores."
+    ),
+    causas=(
+        "As causas vêm da classificação feita pela equipe. Parada ainda sem causa aparece "
+        "como não classificada, e não é distribuída entre as demais."
+    ),
+)
+
+#: A frase que a tela imprime ao lado da lista de eventos. Está aqui, e não no portal,
+#: porque é a declaração de uma limitação REAL da fonte — se ela mudar, muda no servidor.
+AGRUPAMENTO_DOS_EVENTOS = (
+    "Uma linha por parada registrada pelo monitoramento. Paradas que a equipe agrupou "
+    "aparecem numa linha só, com o número de inversores atingidos."
+)
+
+
+# ── leitura das paradas classificadas ───────────────────────────────────────
+
+
+def _dia_brt(valor: Any) -> date | None:
+    """O dia da usina em que o instante caiu. `_instante_local` converte o carimbo UTC do
+    meuWatt para o fuso da usina antes — sem isso, uma parada do fim da tarde escorregaria
+    para o dia seguinte."""
+    instante = _instante_local(valor)
+    return instante.date() if instante else None
+
+
+def _perda_no_mes(parada: dict[str, Any], inicio: date, fim: date) -> float | None:
+    """A perda da parada, recortada ao mês.
+
+    `daily_losses` são as fatias por dia BRT do próprio motor de perdas (Σ = a perda da
+    parada). Com elas, a parada que atravessa a virada do mês entra só com o pedaço daqui
+    — sem estimar nada. Sem elas vale a perda inteira, que é o que o upstream sabe dizer.
+    """
+    fatias = _lista(parada.get("daily_losses"))
+    if fatias:
+        soma = 0.0
+        houve = False
+        for fatia in fatias:
+            dia = _data(fatia.get("d"))
+            kwh = _numero(fatia.get("kwh"))
+            if dia is None or kwh is None or not (inicio <= dia <= fim):
+                continue
+            soma += kwh
+            houve = True
+        return round(soma, 2) if houve else None
+    return _numero(parada.get("estimated_loss_kwh"))
+
+
+def _e_degradacao(parada: dict[str, Any]) -> bool:
+    return str(parada.get("kind") or "stop") == "degradation"
+
+
+def _classificacao(parada: dict[str, Any]) -> tuple[str, str | None, bool, bool]:
+    """`(categoria, origem, externa, classificada)` de uma parada.
+
+    Degradação tem categoria própria: o inversor estava PRODUZINDO, e chamar isso de
+    parada misturaria duas coisas que o cliente precisa distinguir.
+    """
+    if _e_degradacao(parada):
+        return BAIXA_GERACAO, _texto(parada.get("origem")), False, True
+    motivo = _texto(parada.get("motivo")) or _texto(parada.get("causa"))
+    if motivo is None:
+        return SEM_CLASSIFICACAO, None, False, False
+    return motivo, _texto(parada.get("origem")), bool(parada.get("is_external_cause")), True
+
+
+def _grupos_de_parada(
+    paradas: list[dict[str, Any]], inicio: date, fim: date
+) -> list[list[dict[str, Any]]]:
+    """As paradas do mês, agrupadas SÓ pelo `manual_group_id`.
+
+    Esse identificador é agrupamento persistido no banco do meuWatt (a equipe juntou as
+    linhas à mão) — não a dedução do front dele, que não alcançamos. Parada sem ele é uma
+    linha sozinha, e é assim que a lista fica honesta: nunca inventamos um agrupamento,
+    nunca escondemos um que a equipe fez.
+    """
+    grupos: dict[str, list[dict[str, Any]]] = {}
+    soltas: list[list[dict[str, Any]]] = []
+    for parada in paradas:
+        dia = _dia_brt(parada.get("started_at"))
+        if dia is None or not (inicio <= dia <= fim):
+            continue
+        chave = _texto(parada.get("manual_group_id"))
+        if chave:
+            grupos.setdefault(chave, []).append(parada)
+        else:
+            soltas.append([parada])
+    return sorted(
+        [*grupos.values(), *soltas],
+        key=lambda g: min(str(p.get("started_at") or "") for p in g),
+    )
+
+
+def _evento_do_grupo(
+    grupo: list[dict[str, Any]], inicio: date, fim: date
+) -> EventoDeParada:
+    """Uma linha da lista de eventos, a partir das paradas agrupadas pela equipe."""
+    # A classificação do grupo é a da primeira linha classificada — a equipe classifica o
+    # grupo, não cada inversor. Nenhuma classificada, e o grupo é "não classificada".
+    classificados = [p for p in grupo if _classificacao(p)[3]]
+    categoria, origem, externa, classificada = _classificacao(
+        classificados[0] if classificados else grupo[0]
+    )
+    degradacao = all(_e_degradacao(p) for p in grupo)
+
+    comecos = [d for d in (_dia_brt(p.get("started_at")) for p in grupo) if d]
+    fins = [_dia_brt(p.get("resolved_at")) for p in grupo]
+    em_aberto = any(
+        bool(p.get("is_active")) if "is_active" in p else p.get("resolved_at") is None
+        for p in grupo
+    )
+
+    duracoes = [_numero(p.get("duration_minutes")) for p in grupo]
+    horas = (
+        None
+        if any(d is None for d in duracoes)
+        else round(sum(d for d in duracoes if d is not None) / 60, 2)
+    )
+    perdas = [_perda_no_mes(p, inicio, fim) for p in grupo]
+    presentes = [p for p in perdas if p is not None]
+    unidade = next(
+        (_texto(p.get("transformer_name")) for p in grupo if _texto(p.get("transformer_name"))),
+        None,
+    )
+
+    return EventoDeParada(
+        inicio=min(comecos).isoformat(),
+        fim=(None if em_aberto or any(f is None for f in fins) else max(fins).isoformat()),
+        em_aberto=em_aberto,
+        tipo="degradacao" if degradacao else "parada",
+        unidade=unidade,
+        causa=None if categoria == SEM_CLASSIFICACAO else categoria,
+        origem=origem,
+        externa=externa,
+        classificada=classificada,
+        inversores_afetados=len(grupo),
+        # Degradação não tem hora offline: o aparelho estava ligado, só rendendo menos. Os
+        # kWh dela continuam contando — a energia foi perdida do mesmo jeito.
+        horas=0.0 if degradacao else horas,
+        energia_kwh=round(sum(presentes), 2) if presentes else None,
+    )
+
+
+def _causas(eventos: list[EventoDeParada]) -> list[CausaOut]:
+    """O ranking de causas, por energia perdida. Uma linha por categoria."""
+    acumulado: dict[str, dict[str, Any]] = {}
+    for evento in eventos:
+        rotulo = (
+            BAIXA_GERACAO
+            if evento.tipo == "degradacao"
+            else (evento.causa or SEM_CLASSIFICACAO)
+        )
+        linha = acumulado.setdefault(
+            rotulo,
+            {
+                "eventos": 0,
+                "energia": [],
+                "horas": [],
+                "externa": evento.externa,
+                "classificada": evento.classificada,
+            },
+        )
+        linha["eventos"] += 1
+        linha["energia"].append(evento.energia_kwh)
+        linha["horas"].append(evento.horas)
+
+    saida = [
+        CausaOut(
+            categoria=rotulo,
+            eventos=linha["eventos"],
+            energia_kwh=_soma(linha["energia"]),
+            # Mesma régua de `api/v1/paradas.py`: falta uma duração, o total da categoria
+            # sai em travessão em vez de parecer menor do que foi.
+            horas=(
+                None
+                if any(h is None for h in linha["horas"])
+                else round(sum(h for h in linha["horas"] if h is not None), 2)
+            ),
+            externa=linha["externa"],
+            classificada=linha["classificada"],
+        )
+        for rotulo, linha in acumulado.items()
+    ]
+    # Por energia perdida, do maior para o menor — a categoria sem número vai para o fim,
+    # nunca para o topo com um zero que ninguém mediu.
+    return sorted(saida, key=lambda c: (c.energia_kwh is None, -(c.energia_kwh or 0.0)))
+
+
+def _horas_possiveis(
+    relatorio: dict[str, Any], inicio: date, fim_medido: date, agora: datetime
+) -> tuple[float | None, int | None]:
+    """`(horas-inversor de sol decorridas, nº de inversores)` — o denominador da régua.
+
+    A mesma janela solar que o monitoramento usa para recortar a duração das paradas
+    (`daily_solar_windows`), multiplicada pelo número de inversores: é o que faz numerador
+    e denominador nunca usarem réguas diferentes. No mês em curso o dia de hoje entra só
+    até agora — contá-lo inteiro faria a fração parada parecer menor do que é.
+    """
+    transformadores = _lista(relatorio.get("transformers"))
+    inversores = sum(
+        int(_numero(t.get("inverter_count")) or 0) for t in transformadores
+    ) or len(_lista(relatorio.get("inverters")))
+    if inversores <= 0:
+        return None, None
+
+    minutos = 0.0
+    for janela in _lista(relatorio.get("daily_solar_windows")):
+        dia = _data(janela.get("date"))
+        if dia is None or not (inicio <= dia <= fim_medido):
+            continue
+        nascer = _instante_local(janela.get("sunrise_utc"))
+        por = _instante_local(janela.get("sunset_utc"))
+        if nascer is not None and por is not None and por > nascer:
+            fecha = min(por, agora) if dia == agora.date() else por
+            if fecha > nascer:
+                minutos += (fecha - nascer).total_seconds() / 60
+            continue
+        # Sem o par nascer/pôr, o upstream ainda diz quanto durou o dia — só não dá para
+        # recortar em "agora", e o dia de hoje entra inteiro.
+        duracao = _numero(janela.get("duration_min"))
+        if duracao is not None and duracao > 0:
+            minutos += duracao
+
+    if minutos <= 0:
+        return None, inversores
+    return round(minutos * inversores / 60, 1), inversores
+
+
+def _consideracoes(observacoes: Any) -> ConsideracoesOut | None:
+    """A caixa `dash:gerais` do mês. Ausente = a seção não existe, e isso não é erro.
+
+    Várias observações na mesma seção: vale a mais recente. O meuWatt trata a caixa como
+    um DOCUMENTO único do mês ("Última edição por Fulano em dd/mm"), não como uma
+    conversa — publicar todas as versões aqui seria mostrar rascunho como fechamento.
+    """
+    candidatas = [
+        o
+        for o in _lista(observacoes)
+        if _texto(o.get("section")) == SECAO_DAS_CONSIDERACOES and _texto(o.get("body"))
+    ]
+    if not candidatas:
+        return None
+    escolhida = max(
+        candidatas, key=lambda o: str(o.get("updated_at") or o.get("created_at") or "")
+    )
+    editado = _instante_local(escolhida.get("updated_at") or escolhida.get("created_at"))
+    return ConsideracoesOut(
+        texto=_texto(escolhida.get("body")) or "",
+        autor=_texto(escolhida.get("user_name")),
+        em=editado.isoformat() if editado else None,
+    )
+
+
+def _timeline(bruta: Any) -> TimelineOut:
+    """A timeline curada, se a equipe ligou a seção para o mês.
+
+    `show_in_report` falso — ou mês nunca curado, que o upstream devolve como falso e sem
+    marcos — significa que a seção **não existe** naquele mês. É decisão de produto do
+    meuWatt, e ela atravessa: uma espinha vazia é pior que seção nenhuma.
+    """
+    corpo = _dicionario(bruta)
+    if not corpo.get("show_in_report"):
+        return TimelineOut()
+    marcos: list[MarcoOut] = []
+    for bruto in _lista(corpo.get("milestones")):
+        identidade = _texto(bruto.get("id"))
+        instante = _instante_local(bruto.get("at"))
+        tom = _texto(bruto.get("tone"))
+        titulo = _texto(bruto.get("title"))
+        if not identidade or instante is None or not tom or not titulo:
+            continue
+        marcos.append(
+            MarcoOut(
+                id=identidade,
+                em=instante.isoformat(),
+                tom=tom,
+                chip=_texto(bruto.get("chip")) or "",
+                titulo=titulo,
+                sub=_texto(bruto.get("sub")),
+                grupo=_texto(bruto.get("group")),
+            )
+        )
+    # A ORDEM DO ARRAY é conteúdo autoral: o editor do meuWatt reordena por setas e o
+    # servidor de lá NÃO re-ordena por data. Reordenar aqui reescreveria a narrativa.
+    return TimelineOut(exibir=True, marcos=marcos)
+
+
+def _fechamento_sem_dados(
+    alvo: date, inicio: date, fim: date, em_curso: bool, aviso: str
+) -> RelatorioMesOut:
+    """A aba abre vazia e dizendo o motivo — nunca com zeros, que se leem como medição."""
+    return RelatorioMesOut(
+        referencia=alvo.isoformat(),
+        inicio=inicio.isoformat(),
+        fim=fim.isoformat(),
+        rotulo=_rotulo_do_periodo("mes", alvo),
+        em_curso=em_curso,
+        eventos_agrupamento=AGRUPAMENTO_DOS_EVENTOS,
+        regra=_REGRA_DO_FECHAMENTO,
+        aviso=aviso,
+    )
+
+
+@router.get("/usinas/{plant_link_id}/relatorio-mes", response_model=RelatorioMesOut)
+async def relatorio_do_mes(
+    plant_link_id: int,
+    referencia: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> RelatorioMesOut:
+    """O fechamento do mês: potencial, causas, horas com denominador e as considerações.
+
+    **Travado no mês**, sem `recorte`: o fechamento narrativo de um ano não existe — as
+    considerações, a timeline e a classificação das paradas são todas escritas mês a mês.
+
+    **Compõe o painel, não o reescreve.** Os números de geração saem do MESMO
+    `_painel_do_mes` que responde `/painel` — daí `potencial_kwh` ser exatamente
+    `medido_inversores_kwh + perdida_kwh` do painel do mesmo mês, e não um parecido. Três
+    leituras entram além das cinco do painel: as paradas classificadas, as observações e a
+    timeline curada. **Nenhuma delas derruba a resposta**: cada uma fora do ar tira o seu
+    bloco e escreve um aviso.
+    """
+    link = _usina_monitorada(db, usuario, plant_link_id)
+    hoje = hoje_na_usina()
+    alvo = _referencia_pedida(referencia)
+    inicio, fim = _janela("mes", alvo)
+    fim_medido = min(fim, hoje)
+    em_curso = inicio <= hoje <= fim
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+    except Exception as exc:  # noqa: BLE001 — sem ponte a aba ainda abre, vazia e honesta
+        return _fechamento_sem_dados(
+            alvo, inicio, fim, em_curso, f"Monitoramento indisponível: {exc}"
+        )
+
+    (
+        relatorio,
+        pvsyst,
+        manual,
+        fronteira,
+        faturas,
+        paradas,
+        observacoes,
+        timeline,
+    ) = await asyncio.gather(
+        cliente.geracao_periodo(link.mw_plant_slug, inicio, fim_medido),
+        cliente.pvsyst(link.mw_plant_slug, inicio, fim),
+        cliente.pvsyst_manual(link.mw_plant_slug, alvo.year),
+        cliente.ssu_totais_mensais(link.mw_plant_slug, alvo.year),
+        cliente.faturas_concessionaria(link.mw_plant_slug, alvo.year),
+        cliente.paradas_classificadas(link.mw_plant_slug),
+        cliente.observacoes(link.mw_plant_slug, PERIODO_MENSAL, inicio),
+        cliente.timeline_de_paradas(link.mw_plant_slug, alvo.year, alvo.month),
+        return_exceptions=True,
+    )
+
+    if isinstance(relatorio, BaseException) or not isinstance(relatorio, dict):
+        motivo = relatorio if isinstance(relatorio, BaseException) else "resposta inesperada"
+        return _fechamento_sem_dados(
+            alvo, inicio, fim, em_curso, f"Monitoramento indisponível: {motivo}"
+        )
+
+    avisos: list[str] = []
+    if isinstance(pvsyst, BaseException):
+        avisos.append("a meta diária do projeto não veio")
+        pvsyst = {}
+    if isinstance(manual, BaseException):
+        avisos.append("a meta mensal do projeto não veio")
+        manual = {}
+    if isinstance(fronteira, BaseException):
+        avisos.append("a medição na fronteira não veio")
+        fronteira = {}
+    if isinstance(faturas, BaseException):
+        avisos.append("as faturas da distribuidora não vieram")
+        faturas = []
+    if isinstance(paradas, BaseException) or not isinstance(paradas, list):
+        avisos.append("as paradas classificadas não vieram")
+        paradas = None
+    if isinstance(observacoes, BaseException):
+        avisos.append("as considerações do mês não vieram")
+        observacoes = []
+    if isinstance(timeline, BaseException):
+        avisos.append("a timeline de paradas não veio")
+        timeline = {}
+
+    # O painel do MESMO mês, montado pela MESMA função que responde `/painel`. É o que faz
+    # o potencial daqui e o medido de lá serem o mesmo byte em vez de dois números
+    # parecidos — a lição que custou "−64,3 % numa tela e +101,7 % na outra".
+    painel = _painel_do_mes(
+        alvo=alvo,
+        inicio=inicio,
+        fim=fim,
+        fim_medido=fim_medido,
+        hoje=hoje,
+        em_curso=em_curso,
+        relatorio=relatorio,
+        pvsyst=pvsyst,
+        manual=manual,
+        fronteira=fronteira if isinstance(fronteira, dict) else {},
+        faturas=faturas,
+    )
+
+    medido = painel.medido_inversores_kwh
+    perdida = painel.perdida_kwh
+    potencial = (
+        round(medido + perdida, 2) if medido is not None and perdida is not None else None
+    )
+
+    # A BASE da perda: a fronteira manda quando existe e cobre o mês inteiro — é o ponto de
+    # entrega, onde a energia de fato chegou. Fronteira PARCIAL não serve de base: a
+    # diferença dela para o medido não é perda, é medidor a menos.
+    if painel.medido_fronteira_kwh is not None and not painel.fronteira_parcial:
+        base_kwh, perda_base = painel.medido_fronteira_kwh, "fronteira"
+    elif medido is not None:
+        base_kwh, perda_base = medido, "inversor"
+    else:
+        base_kwh, perda_base = None, None
+    perda_pct = (
+        round(perdida / (base_kwh + perdida) * 100, 2)
+        if perdida is not None and base_kwh is not None and (base_kwh + perdida) > 0
+        else None
+    )
+
+    eventos = (
+        [_evento_do_grupo(g, inicio, fim) for g in _grupos_de_parada(paradas, inicio, fim)]
+        if paradas is not None
+        else []
+    )
+    causas = _causas(eventos)
+    causas_total = _soma([c.energia_kwh for c in causas]) if causas else None
+    horas = [e.horas for e in eventos]
+    horas_possiveis, inversores = _horas_possiveis(
+        relatorio, inicio, fim_medido, agora_na_usina().replace(tzinfo=None)
+    )
+
+    return RelatorioMesOut(
+        referencia=alvo.isoformat(),
+        inicio=inicio.isoformat(),
+        fim=fim.isoformat(),
+        rotulo=painel.rotulo,
+        em_curso=em_curso,
+        dia_de_corte=painel.dia_de_corte,
+        medido_inversores_kwh=medido,
+        perdida_kwh=perdida,
+        projeto_proporcional_kwh=painel.projeto_proporcional_kwh,
+        medido_vs_projeto_pct=painel.desvios.medido_vs_projeto_pct,
+        potencial_kwh=potencial,
+        potencial_vs_projeto_pct=_desvio(potencial, painel.projeto_proporcional_kwh),
+        perda_pct=perda_pct,
+        perda_base=perda_base if perda_pct is not None else None,
+        perda_origem="monitoramento" if perdida is not None else None,
+        horas_paradas=(
+            None
+            if (not eventos or any(h is None for h in horas))
+            else round(sum(h for h in horas if h is not None), 2)
+        ),
+        horas_possiveis=horas_possiveis,
+        inversores_considerados=inversores,
+        eventos_sem_duracao=sum(1 for e in eventos if e.horas is None),
+        causas=causas,
+        eventos=eventos,
+        paradas_origem="alertas" if paradas is not None else None,
+        causas_total_kwh=causas_total,
+        causas_origem="alertas" if paradas is not None else None,
+        causas_conferem=(
+            None
+            if causas_total is None or not perdida
+            else abs(causas_total - perdida) / perdida * 100 <= TOLERANCIA_DAS_CAUSAS_PCT
+        ),
+        eventos_agrupamento=AGRUPAMENTO_DOS_EVENTOS,
+        consideracoes=_consideracoes(observacoes),
+        timeline=_timeline(timeline),
+        regra=_REGRA_DO_FECHAMENTO,
+        aviso=("Faltou parte dos dados: " + " · ".join(avisos) + "." if avisos else None),
+    )

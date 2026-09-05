@@ -162,6 +162,24 @@ def _inteiro(valor: Any) -> int | None:
         return None
 
 
+def _decimal(valor: Any) -> float | None:
+    """Número com casas, ou nada.
+
+    Mesma disciplina de `_inteiro`: ausência é `None`, jamais `0`. Um percentual que
+    chegasse como zero por o upstream não o ter mandado seria um "0 % cumprido" fabricado
+    aqui — a acusação mais cara que este BFF poderia imprimir sozinho.
+
+    `bool` sai fora antes de tudo: em Python `True` vira `1.0` sem reclamar, e um campo
+    booleano trocado por engano viraria um percentual de 100 %.
+    """
+    if isinstance(valor, bool) or valor is None:
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
 def _atendida(o: dict[str, Any]) -> bool:
     """OS efetivamente concluída.
 
@@ -537,6 +555,28 @@ class ContratosOut(BaseModel):
     aviso: str | None = None
 
 
+class MesEstadoOut(BaseModel):
+    """Um dos 12 meses da matriz, como o meuPlano o classificou.
+
+    `situacao` é o vocabulário do recorte de vigência — **`fechado`** (mês já vencido e
+    dentro do contrato: entra na cobrança), **`corrente`** (o mês em curso, que ainda tem
+    dias pela frente) e **`futuro`** (não se cobra o que ainda não venceu). É o que impede
+    a tela de pintar de vermelho um mês que ainda nem chegou.
+
+    Nada aqui é recalculado: o mês chega classificado de lá. Situação fora do vocabulário
+    viaja crua — engoli-la deixaria a coluna sem estado sem ninguém saber por quê, o mesmo
+    tratamento que `_situacao` já dá a um status de OS que o meuPlano invente amanhã.
+    """
+
+    mes: str                      # "YYYY-MM"
+    situacao: str | None = None
+    #: Σ de X previstos neste mês e quantos foram cumpridos. Nulos quando o meuPlano não
+    #: disse — ZERO é resposta ("nada previsto neste mês"), e converter ausência em zero é
+    #: exatamente como se fabrica um número que ninguém mediu.
+    previsto: int | None = None
+    cumprido: int | None = None
+
+
 class CronogramaOut(BaseModel):
     usina: str
     usina_id: int
@@ -554,6 +594,40 @@ class CronogramaOut(BaseModel):
     #: Σ previsto e Σ feito do ano — o cabeçalho "18 de 24 atividades cumpridas".
     previsto_ano: int = 0
     feitos_ano: int = 0
+
+    # ── o recorte de vigência, calculado NO meuPlano e só repassado aqui ──────────
+    #
+    # `previsto_ano`/`feitos_ano` (acima) contam a matriz INTEIRA: os 12 meses do contrato,
+    # inclusive os que ainda não venceram. Isso responde "o que foi combinado para o ano",
+    # e não "está sendo feito?". Foi a divisão por um ano que ainda não aconteceu que
+    # produziu **"13 de 270" (4,8 %)** numa tela e **"41,9 %"** na outra, para a MESMA
+    # usina — que não tinha uma única atividade atrasada. Dois números, uma pergunta.
+    #
+    # A régua do recorte é a do Relatório de manutenção do meuPlano, e ela mora LÁ, ao lado
+    # do que já a usa. Este BFF não faz aritmética nenhuma com estes campos: se refizesse a
+    # conta, nasceria a TERCEIRA resposta para "está sendo feito?" — e é assim que o
+    # produto se contradiz de novo, agora em três lugares em vez de dois.
+    #
+    # Ausente vira `None`, nunca `0`: um cronograma sem recorte publicado é diferente de um
+    # recorte que deu zero, e a tela mostra travessão para um e "0 %" para o outro.
+
+    #: Até que mês a conta olha ("YYYY-MM"). É o que a tela imprime ao lado do percentual —
+    #: percentual sem a janela de onde saiu é a metade da frase.
+    mes_referencia: str | None = None
+    #: O denominador honesto: o que o contrato previa nos meses que JÁ venceram dentro da
+    #: vigência. Vai à tela ao lado do percentual ("13/31"), porque percentual sem
+    #: denominador é o que permite ler 41,9 % como se fosse do ano todo.
+    previsto_ate_hoje: int | None = None
+    cumprido_ate_hoje: int | None = None
+    #: 0–100, como o meuPlano calculou. Nulo quando ele não informou.
+    pct_ate_hoje: float | None = None
+    #: Σ de X dos 12 meses segundo o meuPlano — o denominador da aba Cronograma de lá.
+    #: Viaja junto para as duas telas poderem exibir o MESMO "270" e explicar a diferença
+    #: para o "31" do recorte, em vez de cada uma sustentar um número sozinha.
+    previsto_no_contrato: int | None = None
+    #: Os 12 meses classificados (fechado · corrente · futuro). Vazio = o meuPlano não
+    #: mandou; a tela não inventa a classificação por conta própria.
+    meses_estado: list[MesEstadoOut] = []
     #: Se a rota irmã `/cronograma/pdf` tem o que gerar. Sem consolidação o JSON responde
     #: 200 com matriz vazia e a frase, mas o PDF responde 404 — um arquivo não tem como
     #: avisar por dentro. O par ficava incoerente para quem chamasse o PDF direto (um link
@@ -1484,6 +1558,33 @@ DISPENSADO = {"verde_ressalva"}
 ATRASADO = {"vermelho"}
 
 
+def _meses_estado(bruto: Any) -> list[MesEstadoOut]:
+    """Os 12 meses classificados, como o meuPlano os mandou.
+
+    Item sem `mes` é descartado em silêncio, do mesmo jeito que a leitura das linhas
+    descarta o que não é dicionário: um mês sem rótulo não tem coluna onde aparecer, e
+    inventar o rótulo pela posição da lista seria adivinhar a âncora do contrato.
+    """
+    if not isinstance(bruto, list):
+        return []
+    saida: list[MesEstadoOut] = []
+    for m in bruto:
+        if not isinstance(m, dict):
+            continue
+        rotulo = _texto(m.get("mes"))
+        if rotulo is None:
+            continue
+        saida.append(
+            MesEstadoOut(
+                mes=rotulo,
+                situacao=_texto(m.get("situacao")),
+                previsto=_inteiro(m.get("previsto")),
+                cumprido=_inteiro(m.get("cumprido")),
+            )
+        )
+    return saida
+
+
 @router.get("/manutencao/cronograma", response_model=CronogramaOut)
 async def cronograma_da_usina(
     usina_id: int,
@@ -1497,6 +1598,10 @@ async def cronograma_da_usina(
     contra o histórico do ATIVO, não contra tarefas — recalcular aqui produziria uma
     segunda resposta para a mesma pergunta, e o dono veria números diferentes nos dois
     produtos sem saber em qual acreditar.
+
+    O mesmo vale para o RECORTE DE VIGÊNCIA (`pct_ate_hoje` e companhia): ele chega pronto
+    e sai pronto. Ver o bloco de comentário em `CronogramaOut` — é a lição de "13 de 270"
+    contra "41,9 %", e ela custa mais uma vez a cada casa que resolve fazer a conta sozinha.
 
     `contrato_id` é OPCIONAL de propósito: o app em campo chama só com `usina_id` e não
     recebe OTA junto com o deploy — ausente, vale o contrato com versão consolidada mais
@@ -1542,6 +1647,16 @@ async def cronograma_da_usina(
     saida.meses = meses
     saida.status = _texto(dados.get("status"))
     saida.versao = _inteiro(dados.get("version"))
+
+    # O recorte de vigência vem PRONTO do meuPlano. Cinco leituras e uma cópia da lista —
+    # nenhuma soma, nenhuma divisão, nenhum `or 0`. Ver o bloco em `CronogramaOut`: a conta
+    # tem UM dono, e ele é o lado que já a usa no Relatório de manutenção.
+    saida.mes_referencia = _texto(dados.get("mes_referencia"))
+    saida.previsto_ate_hoje = _inteiro(dados.get("previsto_ate_hoje"))
+    saida.cumprido_ate_hoje = _inteiro(dados.get("cumprido_ate_hoje"))
+    saida.pct_ate_hoje = _decimal(dados.get("pct_ate_hoje"))
+    saida.previsto_no_contrato = _inteiro(dados.get("previsto_no_contrato"))
+    saida.meses_estado = _meses_estado(dados.get("meses_estado"))
 
     linhas: list[LinhaCronogramaOut] = []
     for r in dados.get("rows") or []:
