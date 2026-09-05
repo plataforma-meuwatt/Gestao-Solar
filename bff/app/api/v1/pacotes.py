@@ -32,6 +32,15 @@ preparo alheio.
 `manutencao.py`. A mesma OS não pode sair "Serviços adicionais" numa tela e
 "SERVICOS_ADICIONAIS" na outra — foi exatamente o defeito que a tradução única corrigiu.
 
+**"Situação" são DUAS, e é de propósito.** A da ORDEM (`OrdemDoPacoteOut.situacao`, e o
+filtro `situacao=encerradas|em_curso`) responde "esta ordem já foi entregue?". A da FICHA
+(`FichaOut.situacao`) responde "esta tarefa já foi executada?". Parecem a mesma pergunta e
+não são: medido em Porto Ferreira/agosto, a OS 1016 está *em curso* e as dezessete fichas
+dela já estão *Executada*. Por isso os dois campos existem separados, cada um dito na sua
+janela — a da ordem no cabeçalho do grupo, a da ficha na linha —, e nenhum é derivado do
+outro. Foi este segundo campo que viajou nulo desde que o router nasceu: o índice do
+meuPlano tinha o estado da tarefa em mãos (mesma query, mesmo objeto) e não o mandava.
+
 Router próprio, e não mais um bloco em `manutencao.py`: aquele arquivo passa de mil e
 quinhentas linhas e está sendo alterado em paralelo. Daqui só se importa o que já é fonte
 única — o resolvedor de vínculo, a tradução de classificação, a régua de período e a
@@ -49,6 +58,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.v1.manutencao import (
+    FEITAS,
     SITUACAO_TAREFA,
     _classificacao,
     _erro_do_upstream,
@@ -109,8 +119,23 @@ class FichaOut(BaseModel):
     task_id: int
     nome: str
     equipamento: str | None = None
-    #: Situação da tarefa, já traduzida ("Executada"). Nula quando o upstream não disse.
+    #: Situação da TAREFA, já traduzida ("Executada"). Nula só quando o upstream não disse.
+    #:
+    #: ⛔ Não é a mesma coisa que `OrdemDoPacoteOut.situacao` nem que o filtro `situacao=`,
+    #: que são da ORDEM — e as duas divergem de fato: a OS 1016 de agosto está "Em execução"
+    #: e as dezessete fichas dela já estão "Executada". Duas janelas, duas respostas; a tela
+    #: mostra esta na LINHA da ficha e aquela no CABEÇALHO da ordem, para que se leia
+    #: "a ordem ainda está aberta, mas esta ficha já foi feita".
     situacao: str | None = None
+    #: Executada (REALIZADA ou APROVADA) — o ✓ da tela. Mesma régua da aba Ordens, derivada
+    #: do mesmo código cru, para que a mesma tarefa não saia feita numa tela e pendente noutra.
+    #:
+    #: ⛔ **Tri-estado, como `situacao`.** Nulo = o upstream não disse — e isso acontece de
+    #: verdade: contra um meuPlano anterior a esta leva, `situacao` volta nula em TODA ficha,
+    #: inclusive nas da OS 969, que está concluída. Com `bool = False` a resposta afirmaria
+    #: "não foi feita" sobre dezessete tarefas executadas, e a tela desenharia dezessete
+    #: círculos vazios sem ninguém saber que a informação simplesmente não chegou.
+    feita: bool | None = None
     #: O PDF já existe e está válido. Falso = será gerado no preparo.
     pronta: bool = False
     #: Tamanho do PDF, quando ele já existe. Nulo enquanto não foi gerado — e nulo é
@@ -240,7 +265,10 @@ def _ficha_out(t: dict[str, Any]) -> FichaOut | None:
         # Ficha sem id não tem PDF endereçável: contá-la inflaria o total que a tela
         # promete baixar.
         return None
-    situacao_crua = (_texto(t.get("status")) or "").strip().upper()
+    # O índice das fichas nomeia o campo `situacao` — como já faz na ORDEM, logo abaixo, onde
+    # `_ordem_out` normaliza pela mesma razão. Ler só `status` era o defeito: o campo existia
+    # no contrato e nascia SEMPRE nulo. `status` fica de rede para o dia em que o nome mudar.
+    situacao_crua = (_texto(_pega(t, "situacao", "status")) or "").strip().upper()
     return FichaOut(
         task_id=task_id,
         nome=(
@@ -248,7 +276,19 @@ def _ficha_out(t: dict[str, Any]) -> FichaOut | None:
             or f"Tarefa {task_id}"
         ),
         equipamento=_texto(_pega(t, "equipamento", "equipment_path", "equipment_name")),
-        situacao=SITUACAO_TAREFA.get(situacao_crua) if situacao_crua else None,
+        # Estado desconhecido não some nem vira "—": vira o próprio código capitalizado, a
+        # MESMA degradação de `_situacao` das ordens. O meuPlano pode ganhar um estado novo,
+        # e engolir isso deixaria a ficha sem situação de novo, agora sem ninguém saber por quê.
+        situacao=(
+            SITUACAO_TAREFA.get(situacao_crua, situacao_crua.replace("_", " ").capitalize())
+            if situacao_crua
+            else None
+        ),
+        # Executada = REALIZADA ou APROVADA. Derivada do MESMO código cru pelo MESMO conjunto
+        # que a aba Ordens usa (`FEITAS`), e não de um booleano à parte vindo do upstream: a
+        # pergunta "esta tarefa foi executada?" é uma só no portal, e duas réguas para ela é
+        # exatamente como as três cópias da cor do parecer passaram a discordar.
+        feita=(situacao_crua in FEITAS) if situacao_crua else None,
         pronta=bool(t.get("pronta")),
         bytes=_inteiro(t.get("bytes")),
     )

@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { identificarCache, limparCache } from '@/lib/leitura'
 import { Fotos } from '@/features/tarefa/Fotos'
-import { esquecerImagensEmVoo } from '@/features/tarefa/imagem'
+import { baixandoAgora, bytesDaImagem, esquecerImagensEmVoo } from '@/features/tarefa/imagem'
 import Pagina from '@/features/tarefa/Pagina'
 import type {
   EquipamentoDaFicha,
@@ -407,5 +407,66 @@ describe('a ficha de uma tarefa', () => {
       (a.getAttribute('href') ?? '').includes('/api/'),
     )
     expect(comApi.length).toBe(0)
+  })
+})
+
+describe('a fila de imagens', () => {
+  beforeEach(() => {
+    esquecerImagensEmVoo()
+  })
+
+  it('nunca busca mais de seis imagens ao mesmo tempo — e busca todas', async () => {
+    // O defeito que o dono mediu, reabrindo a mesma ficha de 61 fotos quatro vezes: 61,
+    // depois 39, 30 e 33 — o resto virava caixa cinza com código de erro. Medido
+    // isoladamente, 5 de 5 vinham; em rajada de 60, 26 vinham e 26 falhavam. Não era foto
+    // que sumiu: era a rajada esgotando o pool de conexões do meuPlano.
+    let simultaneos = 0
+    let pico = 0
+    const soltar: (() => void)[] = []
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        simultaneos += 1
+        pico = Math.max(pico, simultaneos)
+        await new Promise<void>((libera) => soltar.push(libera))
+        simultaneos -= 1
+        return { ok: true, status: 200, blob: async () => BYTES } as never
+      }),
+    )
+
+    const pedidos = Array.from({ length: 61 }, (_, i) =>
+      bytesDaImagem(`/fotos/${i}`, `foto-${i}`),
+    )
+
+    // Solta uma por vez até todas terem passado; o pico nunca pode passar do teto.
+    for (let i = 0; i < 61; i += 1) {
+      await vi.waitFor(() => expect(soltar.length).toBeGreaterThan(i))
+      soltar[i]()
+    }
+    await Promise.all(pedidos)
+
+    expect(pico).toBe(6)
+    expect(soltar.length).toBe(61) // e as 61 foram buscadas: a fila atrasa, não descarta
+    expect(baixandoAgora()).toBe(0) // nenhuma vaga ficou presa
+  })
+
+  it('uma imagem que falha devolve a vaga — a próxima não fica esperando para sempre', async () => {
+    // Sem o `finally`, a primeira falha comeria uma vaga e, com seis falhas, a fila travaria
+    // para sempre: a tela ficaria em branco sem uma única mensagem de erro.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ detail: 'pool cheio' }) }) as never),
+    )
+
+    const falhas = Array.from({ length: 8 }, (_, i) =>
+      bytesDaImagem(`/fotos/${i}`, `ruim-${i}`).then(
+        () => 'veio',
+        () => 'falhou',
+      ),
+    )
+
+    expect(await Promise.all(falhas)).toEqual(Array(8).fill('falhou'))
+    expect(baixandoAgora()).toBe(0)
   })
 })

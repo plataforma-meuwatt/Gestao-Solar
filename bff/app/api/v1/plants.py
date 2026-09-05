@@ -1332,13 +1332,43 @@ def _esperado_diario_por_mes(pvsyst: Any, inicio: date, fim: date) -> dict[str, 
 
     O corte em `fim` é o que faz a meta do mês corrente parar em hoje: a linha
     de amanhã existe na tabela, mas a energia de amanhã ainda não foi medida.
+
+    """
+    return _diario_por_mes(pvsyst, inicio, fim)[0]
+
+
+def _diario_por_mes(
+    pvsyst: Any, inicio: date, fim: date
+) -> tuple[dict[str, float], set[str]]:
+    """`(meta diária por mês, meses cuja série diária está INCOMPLETA)`.
+
+    A cobertura é contada em DIAS DISTINTOS com linha, contra os dias daquele mês que caem
+    dentro de `[inicio, fim]` — assim o mês em curso continua completo (ele é curto porque
+    a janela é curta, não porque a fonte é rala).
+
+    Ela existe porque a precedência da fonte diária sobre a mensal digitada só vale
+    enquanto a diária fala do mesmo período que o medido. Medido no upstream real em
+    05/09/2026: das seis usinas, cinco não têm PVsyst diário nenhum e a sexta, Ibitinga,
+    tem `jan 31/31 · fev 28/28 · mar 31/31 · abr 30/30 · **mai 13/31**` — a série trunca no
+    meio de maio. Contra 31 dias de geração medida, esse maio publicava
+    `PROJETO 100,8 MWh · MEDIDO 161,3 MWh · +60,1 %` entre meses a −11 % e −48 %, e a mesma
+    linha exibia `projeto 100,8` ao lado de `previsto 194,9` (o previsto vem da mensal, que
+    diz 190.476). Pior: esse maio é DENOMINADOR — o atingimento do ano saía 84,3 % onde o
+    maio inteiro dá 81,9 %, deixando a usina 2,4 pontos mais saudável do que ela é.
+
+    ⛔ **Quem decide a troca é o compositor, não esta função** — e só troca quando há por
+    quê. Descartar o mês incompleto aqui dentro seria pior que o defeito: sem linha na
+    fonte mensal, o mês ficaria com meta NULA, e como `_soma` ignora nulo o mês seguiria no
+    numerador e sairia do denominador — o mesmo "duas janelas para a mesma conta" que esta
+    leva existe para fechar, agora escondido dentro do conserto.
     """
     por_mes: dict[str, float] = {}
+    dias_com_linha: dict[str, set[date]] = {}
     if not isinstance(pvsyst, dict):
-        return por_mes
+        return por_mes, set()
     linhas = pvsyst.get("rows")
     if not isinstance(linhas, list):
-        return por_mes
+        return por_mes, set()
     for linha in linhas:
         if not isinstance(linha, dict):
             continue
@@ -1353,7 +1383,20 @@ def _esperado_diario_por_mes(pvsyst: Any, inicio: date, fim: date) -> dict[str, 
             continue
         chave = _chave_mes(dia)
         por_mes[chave] = por_mes.get(chave, 0.0) + kwh
-    return por_mes
+        dias_com_linha.setdefault(chave, set()).add(dia)
+    incompletos = {
+        chave for chave in por_mes
+        if len(dias_com_linha[chave]) < _dias_na_janela(chave, inicio, fim)
+    }
+    return por_mes, incompletos
+
+
+def _dias_na_janela(chave: str, inicio: date, fim: date) -> int:
+    """Quantos dias daquele mês caem dentro de `[inicio, fim]` — o alvo de cobertura."""
+    ano, mes = int(chave[:4]), int(chave[5:7])
+    primeiro = max(date(ano, mes, 1), inicio)
+    ultimo = min(date(ano, mes, monthrange(ano, mes)[1]), fim)
+    return max((ultimo - primeiro).days + 1, 0)
 
 
 def _esperado_manual_por_mes(manual: Any, ano: int, fim: date) -> dict[str, float]:
@@ -1402,14 +1445,18 @@ async def _meta_do_projeto(cliente, slug: str, inicio: date, fim: date) -> _Meta
     meses = _meses_entre(_chave_mes(inicio), _chave_mes(fim))
     avisos: list[str] = []
 
+    incompletos: set[str] = set()
     try:
         diario = await cliente.pvsyst(slug, inicio, fim)
-        meta.por_mes.update(_esperado_diario_por_mes(diario, inicio, fim))
+        por_mes, incompletos = _diario_por_mes(diario, inicio, fim)
+        meta.por_mes.update(por_mes)
     except Exception as exc:  # noqa: BLE001 — a meta é acessório; o medido segue
         meta.indisponivel = True
         avisos.append(f"meta diária do projeto indisponível ({type(exc).__name__})")
 
-    faltando = [m for m in meses if m not in meta.por_mes]
+    # O mês cuja série diária está INCOMPLETA entra na busca da fonte mensal (ver
+    # `_diario_por_mes`): ele tem meta, mas de menos dias do que os que foram medidos.
+    faltando = [m for m in meses if m not in meta.por_mes or m in incompletos]
     anos = sorted({int(m[:4]) for m in faltando})
     if anos:
         respostas = await asyncio.gather(
@@ -1423,7 +1470,14 @@ async def _meta_do_projeto(cliente, slug: str, inicio: date, fim: date) -> _Meta
                 )
                 continue
             for mes, kwh in _esperado_manual_por_mes(resposta, ano, fim).items():
-                meta.por_mes.setdefault(mes, kwh)
+                # A mensal VENCE no mês em que a diária está incompleta — só aí. Onde a
+                # diária cobre o período inteiro ela continua sendo a melhor fonte (é dia a
+                # dia), e onde a mensal não tem linha o mês fica com a diária parcial, que
+                # é pior que a mensal e MUITO melhor que meta nenhuma.
+                if mes in incompletos:
+                    meta.por_mes[mes] = kwh
+                else:
+                    meta.por_mes.setdefault(mes, kwh)
 
     if meta.por_mes:
         # Chegou meta por algum caminho: a queda do outro não é mais o assunto.

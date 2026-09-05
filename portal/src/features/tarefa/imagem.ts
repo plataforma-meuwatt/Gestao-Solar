@@ -44,6 +44,41 @@ const PRAZO_MS = 45_000
 const emVoo = new Map<string, Promise<Blob>>()
 
 /**
+ * Quantas imagens esta aba busca AO MESMO TEMPO.
+ *
+ * ⛔ FILA, não estouro. A ficha coletiva dos inversores de Porto Ferreira tem 61 fotos, e
+ * "ver todas" pedia as 61 no mesmo instante: o meuPlano esgotava o pool de conexões e
+ * devolvia 500. O dono mediu, reabrindo a mesma ficha quatro vezes: 61, depois 39, 30 e 33
+ * — 22, 31 e 28 quadros viravam caixa cinza com código de erro. Medido de novo isoladamente,
+ * 5 de 5 vinham; em rajada de 60, 26 vinham e 26 falhavam. Não é foto que sumiu, é a rajada.
+ *
+ * Seis é o mesmo número do primeiro bloco da grade (`DE_CARA`), e o teto vale para a aba
+ * inteira — inclusive quando duas fichas estão abertas. O BFF tem o seu próprio teto, do
+ * lado dele: um cliente antigo em campo não fura a regra por não ter esta fila.
+ */
+const AO_MESMO_TEMPO = 6
+
+let baixando = 0
+const esperando: (() => void)[] = []
+
+/** Uma vaga na fila. Resolve na hora enquanto houver espaço; senão, espera a sua vez. */
+function pegarVaga(): Promise<void> {
+  if (baixando < AO_MESMO_TEMPO) {
+    baixando += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((libera) => esperando.push(libera))
+}
+
+function devolverVaga(): void {
+  const proxima = esperando.shift()
+  // A vaga passa direto para quem esperava — decrementar e deixar o próximo "pegar" abriria
+  // uma janela em que dois pedidos entram na mesma vaga.
+  if (proxima) proxima()
+  else baixando -= 1
+}
+
+/**
  * Os bytes da imagem, compartilhando o download que já estiver em andamento.
  *
  * @param caminho endereço no BFF (relativo, como ele o devolve na ficha)
@@ -53,9 +88,12 @@ export function bytesDaImagem(caminho: string, chave: string): Promise<Blob> {
   const voando = emVoo.get(chave)
   if (voando) return voando
 
-  const promessa = baixarComSessao(caminho, { prazoMs: PRAZO_MS }).finally(() => {
-    emVoo.delete(chave)
-  })
+  const promessa = pegarVaga()
+    .then(() => baixarComSessao(caminho, { prazoMs: PRAZO_MS }))
+    .finally(() => {
+      emVoo.delete(chave)
+      devolverVaga()
+    })
   emVoo.set(chave, promessa)
   return promessa
 }
@@ -63,4 +101,13 @@ export function bytesDaImagem(caminho: string, chave: string): Promise<Blob> {
 /** Só para o teste: nenhuma tela precisa disto, e um estado global sujo mente entre casos. */
 export function esquecerImagensEmVoo(): void {
   emVoo.clear()
+  // A fila também é estado global: um caso que abandona downloads deixaria vagas presas e o
+  // caso seguinte esperaria para sempre.
+  baixando = 0
+  esperando.length = 0
+}
+
+/** Só para o teste: quantas imagens estão em voo agora. */
+export function baixandoAgora(): number {
+  return baixando
 }

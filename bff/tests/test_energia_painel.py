@@ -661,15 +661,58 @@ def test_no_mes_em_curso_a_irradiacao_digitada_e_prorateada(cenario):
 def test_previsto_de_origem_manual_sai_com_a_procedencia_escrita(cenario):
     """O meuWatt esconde este card quando a correção é a manual. Aqui ele aparece com a
     origem escrita: esconder do cliente um número que existe é pior do que mostrá-lo
-    dizendo de onde veio. EARRAY 21.000 × (70 HPOA medidos ÷ 65 POA de projeto)."""
+    dizendo de onde veio. E_GRID 20.500 × (70 HPOA medidos ÷ 65 POA de projeto).
+
+    A base é `e_grid`, não `e_array` — a mesma do projeto (ver
+    `test_o_projeto_sai_de_e_grid_como_na_tela_de_desempenho`). Corrigir a energia do
+    ARRANJO e pôr o resultado ao lado de um projeto em energia ENTREGUE compararia dois
+    lugares diferentes da usina dentro da mesma faixa de cartões.
+    """
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(manual=_manual(poa=65.0, ghi=60.0))
 
     c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
 
     assert c["previsto_origem"] == "manual_corrigido"
-    assert c["previsto_kwh"] == pytest.approx(21000.0 * (70.0 / 65.0), rel=1e-6)
-    assert c["projeto_kwh"] == 21000.0, "o EARRAY digitado é a fonte canônica do projeto"
+    assert c["previsto_kwh"] == pytest.approx(20500.0 * (70.0 / 65.0), rel=1e-6)
+
+
+def test_o_projeto_sai_de_e_grid_como_na_tela_de_desempenho(cenario):
+    """O projeto do painel é `e_grid`, e a fonte DIÁRIA manda sobre a mensal digitada.
+
+    Guarda a metade "fonte" do defeito medido em 05/09/2026: o painel lia `e_array` (a
+    energia do ARRANJO, antes do inversor) e `/plants/{id}/desempenho` lia `e_grid` (a que
+    chega ao ponto de entrega). O medido dos dois lados é o mesmo — a geração dos
+    inversores —, então a referência inflada só podia fazer duas coisas: rebaixar a usina
+    e dar ao portal duas respostas para "quanto o projeto esperava".
+
+    Aqui o PVsyst diário cobre agosto inteiro (31 × 700 = 21.700 kWh de `e_grid`) e a
+    página de projeto tem a linha mensal com `e_array` 21.000 / `e_grid` 20.500. Vale o
+    diário, como em `plants._meta_do_projeto`.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(manual=_manual(poa=65.0, ghi=60.0))
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["projeto_kwh"] == 21700.0
+    assert c["projeto_origem"] == "pvsyst_diario"
+
+
+def test_sem_pvsyst_diario_o_projeto_e_a_linha_mensal_em_e_grid(cenario):
+    """Sem série diária, a meta é a mensal digitada — `e_grid` 20.500, e não `e_array`. É
+    a segunda opção de `plants._esperado_manual_por_mes`, e precisa ser a mesma: o mês em
+    curso a recebe rateada (20.500 × 14/31), e é ela o denominador da comparação."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        pvsyst={"rows": [], "years": [], "count": 0}, manual=_manual()
+    )
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+
+    assert c["projeto_kwh"] == 20500.0
+    assert c["projeto_origem"] == "mensal_digitado"
+    assert c["projeto_proporcional_kwh"] == pytest.approx(20500.0 * 14 / 31, abs=0.01)
 
 
 def test_sem_meteo_de_projeto_o_previsto_e_o_pvsyst_diario(cenario):
@@ -770,28 +813,40 @@ def test_a_disponibilidade_do_mes_no_ano_e_a_mesma_que_o_cliente_ve_no_mes(cenar
 
 
 def test_o_acumulado_do_ano_usa_uma_janela_so(cenario):
-    """`medido_inversores_kwh` do ano soma só os meses FECHADOS; a fronteira e a fatura
-    acompanham. Somar a fronteira do ano inteiro poria dois acumulados de janelas
-    diferentes na mesma faixa de cartões — e inventaria uma perda (aqui, negativa) do
-    tamanho do mês em curso."""
+    """Medido, fronteira e perda saem dos MESMOS meses — e a conciliação declara a dela.
+
+    Reescrito em 05/09/2026. A versão anterior somava só os meses FECHADOS e essa era a
+    origem do defeito que os juízes mediram: o cartão "MEDIDO (INVERSORES)" de Porto
+    Ferreira dizia 2.756,4 MWh e a coluna do detalhamento logo abaixo somava 2.884.434,86
+    kWh — a diferença, 128.037,39, era setembro inteiro. `/plants/{id}/desempenho` sempre
+    incluiu o mês em curso (`fim = min(fim, hoje)`), com a meta rateada até hoje; a janela
+    passou a ser essa, e o cartão passou a fechar com a coluna.
+
+    A conciliação é a ÚNICA conta com janela própria, porque depende de a fatura existir:
+    aqui agosto tem medidor e não tem fatura, e por isso ele entra na fronteira do cartão
+    e fica fora da conciliação — que diz em `meses` de onde saiu.
+    """
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(
         relatorio=_range_do_ano(),
-        fronteira={6: 11.8, 7: 10.85, 8: 6.9},  # agosto está em curso
-        faturas=[
+        fronteira={6: 11.8, 7: 10.85, 8: 6.9},
+        faturas=[  # agosto está em curso: a distribuidora ainda não fechou o faturamento
             {"transformer_id": 11, "year": 2026, "month": mes, "billed_mwh": mwh}
-            for mes, mwh in ((6, 11.75), (7, 10.8), (8, 6.85))
+            for mes, mwh in ((6, 11.75), (7, 10.8))
         ],
     )
 
     c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
 
-    assert c["medido_inversores_kwh"] == 23000.0, "junho + julho"
-    assert c["medido_fronteira_kwh"] == 22650.0, "a mesma janela do medido"
-    assert c["perda_inv_fronteira_pct"] == 1.52, "22,65 MWh de fronteira contra 23 MWh"
+    assert c["medido_inversores_kwh"] == 30000.0, "junho + julho + agosto (em curso)"
+    assert c["medido_fronteira_kwh"] == 29550.0, "a mesma janela do medido"
+    assert c["perda_inv_fronteira_pct"] == 1.5, "29,55 MWh de fronteira contra 30 MWh"
     assert c["fronteira_parcial"] is False
+    assert c["janela"]["meses"] == ["2026-06", "2026-07", "2026-08"]
+
+    assert c["conciliacao"]["meses"] == ["2026-06", "2026-07"], "a janela dela é declarada"
     assert c["conciliacao"]["fronteira_mwh"] == 22.65
-    assert c["conciliacao"]["faturado_mwh"] == 22.55, "agosto ainda não tem fatura fechada"
+    assert c["conciliacao"]["faturado_mwh"] == 22.55
     assert c["conciliacao"]["situacao"] == "Conciliado"
 
 
@@ -860,17 +915,28 @@ def test_mes_que_nao_responde_cai_no_rollup_em_vez_de_sumir(cenario):
     assert meses["2026-08"]["disponibilidade_real_pct"] == 99.89, "veio da conferência"
 
 
-def test_o_acumulado_do_ano_soma_so_os_meses_fechados(cenario):
-    """Somar o mês em curso compararia meio mês medido com o projeto inteiro dele e
-    rebaixaria o ano sem que nada tivesse acontecido."""
+def test_o_acumulado_do_ano_inclui_o_mes_em_curso_com_a_meta_rateada(cenario):
+    """O mês em curso ENTRA — e o que impedia isso de rebaixar o ano era o projeto, não a
+    exclusão do mês.
+
+    O medo antigo era real: somar agosto medido pela metade contra o projeto de agosto
+    inteiro rebaixaria o ano sem que nada tivesse acontecido. A saída de
+    `/plants/{id}/desempenho` é a certa e é a que passou a valer aqui — o mês entra dos
+    DOIS lados, com a meta rateada até hoje (`plants._esperado_manual_por_mes` e o PVsyst
+    diário cortado em `fim`). Excluí-lo tirava 128.037,39 kWh do cartão de Porto Ferreira
+    e deixava a coluna da tabela sem par.
+    """
     http, caixa, usina = cenario
     caixa["cliente"] = ClienteFalso(relatorio=_range_do_ano())
 
     c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
 
-    assert c["medido_inversores_kwh"] == 23000.0, "junho + julho; agosto está em curso"
-    assert c["perdida_kwh"] == 380.0 and c["perdida_externa_kwh"] == 50.0
+    assert c["medido_inversores_kwh"] == 30000.0, "junho + julho + agosto"
+    assert c["perdida_kwh"] == 470.0 and c["perdida_externa_kwh"] == 60.0
     assert c["totais"]["tendencia_kwh"] is None, "prever o passado não é previsão"
+    # O PVsyst do cenário só cobre agosto: 14 dias × 700 até hoje, não os 31 do mês.
+    assert c["projeto_proporcional_kwh"] == 9800.0
+    assert c["meses"][7]["projeto_kwh"] == 9800.0, "a linha de agosto traz a meta rateada"
 
 
 def test_o_ano_diz_quais_meses_tem_medicao_para_o_seletor_pular_os_vazios(cenario):
@@ -1089,3 +1155,680 @@ def test_referencia_futura_e_recusada(cenario):
     r = http.get(f"/api/v1/energia/usinas/{usina.id}/painel?referencia=2027-01-01")
 
     assert r.status_code == 400
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# UMA JANELA SÓ — e o painel dá o MESMO número que a tela de desempenho
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Escrito em 05/09/2026, depois de os juízes medirem ao vivo o portal. O painel do ano e
+# `/plants/{id}/desempenho` respondiam à MESMA pergunta — "a usina está batendo o
+# projeto?" — com números que não se pareciam:
+#
+#     Porto Ferreira / 2026    painel: 2.756.397,56 ÷ 7.720.000     = 35,7 %  ("−64,3 %")
+#                         /desempenho: 2.884.434,95 ÷ 2.836.833,33  = 101,7 %
+#
+# E não era uma usina só: Ouro Fino 55 % × 66 %, Pereiras 74 % × 87 %, Pirapozinho
+# 46 % × 78 %, Tietê 48 % × 82 %, Ibitinga 68 % × 84 %.
+#
+# Eram DUAS diferenças somadas, e as duas foram consertadas na fonte, não no resultado:
+#
+#   (a) a JANELA — o painel somava a meta de meses sem medição (jan–mai de uma usina cuja
+#       série começa em junho), pondo-os no denominador e não no numerador; e deixava o
+#       mês em curso fora do acumulado enquanto a tabela logo abaixo o incluía;
+#   (b) a FONTE — o painel lia `e_array` (energia do arranjo, antes do inversor) e a tela
+#       de desempenho lia `e_grid` (a que chega ao ponto de entrega), sendo que o medido
+#       dos dois lados é o mesmo: a geração dos inversores.
+#
+# Os testes abaixo guardam as duas, e o primeiro compara os DOIS endpoints de verdade,
+# contra o mesmo upstream — porque "parecido" é o que se tinha antes.
+
+
+def _aplicacao_com_desempenho(db) -> FastAPI:
+    """Os DOIS routers no mesmo app: só assim o teste pergunta a mesma coisa nas duas
+    telas e compara as respostas."""
+    aplicacao = FastAPI()
+    aplicacao.include_router(energia.router)
+    aplicacao.include_router(plants.router)
+    aplicacao.dependency_overrides[get_db] = lambda: db
+    return aplicacao
+
+
+@pytest.fixture
+def cenario_com_desempenho(db, dono, usinas, monkeypatch):
+    minha, _ = usinas
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=minha.id))
+    db.commit()
+
+    caixa = {"cliente": ClienteFalso()}
+
+    async def _cliente(_db):
+        return caixa["cliente"]
+
+    monkeypatch.setattr(energia.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(energia, "hoje_na_usina", lambda: HOJE)
+    monkeypatch.setattr(plants, "hoje_na_usina", lambda: HOJE)
+
+    http = TestClient(_aplicacao_com_desempenho(db))
+    token, _ = criar_token(dono.id)
+    http.headers["Authorization"] = f"Bearer {token}"
+    yield http, caixa, minha
+
+
+def _pvsyst_de_junho_a_agosto(kwh_por_dia: float = 900.0, globinc: float = 5.2) -> dict:
+    """A importação diária do PVsyst começa quando a usina começa a ser monitorada — é o
+    caso das sete usinas, e é por isso que os meses anteriores não têm meta nenhuma.
+
+    `e_array` vem 8 % acima de `e_grid` de propósito: é a diferença que o inversor e a
+    linha comem, e era ela que inflava a referência do painel antes do conserto.
+    """
+    linhas = []
+    for mes, ultimo in ((6, 30), (7, 31), (8, 31)):
+        linhas += [
+            {
+                "date": f"2026-{mes:02d}-{d:02d}",
+                "e_array": kwh_por_dia * 1.08,
+                "e_grid": kwh_por_dia,
+                "globinc": globinc,
+                "indisponibilidade": None,
+            }
+            for d in range(1, ultimo + 1)
+        ]
+    return {"rows": linhas, "years": [2026], "count": len(linhas)}
+
+
+def _irradiacao_de_junho_a_agosto(hpoa: float = 5.0, hghi: float = 4.4) -> list[dict]:
+    pontos = []
+    for mes, ate in ((6, 30), (7, 31), (8, 14)):
+        pontos += [
+            {"t": f"2026-{mes:02d}-{d:02d}", "hpoa": hpoa, "hghi": hghi}
+            for d in range(1, ate + 1)
+        ]
+    return pontos
+
+
+def _ano_da_usina_que_comeca_em_junho(**extra) -> dict:
+    """O `range` de uma usina cuja série começa no meio do ano.
+
+    O `monthly_summaries` traz só os meses medidos; junho e julho fechados, agosto em
+    curso. 12.000 + 11.000 + 7.000 = 30.000 kWh, que é o `total_generation_kwh` do
+    cabeçalho — os dois lados do portal leem esse mesmo número.
+    """
+    base = dict(
+        start_date="2026-01-01",
+        end_date="2026-08-14",
+        total_generation_kwh=30000.0,
+        irradiacao=_irradiacao_de_junho_a_agosto(),
+        temperatura=[],
+        pr_diario=[],
+        mensais=[
+            {
+                "month": "2026-06",
+                "generation_kwh": 12000.0,
+                "lost_kwh": 200.0,
+                "lost_externa_kwh": 50.0,
+                "availability_real_pct": 96.91,
+                "availability_contratual_pct": 97.53,
+            },
+            {
+                "month": "2026-07",
+                "generation_kwh": 11000.0,
+                "lost_kwh": 180.0,
+                "lost_externa_kwh": 0.0,
+                "availability_real_pct": 98.4,
+                "availability_contratual_pct": 98.4,
+            },
+            {
+                "month": "2026-08",
+                "generation_kwh": 7000.0,
+                "lost_kwh": 90.0,
+                "lost_externa_kwh": 10.0,
+                "availability_real_pct": 99.0,
+                "availability_contratual_pct": 99.0,
+            },
+        ],
+    )
+    base.update(extra)
+    return _range(**base)
+
+
+def test_o_atingimento_do_ano_e_o_mesmo_numero_da_tela_de_desempenho(
+    cenario_com_desempenho,
+):
+    """A identidade que faltava: painel e `/plants/{id}/desempenho`, mesmo upstream, mesmo
+    número — não um parecido.
+
+    Medido antes do conserto (05/09/2026): Porto Ferreira/2026 exibia "atingimento 36 %"
+    no painel e `pct_do_projeto` 101,7 % na tela de desempenho, sobre exatamente a mesma
+    usina, o mesmo ano e o mesmo instante.
+
+    Aqui a meta diária cobre jun–ago a 900 kWh/dia de `e_grid`: 30 + 31 + 14 dias = 67.500
+    kWh até hoje, contra 30.000 medidos → 44,4 %. O que o teste protege não é o 44,4: é a
+    igualdade entre os dois endpoints, que só se sustenta porque os dois passaram a chamar
+    as MESMAS funções — `plants._meses_medidos` para a janela e
+    `plants._esperado_diario_por_mes`/`_esperado_manual_por_mes` para a meta.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst=_pvsyst_de_junho_a_agosto(),
+    )
+
+    painel = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    desempenho = http.get(
+        f"/api/v1/plants/{usina.id}/desempenho?recorte=ano&referencia=2026-08-14"
+    ).json()
+
+    assert painel["atingimento_pct"] == desempenho["pct_do_projeto"] == 44.4
+    assert (
+        painel["projeto_proporcional_kwh"] == desempenho["esperado_projeto_kwh"] == 67500.0
+    )
+    assert painel["medido_inversores_kwh"] == desempenho["energia_kwh"] == 30000.0
+    assert painel["janela"]["meses"] == ["2026-06", "2026-07", "2026-08"]
+    # A tela deriva o atingimento do desvio (`100 + medido_vs_projeto_pct`); o campo
+    # explícito existe para ela parar de derivar, e os dois não podem discordar enquanto
+    # ela não trocar.
+    assert (
+        round(100 + painel["desvios"]["medido_vs_projeto_pct"], 1)
+        == painel["atingimento_pct"]
+    )
+
+
+def test_o_cartao_do_acumulado_e_a_soma_da_coluna_da_tabela(cenario_com_desempenho):
+    """O cliente soma a coluna com o dedo, e ela tem de fechar com o número grande.
+
+    Medido em 05/09/2026: o cartão "MEDIDO (INVERSORES)" de Porto Ferreira dizia 2.756,4
+    MWh (meses fechados) e o "DETALHAMENTO MENSAL" logo abaixo somava 2.884.434,86 kWh
+    (com setembro). A diferença — 128.037,39 — era setembro inteiro. Pior: a linha "Total
+    do período" exibia três pares incompatíveis, com o projeto do ano INTEIRO ao lado de
+    um medido parcial e de um percentual que não vinha de nenhum dos dois.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst=_pvsyst_de_junho_a_agosto(),
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    contados = [m for m in c["meses"] if m["no_acumulado"]]
+
+    assert [m["mes"] for m in contados] == c["janela"]["meses"]
+    assert c["medido_inversores_kwh"] == sum(m["medido_kwh"] for m in contados)
+    assert c["projeto_proporcional_kwh"] == sum(m["projeto_kwh"] for m in contados)
+    assert c["totais"]["medido_kwh"] == c["medido_inversores_kwh"]
+    assert c["totais"]["projeto_ate_hoje_kwh"] == c["projeto_proporcional_kwh"]
+    # A meta do ano INTEIRO continua na tela, e é a única linha fora da janela — de
+    # propósito, porque "quanto o projeto prevê para 2026" é outra pergunta.
+    assert c["totais"]["projeto_kwh"] > c["totais"]["projeto_ate_hoje_kwh"]
+
+
+def test_mes_sem_medicao_nao_entra_no_denominador(cenario_com_desempenho):
+    """O defeito na sua forma mais crua: meta cheia e medição nenhuma.
+
+    O rollup do upstream traz linha com `generation_kwh: 0.0` para os meses anteriores ao
+    início da série — Porto Ferreira mede desde junho e recebe janeiro a maio zerados. Com
+    a página de projeto preenchida o ano inteiro, esses cinco meses entravam no projeto e
+    não na medição, e sozinhos derrubavam o atingimento.
+
+    Aqui o painel é mais estrito do que `plants._meses_medidos`, que só pergunta se o
+    campo existe: mês zerado sai dos DOIS lados e é DECLARADO em `janela.fora`. É a única
+    diferença entre as duas leituras, e ela só aparece quando o mês zerado TEM meta
+    cadastrada — nas usinas medidas ele não tem, e os dois números coincidem.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    zerados = [
+        {
+            "month": f"2026-{m:02d}",
+            "generation_kwh": 0.0,
+            "lost_kwh": 0.0,
+            "lost_externa_kwh": 0.0,
+            "availability_real_pct": 100.0,
+            "availability_contratual_pct": 100.0,
+        }
+        for m in range(1, 6)
+    ]
+    relatorio = _ano_da_usina_que_comeca_em_junho()
+    relatorio["monthly_summaries"] = zerados + relatorio["monthly_summaries"]
+    caixa["cliente"] = ClienteFalso(
+        relatorio=relatorio,
+        pvsyst=_pvsyst_de_junho_a_agosto(),
+        # A página de projeto está preenchida o ano inteiro: é o que põe meta em janeiro.
+        manual={
+            "year": 2026,
+            "rows": [
+                {"month": m, "e_array": 30000.0, "e_grid": 27000.0} for m in range(1, 13)
+            ],
+        },
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert c["janela"]["meses"] == ["2026-06", "2026-07", "2026-08"]
+    fora = {f["mes"]: f["motivo"] for f in c["janela"]["fora"]}
+    assert fora["2026-01"] == "sem_medicao" and fora["2026-05"] == "sem_medicao"
+    assert fora["2026-09"] == "futuro" and fora["2026-12"] == "futuro"
+    assert c["projeto_proporcional_kwh"] == 67500.0, "só jun+jul+ago; nada de jan–mai"
+    assert c["atingimento_pct"] == 44.4
+    janeiro = next(m for m in c["meses"] if m["mes"] == "2026-01")
+    assert janeiro["medido_kwh"] is None and janeiro["no_acumulado"] is False
+    assert janeiro["projeto_kwh"] == 27000.0, "a meta do mês continua visível na tabela"
+
+
+def test_nenhum_desvio_sai_fora_do_fisicamente_possivel(cenario_com_desempenho):
+    """Três percentuais impossíveis saíram da tela em 05/09/2026, e todos por janela.
+
+    "Medido x previsto pela irradiação +211,8 %" dizia que a usina gerou 3,1× o que o sol
+    permitiu; "Sol medido x projeto +176,6 %" e "+191,9 %" diziam que agosto recebeu quase
+    o triplo da irradiação prevista. A causa era sempre a mesma: 482,98 kWh/m² medidos em
+    quatro meses contra 174,6 de um projeto que cobria uma fração do período.
+
+    Com medição e referência nos mesmos meses, os desvios voltam para a faixa em que um
+    número desses pode viver. A usina do cenário está em dia — 75 dias × 400 kWh = 30.000
+    de projeto contra 30.000 medidos —, então NENHUM dos cinco desvios tem motivo para
+    sair de ±40 %. A margem larga é de propósito: o teste guarda a ORDEM DE GRANDEZA, não
+    o valor do cenário.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst=_pvsyst_de_junho_a_agosto(kwh_por_dia=400.0),
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    # 75 dias medidos × 5,0 = 375,0 kWh/m² contra 75 × 5,2 = 390,0 de projeto.
+    assert c["meteo"]["hpoa"] == 375.0 and c["meteo"]["hpoa_projeto"] == 390.0
+    assert c["atingimento_pct"] == 100.0
+    assert set(c["desvios"]) == {
+        "medido_vs_projeto_pct",
+        "medido_vs_previsto_pct",
+        "previsto_vs_projeto_pct",
+        "hpoa_vs_projeto_pct",
+        "ghi_vs_projeto_pct",
+    }, "se um desvio novo aparecer, ele passa por esta peneira também"
+    for nome, valor in c["desvios"].items():
+        if valor is not None:
+            assert -40.0 < valor < 40.0, f"{nome} saiu em {valor} %"
+
+
+def test_referencia_de_irradiacao_que_cobre_meio_periodo_nao_vira_comparacao(
+    cenario_com_desempenho,
+):
+    """Quando o projeto de irradiação não alcança todos os meses do acumulado, o desvio
+    não sai — a tela mostra a medição sozinha, que é verdade.
+
+    É o conserto do "+176,6 %": a referência somava os meses com PVsyst diário e era
+    comparada com a medição de TODOS os meses com estação. Publicar um número desses num
+    documento que vai à diretoria é pior do que não publicar nenhum.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst=_pvsyst(),  # só agosto tem globinc; jun e jul ficam sem referência
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert c["meteo"]["hpoa"] == 375.0, "a medição continua na tela"
+    assert c["meteo"]["hpoa_projeto"] is None
+    assert c["desvios"]["hpoa_vs_projeto_pct"] is None
+
+
+def test_o_total_do_periodo_meteorologico_sai_das_parcelas_visiveis(
+    cenario_com_desempenho,
+):
+    """A tabela meteorológica exibia "Acumulado do período · HPOA PROJETO 174,6" com as
+    doze linhas mensais dessa coluna em travessão: um total que não vinha de parcela
+    nenhuma. Vinha — do valor MENSAL digitado —, enquanto a coluna só sabia desenhar o
+    PVsyst diário. Agora a célula carrega o mesmo número que o acumulado soma, e a origem
+    viaja junto para a tela poder dizer qual das duas fontes falou.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst={"rows": [], "years": [], "count": 0},
+        manual={
+            "year": 2026,
+            "rows": [
+                {"month": m, "e_array": 30000.0, "e_grid": 27000.0, "poa": 130.0}
+                for m in range(1, 13)
+            ],
+        },
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    celulas = {p["chave"]: p["hpoa_projeto"] for p in c["meteo"]["pontos"]}
+
+    assert c["meteo"]["hpoa_projeto_origem"] == "mensal_digitado"
+    # Agosto está em curso: 130 × 14/31. Junho e julho entram inteiros.
+    assert celulas["2026-08"] == pytest.approx(130.0 * 14 / 31, abs=0.01)
+    assert celulas["2026-06"] == 130.0 and celulas["2026-07"] == 130.0
+    assert c["meteo"]["hpoa_projeto"] == pytest.approx(
+        sum(celulas[m] for m in c["janela"]["meses"]), abs=0.01
+    )
+
+
+def test_a_janela_do_acumulado_viaja_na_resposta(cenario_com_desempenho):
+    """Consertar o número sem dizer de onde ele saiu vira a próxima pergunta do cliente.
+
+    É a lição registrada no meuPlano, onde o relatório de manutenção só parou de dar duas
+    respostas para "está sendo feito?" quando passou a declarar `meses_do_cronograma` e
+    `meses_fora_do_cronograma`.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_ano_da_usina_que_comeca_em_junho(),
+        pvsyst=_pvsyst_de_junho_a_agosto(),
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert c["janela"]["rotulo"] == "jun a ago de 2026"
+    assert c["janela"]["parcial"] is True
+    assert "meses com medição" in c["janela"]["regra"]
+    assert {f["motivo"] for f in c["janela"]["fora"]} == {"sem_medicao", "futuro"}
+
+
+def test_a_linha_do_ano_diz_de_onde_a_disponibilidade_saiu(cenario):
+    """Dois números de teor contratual para o mesmo mês, e nenhum inventado: o cabeçalho
+    do `range` de agosto diz 99,89 % e o `monthly_summaries` do ano diz 99,99 %.
+
+    O painel publica o do CABEÇALHO — o mesmo que o recorte `mes` e que
+    `/plants/{id}/desempenho?recorte=mes` mostram —, e diz na resposta que foi de lá que
+    ele saiu. Quando a leitura do mês não vem, a linha cai no rollup e a origem muda com
+    ela: a tela nunca apresenta os dois como se fossem a mesma medição.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range_do_ano(),
+        por_mes={
+            6: RuntimeError("o monitoramento não respondeu"),
+            7: _mes_conferido("2026-07", 97.2, 99.74),
+            8: _mes_conferido("2026-08", 99.89, 99.89),
+        },
+    )
+
+    meses = {
+        m["mes"]: m
+        for m in _painel(http, usina, recorte="ano", referencia="2026-08-14")["meses"]
+    }
+
+    assert meses["2026-08"]["disponibilidade_real_pct"] == 99.89
+    assert meses["2026-08"]["disponibilidade_origem"] == "mes_conferido"
+    assert meses["2026-06"]["disponibilidade_real_pct"] == 96.91, "a leitura do mês faltou"
+    assert meses["2026-06"]["disponibilidade_origem"] == "rollup_do_ano"
+    assert meses["2026-01"]["disponibilidade_origem"] is None, "mês sem medição"
+
+
+def test_a_coluna_de_projeto_dos_dias_soma_o_projeto_do_mes(cenario):
+    """A barra tracejada de cada dia e o cartão do mês são a MESMA meta.
+
+    A tabela do mês tem uma linha por dia e um cartão em cima; se as duas lessem campos
+    diferentes do PVsyst, o cliente somaria 31 barras e não chegaria ao número grande. O
+    cenário usa `e_array` 8 % acima de `e_grid` de propósito — é a diferença que o
+    inversor e a linha comem, e é ela que separava as duas leituras antes do conserto.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        pvsyst={
+            "rows": [
+                {
+                    "date": f"2026-08-{d:02d}",
+                    "e_array": 756.0,  # 700 × 1,08
+                    "e_grid": 700.0,
+                    "globinc": 5.2,
+                    "indisponibilidade": None,
+                }
+                for d in range(1, 32)
+            ],
+            "years": [2026],
+            "count": 31,
+        }
+    )
+
+    c = _painel(http, usina, recorte="mes", referencia="2026-08-14")
+    coluna = [d["projeto_kwh"] for d in c["dias"] if d["projeto_kwh"] is not None]
+
+    assert len(coluna) == 31
+    assert sum(coluna) == c["projeto_kwh"] == 21700.0
+    ate_hoje = [d["projeto_kwh"] for d in c["dias"] if d["dia"] <= 14]
+    assert sum(ate_hoje) == c["projeto_proporcional_kwh"] == 9800.0
+
+
+# ── os defeitos que os juízes ainda acharam ──────────────────────────────────
+
+
+def test_mes_com_projeto_diario_pela_metade_cede_a_vez_a_meta_mensal(cenario):
+    """Maio com 13 dias de PVsyst diário e 31 de geração: a meta é a MENSAL, não a parcial.
+
+    O caso real, medido no upstream em 05/09/2026: Ibitinga tem `jan 31/31 · fev 28/28 ·
+    mar 31/31 · abr 30/30 · **mai 13/31**` — a série trunca no meio de maio. Contra 31 dias
+    de geração medida, esse maio publicava `PROJETO 100,8 MWh · MEDIDO 161,3 MWh · +60,1 %`
+    entre meses a −11 % e −48 % — e, por ser denominador, deixava o ano 2,4 pontos mais
+    saudável do que ele era.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200,
+            energia_kwh=60000.0,
+            monthly_summaries=[
+                {"month": "2026-04", "generation_kwh": 9000.0},
+                {"month": "2026-05", "generation_kwh": 16000.0},
+            ],
+        ),
+        pvsyst={
+            "rows": (
+                [{"date": "2026-04-%02d" % d, "e_grid": 300.0} for d in range(1, 31)]
+                + [{"date": "2026-05-%02d" % d, "e_grid": 300.0} for d in range(1, 14)]
+            ),
+            "years": [2026],
+            "count": 43,
+        },
+        manual={"year": 2026, "rows": [
+            {"month": 4, "e_grid": 99999.0},   # abril NÃO é trocado: a diária o cobre inteiro
+            {"month": 5, "e_grid": 19000.0},
+        ]},
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    por_mes = {m["mes"]: m for m in c["meses"]}
+
+    assert por_mes["2026-04"]["projeto_kwh"] == 9000.0     # 30 × 300, a diária completa
+    assert por_mes["2026-05"]["projeto_kwh"] == 19000.0    # a mensal, não os 3.900 parciais
+    # E o denominador do ano é a soma dessas parcelas — a mesma janela dos dois lados.
+    assert c["projeto_proporcional_kwh"] == 28000.0
+    assert c["atingimento_pct"] == 89.3                    # 25.000 ÷ 28.000
+
+
+def test_projeto_diario_parcial_sem_mensal_no_lugar_continua_valendo(cenario):
+    """Sem linha na fonte mensal, o mês parcial FICA com a diária — meta pior, nunca nula.
+
+    Descartá-lo dentro de `_diario_por_mes` seria pior que o defeito: `_soma` ignora nulo,
+    então o mês seguiria no numerador e sairia do denominador, e o conserto teria escondido
+    dentro de si o mesmo "duas janelas para a mesma conta" que esta leva existe para fechar.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200, energia_kwh=60000.0,
+            monthly_summaries=[{"month": "2026-05", "generation_kwh": 16000.0}],
+        ),
+        pvsyst={"rows": [{"date": "2026-05-%02d" % d, "e_grid": 300.0} for d in range(1, 14)],
+                "years": [2026], "count": 13},
+        manual={"year": 2026, "rows": []},
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    por_mes = {m["mes"]: m for m in c["meses"]}
+
+    assert por_mes["2026-05"]["projeto_kwh"] == 3900.0
+    assert c["projeto_proporcional_kwh"] == 3900.0     # nada saiu do denominador
+    assert c["projeto_origem"] == "mensal_digitado"    # e a procedência não mente "diário"
+
+
+def test_previsto_sem_correcao_pela_meteo_nao_inventa_efeito_do_clima(cenario):
+    """Usina sem estação: o previsto é o projeto, e a tela não afirma clima que ninguém mediu.
+
+    Quatro das sete usinas do dono (Ouro Fino, Pereiras, Pirapozinho, Tietê) não têm uma
+    linha de PVsyst diário nem estação. A tela publicava, lado a lado, `PROJETO 2.379,8 MWh ·
+    do valor mensal digitado no projeto` e `PREVISTO 2.379,8 MWh · da meta diária do projeto,
+    corrigida pela irradiação medida`, com o KPI `+0,0 % — o efeito do clima`.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(irradiacao=False),
+        pvsyst={"rows": [], "years": [], "count": 0},
+        manual=_manual(),                       # sem POA/GHI: não há por que corrigir
+    )
+
+    for recorte in ("mes", "ano"):
+        c = _painel(http, usina, recorte=recorte, referencia="2026-08-14")
+        assert c["previsto_origem"] == "mensal_digitado", recorte
+        assert c["previsto_origem"] != "pvsyst_diario", recorte
+        assert c["desvios"]["previsto_vs_projeto_pct"] is None, recorte
+
+
+def test_o_projeto_do_ano_inteiro_nao_se_disfarca_de_projeto_da_janela(cenario):
+    """`projeto_kwh` é o período INTEIRO em todo recorte — nunca a cópia do proporcional.
+
+    Ele recebia `projeto_ytd` no recorte `ano`, virando cópia exata de
+    `projeto_proporcional_kwh`; a meta do ano inteiro só existia em `totais.projeto_kwh`.
+    Um mesmo campo devolvia o mês FECHADO no recorte `mes` e um ano PARCIAL no `ano`.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200, energia_kwh=60000.0,
+            monthly_summaries=[{"month": "2026-07", "generation_kwh": 9000.0}],
+        ),
+        pvsyst={"rows": [], "years": [], "count": 0},
+        manual={"year": 2026, "rows": [{"month": m, "e_grid": 1000.0} for m in range(1, 13)]},
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert c["projeto_proporcional_kwh"] == 1000.0         # só julho está na janela
+    assert c["projeto_kwh"] == 12000.0                     # os doze meses — o alvo
+    assert c["projeto_kwh"] == c["totais"]["projeto_kwh"]  # e o mesmo dos dois lados
+    assert c["projeto_kwh"] != c["projeto_proporcional_kwh"]
+
+
+def test_a_parcela_do_sol_no_plano_horizontal_existe_na_tabela(cenario):
+    """O total de GHI de projeto tem de sair de parcelas VISÍVEIS, como o do HPOA.
+
+    O cartão publicava `GHI 969,5 · projeto 988,2 kWh/m²` e o KPI `−1,9 %` saía dele, com a
+    tabela abaixo sem uma única coluna de onde os 988,2 pudessem ter vindo. É o mesmo
+    defeito que o HPOA tinha, consertado de um lado e deixado do outro na mesma página.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200, energia_kwh=60000.0,
+            monthly_summaries=[{"month": "2026-07", "generation_kwh": 9000.0}],
+        ),
+        pvsyst={"rows": [], "years": [], "count": 0},
+        manual={"year": 2026, "rows": [
+            {"month": m, "e_grid": 1000.0, "poa": 150.0, "ghi": 140.0} for m in range(1, 13)
+        ]},
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    parcelas = [p["ghi_projeto"] for p in c["meteo"]["pontos"] if p["ghi_projeto"] is not None]
+
+    assert parcelas, "o total de GHI de projeto não pode existir sem nenhuma parcela"
+    dentro = [m["mes"] for m in c["meses"] if m["no_acumulado"]]
+    soma = sum(
+        p["ghi_projeto"] for p in c["meteo"]["pontos"]
+        if p["chave"] in dentro and p["ghi_projeto"] is not None
+    )
+    assert round(soma, 2) == c["meteo"]["ghi_projeto"]
+
+
+def test_a_fronteira_declara_a_propria_janela_quando_ela_e_mais_curta(cenario):
+    """O acumulado de medidor diz de quais meses saiu — pode ser menos que o da geração.
+
+    Em Porto Ferreira o cartão `MEDIDO (FRONTEIRA) 1.132,9 MWh` aparecia sob o rótulo
+    "acumulado · jun a set" e a coluna somava jul+ago+set: junho está na janela e não tem
+    medidor.
+    """
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200, energia_kwh=60000.0,
+            monthly_summaries=[
+                {"month": "2026-06", "generation_kwh": 8000.0},
+                {"month": "2026-07", "generation_kwh": 9000.0},
+            ],
+        ),
+        pvsyst={"rows": [], "years": [], "count": 0},
+        manual={"year": 2026, "rows": [{"month": m, "e_grid": 9000.0} for m in (6, 7)]},
+        fronteira={7: 8.8},                     # junho sem medidor
+    )
+
+    c = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+
+    assert [m["mes"] for m in c["meses"] if m["no_acumulado"]] == ["2026-06", "2026-07"]
+    assert c["fronteira_meses"] == ["2026-07"]      # a janela do medidor é OUTRA, e ela diz
+    assert c["medido_fronteira_kwh"] == 8800.0
+
+
+def test_o_mes_truncado_cede_a_vez_nos_DOIS_endpoints(cenario_com_desempenho):
+    """A troca da fonte parcial pela mensal vale no painel E em `/desempenho` — ou não vale.
+
+    Este teste nasceu de uma mutação que SOBREVIVEU: desfazer a regra em
+    `plants._meta_do_projeto` (o compositor de `/desempenho`) não derrubava nenhum teste,
+    porque os outros passam todos pelo painel, que compõe a mesma regra em
+    `energia._meta_por_mes`. Uma régua aplicada de um lado só é pior que régua nenhuma: as
+    duas telas do mesmo portal voltariam a responder números diferentes para "quanto o
+    projeto esperava" — o defeito que esta leva inteira existe para fechar.
+
+    Julho tem 31 dias de geração e só 13 de PVsyst diário; a página Projeto do meuWatt tem
+    o mês inteiro (19.000). A meta de julho é 19.000 nos dois lados, nunca os 3.900 parciais.
+    """
+    http, caixa, usina = cenario_com_desempenho
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(
+            dias_com_dado=200,
+            # O cabeçalho do `range` e a soma dos meses são a MESMA energia: é assim no
+            # upstream real, e é a premissa da igualdade que este teste mede.
+            energia_kwh=25000.0,
+            monthly_summaries=[
+                {"month": "2026-06", "generation_kwh": 9000.0},
+                {"month": "2026-07", "generation_kwh": 16000.0},
+            ],
+        ),
+        pvsyst={
+            "rows": (
+                [{"date": "2026-06-%02d" % d, "e_grid": 300.0} for d in range(1, 31)]
+                + [{"date": "2026-07-%02d" % d, "e_grid": 300.0} for d in range(1, 14)]
+            ),
+            "years": [2026],
+            "count": 43,
+        },
+        manual={"year": 2026, "rows": [
+            {"month": 6, "e_grid": 99999.0},   # junho NÃO troca: a diária o cobre inteiro
+            {"month": 7, "e_grid": 19000.0},
+        ]},
+    )
+
+    painel = _painel(http, usina, recorte="ano", referencia="2026-08-14")
+    desempenho = http.get(
+        f"/api/v1/plants/{usina.id}/desempenho?recorte=ano&referencia=2026-08-14"
+    ).json()
+
+    esperado_por_mes = {m["mes"]: m["esperado_projeto_kwh"] for m in desempenho["meses"]}
+    projeto_por_mes = {m["mes"]: m["projeto_kwh"] for m in painel["meses"]}
+
+    # Junho: a diária completa manda nos dois (30 × 300), e a mensal de 99.999 não entra.
+    assert esperado_por_mes["2026-06"] == projeto_por_mes["2026-06"] == 9000.0
+    # Julho: a mensal ocupa o lugar da diária truncada, nos dois.
+    assert esperado_por_mes["2026-07"] == projeto_por_mes["2026-07"] == 19000.0
+
+    # E o número que o cliente lê é O MESMO nas duas telas.
+    assert (
+        painel["projeto_proporcional_kwh"]
+        == desempenho["esperado_projeto_kwh"]
+        == 28000.0
+    )
+    assert painel["atingimento_pct"] == desempenho["pct_do_projeto"] == 89.3

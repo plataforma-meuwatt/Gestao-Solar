@@ -38,8 +38,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.v1.plants import (
+    _chave_mes,
+    _diario_por_mes,
+    _esperado_manual_por_mes,
     _janela,
+    _meses_entre,
+    _meses_medidos,
     _referencia_pedida,
+    _rotulo_de_meses,
     _usina_monitorada,
 )
 from app.core.datas import BRT
@@ -167,8 +173,20 @@ class DiaOut(BaseModel):
     hpoa_agora: float | None = None
     hpoa_acumulada: float | None = None
     ghi_acumulada: float | None = None
-    #: `False` faz a tela dizer "sem estação" em vez de desenhar uma curva rasteira.
+    #: A usina TEM estação solarimétrica — pergunta de CADASTRO, respondida pela mesma
+    #: lista `weather_stations` de `monitoring/current` que a tela de equipamentos usa
+    #: (`/plants/{id}/equipamentos`). O ativo é permanente: ele não deixa de existir às
+    #: 03h só porque ainda não houve sol. `False` faz a tela dizer "sem estação".
     tem_estacao: bool = False
+    #: A estação MEDIU alguma coisa neste dia. É o outro lado da pergunta, e é o que
+    #: separa "não existe" de "ainda não mediu": às 03h10 de um dia com estação isto é
+    #: `False` e `tem_estacao` continua `True`. Antes os dois eram o mesmo campo, e de
+    #: madrugada a tela negava uma estação que existe.
+    estacao_com_leitura: bool = False
+    #: Quando o cadastro não pôde ser lido (o `monitoring/current` caiu), `tem_estacao`
+    #: cai na leitura do dia — que é o comportamento antigo — e isto fica `True` para a
+    #: tela não afirmar "não tem estação" com base num palpite.
+    estacao_indefinida: bool = False
     curva: list[PontoCurva] = []
     #: Vazio = operação sem incidentes. É estado, não falta de dado.
     eventos: list[EventoDoDia] = []
@@ -500,6 +518,25 @@ def _eventos(alertas: list[dict[str, Any]], rotulos: dict[str, str]) -> list[Eve
     return saida
 
 
+def _tem_estacao_no_cadastro(atual: Any) -> bool | None:
+    """A usina tem estação solarimétrica CADASTRADA? `None` = não deu para saber.
+
+    Lê a mesma lista `weather_stations` de `monitoring/current` que a tela de equipamentos
+    monta (`equipamentos._estacoes`) — o cadastro do ativo, não a medição do dia. A
+    resposta é "de agora", e é assim que tem de ser: a estação é um APARELHO instalado na
+    usina, e ela não passa a não existir num dia em que não mediu.
+
+    `None` (a leitura falhou) é diferente de `False`: quem chama volta à régua antiga — a
+    de haver irradiação no dia — em vez de afirmar ausência que não conferiu.
+    """
+    if not isinstance(atual, dict):
+        return None
+    estacoes = atual.get("weather_stations")
+    if not isinstance(estacoes, list):
+        return None
+    return any(isinstance(e, dict) for e in estacoes)
+
+
 def _hora_curta(instante: str) -> str:
     """"2026-08-14T09:32:00-03:00" → "09:32". Formato desconhecido volta como veio."""
     if "T" in instante and len(instante) >= 16:
@@ -520,6 +557,14 @@ async def dia_da_usina(
     """A operação de um dia: números do dia, curva de potência e irradiância, eventos e
     a tabela por unidade consumidora.
 
+    Três leituras em paralelo, e só a primeira é indispensável: os números do dia
+    (`generation/daily`), a curva (`charts/intraday`) e o CADASTRO dos ativos
+    (`monitoring/current`), de onde sai apenas a resposta "esta usina tem estação
+    solarimétrica?". A terceira entrou porque a existência de um aparelho não pode ser
+    deduzida da medição de um dia: às 03h10 não há sol, e a régua antiga fazia a tela
+    escrever "esta usina não tem estação solarimétrica" sobre uma usina que tem — e que na
+    véspera mediu 7,1 kWh/m².
+
     Uma queda do monitoramento vira 200 com `aviso` e campos nulos — a tela mostra
     travessão e diz o que faltou, em vez de uma página de erro ou, pior, de zeros.
     """
@@ -529,9 +574,15 @@ async def dia_da_usina(
 
     try:
         cliente = await integracoes.cliente_meuwatt(db)
-        diario, intraday = await asyncio.gather(
+        diario, intraday, atual = await asyncio.gather(
             cliente.geracao_diaria(link.mw_plant_slug, referencia),
             cliente.intraday(link.mw_plant_slug, referencia),
+            # O CADASTRO dos ativos — daqui sai só a resposta "esta usina tem estação
+            # solarimétrica?". É a mesma leitura que a tela de equipamentos já faz, e ela
+            # entra porque a existência do aparelho não pode ser deduzida da medição do
+            # dia: às 03h10 não há sol, e a régua antiga negava a estação de Porto
+            # Ferreira, que existe e mediu 7,1 kWh/m² na véspera.
+            cliente.monitoramento_atual(link.mw_plant_slug),
             return_exceptions=True,
         )
     except Exception as exc:  # noqa: BLE001
@@ -554,7 +605,14 @@ async def dia_da_usina(
     saida.disponibilidade_pct = _arredondar(_numero(diario.get("availability_real_pct")))
     saida.inversores_total = len(inversores) or None
 
-    saida.curva, saida.tem_estacao = _curva_da_usina(intraday)
+    # DUAS perguntas, dois campos. "Existe estação?" é cadastro e vem de
+    # `monitoring/current`; "mediu hoje?" é o dia e vem da irradiação da curva. Enquanto
+    # eram um campo só, um pedido às 03h10 respondia "esta usina não tem estação
+    # solarimétrica" sobre a MESMA usina que no dia anterior devolveu hpoa 7,1.
+    saida.curva, saida.estacao_com_leitura = _curva_da_usina(intraday)
+    cadastrada = _tem_estacao_no_cadastro(atual)
+    saida.estacao_indefinida = cadastrada is None
+    saida.tem_estacao = saida.estacao_com_leitura if cadastrada is None else cadastrada
     if saida.curva:
         pico = max(saida.curva, key=lambda p: p.kw)
         saida.pico_kw = pico.kw
@@ -569,9 +627,14 @@ async def dia_da_usina(
         poa = _numero(p.get("poa"))
         saida.potencia_agora_kw = round(sum(medindo), 2)
         saida.inversores_gerando = sum(1 for k in medindo if k > PISO_GERANDO_KW)
-        saida.hpoa_agora = poa if saida.tem_estacao else None
+        saida.hpoa_agora = poa if saida.estacao_com_leitura else None
 
-    if saida.tem_estacao:
+    # Os NÚMEROS medidos seguem a leitura, não o cadastro: o upstream devolve `0.0` de
+    # irradiação tanto para a usina sem sensor quanto para a madrugada de quem tem, e
+    # publicar esse zero seria dar a ele o peso de medição. Estação cadastrada sem leitura
+    # ainda no dia sai em travessão — com `estacao_com_leitura` falso ao lado, que é o que
+    # deixa a tela escrever "a estação ainda não mediu hoje".
+    if saida.estacao_com_leitura:
         irradiacao = diario.get("irradiation")
         if isinstance(irradiacao, dict):
             saida.hpoa_acumulada = _arredondar(_numero(irradiacao.get("hpoa")))
@@ -630,6 +693,38 @@ async def dia_da_usina(
 
 
 # ── rota · unidades consumidoras ────────────────────────────────────────────
+
+
+def _fechar_participacao_em_cem(ucs: list[UnidadeDoPeriodo]) -> None:
+    """Faz a coluna de participação somar exatamente 100,0 % — maior resto.
+
+    Arredondar cada UC isoladamente para uma casa dava uma coluna que o cliente soma com o
+    dedo e não fecha: Porto Ferreira publicava **100,1 %** em cinco UCs e Tietê 99,9 % —
+    "quanto desta usina é meu?" respondida por uma tabela que se desmente sozinha.
+
+    O ajuste é de arredondamento, nunca de dado: distribui os décimos que sobram entre as
+    UCs de maior resto, uma casa decimal por vez. A soma dos `geracao_kwh` (o número que é
+    medição) não é tocada. Sem participação medida em alguma UC, nada é ajustado — não se
+    fecha em 100 % uma coluna que já está incompleta.
+    """
+    com_share = [u for u in ucs if u.share_pct is not None]
+    if not com_share or len(com_share) != len(ucs):
+        return
+    decimos = [round((u.share_pct or 0.0) * 10) for u in com_share]
+    sobra = 1000 - sum(decimos)
+    if sobra:
+        # Quem tem mais energia absorve o décimo sobrando — o maior número é o que menos
+        # se altera em termos relativos.
+        ordem = sorted(
+            range(len(com_share)),
+            key=lambda i: com_share[i].geracao_kwh or 0.0,
+            reverse=(sobra > 0),
+        )
+        passo = 1 if sobra > 0 else -1
+        for i in range(abs(sobra)):
+            decimos[ordem[i % len(ordem)]] += passo
+    for uc, d in zip(com_share, decimos, strict=True):
+        uc.share_pct = round(d / 10, 1)
 
 
 def _serie_da_uc(bruto: dict[str, Any]) -> dict[str, float]:
@@ -769,6 +864,7 @@ def unidades_do_periodo(
     saida.ucs_ativas = len(saida.ucs)
     saida.capacidade_total_kwp = _arredondar(sum(capacidades)) if capacidades else None
     saida.energia_periodo_kwh = _arredondar(total_gerado) if tem_geracao else None
+    _fechar_participacao_em_cem(saida.ucs)
 
     if saida.ucs and tem_geracao:
         maior = max(saida.ucs, key=lambda u: u.geracao_kwh or 0.0)
@@ -856,7 +952,20 @@ async def unidades_da_usina(
 # que não é nosso. Um ano de uma usina de vinte inversores também é payload grande; o
 # upstream limita a 366 dias e cacheia dez minutos porque a resposta é cara.
 #
-# QUATRO DECISÕES DECLARADAS, porque cada uma tinha duas saídas defensáveis:
+# CINCO DECISÕES DECLARADAS, porque cada uma tinha duas saídas defensáveis:
+#
+# 0. UMA JANELA SÓ, E ELA VIAJA NA RESPOSTA. Todo acumulado do painel — medido, projeto,
+#    previsto, perdida, fronteira, faturado, irradiação — soma os MESMOS meses, e a lista
+#    deles sai em `janela` para a tela poder dizer de onde o número veio. A janela é a de
+#    `/plants/{id}/desempenho`, chamando a MESMA função (`plants._meses_medidos`), e o
+#    projeto é a MESMA meta (`plants._esperado_diario_por_mes`/`_esperado_manual_por_mes`,
+#    em `e_grid`): "a usina está batendo o projeto?" é uma pergunta só e não pode ter duas
+#    respostas no mesmo portal. Enquanto teve, Porto Ferreira/2026 exibia 36 % de
+#    atingimento no painel e 101,7 % na tela de desempenho — e o desencontro aparecia nas
+#    sete usinas. O mês em curso ENTRA, com a meta rateada até hoje (é o que a tela de
+#    desempenho faz, e é por isso que o cartão passou a fechar com a soma da coluna). A
+#    única conta com janela própria é a conciliação, que depende de a fatura já existir —
+#    e ela declara a dela em `conciliacao.meses`.
 #
 # 1. DISPONIBILIDADE. Vale o número PRONTO do upstream (`availability_real_pct` e
 #    `availability_contratual_pct`) — a mesma régua que `/plants/{id}/desempenho` já usa.
@@ -999,6 +1108,12 @@ class ConciliacaoOut(BaseModel):
     #: mandaria o cliente cobrar da distribuidora um erro que é do medidor dele.
     situacao: str | None = None
     tolerancia_pct: float = TOLERANCIA_CONCILIACAO_PCT
+    #: Os meses ("YYYY-MM") que a conciliação cobre — os que têm medidor E fatura. Ela é a
+    #: única conta do painel com janela PRÓPRIA, e por isso a declara: a fatura de um mês
+    #: recém-fechado leva semanas para ser emitida, e somar a fronteira de um mês cuja
+    #: fatura não existe inventaria uma "divergência" do tamanho daquele mês. Vazio no
+    #: recorte `mes`, onde a janela é o próprio mês.
+    meses: list[str] = []
 
 
 class DiaDoMes(BaseModel):
@@ -1031,15 +1146,62 @@ class MesDoAno(BaseModel):
     perdida_externa_kwh: float | None = None
     fronteira_mwh: float | None = None
     faturado_mwh: float | None = None
+    #: De onde saiu a disponibilidade desta linha: `mes_conferido` (o cabeçalho do `range`
+    #: daquele mês — a mesma leitura que o recorte `mes` e `/plants/{id}/desempenho?
+    #: recorte=mes` publicam) ou `rollup_do_ano` (o `monthly_summaries`, rede de segurança
+    #: de quando a leitura do mês não veio). Os dois discordam no upstream — Porto
+    #: Ferreira, agosto/2026: 99,89 % contra 99,99 % —, e num número de teor contratual a
+    #: tela precisa poder dizer de onde o dela saiu.
+    disponibilidade_origem: str | None = None
+    #: O mês entrou no acumulado do período (ver `PainelOut.janela`).
+    no_acumulado: bool = False
     em_curso: bool = False
     futuro: bool = False
 
 
+class MesForaDoAcumulado(BaseModel):
+    """Um mês do período que NÃO entrou no acumulado, e por quê."""
+
+    mes: str
+    rotulo: str
+    #: `futuro` (o mês ainda não começou) · `sem_medicao` (o monitoramento não mediu nada
+    #: nele — série que ainda não começava, usina fora do ar) · `sem_detalhe_mensal` (há
+    #: geração nos dias, mas o resumo mensal do upstream não traz o mês).
+    motivo: str
+
+
+class JanelaOut(BaseModel):
+    """QUAIS meses entraram no acumulado — e quais ficaram de fora, com o motivo.
+
+    Existe porque o conserto de um número sem dizer de onde ele saiu vira a próxima
+    pergunta do cliente. É a mesma lição do relatório de manutenção do meuPlano, que dava
+    duas respostas para "está sendo feito?" até declarar `meses_do_cronograma` e
+    `meses_fora_do_cronograma`.
+
+    **Todos os acumulados do painel saem desta janela** — medido, projeto, previsto,
+    perdida, fronteira, faturado e irradiação. A única exceção declarada é a conciliação,
+    que tem janela própria (`ConciliacaoOut.meses`) porque depende de a fatura já existir.
+    """
+
+    #: Os meses ("YYYY-MM") somados no acumulado, em ordem.
+    meses: list[str] = []
+    fora: list[MesForaDoAcumulado] = []
+    #: "jun a set de 2026" — pronto para a tela escrever ao lado do número.
+    rotulo: str | None = None
+    #: A janela cobre menos do que o período pedido; a tela precisa dizer isso.
+    parcial: bool = False
+    regra: str
+
+
 class TotaisOut(BaseModel):
+    #: Medido, projeto e a razão entre eles — os três na MESMA janela (`PainelOut.janela`).
     medido_kwh: float | None = None
+    #: O projeto do PERÍODO INTEIRO — a meta do ano/mês, futuro incluído. É a única linha
+    #: do bloco fora da janela do acumulado, e está aqui de propósito: "quanto o projeto
+    #: prevê para 2026" é outra pergunta, não a mesma comparada com meio ano de medição.
     projeto_kwh: float | None = None
-    #: O projeto rateado pelos dias já decorridos — comparar mês inteiro com meio mês
-    #: acusaria de doente uma usina em dia.
+    #: O projeto NA JANELA DO ACUMULADO — o par de `medido_kwh`, e o denominador do
+    #: atingimento.
     projeto_ate_hoje_kwh: float | None = None
     #: Projeção linear do fechamento, só no período em curso. Nulo em período fechado:
     #: prever o passado não é previsão.
@@ -1053,6 +1215,12 @@ class PontoMeteo(BaseModel):
     hpoa: float | None = None
     hpoa_projeto: float | None = None
     ghi: float | None = None
+    #: A PARCELA do projeto no plano horizontal — a mesma que `meteo.ghi_projeto` soma.
+    #: Ela existia no acumulado e não existia aqui: o cartão publicava
+    #: `GHI 969,5 · projeto 988,2 kWh/m²` e o "Sol medido × projeto −1,9 %" saía dele, com
+    #: a tabela abaixo sem uma única coluna de onde os 988,2 pudessem ter vindo. É o mesmo
+    #: defeito que o HPOA tinha, consertado de um lado e deixado do outro na mesma página.
+    ghi_projeto: float | None = None
     t_amb: float | None = None
     t_mod: float | None = None
     t_mod_max: float | None = None
@@ -1072,8 +1240,18 @@ class MeteoOut(BaseModel):
     razao: float | None = None
     #: A irradiação de PROJETO do período, na MESMA janela do medido (ver
     #: `_irradiacao_de_projeto`). No plano dos módulos e no horizontal.
+    #:
+    #: No recorte `ano` ela só sai quando cobre TODOS os meses do acumulado: uma
+    #: referência de quatro meses ao lado de uma medição de sete devolve "+176 % de sol",
+    #: que foi o que a tela publicou. Referência incompleta não vira comparação.
     hpoa_projeto: float | None = None
     ghi_projeto: float | None = None
+    #: `pvsyst_diario` ou `mensal_digitado`. O diário tem célula por dia/mês na tabela; o
+    #: digitado é um número do mês inteiro e por isso a coluna sai em travessão — sem esta
+    #: procedência o cliente via um "Acumulado do período" que não vinha de parcela
+    #: nenhuma visível.
+    hpoa_projeto_origem: str | None = None
+    ghi_projeto_origem: str | None = None
     t_amb_media: float | None = None
     t_amb_max: float | None = None
     t_mod_media: float | None = None
@@ -1159,8 +1337,28 @@ class PainelOut(BaseModel):
     #: é medição de verdade, mas a tela precisa rotulá-lo como parcial e não pode subtraí-lo
     #: do medido: a diferença não é perda.
     fronteira_parcial: bool = False
+    #: Os meses da janela que REALMENTE têm leitura de medidor — a janela do acumulado de
+    #: fronteira, que pode ser mais curta que a da geração. Em Porto Ferreira o cartão
+    #: `MEDIDO (FRONTEIRA) 1.132,9 MWh` aparecia sob o rótulo "acumulado · jun a set", e a
+    #: coluna somava jul+ago+set: junho está na janela e não tem medidor. Vazio ou igual à
+    #: janela inteira = nada a declarar. Mesmo princípio de `conciliacao.meses`.
+    fronteira_meses: list[str] = []
+    #: A meta do PERÍODO INTEIRO (o mês fechado, o ano de doze meses) — o alvo, futuro
+    #: incluído. Não é o denominador de nada: para comparar existe o proporcional.
     projeto_kwh: float | None = None
+    #: A meta NA JANELA DO ACUMULADO (ver `janela`) — o par de `medido_inversores_kwh` e o
+    #: denominador de `atingimento_pct` e de `desvios.medido_vs_projeto_pct`.
     projeto_proporcional_kwh: float | None = None
+    #: `medido ÷ projeto` na janela, em %. É EXATAMENTE o `pct_do_projeto` de
+    #: `/plants/{id}/desempenho` — mesma janela, mesma fonte (`e_grid`), mesmo
+    #: arredondamento —, porque é a mesma pergunta feita pelo mesmo cliente no mesmo
+    #: portal. Enquanto eram duas contas, Porto Ferreira/2026 exibia 36 % numa tela e
+    #: 101,7 % na outra.
+    atingimento_pct: float | None = None
+    #: `pvsyst_diario`, `mensal_digitado` ou `misto` — de onde veio a meta. O diário tem
+    #: célula por dia/mês na tabela; o digitado é um número do mês, e aí a coluna sai em
+    #: travessão sem que o total esteja errado.
+    projeto_origem: str | None = None
     previsto_kwh: float | None = None
     #: `pvsyst_diario` ou `manual_corrigido` — de onde veio o previsto.
     previsto_origem: str | None = None
@@ -1179,6 +1377,8 @@ class PainelOut(BaseModel):
     conciliacao: ConciliacaoOut = ConciliacaoOut()
     totais: TotaisOut = TotaisOut()
     meteo: MeteoOut = MeteoOut()
+    #: De onde saíram os acumulados. A tela imprime; ver `JanelaOut`.
+    janela: JanelaOut
     regra: RegraOut
 
     dias: list[DiaDoMes] = []
@@ -1393,20 +1593,8 @@ def _paradas_pendentes(relatorio: Any) -> int:
 # ── projeto e previsto ──────────────────────────────────────────────────────
 
 
-def _ajustado(bruto: float, indisponibilidade: Any, derating: Any) -> float:
-    """O EARRAY do projeto descontado da indisponibilidade e do derating declarados.
-
-    É a mesma correção que o meuWatt aplica em todas as telas de geração: comparar o
-    medido com um projeto que ignora a parada programada e a degradação declarada faz a
-    usina parecer pior do que é.
-    """
-    indisp = max(0.0, 1 - (_numero(indisponibilidade) or 0.0) / 100)
-    derat = max(0.0, 1 - (_numero(derating) or 0.0) / 100)
-    return bruto * indisp * derat
-
-
 def _manual_por_mes(manual: Any) -> dict[int, dict[str, Any]]:
-    """`rows[].{month, e_array, poa, ghi, derating, …}` → `{mês: linha}`."""
+    """`rows[].{month, e_grid, poa, ghi, …}` → `{mês: linha}`."""
     return {
         linha["month"]: linha
         for linha in _lista(_dicionario(manual).get("rows"))
@@ -1416,17 +1604,59 @@ def _manual_por_mes(manual: Any) -> dict[int, dict[str, Any]]:
     }
 
 
-def _projeto_por_dia(pvsyst: Any, derating_do_mes: dict[int, Any]) -> dict[str, float]:
-    """O projeto de cada dia, já ajustado. `{'YYYY-MM-DD': kWh}`."""
+def _projeto_por_dia(pvsyst: Any) -> dict[str, float]:
+    """O projeto de cada dia. `{'YYYY-MM-DD': kWh}` — a linha da barra tracejada.
+
+    **É `e_grid`, e não `e_array`.** `e_array` é a energia do ARRANJO, antes do inversor;
+    `e_grid` é a que chega ao ponto de entrega. O número com que ela é comparada aqui é a
+    geração dos INVERSORES, então `e_grid` é o par certo — e é o que
+    `/plants/{id}/desempenho` lê desde sempre (`plants._esperado_diario_por_mes`).
+
+    Ler `e_array` fazia duas coisas ruins ao mesmo tempo: inflava a referência (a usina
+    parecia pior do que é) e dava ao portal DUAS respostas para "quanto o projeto
+    esperava" — a do painel e a da tela de desempenho, no mesmo portal, para o mesmo
+    cliente. A correção por indisponibilidade/derating saiu junto pelo mesmo motivo: a
+    tela de desempenho não a aplica, e um projeto corrigido de um lado e cru do outro é a
+    mesma pergunta com duas respostas. Se ela precisar voltar, volta nos DOIS lugares.
+    """
     saida: dict[str, float] = {}
     for linha in _lista(_dicionario(pvsyst).get("rows")):
         dia = _data(linha.get("date"))
-        bruto = _numero(linha.get("e_array"))
-        if dia is not None and bruto is not None:
-            saida[dia.isoformat()] = _ajustado(
-                bruto, linha.get("indisponibilidade"), derating_do_mes.get(dia.month)
-            )
+        kwh = _numero(linha.get("e_grid"))
+        if dia is not None and kwh is not None:
+            saida[dia.isoformat()] = kwh
     return saida
+
+
+def _meta_por_mes(
+    pvsyst: Any, manual: Any, ano: int, inicio: date, fim: date
+) -> dict[str, float]:
+    """A meta do projeto de cada mês entre `inicio` e `fim` — a MESMA de `/desempenho`.
+
+    Não é uma segunda conta: são as duas funções puras que `plants._meta_do_projeto`
+    compõe (`_diario_por_mes` e `_esperado_manual_por_mes`), rodadas aqui sobre
+    os payloads que o painel JÁ tem em mãos — sem uma chamada nova à rede. Reusar as
+    funções, em vez de reescrever a regra, é o que garante que o painel e a tela de
+    desempenho respondam com o MESMO número, e não com um parecido.
+
+    Três regras vêm de lá e são deliberadas: a fonte DIÁRIA manda (é dia a dia, então
+    respeita "até hoje" sem rateio) e a MENSAL digitada só entra nos meses que a diária
+    não cobre; o mês em que `fim` cai sai rateado pelos dias decorridos, porque comparar a
+    meta inteira com meio mês medido diria "abaixo do esperado" sem que nada estivesse
+    errado; e o mês cuja série DIÁRIA está incompleta cede a vez à mensal, quando ela
+    existe (ver `plants._diario_por_mes` — foi o maio de 13 dias de Ibitinga fazendo a
+    usina publicar `+60,1 %` num mês e 2,4 pontos a mais no ano inteiro).
+    """
+    diario, incompletos = _diario_por_mes(pvsyst, inicio, fim)
+    meta = dict(diario)
+    for chave, kwh in _esperado_manual_por_mes(manual, ano, fim).items():
+        if chave in incompletos:
+            meta[chave] = kwh
+        else:
+            meta.setdefault(chave, kwh)
+    # Arredondado no mapa, e não só na saída: a célula da tabela e o cartão do acumulado
+    # somam os MESMOS números, e o cliente que confere a coluna com o dedo fecha a conta.
+    return {chave: round(kwh, 2) for chave, kwh in meta.items()}
 
 
 def _globinc_por_dia(pvsyst: Any) -> dict[str, float]:
@@ -1444,23 +1674,27 @@ def _globinc_por_dia(pvsyst: Any) -> dict[str, float]:
 def _previsto_manual(
     linha: dict[str, Any] | None, hpoa_medida: float, ghi_medida: float
 ) -> float | None:
-    """EARRAY × (irradiação medida ÷ irradiação do projeto), do cadastro manual.
+    """Meta do mês × (irradiação medida ÷ irradiação do projeto), do cadastro manual.
 
     Preferência pelo plano inclinado (POA), que é o mesmo plano da estação; o horizontal
     (GHI) é a segunda opção. Sem irradiação de projeto cadastrada não há correção — e
     inventar uma seria pior do que não ter o número.
+
+    A base é `e_grid`, a MESMA do projeto (ver `_projeto_por_dia`). Corrigir `e_array` e
+    pôr o resultado ao lado de um projeto em `e_grid` compararia energia do arranjo com
+    energia entregue — dois lugares diferentes da usina, na mesma faixa de cartões.
     """
     if not linha:
         return None
-    earray = _numero(linha.get("e_array"))
-    if earray is None or earray <= 0:
+    base = _numero(linha.get("e_grid"))
+    if base is None or base <= 0:
         return None
     poa = _numero(linha.get("poa"))
     if poa and poa > 0 and hpoa_medida > 0:
-        return earray * (hpoa_medida / poa)
+        return base * (hpoa_medida / poa)
     ghi = _numero(linha.get("ghi"))
     if ghi and ghi > 0 and ghi_medida > 0:
-        return earray * (ghi_medida / ghi)
+        return base * (ghi_medida / ghi)
     return None
 
 
@@ -1472,6 +1706,17 @@ def _desvio(aferido: float | None, referencia: float | None) -> float | None:
     if aferido is None or referencia is None or referencia <= 0:
         return None
     return round((aferido - referencia) / referencia * 100, 2)
+
+
+def _atingimento(medido: float | None, projeto: float | None) -> float | None:
+    """`medido ÷ projeto`, em %, com UMA casa.
+
+    A casa decimal não é detalhe: é a de `plants._situacao_do_projeto`, e é o que faz este
+    número ser IGUAL ao `pct_do_projeto` de `/plants/{id}/desempenho` em vez de parecido.
+    """
+    if medido is None or projeto is None or projeto <= 0:
+        return None
+    return round(medido / projeto * 100, 1)
 
 
 def _situacao_da_conciliacao(diferenca_pct: float | None) -> str | None:
@@ -1503,7 +1748,11 @@ def _perda_ate_a_fronteira(
 
 
 def _conciliacao(
-    fronteira_mwh: float | None, faturado_mwh: float | None, *, parcial: bool = False
+    fronteira_mwh: float | None,
+    faturado_mwh: float | None,
+    *,
+    parcial: bool = False,
+    meses: list[str] | None = None,
 ) -> ConciliacaoOut:
     diferenca = (
         round(fronteira_mwh - faturado_mwh, 3)
@@ -1521,6 +1770,7 @@ def _conciliacao(
         diferenca_mwh=diferenca,
         diferenca_pct=pct,
         situacao=_situacao_da_conciliacao(pct),
+        meses=meses or [],
     )
 
 
@@ -1578,11 +1828,19 @@ def _irradiacao_de_projeto(
 def _meteo(
     *, pontos: list[PontoMeteo], hpoa: float, ghi: float,
     hpoa_projeto: float | None, ghi_projeto: float | None = None,
+    hpoa_projeto_origem: str | None = None, ghi_projeto_origem: str | None = None,
+    agregar: list[PontoMeteo] | None = None,
 ) -> MeteoOut:
-    """Os KPIs de meteorologia, derivados dos pontos que já foram montados."""
-    ambientes = [p.t_amb for p in pontos if p.t_amb is not None]
-    modulos = [p.t_mod for p in pontos if p.t_mod is not None]
-    modulos_max = [p.t_mod_max for p in pontos if p.t_mod_max is not None]
+    """Os KPIs de meteorologia, derivados dos pontos que já foram montados.
+
+    `agregar` é o subconjunto de `pontos` que entra nos ACUMULADOS e nas médias — a
+    janela do painel. `pontos` continua vindo inteiro, porque a tabela mostra o período
+    todo; o que não pode é a média sair de um conjunto e o total de outro.
+    """
+    contados = pontos if agregar is None else agregar
+    ambientes = [p.t_amb for p in contados if p.t_amb is not None]
+    modulos = [p.t_mod for p in contados if p.t_mod is not None]
+    modulos_max = [p.t_mod_max for p in contados if p.t_mod_max is not None]
     return MeteoOut(
         tem_estacao=hpoa > 0 or ghi > 0,
         tem_sensor_temperatura=bool(ambientes or modulos),
@@ -1591,12 +1849,91 @@ def _meteo(
         razao=round(hpoa / ghi, 3) if hpoa > 0 and ghi > 0 else None,
         hpoa_projeto=_arredondar(hpoa_projeto) if hpoa_projeto else None,
         ghi_projeto=_arredondar(ghi_projeto) if ghi_projeto else None,
+        hpoa_projeto_origem=hpoa_projeto_origem if hpoa_projeto else None,
+        ghi_projeto_origem=ghi_projeto_origem if ghi_projeto else None,
         t_amb_media=_arredondar(sum(ambientes) / len(ambientes), 1) if ambientes else None,
         t_amb_max=_arredondar(max(ambientes), 1) if ambientes else None,
         t_mod_media=_arredondar(sum(modulos) / len(modulos), 1) if modulos else None,
         t_mod_max=_arredondar(max(modulos_max), 1) if modulos_max else None,
         pontos=pontos,
     )
+
+
+# ── a janela do acumulado ───────────────────────────────────────────────────
+
+
+def _janela_do_acumulado(
+    relatorio: Any, meses: list[str], medidos: dict[int, float]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Quais meses entram no acumulado — e quais ficam de fora, com o motivo.
+
+    **É a régua canônica do portal**, a mesma linha de `/plants/{id}/desempenho`:
+
+        comparaveis = _meses_medidos(relatorio, meses) or meses
+
+    — "a meta soma os MESMOS meses que a medição cobre, nunca o intervalo inteiro". O
+    painel passou a chamar a MESMA função (`plants._meses_medidos`) em vez de reescrever
+    a regra, porque a pergunta é uma só: "de quanto a usina está atingindo o projeto?".
+    Enquanto eram duas contas, Porto Ferreira/2026 exibia 36 % no painel e 101,7 % em
+    `/desempenho` — e o mesmo desencontro aparecia nas sete usinas.
+
+    Um acréscimo, e ele é o conserto: o mês sem medição sai também do DENOMINADOR. O
+    rollup do upstream traz `generation_kwh: 0.0` para os meses anteriores ao início da
+    série (Porto Ferreira mede desde junho e recebe janeiro a maio zerados), e
+    `_meses_medidos` — que só pergunta se o campo existe — os aceitava. Eles entravam no
+    projeto e não na medição: era exatamente daí que saía o 36 %. Numerador e denominador
+    passam a sair da MESMA lista, que é a única forma de a razão entre eles significar
+    alguma coisa. Onde o mês zerado não tem meta cadastrada — o caso das usinas medidas —
+    as duas leituras coincidem e o número é o mesmo dos dois lados.
+
+    Sem `monthly_summaries` (o upstream não mandou o detalhe) o canônico devolve lista
+    vazia e vale o intervalo inteiro, também como lá; o filtro da medição continua de pé.
+    """
+    canonicos = _meses_medidos(relatorio, meses) or meses
+    dentro: list[str] = []
+    fora: list[tuple[str, str]] = []
+    for mes in meses:
+        if medidos.get(int(mes[5:7])) is None:
+            fora.append((mes, "sem_medicao"))
+        elif mes in canonicos:
+            dentro.append(mes)
+        else:
+            # O mês tem geração nos buckets diários, mas o detalhe mensal do upstream não
+            # o lista. Ficar de fora é o que mantém o painel igual à tela de desempenho, e
+            # o motivo diz que a razão é o detalhe que faltou — não a usina.
+            fora.append((mes, "sem_detalhe_mensal"))
+    return dentro, fora
+
+
+def _janela_out(
+    dentro: list[str], fora: list[tuple[str, str]], regra: str
+) -> JanelaOut:
+    return JanelaOut(
+        meses=dentro,
+        fora=[
+            MesForaDoAcumulado(
+                mes=m, rotulo=f"{_MES_CURTO[int(m[5:7]) - 1]}/{m[:4]}", motivo=motivo
+            )
+            for m, motivo in fora
+        ],
+        rotulo=_rotulo_de_meses(dentro) if dentro else None,
+        parcial=bool(fora),
+        regra=regra,
+    )
+
+
+#: A frase que a tela escreve ao lado do acumulado do ano.
+_REGRA_JANELA_ANO = (
+    "O acumulado soma só os meses com medição, e o projeto soma os MESMOS meses — o mês "
+    "em curso entra com a meta rateada até hoje. Mês sem medição não entra em nenhum dos "
+    "dois lados: ele derrubaria o atingimento sem que nada tivesse acontecido."
+)
+
+_REGRA_JANELA_MES = (
+    "O acumulado vai do dia 1 até o último dia medido, e o projeto é rateado até o mesmo "
+    "dia — comparar o mês inteiro do projeto com meio mês medido acusaria de doente uma "
+    "usina em dia."
+)
 
 
 # ── disponibilidade técnica (tempo de pé por inversor) ──────────────────────
@@ -1745,6 +2082,9 @@ def _painel_sem_dados(
         fim=fim.isoformat(),
         rotulo=_rotulo_do_periodo(recorte, alvo),
         em_curso=em_curso,
+        janela=_janela_out(
+            [], [], _REGRA_JANELA_ANO if recorte == "ano" else _REGRA_JANELA_MES
+        ),
         regra=_REGRA,
         aviso=aviso,
     )
@@ -1873,9 +2213,8 @@ def _painel_do_mes(
 
     manual_do_ano = _manual_por_mes(manual)
     linha_manual = manual_do_ano.get(alvo.month)
-    derating = {mes: linha.get("derating") for mes, linha in manual_do_ano.items()}
 
-    projeto_diario = _projeto_por_dia(pvsyst, derating)
+    projeto_diario = _projeto_por_dia(pvsyst)
     globinc = _globinc_por_dia(pvsyst)
     diarios = _diarios(relatorio)
     irradiacao = _irradiacao_por_dia(relatorio)
@@ -1931,16 +2270,24 @@ def _painel_do_mes(
 
     medido = _numero(relatorio.get("total_generation_kwh")) if _tem_medicao(relatorio) else None
 
-    # Projeto: o EARRAY mensal digitado é a fonte canônica; a soma dos dias importados só
-    # entra onde não há entrada manual. A importação diária costuma cobrir o mês pela
-    # metade, e somá-la como se fosse o mês inteiro rebaixaria o projeto sem motivo.
-    earray = _numero(_dicionario(linha_manual).get("e_array")) or 0.0
-    soma_diaria = sum(projeto_diario.get(d.data, 0.0) for d in dias)
-    projeto = earray if earray > 0 else (soma_diaria if soma_diaria > 0 else None)
-    proporcional = (
-        round(projeto * dia_de_corte / dias_no_mes, 2)
-        if projeto is not None and em_curso and dia_de_corte
-        else projeto
+    # O PROJETO, pela régua canônica do portal (`_meta_por_mes` → as funções puras que
+    # `/plants/{id}/desempenho` usa): a fonte DIÁRIA manda e a MENSAL digitada só entra no
+    # mês que a diária não cobre. Duas janelas, e a distinção é o que impede o número de
+    # mentir: `projeto` é o mês INTEIRO (a meta) e `proporcional` para no último dia
+    # medido (o denominador da comparação).
+    chave_do_mes = _chave_mes(alvo)
+    projeto = _meta_por_mes(pvsyst, manual, alvo.year, inicio, fim).get(chave_do_mes)
+    proporcional = _meta_por_mes(pvsyst, manual, alvo.year, inicio, fim_medido).get(
+        chave_do_mes
+    )
+    # A procedência tem de acompanhar a TROCA: mês cuja série diária está incompleta cede a
+    # vez à mensal em `_meta_por_mes`, e dizer "pvsyst_diario" aqui seria carimbar a fonte
+    # errada no número que a tela publica.
+    _diario_mes, _incompletos_mes = _diario_por_mes(pvsyst, inicio, fim)
+    projeto_origem = (
+        "pvsyst_diario"
+        if chave_do_mes in _diario_mes and chave_do_mes not in _incompletos_mes
+        else ("mensal_digitado" if projeto is not None else None)
     )
 
     # A IRRADIAÇÃO DE PROJETO, na mesma janela do medido — é o que permite separar "o sol
@@ -1958,18 +2305,16 @@ def _painel_do_mes(
         globinc_na_janela, _numero(_dicionario(linha_manual).get("poa")), fator_do_periodo)
     ghi_projeto = _irradiacao_de_projeto(
         0.0, _numero(_dicionario(linha_manual).get("ghi")), fator_do_periodo)
+    hpoa_projeto_origem = "pvsyst_diario" if globinc_na_janela > 0 else "mensal_digitado"
 
     previsto = _previsto_manual(linha_manual, hpoa_medida, ghi_medida)
     origem: str | None = "manual_corrigido" if previsto is not None else None
     if previsto is None:
-        # Sem correção pela meteo digitada, o previsto é o próprio PVsyst diário — na
-        # mesma janela do medido, senão a comparação seria de meio mês contra um mês.
-        base = sum(
-            kwh for chave, kwh in projeto_diario.items()
-            if (_data(chave) or date.max) <= fim_medido
-        ) if em_curso else soma_diaria
-        if base > 0:
-            previsto, origem = base, "pvsyst_diario"
+        # Sem correção pela meteo digitada, o previsto é o próprio projeto na janela do
+        # medido — o MESMO `proporcional` do cartão ao lado. Antes era uma segunda soma
+        # dos mesmos dias, que só podia divergir com o tempo.
+        if proporcional:
+            previsto, origem = proporcional, projeto_origem
 
     resumo = _dicionario(relatorio.get("summary"))
     perdida = _numero(resumo.get("total_lost_kwh")) if _tem_medicao(relatorio) else None
@@ -1996,8 +2341,11 @@ def _painel_do_mes(
         medido_fronteira_kwh=_arredondar(fronteira_kwh),
         perda_inv_fronteira_pct=perda_fronteira,
         fronteira_parcial=fronteira_parcial,
+        fronteira_meses=[chave_do_mes] if fronteira_mwh is not None else [],
         projeto_kwh=_arredondar(projeto),
         projeto_proporcional_kwh=_arredondar(proporcional),
+        atingimento_pct=_atingimento(medido, proporcional),
+        projeto_origem=projeto_origem,
         previsto_kwh=_arredondar(previsto),
         previsto_origem=origem,
         produtividade_kwh_kwp=(
@@ -2015,7 +2363,12 @@ def _painel_do_mes(
         desvios=DesviosOut(
             medido_vs_projeto_pct=_desvio(medido, proporcional),
             medido_vs_previsto_pct=_desvio(medido, previsto),
-            previsto_vs_projeto_pct=_desvio(previsto, proporcional),
+            # Mesma régua do recorte `ano`: sem correção pela meteo medida, previsto e
+            # projeto são o mesmo número e o desvio seria `0,0 %` por construção — um
+            # "efeito do clima" onde clima nenhum foi medido.
+            previsto_vs_projeto_pct=(
+                _desvio(previsto, proporcional) if origem == "manual_corrigido" else None
+            ),
             hpoa_vs_projeto_pct=_desvio(hpoa_medida or None, hpoa_projeto),
             ghi_vs_projeto_pct=_desvio(ghi_medida or None, ghi_projeto),
         ),
@@ -2040,8 +2393,15 @@ def _painel_do_mes(
             ghi=ghi_medida,
             hpoa_projeto=hpoa_projeto,
             ghi_projeto=ghi_projeto,
+            hpoa_projeto_origem=hpoa_projeto_origem,
+            ghi_projeto_origem="mensal_digitado",
         ),
         dias=dias,
+        janela=_janela_out(
+            [chave_do_mes] if medido is not None else [],
+            [] if medido is not None else [(chave_do_mes, "sem_medicao")],
+            _REGRA_JANELA_MES,
+        ),
         regra=_REGRA,
     )
 
@@ -2148,7 +2508,6 @@ def _painel_do_ano(
     ano = alvo.year
     conferida = disponibilidade_mensal or {}
     manual_do_ano = _manual_por_mes(manual)
-    derating = {mes: linha.get("derating") for mes, linha in manual_do_ano.items()}
 
     diarios = _diarios(relatorio)
     mensais = _mensais(relatorio)
@@ -2157,8 +2516,18 @@ def _painel_do_ano(
     temperatura = _temperatura_por_dia(relatorio)
     faturado_do_ano = _faturado_por_mes(faturas)
 
+    # A META, pela régua canônica do portal (as funções puras de `plants.py` que
+    # `/plants/{id}/desempenho` usa). Duas janelas: `meta_ate_hoje` para no último dia
+    # medido — o mês em curso sai rateado — e `meta_do_ano` vai até 31/12, porque "quanto
+    # o projeto prevê para o ano" é outra pergunta e continua na tela.
+    meta_ate_hoje = _meta_por_mes(pvsyst, manual, ano, inicio, fim_medido)
+    meta_do_ano = _meta_por_mes(pvsyst, manual, ano, inicio, fim)
+    # Só os meses que a diária cobre INTEIROS contam como origem `pvsyst_diario` —
+    # os incompletos foram trocados pela mensal em `_meta_por_mes`.
+    _diario_ano, _incompletos_ano = _diario_por_mes(pvsyst, inicio, fim)
+    diario_por_mes = {m: v for m, v in _diario_ano.items() if m not in _incompletos_ano}
+
     # Acumuladores por mês do ano pedido. Tudo o que vem por DIA é somado aqui uma vez só.
-    projeto: dict[int, float] = {}
     hpoa: dict[int, float] = {}
     hpoa_projeto: dict[int, float] = {}
     ghi: dict[int, float] = {}
@@ -2175,11 +2544,11 @@ def _painel_do_ano(
         dia = _data(chave)
         return dia if dia and dia.year == ano else None
 
-    for chave, kwh in _projeto_por_dia(pvsyst, derating).items():
-        if dia := _no_ano(chave):
-            projeto[dia.month] = projeto.get(dia.month, 0.0) + kwh
+    # O projeto de irradiação para no último dia medido, como a meta de energia: no mês em
+    # curso a medição é parcial, e um projeto de mês inteiro do outro lado devolveria
+    # "faltou sol" todo dia 15 de todo mês.
     for chave, valor in _globinc_por_dia(pvsyst).items():
-        if dia := _no_ano(chave):
+        if (dia := _no_ano(chave)) and dia <= fim_medido:
             hpoa_projeto[dia.month] = hpoa_projeto.get(dia.month, 0.0) + valor
     for chave, linha in diarios.items():
         if not (dia := _no_ano(chave)):
@@ -2220,15 +2589,39 @@ def _painel_do_ano(
             pr_numerador[dia.month] = pr_numerador.get(dia.month, 0.0) + pr * poa
             pr_denominador[dia.month] = pr_denominador.get(dia.month, 0.0) + poa
 
+    # ── A JANELA, antes de qualquer acumulado ────────────────────────────────
+    # Ela é o conserto: numerador e denominador saem da MESMA lista de meses. Ver
+    # `_janela_do_acumulado` — é a régua de `/plants/{id}/desempenho`, chamada e não
+    # reescrita, mais o descarte do mês que o rollup zera.
+    meses_do_periodo = _meses_entre(_chave_mes(inicio), _chave_mes(fim_medido))
+    dentro, fora = _janela_do_acumulado(relatorio, meses_do_periodo, medidos)
+    fora += [
+        (f"{ano:04d}-{numero:02d}", "futuro")
+        for numero in range(1, 13)
+        if f"{ano:04d}-{numero:02d}" not in meses_do_periodo
+    ]
+    fora.sort(key=lambda item: item[0])
+    no_acumulado = set(dentro)
+
     meses: list[MesDoAno] = []
     pontos: list[PontoMeteo] = []
     disponiveis: list[str] = []
+    #: O projeto de irradiação POR MÊS, na forma em que ele aparece na tabela — é a mesma
+    #: parcela que o acumulado soma.
+    hpoa_projeto_do_mes: dict[int, float] = {}
+    ghi_projeto_do_mes: dict[int, float] = {}
     for numero in range(1, 13):
         chave_mes = f"{ano:04d}-{numero:02d}"
         primeiro = date(ano, numero, 1)
         ultimo = date(ano, numero, monthrange(ano, numero)[1])
         futuro = primeiro > hoje
         mes_em_curso = not futuro and ultimo > hoje
+        # Fração do mês já decorrida — o mesmo rateio que a meta de energia recebe em
+        # `_esperado_manual_por_mes`, aplicado à irradiação digitada para os dois lados da
+        # comparação cobrirem os mesmos dias.
+        fator_mes = (
+            hoje.day / monthrange(ano, numero)[1] if mes_em_curso else 1.0
+        )
 
         # A geração e a perda vêm do rollup canônico do servidor (`monthly_summaries`), com
         # os buckets do diário entrando só onde ele não cobre. A régua de "mês medido" mora
@@ -2253,17 +2646,28 @@ def _painel_do_ano(
             # mesmo número que o recorte `mes` e `/plants/{id}/desempenho` publicam. O
             # rollup é a rede de segurança de quando aquela leitura não veio.
             real, contratual = conferida.get(numero) or (None, None)
+            origem_disp = "mes_conferido"
             if real is None:
                 real = _numero(_dicionario(rollup).get("availability_real_pct"))
+                origem_disp = "rollup_do_ano"
             if contratual is None:
                 contratual = _numero(_dicionario(rollup).get("availability_contratual_pct"))
+                origem_disp = "rollup_do_ano"
+        else:
+            origem_disp = None
 
+        # O PROJETO da linha: dentro da janela vale a meta ATÉ HOJE (o mês em curso sai
+        # rateado, e é assim que a coluna soma exatamente o cartão do acumulado); fora
+        # dela vale a meta do mês inteiro, que é o alvo e não entra em conta nenhuma.
         linha_manual = manual_do_ano.get(numero)
-        earray = _numero(_dicionario(linha_manual).get("e_array")) or 0.0
-        projeto_mes = earray if earray > 0 else projeto.get(numero)
+        projeto_mes = (
+            meta_ate_hoje.get(chave_mes)
+            if chave_mes in no_acumulado
+            else meta_do_ano.get(chave_mes)
+        )
         previsto_mes = _previsto_manual(linha_manual, hpoa.get(numero, 0.0), ghi.get(numero, 0.0))
         if previsto_mes is None:
-            previsto_mes = projeto.get(numero)
+            previsto_mes = projeto_mes
 
         fronteira_mes = _fronteira_do_mes(fronteira, numero)
         meses.append(
@@ -2284,19 +2688,35 @@ def _painel_do_ano(
                 perdida_externa_kwh=_arredondar(perdida_ext),
                 fronteira_mwh=_arredondar(fronteira_mes, 3),
                 faturado_mwh=faturado_do_ano.get(numero),
+                disponibilidade_origem=origem_disp,
+                no_acumulado=chave_mes in no_acumulado,
                 em_curso=mes_em_curso,
                 futuro=futuro,
             )
         )
+        # A CÉLULA do projeto de irradiação carrega o MESMO valor que entra no acumulado —
+        # PVsyst diário quando existe, valor mensal digitado (rateado no mês em curso)
+        # quando não. Enquanto a coluna vinha só do diário e o total só do digitado, a
+        # tabela exibia "Acumulado do período · HPOA PROJETO 174,6" com as doze parcelas
+        # em travessão: um total que não saía de nada visível.
+        hpoa_projeto_mes = hpoa_projeto.get(numero) or (
+            (_numero(_dicionario(linha_manual).get("poa")) or 0.0) * fator_mes
+        )
+        ghi_projeto_mes = (
+            _numero(_dicionario(linha_manual).get("ghi")) or 0.0
+        ) * fator_mes
+        if hpoa_projeto_mes:
+            hpoa_projeto_do_mes[numero] = hpoa_projeto_mes
+        if ghi_projeto_mes:
+            ghi_projeto_do_mes[numero] = ghi_projeto_mes
         pontos.append(
             PontoMeteo(
                 chave=chave_mes,
                 rotulo=_MES_CURTO[numero - 1],
                 hpoa=_arredondar(hpoa[numero]) if hpoa.get(numero) else None,
-                hpoa_projeto=(
-                    _arredondar(hpoa_projeto[numero]) if hpoa_projeto.get(numero) else None
-                ),
+                hpoa_projeto=_arredondar(hpoa_projeto_mes) if hpoa_projeto_mes else None,
                 ghi=_arredondar(ghi[numero]) if ghi.get(numero) else None,
+                ghi_projeto=_arredondar(ghi_projeto_mes) if ghi_projeto_mes else None,
                 t_amb=(
                     _arredondar(sum(ambientes[numero]) / len(ambientes[numero]), 1)
                     if ambientes.get(numero) else None
@@ -2309,39 +2729,63 @@ def _painel_do_ano(
             )
         )
 
-    # O acumulado do ano soma só os meses FECHADOS: incluir o mês em curso compararia meio
-    # mês medido com o projeto inteiro dele e rebaixaria o ano sem que nada tivesse
-    # acontecido. É a mesma janela deliberada do meuWatt.
-    fechados = [m for m in meses if not m.futuro and not m.em_curso]
-    medido_ytd = _soma([m.medido_kwh for m in fechados])
-    projeto_ytd = _soma([m.projeto_kwh for m in fechados])
-    projeto_ano = _soma([m.projeto_kwh for m in meses])
-    previsto_ytd = _soma([m.previsto_kwh for m in meses if m.medido_kwh is not None])
-    # A fronteira e a fatura seguem a MESMA janela do medido — os meses fechados. Somar a
-    # fronteira do ano inteiro poria lado a lado, na mesma faixa de cartões, um acumulado
-    # com o mês em curso e outro sem ele; e na conciliação inflaria a diferença com um mês
-    # cuja fatura a distribuidora ainda nem emitiu.
-    fronteira_ytd = _soma([m.fronteira_mwh for m in fechados])
+    # ── OS ACUMULADOS, todos da MESMA janela ─────────────────────────────────
+    # Antes eram três janelas convivendo na mesma tela: o cartão somava os meses fechados,
+    # a tabela mostrava também o mês em curso (o cliente somava a coluna com o dedo e ela
+    # não batia: em Porto Ferreira faltavam exatamente os 128.037 kWh de setembro) e o
+    # previsto somava "os meses com medição". Agora há uma lista só, e ela viaja na
+    # resposta (`janela`) para a tela poder dizer de onde o número saiu.
+    contados = [m for m in meses if m.mes in no_acumulado]
+    medido_ytd = _soma([m.medido_kwh for m in contados])
+    projeto_ytd = _soma([m.projeto_kwh for m in contados])
+    projeto_ano = _soma([meta_do_ano.get(m.mes) for m in meses])
+    previsto_ytd = _soma([m.previsto_kwh for m in contados])
+    fronteira_ytd = _soma([m.fronteira_mwh for m in contados])
     fronteira_ytd_kwh = fronteira_ytd * 1000 if fronteira_ytd is not None else None
-    faturado_ytd = _soma([m.faturado_mwh for m in fechados])
     perda_fronteira, fronteira_parcial = _perda_ate_a_fronteira(fronteira_ytd_kwh, medido_ytd)
 
-    # A irradiação de projeto do ano acompanha a MEDIDA mês a mês: só entram os meses em que
-    # a estação mediu. Somar o projeto de doze meses contra a medição de sete devolveria uma
-    # "queda de irradiação" que é só o calendário. Onde não há PVsyst diário, vale o valor
-    # mensal digitado — nunca os dois, para não contar o mesmo mês duas vezes.
-    meses_com_hpoa = {mes for mes, valor in hpoa.items() if valor > 0}
-    meses_com_ghi = {mes for mes, valor in ghi.items() if valor > 0}
-    hpoa_projeto_ytd = _irradiacao_de_projeto(
-        sum(valor for mes, valor in hpoa_projeto.items() if mes in meses_com_hpoa),
-        sum((_numero(manual_do_ano.get(mes, {}).get("poa")) or 0.0) for mes in meses_com_hpoa),
-        1.0)
-    ghi_projeto_ytd = _irradiacao_de_projeto(
-        0.0,
-        sum((_numero(manual_do_ano.get(mes, {}).get("ghi")) or 0.0) for mes in meses_com_ghi),
-        1.0)
+    # A CONCILIAÇÃO é a única conta com janela própria, e por isso ela a declara. Fatura
+    # ainda não emitida é ESTADO, não erro: pôr a fronteira de um mês cujo faturamento a
+    # distribuidora nem fechou inventaria uma "divergência relevante" do tamanho daquele
+    # mês, e mandaria o cliente cobrar da distribuidora um mês que ainda não chegou.
+    conciliaveis = [
+        m for m in contados if m.fronteira_mwh is not None and m.faturado_mwh is not None
+    ]
+    conciliada_fronteira = _soma([m.fronteira_mwh for m in conciliaveis])
+    conciliada_faturado = _soma([m.faturado_mwh for m in conciliaveis])
+
+    # A IRRADIAÇÃO do projeto só sai quando cobre TODOS os meses do acumulado. Ela vinha de
+    # um conjunto (os meses com PVsyst diário) e era comparada com a medição de outro (os
+    # meses com estação): Porto Ferreira publicava "+176,6 % de sol", como se agosto
+    # tivesse recebido quase o triplo da irradiação prevista. Referência que cobre parte
+    # do período não vira comparação — e a tela mostra a medição sozinha, que é verdade.
+    hpoa_projeto_ytd = (
+        _soma([hpoa_projeto_do_mes.get(int(m[5:7])) for m in dentro])
+        if dentro and all(int(m[5:7]) in hpoa_projeto_do_mes for m in dentro)
+        else None
+    )
+    ghi_projeto_ytd = (
+        _soma([ghi_projeto_do_mes.get(int(m[5:7])) for m in dentro])
+        if dentro and all(int(m[5:7]) in ghi_projeto_do_mes for m in dentro)
+        else None
+    )
+    hpoa_ytd = sum(hpoa.get(int(m[5:7]), 0.0) for m in dentro)
+    ghi_ytd = sum(ghi.get(int(m[5:7]), 0.0) for m in dentro)
+    # A procedência da referência: diário onde ele existe em TODOS os meses contados,
+    # digitado quando algum deles caiu no valor mensal.
+    hpoa_origem = (
+        "pvsyst_diario"
+        if dentro and all(hpoa_projeto.get(int(m[5:7])) for m in dentro)
+        else "mensal_digitado"
+    )
 
     capacidade = _capacidade(relatorio)
+    projeto_origem = (
+        "pvsyst_diario"
+        if dentro and all(m in diario_por_mes for m in dentro)
+        else ("mensal_digitado" if projeto_ytd is not None else None)
+    )
+    previsto_origem = _origem_do_previsto_anual(manual_do_ano, hpoa, ghi, projeto_origem)
 
     return PainelOut(
         recorte="ano",
@@ -2355,10 +2799,19 @@ def _painel_do_ano(
         medido_fronteira_kwh=_arredondar(fronteira_ytd_kwh),
         perda_inv_fronteira_pct=perda_fronteira,
         fronteira_parcial=fronteira_parcial,
-        projeto_kwh=projeto_ytd,
+        fronteira_meses=[m.mes for m in contados if m.fronteira_mwh is not None],
+        # `projeto_kwh` é a meta do PERÍODO INTEIRO em todo recorte — é o que o próprio
+        # campo promete no `PainelOut`. Aqui ele recebia `projeto_ytd`, virando cópia exata
+        # de `projeto_proporcional_kwh`, e a meta do ano inteiro só existia em
+        # `totais.projeto_kwh`: um mesmo campo devolvia o mês FECHADO no recorte `mes` e um
+        # ano PARCIAL no recorte `ano`. Nenhuma tela lia assim hoje — e é exatamente a
+        # armadilha "uma pergunta, duas respostas" que esta leva existe para fechar.
+        projeto_kwh=projeto_ano,
         projeto_proporcional_kwh=projeto_ytd,
+        atingimento_pct=_atingimento(medido_ytd, projeto_ytd),
+        projeto_origem=projeto_origem,
         previsto_kwh=previsto_ytd,
-        previsto_origem=_origem_do_previsto_anual(manual_do_ano, hpoa, ghi, projeto),
+        previsto_origem=previsto_origem,
         produtividade_kwh_kwp=(
             _arredondar(medido_ytd / capacidade)
             if medido_ytd is not None and capacidade else None
@@ -2369,17 +2822,26 @@ def _painel_do_ano(
             relatorio, "availability_contratual_pct"
         ),
         paradas_pendentes=_paradas_pendentes(relatorio),
-        perdida_kwh=_soma([m.perdida_kwh for m in fechados]),
-        perdida_externa_kwh=_soma([m.perdida_externa_kwh for m in fechados]),
+        perdida_kwh=_soma([m.perdida_kwh for m in contados]),
+        perdida_externa_kwh=_soma([m.perdida_externa_kwh for m in contados]),
         desvios=DesviosOut(
             medido_vs_projeto_pct=_desvio(medido_ytd, projeto_ytd),
             medido_vs_previsto_pct=_desvio(medido_ytd, previsto_ytd),
-            previsto_vs_projeto_pct=_desvio(previsto_ytd, projeto_ytd),
-            hpoa_vs_projeto_pct=_desvio(sum(hpoa.values()) or None, hpoa_projeto_ytd),
-            ghi_vs_projeto_pct=_desvio(sum(ghi.values()) or None, ghi_projeto_ytd),
+            # "O efeito do clima" só existe quando houve correção pela irradiação medida.
+            # Sem ela o previsto É o projeto, e este desvio saía `+0,0 %` — uma medição de
+            # clima afirmada em quatro usinas que não têm estação nenhuma.
+            previsto_vs_projeto_pct=(
+                _desvio(previsto_ytd, projeto_ytd)
+                if previsto_origem == "manual_corrigido" else None
+            ),
+            hpoa_vs_projeto_pct=_desvio(hpoa_ytd or None, hpoa_projeto_ytd),
+            ghi_vs_projeto_pct=_desvio(ghi_ytd or None, ghi_projeto_ytd),
         ),
         conciliacao=_conciliacao(
-            _arredondar(fronteira_ytd, 3), faturado_ytd, parcial=fronteira_parcial
+            _arredondar(conciliada_fronteira, 3),
+            conciliada_faturado,
+            parcial=fronteira_parcial,
+            meses=[m.mes for m in conciliaveis],
         ),
         totais=TotaisOut(
             medido_kwh=medido_ytd,
@@ -2389,13 +2851,17 @@ def _painel_do_ano(
         ),
         meteo=_meteo(
             pontos=pontos,
-            hpoa=sum(hpoa.values()),
-            ghi=sum(ghi.values()),
+            hpoa=hpoa_ytd,
+            ghi=ghi_ytd,
             hpoa_projeto=hpoa_projeto_ytd,
             ghi_projeto=ghi_projeto_ytd,
+            hpoa_projeto_origem=hpoa_origem,
+            ghi_projeto_origem="mensal_digitado",
+            agregar=[p for p in pontos if p.chave in no_acumulado],
         ),
         meses=meses,
         meses_disponiveis=disponiveis,
+        janela=_janela_out(dentro, fora, _REGRA_JANELA_ANO),
         disponibilidade_tecnica=_disponibilidade_tecnica(
             relatorio, inicio, fim_medido, dias_com_dado
         ),
@@ -2407,11 +2873,23 @@ def _origem_do_previsto_anual(
     manual_do_ano: dict[int, dict[str, Any]],
     hpoa: dict[int, float],
     ghi: dict[int, float],
-    projeto: dict[int, float],
+    projeto_origem: str | None,
 ) -> str | None:
     """De onde veio o previsto do ano. Basta um mês corrigido pela meteo digitada para a
-    origem ser a manual — é o que a tela precisa escrever ao lado do número."""
+    origem ser a manual — é o que a tela precisa escrever ao lado do número.
+
+    ⛔ **Sem correção, a origem é a DO PROJETO** — porque sem correção o previsto É o
+    projeto (o mesmo `previsto = proporcional` do recorte `mes`, ali com a origem certa).
+    Isto dizia `"pvsyst_diario" if meta else None`, e a frase que a tela escreve para essa
+    origem é *"da meta diária do projeto, corrigida pela irradiação medida"*. Em Ouro Fino,
+    Pereiras, Pirapozinho e Tietê — quatro das sete usinas, **nenhuma** com uma linha de
+    PVsyst diário e **nenhuma** com estação — a tela publicava, lado a lado:
+    `PROJETO 2.379,8 MWh · do valor mensal digitado no projeto` e `PREVISTO 2.379,8 MWh ·
+    da meta diária do projeto, corrigida pela irradiação medida`. Dois rótulos, o mesmo
+    byte, e uma correção que nunca houve. E a mesma usina se contradizia entre as abas: no
+    recorte `mes` este mesmo código já escrevia `mensal_digitado`.
+    """
     for mes, linha in manual_do_ano.items():
         if _previsto_manual(linha, hpoa.get(mes, 0.0), ghi.get(mes, 0.0)) is not None:
             return "manual_corrigido"
-    return "pvsyst_diario" if projeto else None
+    return projeto_origem

@@ -23,6 +23,13 @@
  * Geração, Paradas e o Resumo Executivo — o cliente baixa em Relatórios, prontos, sem ter
  * de montar nada.
  *
+ * **Todo acumulado diz de que meses ele saiu.** O servidor manda a janela (`painel.janela`:
+ * os meses somados, os que ficaram de fora e o motivo de cada um) e as duas abas de período
+ * a imprimem colada no número, pela mesma peça (`NotaDaJanela`). Não é enfeite: até o
+ * conserto do BFF, o mesmo cliente lia "36%" de atingimento aqui e "101,7%" na tela de
+ * desempenho, e o cartão do topo não fechava com a coluna da tabela logo abaixo. Consertar
+ * os números sem dizer de onde eles saem só adiaria a pergunta seguinte.
+ *
  * Também ficaram de fora, com motivo: o ranking de causas, o detalhamento parada a parada e
  * o desvio entre inversores (não são do painel — vivem dentro do Anexo de Paradas, que
  * chega em PDF); o derating e a indisponibilidade do PVsyst (são parâmetros de ENTRADA do

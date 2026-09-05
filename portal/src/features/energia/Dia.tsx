@@ -14,6 +14,13 @@
  *
  * **PR descartado não é PR zero.** Quando o monitoramento descarta a leitura do dia, o
  * cartão escreve "descartada" e não desenha percentual nenhum.
+ *
+ * **A estação é um APARELHO, não uma leitura.** Existir (`tem_estacao`, que vem do cadastro)
+ * e ter medido hoje (`estacao_com_leitura`) são duas perguntas, e a tela responde as duas
+ * separadas. Enquanto eram uma só, um pedido às 3h da manhã fazia esta página afirmar "esta
+ * usina não tem estação solarimétrica" sobre a mesma usina que na véspera mediu 7,1 kWh/m².
+ * E quando o cadastro não pôde ser lido (`estacao_indefinida`), a tela não afirma nem uma
+ * coisa nem outra: diz que não houve leitura, que é o que se sabe.
  */
 
 import {
@@ -34,8 +41,26 @@ import { energia } from '@/lib/format'
 import type { Dia, EventoDoDia } from './api'
 import { Faisca, SemDado, capacidade } from './graficos'
 
+/**
+ * O que a tela pode AFIRMAR sobre a estação solarimétrica desta usina.
+ *
+ * Três respostas, e só a primeira nega o aparelho — e ela exige o cadastro, nunca a
+ * ausência de sol num dia. `null` significa "há estação e ela mediu": não há o que dizer.
+ */
+function recadoDaEstacao(d: Dia): string | null {
+  if (d.estacao_com_leitura) return null
+  if (d.estacao_indefinida) {
+    return 'Não houve leitura de irradiância neste dia — e o cadastro dos aparelhos não pôde ser consultado agora.'
+  }
+  if (d.tem_estacao) {
+    return 'A estação solarimétrica desta usina ainda não registrou leitura neste dia.'
+  }
+  return 'Esta usina não tem estação solarimétrica — só a potência é medida.'
+}
+
 export function AbaDia({ dia }: { dia: Dia }) {
   const d = dia
+  const recadoEstacao = recadoDaEstacao(d)
 
   return (
     <>
@@ -81,7 +106,10 @@ export function AbaDia({ dia }: { dia: Dia }) {
               d.pr_descartado ? (
                 <span className="text-tom-alerta">leitura descartada pelo monitoramento</span>
               ) : d.pr_pct === null ? (
-                'sem irradiação medida'
+                // Sem PR, o motivo é a estação — e o motivo certo depende de o aparelho
+                // existir. "Sem irradiação medida" para todos os casos dizia a mesma coisa
+                // para uma usina sem sensor e para uma manhã em que ainda não deu sol.
+                (recadoEstacao ?? 'o monitoramento não devolveu o PR deste dia')
               ) : undefined
             }
           />
@@ -94,11 +122,9 @@ export function AbaDia({ dia }: { dia: Dia }) {
         {d.curva.length >= 2 ? (
           <>
             <GraficoLinha pontos={d.curva} />
-            {!d.tem_estacao ? (
-              <p className="mt-2 text-xs text-fraco">
-                Esta usina não tem estação solarimétrica — só a potência é medida.
-              </p>
-            ) : null}
+            {recadoEstacao === null ? null : (
+              <p className="mt-2 text-xs text-fraco">{recadoEstacao}</p>
+            )}
           </>
         ) : (
           <SemDado>Sem leitura de potência neste dia.</SemDado>
@@ -106,7 +132,10 @@ export function AbaDia({ dia }: { dia: Dia }) {
       </Cartao>
 
       {/* ───────────────────────────────────────────────── meteorologia */}
-      {d.tem_estacao ? (
+      {/* O bloco depende da LEITURA, não do cadastro: uma estação que existe e ainda não
+          mediu renderia três travessões em fila, que não informam nada e ocupam o lugar do
+          que informa. Quem diz que ela existe é o recado embaixo da curva. */}
+      {d.estacao_com_leitura ? (
         <Cartao>
           <CabecalhoCard rotulo="Condições do dia" />
           <div className="grid gap-6 sm:grid-cols-3">

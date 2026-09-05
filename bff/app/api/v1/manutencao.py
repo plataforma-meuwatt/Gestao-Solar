@@ -1250,6 +1250,13 @@ async def _tarefa_autorizada_em_cache(
     return dados
 
 
+#: Quantas fotos este processo busca no meuPlano AO MESMO TEMPO. O upstream tem pool de
+#: conexões finito e uma ficha coletiva pode ter dezenas de evidências; sem teto, a tela
+#: derruba o servidor que ela está tentando ler. Oito passa uma tela de 61 fotos em oito
+#: ondas — imperceptível para quem rola a página, e nenhuma foto perdida.
+_FILA_DE_FOTOS = asyncio.Semaphore(8)
+
+
 @router.get("/manutencao/ordens/{so_id}/tarefas/{task_id}/fotos/{foto_id}")
 async def foto_da_tarefa(
     so_id: int,
@@ -1268,7 +1275,15 @@ async def foto_da_tarefa(
     """
     cliente, _tarefa, _link = await _tarefa_autorizada_em_cache(db, usuario, so_id, task_id)
     try:
-        conteudo, tipo = await cliente.foto_da_tarefa(task_id, foto_id, variante)
+        # ⛔ FILA, não estouro. A ficha coletiva dos inversores de Porto Ferreira tem 61
+        # fotos e a tela pede TODAS de uma vez; o meuPlano esgotava o pool de conexões e
+        # devolvia 500. O dono mediu: 61 de 61 na primeira carga, depois 39, 30 e 33 — o
+        # resto virava caixa cinza com código de erro. Sequencialmente, 5 de 5 vinham; em
+        # rajada de 60, 26 vinham e 26 falhavam. Não é foto que sumiu: é a rajada.
+        # O semáforo faz a 33ª esperar em vez de derrubar a 33ª — mais lento e inteiro,
+        # que é o certo para uma evidência de laudo.
+        async with _FILA_DE_FOTOS:
+            conteudo, tipo = await cliente.foto_da_tarefa(task_id, foto_id, variante)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para carregar esta foto") from exc
     return Response(content=conteudo, media_type=tipo, headers={

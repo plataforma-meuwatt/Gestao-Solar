@@ -15,6 +15,19 @@
  * A disponibilidade de cada mês desta tabela é a MESMA que a aba Mês publica para aquele
  * mês: o BFF confere mês a mês em vez de usar o acumulado do monitoramento, justamente
  * porque os dois discordavam em pontos percentuais. Aqui não se recalcula nada.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────────
+ * A LINHA DE TOTAL FECHA COM O CARTÃO — e é por isso que ela não é somada aqui.
+ *
+ * Ela já foi: o rodapé somava as doze linhas da coluna enquanto o cartão do topo somava
+ * outra janela, e o cliente que conferia a tabela com o dedo achava um terceiro número. Não
+ * havia um errado entre eles; havia três perguntas parecidas com três respostas.
+ *
+ * Agora o rodapé IMPRIME o acumulado do servidor (`medido_inversores_kwh`,
+ * `projeto_proporcional_kwh`, `atingimento_pct`) — os mesmos campos dos cartões, byte a
+ * byte —, a linha diz sobre que meses ele foi somado, e o mês que ficou de fora do
+ * acumulado continua VISÍVEL na tabela, marcado e com o motivo escrito. O cliente quer ver
+ * o ano inteiro; o que ele não pode é somar a coluna e achar outro total.
  */
 
 import {
@@ -34,17 +47,44 @@ import {
   CartaoDesvios,
   CartaoRegra,
   LinhaDoTempo,
+  NotaDaJanela,
   SemDado,
   TabelaLonga,
   capacidade,
   comSinal,
+  motivoDaExclusao,
+  faixaDeChaves,
+  origemDoPrevisto,
+  origemDoProjeto,
+  previstoFoiCorrigido,
+  tomDaConciliacao,
   type PontoDoPeriodo,
 } from './graficos'
 
-/** Soma o que houver; nulo quando NENHUM mês tem o número — soma de nada não é zero. */
-function soma(valores: (number | null)[]): number | null {
-  const numeros = valores.filter((v): v is number => typeof v === 'number')
-  return numeros.length > 0 ? numeros.reduce((a, b) => a + b, 0) : null
+/**
+ * O rodapé de uma tabela cujo total NÃO é a soma de tudo o que se vê.
+ *
+ * Duas linhas na primeira célula: o que a soma é, e sobre que meses ela foi feita. Sem a
+ * segunda, o rodapé volta a ser um total que parece não bater com a coluna.
+ */
+function TotalDe({ titulo, janela }: { titulo: string; janela: string | null }) {
+  return (
+    <span className="block">
+      {titulo}
+      <span className="mt-0.5 block text-xs font-normal text-fraco">
+        {janela === null ? 'sem meses somados' : janela}
+      </span>
+    </span>
+  )
+}
+
+/** A marca do mês que a tabela mostra mas o acumulado não somou — com o motivo do servidor. */
+function ForaDaConta({ motivo }: { motivo: string | undefined }) {
+  return (
+    <Selo tom="semDados">
+      fora da conta{motivo === undefined ? '' : ` · ${motivoDaExclusao(motivo)}`}
+    </Selo>
+  )
 }
 
 export function AbaAno({ painel }: { painel: Painel }) {
@@ -59,6 +99,12 @@ export function AbaAno({ painel }: { painel: Painel }) {
   const comConta = p.meses.filter(
     (m) => m.fronteira_mwh !== null || m.faturado_mwh !== null,
   )
+  /** O motivo de cada mês excluído, para a linha dele poder dizer por que ficou de fora. */
+  const motivoDoMes = new Map(p.janela.fora.map((f) => [f.mes, f.motivo]))
+  /** A conciliação tem janela PRÓPRIA (depende de a fatura existir) — e a declara. */
+  const conciliados = new Set(p.conciliacao.meses)
+  const noAcumulado = new Set(p.janela.meses)
+  const origemDaMeta = origemDoProjeto(p.projeto_origem)
 
   return (
     <>
@@ -68,7 +114,16 @@ export function AbaAno({ painel }: { painel: Painel }) {
       <Cartao>
         <CabecalhoCard
           rotulo={`Quanto a usina gerou · ${p.rotulo}`}
-          direita={p.em_curso ? 'acumulado do ano até hoje' : 'ano fechado'}
+          direita={
+            // O período dos números, no canto do cartão: não "o ano", e sim os meses que
+            // entraram nele. É a primeira das duas vezes em que a tela diz isso; a segunda
+            // é a nota da janela, no pé do mesmo cartão.
+            p.janela.rotulo === null
+              ? p.em_curso
+                ? 'ano em curso'
+                : 'ano fechado'
+              : `acumulado · ${p.janela.rotulo}`
+          }
         />
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
           <Kpi
@@ -107,37 +162,67 @@ export function AbaAno({ painel }: { painel: Painel }) {
                   não é perda.
                 </p>
               ) : null}
+              {/* A JANELA DO MEDIDOR, quando ela é mais curta que a da geração. Em Porto
+                  Ferreira este cartão dizia 1.132,9 MWh sob o rótulo "acumulado · jun a
+                  set", e a coluna somava jul+ago+set: junho está na janela e não tem
+                  medidor. O acumulado de geração declara a janela dele logo abaixo; este
+                  precisava declarar a sua. */}
+              {p.fronteira_meses.length > 0 &&
+              p.fronteira_meses.length < p.janela.meses.length ? (
+                <p className="mt-2 text-xs leading-snug text-fraco">
+                  Só {faixaDeChaves(p.fronteira_meses)} tem leitura de medidor — os demais
+                  meses do acumulado não entram nesta soma.
+                </p>
+              ) : null}
             </div>
           )}
 
+          {/* O PAR do medido: a meta dos MESMOS meses. O atingimento vem pronto do
+              servidor — é o mesmo número da tela de desempenho, e recalculá-lo aqui (de
+              `100 + desvio`, como já foi) é como o portal exibia 36% num lugar e 101,7% no
+              outro. */}
           <Kpi
             rotulo="Projeto (PVsyst)"
-            valor={energia(p.projeto_kwh)}
+            valor={energia(p.projeto_proporcional_kwh)}
             tamanho="grande"
             detalhe={
-              p.desvios.medido_vs_projeto_pct === null ? (
-                'meta do projeto no período medido'
-              ) : (
-                <>
-                  atingimento <Num>{porcento(100 + p.desvios.medido_vs_projeto_pct, 0)}</Num>
-                </>
-              )
+              <>
+                {p.atingimento_pct === null ? (
+                  'a meta dos meses somados no acumulado'
+                ) : (
+                  <>
+                    atingimento <Num>{porcento(p.atingimento_pct)}</Num>
+                  </>
+                )}
+                {origemDaMeta === null ? null : (
+                  <span className="block">{origemDaMeta}</span>
+                )}
+                {/* A meta do ano INTEIRO é outra pergunta, e só aparece quando é outro
+                    número — no ano fechado as duas coincidem e repeti-la seria ruído. */}
+                {p.janela.parcial && p.totais.projeto_kwh !== null ? (
+                  <span className="block">
+                    ano inteiro <Num>{energia(p.totais.projeto_kwh)}</Num>
+                  </span>
+                ) : null}
+              </>
             }
           />
 
           {p.previsto_kwh === null ? null : (
             <Kpi
-              rotulo="Previsto (irradiação medida)"
+              rotulo={
+                previstoFoiCorrigido(p.previsto_origem)
+                  ? 'Previsto (irradiação medida)'
+                  : 'Previsto'
+              }
               valor={energia(p.previsto_kwh)}
               tamanho="grande"
-              detalhe={
-                p.previsto_origem === 'manual_corrigido'
-                  ? 'da meta mensal digitada no projeto, corrigida pela irradiação medida'
-                  : 'da meta diária do projeto, corrigida pela irradiação medida'
-              }
+              detalhe={origemDoPrevisto(p.previsto_origem)}
             />
           )}
         </div>
+
+        <NotaDaJanela janela={p.janela} />
       </Cartao>
 
       {/* ───────────────────────────────────────────────── performance */}
@@ -214,10 +299,16 @@ export function AbaAno({ painel }: { painel: Painel }) {
                   chave: 'mes',
                   titulo: 'Mês',
                   celula: (m) => (
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-2">
                       {m.rotulo}
                       {m.em_curso ? <Selo tom="tempoRuim">em curso</Selo> : null}
                       {m.futuro ? <span className="text-xs text-fraco">ainda não</span> : null}
+                      {/* O mês fora do acumulado continua na tabela — o cliente quer ver o
+                          ano inteiro — mas dizendo que não entrou na conta, e por quê.
+                          Sem a marca, a coluna some com o total e parece defeito da tela. */}
+                      {!m.no_acumulado && !m.futuro ? (
+                        <ForaDaConta motivo={motivoDoMes.get(m.mes)} />
+                      ) : null}
                     </span>
                   ),
                 },
@@ -249,7 +340,20 @@ export function AbaAno({ painel }: { painel: Painel }) {
                   chave: 'real',
                   titulo: 'Disp. real',
                   alinhar: 'dir',
-                  celula: (m) => <Num>{porcento(m.disponibilidade_real_pct, 2)}</Num>,
+                  // A origem só é escrita quando NÃO é a leitura do mês: `mes_conferido` é
+                  // o mesmo número da aba Mês e não precisa de nota. O `rollup_do_ano` é a
+                  // rede de segurança, e os dois discordam em centésimos no upstream — num
+                  // número de teor contratual, a tela tem de poder dizer qual está ali.
+                  celula: (m) => (
+                    <>
+                      <Num>{porcento(m.disponibilidade_real_pct, 2)}</Num>
+                      {m.disponibilidade_origem === 'rollup_do_ano' ? (
+                        <span className="block text-[11px] font-normal text-fraco">
+                          do resumo do ano
+                        </span>
+                      ) : null}
+                    </>
+                  ),
                 },
                 {
                   chave: 'contratual',
@@ -267,10 +371,16 @@ export function AbaAno({ painel }: { painel: Painel }) {
               linhas={p.meses}
               chave={(m) => m.mes}
               destacar={(m) => m.em_curso}
+              // O rodapé é o MESMO acumulado dos cartões do topo, campo por campo — não uma
+              // segunda soma feita aqui. É esta linha que fecha a tela consigo mesma.
               rodape={[
-                'Total do período',
-                <Num key="t-projeto">{energia(soma(p.meses.map((m) => m.projeto_kwh)))}</Num>,
-                <Num key="t-medido">{energia(soma(p.meses.map((m) => m.medido_kwh)))}</Num>,
+                <TotalDe
+                  key="t-titulo"
+                  titulo="Total do período"
+                  janela={p.janela.rotulo}
+                />,
+                <Num key="t-projeto">{energia(p.projeto_proporcional_kwh)}</Num>,
+                <Num key="t-medido">{energia(p.medido_inversores_kwh)}</Num>,
                 <Num key="t-desvio">{comSinal(p.desvios.medido_vs_projeto_pct)}</Num>,
                 <Num key="t-pr">{porcento(p.pr_pct)}</Num>,
                 <Num key="t-real">{porcento(p.disponibilidade_real_pct, 2)}</Num>,
@@ -278,6 +388,13 @@ export function AbaAno({ painel }: { painel: Painel }) {
                 <Num key="t-perdida">{energia(p.perdida_kwh)}</Num>,
               ]}
             />
+            <p className="px-3 pt-2 text-xs leading-relaxed text-fraco">
+              O total soma só os meses do acumulado — os marcados como fora da conta aparecem
+              na tabela mas não entram nele, e é por isso que a coluna não fecha com o rodapé.
+              Onde a disponibilidade diz "do resumo do ano", a leitura daquele mês não veio e o
+              número saiu do resumo anual do monitoramento; os dois podem discordar em
+              centésimos.
+            </p>
           </div>
         )}
       </Cartao>
@@ -300,7 +417,20 @@ export function AbaAno({ painel }: { painel: Painel }) {
           <div className="px-2 pb-3">
             <TabelaLonga<MesDoAno>
               colunas={[
-                { chave: 'mes', titulo: 'Mês', celula: (m) => m.rotulo },
+                {
+                  chave: 'mes',
+                  titulo: 'Mês',
+                  celula: (m) => (
+                    <span className="flex flex-wrap items-center gap-2">
+                      {m.rotulo}
+                      {/* A conferência só existe onde há os DOIS lados. O mês com só um
+                          deles continua visível — e dizendo que não foi conferido. */}
+                      {conciliados.has(m.mes) ? null : (
+                        <Selo tom="semDados">não conferido</Selo>
+                      )}
+                    </span>
+                  ),
+                },
                 {
                   chave: 'fronteira',
                   titulo: 'Fronteira (MWh)',
@@ -315,25 +445,41 @@ export function AbaAno({ painel }: { painel: Painel }) {
                 },
                 {
                   chave: 'delta',
-                  titulo: 'Diferença (MWh)',
+                  titulo: 'Fronteira − conta (MWh)',
                   alinhar: 'dir',
                   celula: (m) => <Num>{diferencaDoMes(m)}</Num>,
                 },
               ]}
               linhas={comConta}
               chave={(m) => m.mes}
+              // O rodapé é a CONCILIAÇÃO do servidor, que soma só os meses com os dois
+              // lados — e não a coluna inteira. Somar um mês cuja fatura a distribuidora
+              // ainda nem emitiu inventaria uma divergência do tamanho daquele mês.
               rodape={[
-                'Total do período',
-                <Num key="t-fronteira">
-                  {numero(soma(comConta.map((m) => m.fronteira_mwh)), 1)}
-                </Num>,
-                <Num key="t-faturado">{numero(soma(comConta.map((m) => m.faturado_mwh)), 1)}</Num>,
-                <Num key="t-delta">{'—'}</Num>,
+                <TotalDe
+                  key="t-titulo"
+                  titulo="Total conferido"
+                  janela={faixaDeChaves(p.conciliacao.meses)}
+                />,
+                <Num key="t-fronteira">{numero(p.conciliacao.fronteira_mwh, 1)}</Num>,
+                <Num key="t-faturado">{numero(p.conciliacao.faturado_mwh, 1)}</Num>,
+                <Num key="t-delta">{numero(p.conciliacao.diferenca_mwh, 1)}</Num>,
               ]}
             />
-            <p className="px-3 pt-2 text-xs text-fraco">
+            <div className="px-3 pt-3">
+              {p.conciliacao.situacao ? (
+                <Selo tom={tomDaConciliacao(p.conciliacao.situacao)}>
+                  {p.conciliacao.situacao}
+                  {p.conciliacao.diferenca_pct === null
+                    ? ''
+                    : ` · ${comSinal(p.conciliacao.diferenca_pct)}`}
+                </Selo>
+              ) : null}
+            </div>
+            <p className="px-3 pt-2 text-xs leading-relaxed text-fraco">
               Mês sem fatura na coluna é fatura ainda não emitida — situação normal enquanto a
-              distribuidora não fecha a competência.
+              distribuidora não fecha a competência. O total confere só os meses com os dois
+              lados; os marcados como não conferidos ficam de fora dele.
             </p>
           </div>
         )}
@@ -350,7 +496,21 @@ export function AbaAno({ painel }: { painel: Painel }) {
               <CabecalhoCard rotulo="Detalhamento meteorológico" />
               <TabelaLonga
                 colunas={[
-                  { chave: 'mes', titulo: 'Mês', celula: (m) => m.rotulo },
+                  {
+                    chave: 'mes',
+                    titulo: 'Mês',
+                    celula: (m) => (
+                      <span className="flex flex-wrap items-center gap-2">
+                        {m.rotulo}
+                        {/* Mesma janela dos cartões: a média e o acumulado do rodapé saem
+                            dos meses do acumulado, e o mês fora dele aparece marcado em vez
+                            de sumir da tabela. */}
+                        {noAcumulado.has(m.chave) ? null : (
+                          <Selo tom="semDados">fora da conta</Selo>
+                        )}
+                      </span>
+                    ),
+                  },
                   {
                     chave: 'hpoa',
                     titulo: 'HPOA',
@@ -368,6 +528,16 @@ export function AbaAno({ painel }: { painel: Painel }) {
                     titulo: 'GHI',
                     alinhar: 'dir',
                     celula: (m) => <Num>{numero(m.ghi, 1)}</Num>,
+                  },
+                  {
+                    /* A PARCELA do sol de projeto no plano horizontal. O cartão publicava
+                       `GHI 969,5 · projeto 988,2 kWh/m²` — e o desvio de −1,9 % saía dele —
+                       com esta tabela sem uma única coluna de onde os 988,2 pudessem ter
+                       vindo. Total sem parcela visível é o mesmo defeito que o HPOA tinha. */
+                    chave: 'ghi-proj',
+                    titulo: 'GHI projeto',
+                    alinhar: 'dir',
+                    celula: (m) => <Num>{numero(m.ghi_projeto, 1)}</Num>,
                   },
                   {
                     chave: 't-amb',
@@ -391,15 +561,31 @@ export function AbaAno({ painel }: { painel: Painel }) {
                 linhas={p.meteo.pontos}
                 chave={(m) => m.chave}
                 rodape={[
-                  'Acumulado do período',
+                  <TotalDe
+                    key="t-titulo"
+                    titulo="Acumulado do período"
+                    janela={p.janela.rotulo}
+                  />,
                   <Num key="t-hpoa">{numero(p.meteo.hpoa, 1)}</Num>,
                   <Num key="t-hpoa-proj">{numero(p.meteo.hpoa_projeto, 1)}</Num>,
                   <Num key="t-ghi">{numero(p.meteo.ghi, 1)}</Num>,
+                  <Num key="t-ghi-proj">{numero(p.meteo.ghi_projeto, 1)}</Num>,
                   <Num key="t-amb">{numero(p.meteo.t_amb_media, 1)}</Num>,
                   <Num key="t-mod">{numero(p.meteo.t_mod_media, 1)}</Num>,
                   <Num key="t-mod-max">{numero(p.meteo.t_mod_max, 1)}</Num>,
                 ]}
               />
+              {/* A referência de irradiação só sai quando cobre TODOS os meses do
+                  acumulado. Quando ela some, some junto o desvio de sol — e é melhor não
+                  ter a comparação do que tê-la com quatro meses de referência contra sete
+                  de medição, que foi como esta tela já publicou "+176% de sol". */}
+              {p.meteo.hpoa_projeto === null ? (
+                <p className="px-3 pt-2 text-xs leading-relaxed text-fraco">
+                  Sem referência de irradiação do projeto para todos os meses do acumulado, a
+                  coluna de HPOA do projeto fica sem total: comparar sol medido de um período
+                  com projeto de outro não é comparação.
+                </p>
+              ) : null}
             </div>
           ) : null}
         </Cartao>
@@ -425,15 +611,19 @@ export function AbaAno({ painel }: { painel: Painel }) {
 }
 
 /**
- * A diferença do mês entre a conta e a fronteira, em MWh e com sinal.
+ * A diferença do mês, **fronteira − conta**, em MWh e com sinal.
  *
  * É subtração de dois números que o servidor mediu — não um indicador novo. Fica em MWh de
  * propósito: um percentual precisaria escolher qual dos dois é o denominador, e essa
  * escolha é justamente o tipo de decisão que não se toma na tela.
+ *
+ * A ORDEM da subtração é a do servidor (`conciliacao.diferenca_mwh` = fronteira − faturado),
+ * e não uma escolha daqui. Ela já foi invertida: a coluna subtraía num sentido e o rodapé
+ * viria no outro, e a mesma diferença apareceria com dois sinais na mesma tabela.
  */
 function diferencaDoMes(m: MesDoAno): string {
   if (m.fronteira_mwh === null || m.faturado_mwh === null) return '—'
-  const delta = m.faturado_mwh - m.fronteira_mwh
+  const delta = m.fronteira_mwh - m.faturado_mwh
   const sinal = delta < 0 ? '−' : '+'
   return `${sinal}${numero(Math.abs(delta), 1)}`
 }

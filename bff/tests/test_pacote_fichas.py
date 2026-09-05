@@ -107,12 +107,15 @@ INDICE = {
             "titulo": "O&M mensal",
             "task_count": 2,
             "task_realized_count": 2,
+            # A ficha nomeia o estado da TAREFA como `situacao`, igual à ordem que a contém.
+            # Aqui está o caso de Porto Ferreira que motivou os dois campos: a ORDEM está
+            # EM_EXECUCAO e a primeira ficha dela já está REALIZADA.
             "tarefas": [
                 {"task_id": 6710, "nome": "Inversores — 08/2026",
-                 "equipamento": "Skid 01 > INV-01", "status": "REALIZADA",
+                 "equipamento": "Skid 01 > INV-01", "situacao": "REALIZADA",
                  "pronta": True, "bytes": 2_686_172},
                 {"task_id": 6711, "nome": "Cercamento — 08/2026",
-                 "equipamento": "Perímetro", "status": "REALIZADA",
+                 "equipamento": "Perímetro", "situacao": "PROGRAMADA",
                  "pronta": False, "bytes": None},
             ],
         },
@@ -122,8 +125,8 @@ INDICE = {
             "situacao": "APROVADA",
             "data_efetiva": "2026-08-22T15:30:00",
             "titulo": "Troca de fusível",
-            "tarefas": [{"task_id": 7001, "nome": "Substituição", "pronta": True,
-                         "bytes": 120_000}],
+            "tarefas": [{"task_id": 7001, "nome": "Substituição", "situacao": "APROVADA",
+                         "pronta": True, "bytes": 120_000}],
         },
     ],
     "total_fichas": 3,
@@ -201,10 +204,69 @@ async def test_inventario_lista_as_fichas_com_a_classificacao_traduzida(db, dono
     # A ficha que ainda não tem PDF aparece, e diz que não tem.
     assert [f.pronta for f in saida.ordens[0].fichas] == [True, False]
     assert saida.ordens[0].fichas[1].bytes is None
+    # A SITUAÇÃO DA FICHA, traduzida pelo mesmo mapa da aba Ordens. Era o campo que nascia
+    # sempre nulo: estava no contrato e o índice não mandava o estado da tarefa.
+    assert [f.situacao for f in saida.ordens[0].fichas] == ["Executada", "Programada"]
+    assert saida.ordens[1].fichas[0].situacao == "Executada e verificada"
+    assert [f.feita for f in saida.ordens[0].fichas] == [True, False]
+    # E as DUAS situações da mesma resposta discordam, que é a razão de serem dois campos:
+    # a ordem está "Executada · aguardando verificação" e a ficha dela, "Executada".
+    assert saida.ordens[0].situacao != saida.ordens[0].fichas[0].situacao
     assert saida.partes and saida.partes[0].numero == 1
     # O período conferido aqui é o que foi para o upstream.
     params = rota.calls.last.request.url.params
     assert params["de"] == "2026-08" and params["ate"] == "2026-08"
+
+
+@respx.mock
+async def test_situacao_da_ficha_le_os_dois_nomes_e_nao_engole_o_desconhecido(
+    db, dono, minha, ponte
+):
+    """`FichaOut.situacao` viajou nulo desde que este router nasceu: o contrato publicava o
+    campo e a leitura procurava só por `status`, enquanto o índice o nomeia `situacao` — o
+    mesmo nome que ele já usava na ordem. Três casos numa tacada:
+
+      · `situacao` (o nome real) é lido;
+      · `status` continua valendo de rede, para o dia em que o campo mudar de nome de novo;
+      · estado que o mapa não conhece NÃO some nem vira "—": vira o próprio código
+        capitalizado, como já fazia a situação da ordem. O meuPlano pode ganhar um estado
+        novo, e engoli-lo devolveria a ficha ao defeito de agora, sem ninguém saber por quê.
+
+    Ausência segue sendo `None` — nunca um rótulo inventado.
+    """
+    ordens = [
+        {
+            **INDICE["ordens"][0],
+            "tarefas": [
+                {"task_id": 1, "nome": "Pelo nome real", "situacao": "REALIZADA"},
+                {"task_id": 2, "nome": "Pelo nome antigo", "status": "APROVADA"},
+                {"task_id": 3, "nome": "Estado que o mapa não conhece",
+                 "situacao": "EM_VERIFICACAO"},
+                {"task_id": 4, "nome": "O upstream não disse"},
+            ],
+        }
+    ]
+    respx.mock.get(f"{VC}/{minha.mp_usina_id}/fichas").respond(
+        200, json={**INDICE, "ordens": ordens}
+    )
+
+    saida = await inventario_de_fichas(usina_id=minha.id, de="2026-08", ate="2026-08",
+                                       db=db, usuario=dono)
+
+    fichas = saida.ordens[0].fichas
+    assert [f.situacao for f in fichas] == [
+        "Executada", "Executada e verificada", "Em verificacao", None,
+    ]
+    # `feita` sai da MESMA régua da aba Ordens: a mesma tarefa não pode ser feita numa tela
+    # e pendente na outra. Estado desconhecido não se declara feito — e estado AUSENTE não
+    # se declara nada: é `None`, como a `situacao` ao lado.
+    #
+    # A quarta ficha é o caso real, não hipótese: contra um meuPlano anterior a esta leva
+    # `situacao` volta nula em TODA ficha, inclusive nas da OS 969, que está concluída. Com
+    # `feita=False` a resposta afirmaria "não foi feita" sobre dezessete tarefas
+    # executadas, e a tela desenharia dezessete círculos vazios sem ninguém saber que a
+    # informação simplesmente não chegou.
+    assert [f.feita for f in fichas] == [True, True, False, None]
 
 
 @respx.mock

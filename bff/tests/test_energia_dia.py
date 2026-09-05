@@ -170,15 +170,42 @@ def _intraday(pontos: list[dict] | None = None) -> dict:
     }
 
 
+def _monitoramento_atual(estacoes: list[dict] | None = None) -> dict:
+    """`monitoring/current` — só a parte que interessa aqui: o CADASTRO da estação.
+
+    É a mesma lista que a tela de equipamentos monta (`equipamentos._estacoes`). Lista
+    vazia = a usina não tem estação; lista com uma linha = tem, mediu hoje ou não.
+    """
+    return {
+        "weather_stations": [
+            {"id": "ws-1", "name": "Estação solarimétrica", "comm": True}
+        ]
+        if estacoes is None
+        else estacoes
+    }
+
+
 class ClienteFalso:
     """O meuWatt sem rede. Qualquer resposta pode ser uma exceção a lançar."""
 
-    def __init__(self, diario=None, intraday=None, range_=None, faturas=None):
+    def __init__(
+        self, diario=None, intraday=None, range_=None, faturas=None, atual=None
+    ):
         self.diario_resposta = diario if diario is not None else _diario()
         self.intraday_resposta = intraday if intraday is not None else _intraday()
         self.range_resposta = range_ if range_ is not None else {}
         self.faturas_resposta = faturas if faturas is not None else []
+        # O CADASTRO dos ativos. É de onde sai "esta usina tem estação solarimétrica?" —
+        # pergunta de inventário, não de medição do dia. O padrão é a usina COM estação,
+        # que é o caso das sete monitoradas.
+        self.atual_resposta = atual if atual is not None else _monitoramento_atual()
         self.chamadas: list[tuple] = []
+
+    async def monitoramento_atual(self, slug):
+        self.chamadas.append(("atual",))
+        if isinstance(self.atual_resposta, BaseException):
+            raise self.atual_resposta
+        return self.atual_resposta
 
     async def geracao_diaria(self, slug, dia):
         self.chamadas.append(("daily", dia))
@@ -487,19 +514,27 @@ def test_pr_descartada_pelo_meuwatt_sai_nula_com_a_bandeira(cenario):
 
 def test_usina_sem_estacao_nao_publica_irradiacao_nem_pr(cenario):
     """O upstream preenche `poa` com 0 quando não há sensor — desenhar isso daria uma
-    linha rasteira com cara de medição."""
+    linha rasteira com cara de medição.
+
+    Quem responde "não tem estação" é o CADASTRO (`weather_stations` vazio), e não mais o
+    fato de o dia estar sem irradiação: ver
+    `test_de_madrugada_a_estacao_que_existe_continua_existindo`.
+    """
     http, caixa, usina = cenario
     pontos = _intraday()["points"]
     for p in pontos:
         p["poa"] = 0
         p["ghi"] = 0
     caixa["cliente"] = ClienteFalso(
-        diario=_diario(irradiation={"hpoa": 0.0, "hghi": 0.0}), intraday=_intraday(pontos)
+        diario=_diario(irradiation={"hpoa": 0.0, "hghi": 0.0}),
+        intraday=_intraday(pontos),
+        atual=_monitoramento_atual([]),
     )
 
     c = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}").json()
 
     assert c["tem_estacao"] is False
+    assert c["estacao_com_leitura"] is False
     assert c["hpoa_agora"] is None
     assert c["hpoa_acumulada"] is None and c["ghi_acumulada"] is None
     assert c["pr_pct"] is None and c["pr_descartado"] is False
@@ -614,3 +649,70 @@ def test_o_corpo_do_dia_cabe_em_duzentos_kb_com_vinte_inversores(cenario):
     assert len(c["ucs"]) == 5
     assert len(c["faisca_horas"]) == 96, "24 h em fatias de 15 min"
     assert all(len(u["faisca"]) == 96 for u in c["ucs"])
+
+
+# ── a estação existe mesmo às 3 da manhã ─────────────────────────────────────
+#
+# Medido em 05/09/2026, 03h10: `/energia/usinas/4/dia` devolvia `tem_estacao=false` e a
+# tela escrevia "Esta usina não tem estação solarimétrica — só a potência é medida". A
+# MESMA usina, com `?data=2026-09-04`, devolvia `tem_estacao=true` e hpoa 7,1; e o recorte
+# Mês mostrava 22,5 kWh/m². O campo respondia "não mediu" e a tela lia "não existe".
+#
+# O ativo é permanente; a ausência é do dia. São duas perguntas, e agora são dois campos.
+
+
+def test_de_madrugada_a_estacao_que_existe_continua_existindo(cenario):
+    """03h10: nenhum ponto tem irradiação ainda, e a estação continua cadastrada.
+
+    `tem_estacao` sai do CADASTRO (`monitoring/current` → `weather_stations`), a mesma
+    fonte que a tela de equipamentos usa. `estacao_com_leitura` fica falso, que é o que
+    deixa a tela dizer "a estação ainda não mediu hoje" em vez de negar o aparelho.
+    """
+    http, caixa, usina = cenario
+    madrugada = [
+        {"time": "03:00", "ghi": 0, "poa": 0, "inverters": [{"serial_number": "SN-A1", "power_kw": 0.0}]},
+        {"time": "03:05", "ghi": 0, "poa": 0, "inverters": [{"serial_number": "SN-A1", "power_kw": 0.0}]},
+    ]
+    caixa["cliente"] = ClienteFalso(
+        diario=_diario(irradiation={"hpoa": 0.0, "hghi": 0.0}),
+        intraday=_intraday(madrugada),
+    )
+
+    c = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}").json()
+
+    assert c["tem_estacao"] is True, "o aparelho não some às 3 da manhã"
+    assert c["estacao_com_leitura"] is False, "e ainda não mediu nada hoje"
+    assert c["estacao_indefinida"] is False
+    # A ausência do dia continua sendo ausência: nada de publicar o 0,0 do upstream, que é
+    # o mesmo valor que ele fabrica para quem não tem sensor nenhum.
+    assert c["hpoa_acumulada"] is None and c["ghi_acumulada"] is None
+    assert c["hpoa_agora"] is None and c["pr_pct"] is None
+
+
+def test_cadastro_fora_do_ar_nao_faz_a_tela_negar_a_estacao(cenario):
+    """Se o cadastro não pôde ser lido, a resposta volta à régua antiga — a leitura do dia
+    — e DIZ que voltou (`estacao_indefinida`). Afirmar "não tem estação" com base num
+    palpite seria trocar um erro por outro."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(atual=RuntimeError("502 no monitoramento"))
+
+    c = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}").json()
+
+    assert c["estacao_indefinida"] is True
+    assert c["tem_estacao"] is True, "o dia tem irradiação: a régua antiga ainda serve"
+    assert c["estacao_com_leitura"] is True
+    assert c["hpoa_acumulada"] == 5.4, "os números do dia continuam de pé"
+
+
+def test_a_queda_do_cadastro_nao_derruba_o_resto_do_dia(cenario):
+    """O cadastro é acessório como a curva: sem ele a resposta ainda é 200 com os números
+    do dia. Nenhuma das três leituras pode derrubar a tela."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(atual=RuntimeError("timeout"))
+
+    r = http.get(f"/api/v1/energia/usinas/{usina.id}/dia?data={DIA}")
+
+    assert r.status_code == 200
+    c = r.json()
+    assert c["gerado_kwh"] == 4000.0
+    assert len(c["ucs"]) == 2

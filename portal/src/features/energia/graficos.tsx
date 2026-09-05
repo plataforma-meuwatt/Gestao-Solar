@@ -26,7 +26,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { Botao, CabecalhoCard, Esqueleto, Kpi, Num } from '@/components/base'
-import { energia, numero, porcento } from '@/lib/format'
+import { MESES_CURTOS, energia, numero, porcento } from '@/lib/format'
 import type { Leitura } from '@/lib/leitura'
 
 /* ------------------------------------------------------------------ estados */
@@ -975,6 +975,174 @@ export function comSinal(valor: number | null, casas = 1): string {
   return `+${numero(valor, casas)}%`
 }
 
+/* ------------------------------------------------------------------ a janela */
+
+/**
+ * A janela do acumulado, como o servidor a declara — espelho estrutural de `Janela`
+ * (`./api`), na mesma convenção das outras peças deste arquivo.
+ */
+export type JanelaDoAcumulado = {
+  meses: string[]
+  fora: { mes: string; rotulo: string; motivo: string }[]
+  rotulo: string | null
+  parcial: boolean
+  regra: string
+}
+
+/**
+ * O motivo da exclusão, em português de cliente.
+ *
+ * O vocabulário é FECHADO e pertence ao servidor; aqui só se traduz. Motivo desconhecido
+ * cai numa frase que não afirma nada — a mesma regra dos tons: nunca uma explicação errada
+ * no lugar de uma que falta.
+ */
+export function motivoDaExclusao(motivo: string): string {
+  if (motivo === 'futuro') return 'ainda não começou'
+  if (motivo === 'sem_medicao') return 'sem medição'
+  if (motivo === 'sem_detalhe_mensal') return 'sem o detalhamento mensal do monitoramento'
+  return 'fora do acumulado'
+}
+
+function indiceDoMes(mes: string): number {
+  return Number(mes.slice(0, 4)) * 12 + Number(mes.slice(5, 7))
+}
+
+/**
+ * Os rótulos de meses em faixas: "jan/2026 a mai/2026", "out/2026 e dez/2026".
+ *
+ * É FORMATAÇÃO dos rótulos que o servidor mandou, não uma conta nova. Oito meses listados
+ * um a um viram uma frase que ninguém lê — e uma frase que ninguém lê não informa, que era
+ * justamente o problema que a janela veio resolver.
+ */
+export function faixaDeMeses(itens: { mes: string; rotulo: string }[]): string {
+  const ordenados = [...itens].sort((a, b) => a.mes.localeCompare(b.mes))
+  const trechos: string[] = []
+  let inicio = 0
+  for (let i = 1; i <= ordenados.length; i += 1) {
+    const rompeu =
+      i === ordenados.length ||
+      indiceDoMes(ordenados[i].mes) !== indiceDoMes(ordenados[i - 1].mes) + 1
+    if (!rompeu) continue
+    const primeiro = ordenados[inicio]
+    const ultimo = ordenados[i - 1]
+    trechos.push(primeiro === ultimo ? primeiro.rotulo : `${primeiro.rotulo} a ${ultimo.rotulo}`)
+    inicio = i
+  }
+  if (trechos.length <= 1) return trechos.join('')
+  return `${trechos.slice(0, -1).join(', ')} e ${trechos[trechos.length - 1]}`
+}
+
+/**
+ * "2026-06" → "jun/2026" — a mesma forma com que o servidor rotula os meses da janela.
+ *
+ * `competenciaCurta` de `lib/format` abrevia o ano ("jun/26"), e as duas formas na MESMA
+ * tela pareceriam dois calendários. Aqui a lista de meses tem de sair igual à do servidor.
+ */
+export function rotuloDoMes(mes: string): string {
+  const nome = MESES_CURTOS[Number(mes.slice(5, 7)) - 1]
+  return nome === undefined ? mes : `${nome}/${mes.slice(0, 4)}`
+}
+
+/** A faixa de um conjunto de chaves `YYYY-MM`; nulo quando o conjunto é vazio. */
+export function faixaDeChaves(meses: string[]): string | null {
+  if (meses.length === 0) return null
+  return faixaDeMeses(meses.map((mes) => ({ mes, rotulo: rotuloDoMes(mes) })))
+}
+
+/**
+ * A letra pequena que diz SOBRE QUE MESES o número grande foi calculado.
+ *
+ * Fica colada no acumulado, nos dois recortes, porque consertar o número sem dizer de onde
+ * ele saiu apenas adia a pergunta: quem lê "atingimento 102%" pergunta em seguida "de que
+ * período?" — e até aqui a tela não tinha como responder.
+ *
+ * O que ela imprime vem inteiro do servidor: os meses somados, os que ficaram de fora com o
+ * motivo, e a frase da regra. Aqui não se recalcula nem se reescreve nada.
+ */
+export function NotaDaJanela({ janela }: { janela: JanelaDoAcumulado }) {
+  const porMotivo = new Map<string, { mes: string; rotulo: string }[]>()
+  for (const item of janela.fora) {
+    const lista = porMotivo.get(item.motivo)
+    if (lista) lista.push(item)
+    else porMotivo.set(item.motivo, [item])
+  }
+  const quantos = janela.meses.length
+
+  return (
+    <div
+      data-testid="janela-do-acumulado"
+      className="mt-5 border-t border-borda-fraca pt-3 text-xs leading-relaxed text-fraco"
+    >
+      <p>
+        {quantos === 0 ? (
+          'Nenhum mês deste período tem medição, então não há acumulado para comparar.'
+        ) : janela.rotulo === null ? (
+          <>
+            O acumulado soma {quantos} {quantos === 1 ? 'mês' : 'meses'} deste período.
+          </>
+        ) : (
+          <>
+            O acumulado soma <span className="text-corpo">{janela.rotulo}</span>
+            {quantos > 1 ? ` — ${quantos} meses.` : '.'}
+          </>
+        )}
+      </p>
+
+      {porMotivo.size > 0 ? (
+        <p className="mt-1">
+          Fora da conta:{' '}
+          {[...porMotivo.entries()].map(([motivo, itens], i) => (
+            <span key={motivo}>
+              {i > 0 ? '; ' : ''}
+              <span className="text-corpo">{faixaDeMeses(itens)}</span> ({motivoDaExclusao(motivo)}
+              )
+            </span>
+          ))}
+          .
+        </p>
+      ) : null}
+
+      <p className="mt-1">{janela.regra}</p>
+    </div>
+  )
+}
+
+/**
+ * De onde veio a referência de projeto — a série diária ou o número mensal digitado.
+ *
+ * Vocabulário fechado do servidor. Nulo quando ele não disse: a tela cala, em vez de
+ * atribuir ao cadastro uma procedência que ninguém declarou.
+ */
+export function origemDoProjeto(origem: string | null): string | null {
+  if (origem === 'pvsyst_diario') return 'da série diária do projeto'
+  if (origem === 'mensal_digitado') return 'do valor mensal digitado no projeto'
+  return null
+}
+
+/**
+ * De onde veio o "previsto" — FONTE ÚNICA das abas Mês e Ano.
+ *
+ * ⛔ Só fala em correção pela irradiação quando ela ACONTECEU (`manual_corrigido`). As duas
+ * abas tinham cópias próprias desta frase e as duas diziam "corrigida pela irradiação
+ * medida" para qualquer origem: em Ouro Fino, Pereiras, Pirapozinho e Tietê — quatro das
+ * sete usinas, nenhuma com estação — a tela publicava `PROJETO 2.379,8 MWh · do valor
+ * mensal digitado no projeto` e, ao lado, `PREVISTO 2.379,8 MWh · da meta diária do
+ * projeto, corrigida pela irradiação medida`. O mesmo byte, dois rótulos, e uma correção
+ * que nunca houve.
+ */
+export function origemDoPrevisto(origem: string | null): string | null {
+  if (origem === 'manual_corrigido') {
+    return 'da meta mensal digitada no projeto, corrigida pela irradiação medida'
+  }
+  // Sem correção, o previsto É o projeto — e então o rótulo honesto é o do projeto.
+  return origemDoProjeto(origem)
+}
+
+/** O previsto foi mesmo corrigido pelo clima medido? Manda no TÍTULO do cartão. */
+export function previstoFoiCorrigido(origem: string | null): boolean {
+  return origem === 'manual_corrigido'
+}
+
 /**
  * As fórmulas, escritas pelo servidor, em linguagem de cliente.
  *
@@ -1123,6 +1291,8 @@ export function BlocoMeteo({
     razao: number | null
     hpoa_projeto: number | null
     ghi_projeto: number | null
+    hpoa_projeto_origem: string | null
+    ghi_projeto_origem: string | null
     t_amb_media: number | null
     t_amb_max: number | null
     t_mod_media: number | null
@@ -1132,6 +1302,11 @@ export function BlocoMeteo({
   rotuloDoGrafico: string
 }) {
   if (!meteo.tem_estacao) return null
+  // A procedência da referência entra COLADA no número, e não numa nota de rodapé: o valor
+  // mensal digitado não tem parcela por dia, e sem esta linha o cliente lia um "projeto"
+  // que não saía de célula nenhuma da tabela logo abaixo.
+  const origemHpoa = origemDoProjeto(meteo.hpoa_projeto_origem)
+  const origemGhi = origemDoProjeto(meteo.ghi_projeto_origem)
   return (
     <>
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
@@ -1142,6 +1317,7 @@ export function BlocoMeteo({
             meteo.hpoa_projeto === null ? undefined : (
               <>
                 projeto <Num>{numero(meteo.hpoa_projeto, 1)}</Num> kWh/m²
+                {origemHpoa === null ? null : <span className="block">{origemHpoa}</span>}
               </>
             )
           }
@@ -1155,6 +1331,7 @@ export function BlocoMeteo({
             meteo.ghi_projeto !== null ? (
               <>
                 projeto <Num>{numero(meteo.ghi_projeto, 1)}</Num> kWh/m²
+                {origemGhi === null ? null : <span className="block">{origemGhi}</span>}
               </>
             ) : meteo.razao === null ? undefined : (
               <>

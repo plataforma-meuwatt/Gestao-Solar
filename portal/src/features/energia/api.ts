@@ -74,6 +74,8 @@ export type Desvios = {
 }
 
 export type Conciliacao = {
+  /** `fronteira − faturado`, nesta ordem. A tela repete o sinal do servidor; inverter a
+   *  subtração numa das duas pontas daria dois números para a mesma diferença. */
   fronteira_mwh: number | null
   faturado_mwh: number | null
   diferenca_mwh: number | null
@@ -86,13 +88,54 @@ export type Conciliacao = {
    */
   situacao: string | null
   tolerancia_pct: number
+  /**
+   * Os meses que a conferência cobre — os que têm medidor E fatura.
+   *
+   * É a ÚNICA conta do painel com janela própria, e por isso ela a declara: a fatura de um
+   * mês recém-fechado leva semanas para sair, e somar a fronteira de um mês sem fatura
+   * inventaria uma divergência do tamanho daquele mês. Vazio no recorte `mes`, onde a
+   * janela é o próprio mês.
+   */
+  meses: string[]
+}
+
+/** Um mês do período que NÃO entrou no acumulado, e por quê. */
+export type MesForaDoAcumulado = {
+  mes: string
+  rotulo: string
+  /** `futuro` · `sem_medicao` · `sem_detalhe_mensal`. */
+  motivo: string
+}
+
+/**
+ * QUAIS meses o acumulado somou — e quais ficaram de fora, com o motivo.
+ *
+ * É a peça que faz a tela poder DIZER de onde o número saiu. Todo acumulado do painel
+ * (medido, projeto, previsto, perdida, fronteira, irradiação, temperatura) sai desta
+ * janela; a única exceção declarada é a conciliação, que tem a sua em `Conciliacao.meses`.
+ *
+ * Sem isto, consertar o número só adiava a pergunta: o cliente que lê "atingimento 102%"
+ * pergunta em seguida "sobre que meses?", e a tela não tinha como responder.
+ */
+export type Janela = {
+  /** Os meses (`YYYY-MM`) somados, em ordem. */
+  meses: string[]
+  fora: MesForaDoAcumulado[]
+  /** "jun a set de 2026" — pronto para a tela escrever ao lado do número. */
+  rotulo: string | null
+  /** A janela cobre menos do que o período pedido. */
+  parcial: boolean
+  /** A regra, escrita pelo servidor em linguagem de cliente. A tela imprime. */
+  regra: string
 }
 
 export type Totais = {
+  /** Medido e projeto na MESMA janela (`Painel.janela`) — os dois lados da comparação. */
   medido_kwh: number | null
+  /** O projeto do PERÍODO INTEIRO (o mês fechado, os doze meses do ano) — o alvo, futuro
+   *  incluído. É outra pergunta, e não o denominador de nada. */
   projeto_kwh: number | null
-  /** O projeto rateado pelos dias decorridos — comparar mês inteiro com meio mês acusaria
-   *  de doente uma usina em dia. */
+  /** O projeto NA JANELA DO ACUMULADO — o par de `medido_kwh`. */
   projeto_ate_hoje_kwh: number | null
   /** Projeção linear do fechamento, só no período em curso. Prever o passado não é previsão. */
   tendencia_kwh: number | null
@@ -126,6 +169,15 @@ export type MesDoAno = {
   perdida_externa_kwh: number | null
   fronteira_mwh: number | null
   faturado_mwh: number | null
+  /**
+   * De onde saiu a disponibilidade DESTA linha: `mes_conferido` (o mesmo número que a aba
+   * Mês publica para aquele mês) ou `rollup_do_ano` (o resumo anual do monitoramento, rede
+   * de segurança de quando a leitura do mês não veio). Os dois discordam no upstream, e
+   * num número de teor contratual a tela precisa dizer qual está mostrando.
+   */
+  disponibilidade_origem: string | null
+  /** O mês entrou no acumulado do período (ver `Painel.janela`). */
+  no_acumulado: boolean
   em_curso: boolean
   futuro: boolean
 }
@@ -137,6 +189,8 @@ export type PontoMeteo = {
   hpoa: number | null
   hpoa_projeto: number | null
   ghi: number | null
+  /** A PARCELA do projeto no plano horizontal — a mesma que `meteo.ghi_projeto` soma. */
+  ghi_projeto: number | null
   t_amb: number | null
   t_mod: number | null
   t_mod_max: number | null
@@ -151,9 +205,20 @@ export type Meteo = {
   ghi: number | null
   /** `hpoa ÷ ghi` — quanto o plano inclinado ganha sobre o horizontal. */
   razao: number | null
-  /** A irradiação de PROJETO do período, na mesma janela do medido — nos dois planos. */
+  /**
+   * A irradiação de PROJETO do período, na mesma janela do medido — nos dois planos.
+   *
+   * No ano ela só sai quando cobre TODOS os meses do acumulado: referência de quatro meses
+   * ao lado de medição de sete devolvia "+176% de sol". Referência parcial não vira
+   * comparação — e aí a tela mostra a medida sozinha, que é verdade.
+   */
   hpoa_projeto: number | null
   ghi_projeto: number | null
+  /** `pvsyst_diario` ou `mensal_digitado` — qual fonte do projeto falou. O digitado é um
+   *  número do mês inteiro, e por isso a coluna da tabela pode sair em travessão sem que o
+   *  total esteja errado. */
+  hpoa_projeto_origem: string | null
+  ghi_projeto_origem: string | null
   t_amb_media: number | null
   t_amb_max: number | null
   t_mod_media: number | null
@@ -223,10 +288,34 @@ export type Painel = {
    * rotula como parcial e NÃO desenha a perda, porque a diferença não é perda.
    */
   fronteira_parcial: boolean
+  /** Os meses da janela que REALMENTE têm leitura de medidor. Pode ser mais curto que
+   *  `janela.meses` — e quando é, a tela DIZ, porque o número grande sai só desses. */
+  fronteira_meses: string[]
+  /** A meta do PERÍODO INTEIRO — o alvo, futuro incluído. No recorte `ano` ela coincide com
+   *  a da janela; no `mes` é o mês fechado. Não é o denominador de nada. */
   projeto_kwh: number | null
+  /** A meta NA JANELA DO ACUMULADO — o par de `medido_inversores_kwh` e o denominador de
+   *  `atingimento_pct`. É este o número que a coluna da tabela tem de somar. */
   projeto_proporcional_kwh: number | null
+  /**
+   * `medido ÷ projeto` na janela, em %.
+   *
+   * É EXATAMENTE o `pct_do_projeto` da tela de desempenho — mesma janela, mesma fonte,
+   * mesmo arredondamento. A tela IMPRIME; recalcular aqui (de `100 + desvio`, por exemplo)
+   * é como o mesmo portal acabou exibindo 36% numa tela e 101,7% na outra.
+   */
+  atingimento_pct: number | null
+  /** `pvsyst_diario` ou `mensal_digitado` — de onde veio a meta. */
+  projeto_origem: string | null
   previsto_kwh: number | null
-  /** `pvsyst_diario` ou `manual_corrigido` — de onde veio o previsto. */
+  /**
+   * De onde veio o previsto: `manual_corrigido` (a meta mensal corrigida pela irradiação
+   * MEDIDA) ou — quando não houve correção — a própria origem do projeto
+   * (`pvsyst_diario` / `mensal_digitado`), porque aí o previsto É o projeto.
+   *
+   * ⛔ Quem escreve a frase é `origemDoPrevisto`, uma só, e ela só fala em correção quando
+   * a origem é `manual_corrigido`.
+   */
   previsto_origem: string | null
 
   produtividade_kwh_kwp: number | null
@@ -242,6 +331,8 @@ export type Painel = {
   conciliacao: Conciliacao
   totais: Totais
   meteo: Meteo
+  /** De onde saíram os acumulados. A tela imprime; ver `Janela`. */
+  janela: Janela
   regra: Regra
 
   dias: DiaDoMes[]
@@ -310,7 +401,19 @@ export type Dia = {
   hpoa_agora: number | null
   hpoa_acumulada: number | null
   ghi_acumulada: number | null
+  /**
+   * A usina TEM estação solarimétrica — pergunta de CADASTRO, respondida pela mesma lista de
+   * aparelhos da tela de equipamentos. O ativo é permanente: ele não deixa de existir às 3h
+   * da manhã só porque ainda não houve sol.
+   */
   tem_estacao: boolean
+  /** A estação MEDIU alguma coisa neste dia. É o outro lado da pergunta, e é o que separa
+   *  "não existe" de "ainda não mediu" — de madrugada isto é falso e `tem_estacao` continua
+   *  verdadeiro. Enquanto era um campo só, a tela negava de manhã uma estação que existe. */
+  estacao_com_leitura: boolean
+  /** O cadastro não pôde ser lido, e `tem_estacao` caiu na leitura do dia. A tela NÃO pode
+   *  afirmar "não tem estação" com base num palpite. */
+  estacao_indefinida: boolean
   curva: PontoCurva[]
   /** Vazio = operação sem incidentes. É estado, não falta de dado. */
   eventos: EventoDoDia[]

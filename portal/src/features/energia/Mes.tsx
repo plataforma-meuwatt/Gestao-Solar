@@ -20,6 +20,13 @@
  * **Desvio não é pintado.** O servidor não classifica desvio, e um limiar inventado aqui
  * pintaria de vermelho uma usina que o contrato considera em dia. Cor, neste produto,
  * significa estado — e estado quem decide é quem tem o dado inteiro.
+ *
+ * **O atingimento é IMPRESSO, não calculado.** `atingimento_pct` vem pronto, e é o mesmo
+ * número que a tela de desempenho publica — mesma janela, mesma fonte, mesmo
+ * arredondamento. Ele já foi refeito aqui (`100 + desvio`), e é assim que o mesmo portal
+ * chegou a exibir 36% num lugar e 101,7% no outro para a mesma usina no mesmo ano. Junto
+ * dele, a nota da janela diz sobre QUE período a conta foi feita — porque a pergunta
+ * seguinte de quem lê um percentual é sempre "de quando?".
  */
 
 import {
@@ -39,24 +46,19 @@ import {
   BlocoMeteo,
   CartaoDesvios,
   CartaoRegra,
+  NotaDaJanela,
   Rosca,
   SemDado,
   TabelaLonga,
   capacidade,
   comSinal,
+  origemDoPrevisto,
+  origemDoProjeto,
+  previstoFoiCorrigido,
   tomDaConciliacao,
   type PontoDoPeriodo,
   type PontoPr,
 } from './graficos'
-
-/** A frase que explica de onde saiu o "previsto". Fonte: `previsto_origem` do servidor. */
-function origemDoPrevisto(origem: string | null): string {
-  if (origem === 'manual_corrigido') {
-    return 'da meta mensal digitada no projeto, corrigida pela irradiação medida'
-  }
-  if (origem === 'pvsyst_diario') return 'da meta diária do projeto, corrigida pela irradiação medida'
-  return 'pela irradiação medida'
-}
 
 export function AbaMes({ painel }: { painel: Painel }) {
   const p = painel
@@ -137,30 +139,50 @@ export function AbaMes({ painel }: { painel: Painel }) {
             </div>
           )}
 
+          {/* O número grande é a meta do MÊS INTEIRO — é ela que o cliente conhece do
+              contrato. O denominador da comparação, porém, é o proporcional até o dia
+              medido, e por isso ele vem escrito logo abaixo em vez de ficar implícito: sem
+              essa linha, o "atingimento" do fechamento parece dividir por este número. */}
           <Kpi
             rotulo="Projeto (PVsyst)"
             valor={energia(p.projeto_kwh)}
             tamanho="grande"
             detalhe={
-              p.em_curso && p.projeto_proporcional_kwh !== null ? (
-                <>
-                  proporcional até hoje <Num>{energia(p.projeto_proporcional_kwh)}</Num>
-                </>
-              ) : (
-                'meta do projeto para o mês inteiro'
-              )
+              <>
+                {p.em_curso && p.dia_de_corte !== null && p.projeto_proporcional_kwh !== null ? (
+                  <>
+                    até o dia {p.dia_de_corte}{' '}
+                    <Num>{energia(p.projeto_proporcional_kwh)}</Num> — é com este que o
+                    medido é comparado
+                  </>
+                ) : (
+                  'meta do projeto para o mês inteiro'
+                )}
+                {origemDoProjeto(p.projeto_origem) === null ? null : (
+                  <span className="block">{origemDoProjeto(p.projeto_origem)}</span>
+                )}
+              </>
             }
           />
 
           {p.previsto_kwh === null ? null : (
             <Kpi
-              rotulo="Previsto (irradiação medida)"
+              rotulo={
+                previstoFoiCorrigido(p.previsto_origem)
+                  ? 'Previsto (irradiação medida)'
+                  : 'Previsto'
+              }
               valor={energia(p.previsto_kwh)}
               tamanho="grande"
               detalhe={origemDoPrevisto(p.previsto_origem)}
             />
           )}
         </div>
+
+        {/* De onde saiu o acumulado — a mesma nota da aba Ano, a mesma peça. No mês ela
+            costuma dizer uma linha só, e é justamente nos meses sem medição que ela evita
+            a leitura de que a usina não gerou. */}
+        <NotaDaJanela janela={p.janela} />
       </Cartao>
 
       {/* ───────────────────────────────────────────────── performance */}
@@ -301,13 +323,19 @@ export function AbaMes({ painel }: { painel: Painel }) {
       <Cartao>
         <CabecalhoCard rotulo={p.em_curso ? 'Fechamento até hoje' : 'Fechamento do mês'} />
         <div className="grid gap-6 lg:grid-cols-[auto,1fr]">
+          {/* UMA casa decimal, como a tela de desempenho publica o mesmo percentual.
+              Arredondar para inteiro aqui devolveria "44%" ao lado de um "44,4%" em outra
+              tela do mesmo portal — a mesma pergunta com duas respostas, em miniatura. */}
           <Rosca
-            pct={porcentagemDoProjeto(p)}
-            centro={porcento(porcentagemDoProjeto(p), 0)}
+            pct={p.atingimento_pct}
+            centro={porcento(p.atingimento_pct, 1)}
             detalhe={
               <>
                 do que o projeto previa
-                {p.em_curso ? ' até aqui' : ' para o mês'}.
+                {p.em_curso && p.dia_de_corte !== null
+                  ? ` até o dia ${p.dia_de_corte}`
+                  : ' para o mês'}
+                .
                 {p.totais.tendencia_kwh === null ? null : (
                   <>
                     <br />
@@ -356,23 +384,23 @@ export function AbaMes({ painel }: { painel: Painel }) {
 type LinhaDeTotal = { chave: string; titulo: string; valor: number | null; contra: string }
 
 /**
- * Quanto do projeto foi entregue, em %.
+ * As duas linhas do fechamento — e elas são as MESMAS do cartão de geração lá em cima.
  *
- * Vem do desvio que o servidor já calculou (`medido ÷ referência − 1`), somando 100 — e não
- * de uma divisão refeita aqui. Duas contas para o mesmo número é como a mesma usina acaba
- * com dois percentuais na mesma tela.
+ * O par comparado é sempre `totais.projeto_ate_hoje_kwh` × `totais.medido_kwh`, que é o par
+ * de onde o servidor tirou `atingimento_pct` e `desvios.medido_vs_projeto_pct`. Quando o mês
+ * está em curso, a meta do mês inteiro entra como uma TERCEIRA linha, marcada como alvo —
+ * ela é o que o contrato promete, não o denominador de nada. Enquanto as duas dividiam a
+ * mesma linha, a tabela trocava de referência conforme o mês estivesse aberto ou fechado.
  */
-function porcentagemDoProjeto(p: Painel): number | null {
-  const desvio = p.desvios.medido_vs_projeto_pct
-  return desvio === null ? null : 100 + desvio
-}
-
 function totaisDoMes(p: Painel): LinhaDeTotal[] {
   const linhas: LinhaDeTotal[] = [
     {
       chave: 'projeto',
-      titulo: p.em_curso ? 'Projeto proporcional até hoje' : 'Projeto (PVsyst)',
-      valor: p.em_curso ? p.totais.projeto_ate_hoje_kwh : p.totais.projeto_kwh,
+      titulo:
+        p.em_curso && p.dia_de_corte !== null
+          ? `Projeto até o dia ${p.dia_de_corte}`
+          : 'Projeto (PVsyst)',
+      valor: p.totais.projeto_ate_hoje_kwh,
       contra: 'referência',
     },
     {
@@ -382,6 +410,14 @@ function totaisDoMes(p: Painel): LinhaDeTotal[] {
       contra: comSinal(p.desvios.medido_vs_projeto_pct),
     },
   ]
+  if (p.em_curso) {
+    linhas.push({
+      chave: 'alvo',
+      titulo: 'Projeto do mês inteiro',
+      valor: p.totais.projeto_kwh,
+      contra: 'alvo',
+    })
+  }
   if (p.totais.tendencia_kwh !== null) {
     linhas.push({
       chave: 'tendencia',
