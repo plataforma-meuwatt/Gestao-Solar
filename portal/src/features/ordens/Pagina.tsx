@@ -15,10 +15,12 @@
  * frase ("Em verificação", "Executada · aguardando verificação") e o tom. O código cru
  * continua no dado, para auditoria, e não na tela.
  *
- * **Nenhuma OS some por causa de um filtro.** Os blocos são "Em andamento" e "Concluídas",
- * mas uma OS cancelada não é nenhum dos dois: em vez de descartá-la em silêncio, ela ganha um
- * terceiro bloco, que só aparece quando há o que mostrar. E o bloco vazio nunca deixa a tela
- * em branco: diz o que houve e oferece o caminho para o bloco que tem conteúdo.
+ * **Nenhuma OS some calada.** Os blocos são "Em andamento" e "Concluídas"; uma OS cancelada
+ * não é nenhum dos dois e não vira aba — ela é CONTADA no rodapé ("6 no total · 2
+ * canceladas"). Dar aba a ela foi o que pôs duas ordens de teste da equipe na frente do
+ * cliente, e a pergunta desta tela é "está sendo feito?", que cancelada não responde. Um
+ * estado NOVO do meuPlano, esse sim, abre a terceira aba: desconhecido tem de aparecer. E o
+ * bloco vazio nunca deixa a tela em branco — diz o que houve e leva ao bloco com conteúdo.
  */
 
 import { useState } from 'react'
@@ -123,28 +125,40 @@ export default function Ordens() {
               )
             }
 
-            const porBloco: Record<Bloco, Ordem[]> = { andamento: [], concluidas: [], outras: [] }
+            const porBloco: Record<Bloco, Ordem[]> = {
+              andamento: [],
+              concluidas: [],
+              outras: [],
+              cancelada: [],
+            }
             for (const o of dados.ordens) porBloco[blocoDaOrdem(o)].push(o)
 
-            // "Outras" quase sempre são canceladas; nomear pelo que é evita a categoria vaga.
-            // Se houver qualquer outra coisa (um estado novo do meuPlano, por exemplo), o
-            // rótulo volta a ser genérico em vez de mentir.
-            const soCanceladas =
-              porBloco.outras.length > 0 &&
-              porBloco.outras.every((o) => (o.status ?? '').trim().toUpperCase() === 'CANCELADA')
+            const canceladas = porBloco.cancelada.length
+            // As listadas são as que respondem à pergunta da tela; as canceladas ficam no
+            // rodapé, contadas, para o total continuar batendo sem virar aba.
+            const listadas = dados.ordens.length - canceladas
 
             const opcoes: { valor: Bloco; rotulo: string }[] = [
               { valor: 'andamento', rotulo: `Em andamento (${inteiro(porBloco.andamento.length)})` },
               { valor: 'concluidas', rotulo: `Concluídas (${inteiro(porBloco.concluidas.length)})` },
+              // Só um estado que este portal não conhece abre a terceira aba.
               ...(porBloco.outras.length > 0
-                ? [
-                    {
-                      valor: 'outras' as Bloco,
-                      rotulo: `${soCanceladas ? 'Canceladas' : 'Outras'} (${inteiro(porBloco.outras.length)})`,
-                    },
-                  ]
+                ? [{ valor: 'outras' as Bloco, rotulo: `Outras (${inteiro(porBloco.outras.length)})` }]
                 : []),
             ]
+
+            if (listadas === 0) {
+              return (
+                <Vazio
+                  titulo="Nenhuma ordem de serviço em aberto nesta usina"
+                  descricao={
+                    canceladas > 0
+                      ? `As ${inteiro(canceladas)} ordens desta usina foram canceladas pela equipe.`
+                      : 'Quando a equipe abrir uma ordem de serviço para esta usina, ela aparece aqui.'
+                  }
+                />
+              )
+            }
 
             const padrao: Bloco = porBloco.andamento.length > 0 ? 'andamento' : 'concluidas'
             const bloco = escolhido ?? padrao
@@ -207,7 +221,14 @@ export default function Ordens() {
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
                     <Segmentado opcoes={opcoes} valor={bloco} onEscolher={setEscolhido} />
                     <span className="text-xs text-fraco">
-                      <Num>{inteiro(dados.total)}</Num> no total
+                      <Num>{inteiro(listadas)}</Num> no total
+                      {canceladas > 0 ? (
+                        <>
+                          {' · '}
+                          <Num>{inteiro(canceladas)}</Num>
+                          {canceladas === 1 ? ' cancelada' : ' canceladas'}
+                        </>
+                      ) : null}
                     </span>
                   </div>
 

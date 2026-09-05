@@ -80,6 +80,15 @@ export type Desempenho = {
   tom: string
   situacao: string
   aviso: string | null
+  /**
+   * O que a comparação cobriu, quando cobriu menos do que o período pedido.
+   *
+   * Separado do `aviso` de propósito: aviso é coisa que deu errado; isto é a leitura certa
+   * de um período só parcialmente medido ("comparação feita só com os meses que têm medição
+   * (jun a set de 2026)"). Sem a frase, "no ano" parece o ano fechado — foi assim que a
+   * mesma usina apareceu verde no mês e vermelha no ano, na mesma tela.
+   */
+  cobertura: string | null
 }
 
 export type PontoGeracao = {

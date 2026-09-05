@@ -94,8 +94,8 @@ function relatorio(parcial: Partial<RelatorioOut> = {}): RelatorioOut {
     cronograma: null,
     ordens: [],
     em_curso: [],
-    pareceres: { aprovados: 0, com_ressalva: 0, reprovados: 0, sem_parecer: 0 },
-    problemas: { total: 0, por_criticidade: [], por_os: [] },
+    pareceres: { aprovados: 0, com_ressalva: 0, reprovados: 0, sem_parecer: 0, recorte: null },
+    problemas: { total: 0, por_criticidade: [], por_os: [], recorte: null },
     pendencias: { abertas: [], concluidas: [] },
     fotos: null,
     gerado_em: '2026-09-04T12:00:00-03:00',
@@ -244,6 +244,42 @@ describe('tela de Relatórios', () => {
     // O parecer da ficha é colorido pela régua única (ressalva = alerta, não verde).
     const ressalva = screen.getAllByText('Aprovado com ressalva')[0]
     expect(ressalva.className).toContain('text-tom-alerta')
+  })
+
+  it('não se contradiz: quando a ordem em curso mostra ressalva, a página diz de onde vêm as contagens', async () => {
+    // O caso real: "Aprovado com ressalva" na OS EM CURSO e, logo abaixo, "COM RESSALVA 0"
+    // e "as fichas não registraram problema nenhum". Os números estavam certos — o recorte
+    // é que era mudo, e um relatório que se contradiz não chega à diretoria.
+    servidor(
+      relatorio({
+        ordens: [],
+        em_curso: [{ ...ORDEM, id: 1016, numero: 1016, status: 'EM_EXECUCAO', situacao: 'Em execução' }],
+        pareceres: {
+          aprovados: 0,
+          com_ressalva: 0,
+          reprovados: 0,
+          sem_parecer: 0,
+          recorte:
+            'Conta as fichas de 0 ordens encerradas no período. 1 ordem ainda em execução aparece acima e não entra nesta conta: enquanto a ordem não encerra, o parecer ainda pode mudar.',
+        },
+        problemas: {
+          total: 0,
+          por_criticidade: [],
+          por_os: [],
+          recorte: 'Conta as fichas de 0 ordens encerradas no período.',
+        },
+      }),
+    )
+    montar()
+
+    // O parecer da ordem em curso continua visível...
+    expect((await screen.findAllByText('Aprovado com ressalva')).length).toBeGreaterThan(0)
+    // ...e a página explica por que ele não está nas contagens.
+    expect(screen.getAllByText(/ainda em execução aparece acima e não entra nesta conta/).length).toBe(1)
+    // A frase do vazio nomeia o recorte em vez de afirmar "o período não teve problema".
+    expect(
+      screen.getByText('As fichas das ordens encerradas no período não registraram problema nenhum.'),
+    ).toBeTruthy()
   })
 
   it('nenhum PDF é link comum: os arquivos abrem por botão, com a sessão no cabeçalho', async () => {

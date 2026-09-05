@@ -133,6 +133,15 @@ export type Pareceres = {
   com_ressalva: number
   reprovados: number
   sem_parecer: number
+  /**
+   * De onde saem estas contagens, escrito pelo servidor.
+   *
+   * O agregado conta as fichas das ordens ENCERRADAS; a ordem ainda em execução aparece na
+   * lista acima e não entra. Enquanto isso ficava implícito, a mesma página exibia um
+   * "Aprovado com ressalva" na OS em curso e "COM RESSALVA 0" logo abaixo — e um relatório
+   * que se contradiz não chega à diretoria.
+   */
+  recorte: string | null
 }
 
 export type FaixaDeCriticidade = {
@@ -155,6 +164,8 @@ export type Problemas = {
   /** Sempre as quatro faixas, do mais grave para o menos — a ordem vem do servidor. */
   por_criticidade: FaixaDeCriticidade[]
   por_os: ProblemasDaOrdem[]
+  /** Mesmo recorte dos pareceres (ver `Pareceres.recorte`). */
+  recorte: string | null
 }
 
 export type PendenciaDoRelatorio = {

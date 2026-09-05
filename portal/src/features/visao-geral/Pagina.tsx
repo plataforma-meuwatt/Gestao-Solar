@@ -158,7 +158,14 @@ export default function VisaoGeral() {
                       {
                         titulo: 'Usina',
                         celula: (u) => (
-                          <div className="min-w-0">
+                          // A largura é PRESA de propósito. Numa tabela de largura
+                          // automática, `truncate` corta o desenho mas não o cálculo: o
+                          // navegador reserva a largura do texto inteiro, e o aviso
+                          // ("A equipe ainda não publicou o cronograma deste contrato")
+                          // levava esta coluna a 996 px de 1110 — empurrando energia,
+                          // esperado e % para fora da tela, atrás de uma rolagem lateral
+                          // que ninguém procura. O número é o que o cliente vem ver.
+                          <div className="min-w-0 max-w-[17rem]">
                             <span className="block truncate font-medium text-forte">{u.nome}</span>
                             {local(u) ? (
                               <span className="block truncate text-xs text-fraco">{local(u)}</span>

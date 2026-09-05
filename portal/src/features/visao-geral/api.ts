@@ -108,6 +108,19 @@ export type ResumoOut = {
 }
 
 /**
+ * Prazo próprio da carteira.
+ *
+ * O `/resumo` compõe energia, paradas, manutenção e pendências de TODAS as usinas da conta
+ * numa resposta só — é a chamada mais pesada do portal e, ao mesmo tempo, a tela em que o
+ * cliente cai depois de entrar. Com o prazo padrão de 30 s ela nunca chegava a renderizar
+ * numa carteira de sete usinas: 30 s de esqueleto, a tentativa automática, mais 30 s e um
+ * "a conexão demorou demais" aos 62 s — com o servidor respondendo 200 e completo do outro
+ * lado. O BFF ficou bem mais rápido (passou a reaproveitar a conexão com os upstreams), mas
+ * o teto próprio aqui é o que impede a tela de voltar a mentir quando a carteira crescer.
+ */
+const PRAZO_DA_CARTEIRA_MS = 120_000
+
+/**
  * A leitura da carteira num mês.
  *
  * `referencia` é `YYYY-MM-DD` e entra na chave do cache: cada mês guarda o seu, então andar
@@ -115,5 +128,7 @@ export type ResumoOut = {
  * offline em cima — quando a rede estiver fora.
  */
 export function useResumo(referencia: string): Leitura<ResumoOut> {
-  return useLeitura<ResumoOut>(`resumo?referencia=${referencia}`)
+  return useLeitura<ResumoOut>(`resumo?referencia=${referencia}`, {
+    prazoMs: PRAZO_DA_CARTEIRA_MS,
+  })
 }

@@ -175,6 +175,16 @@ function KpiDoPeriodo({
           <span className="text-xs text-fraco">{d.situacao}</span>
         )}
       </div>
+      {/* Quando o monitoramento não tem leitura do período inteiro, o servidor compara só os
+          meses medidos — e DIZ isso aqui. Sem a frase, "no ano" pareceria o ano fechado, que
+          é justamente a leitura errada que fazia a mesma usina sair verde no mês e vermelha
+          no ano. `title` guarda o texto inteiro; a linha fica em uma só para não empurrar o
+          cartão. */}
+      {d.cobertura ? (
+        <p className="mt-1 truncate text-xs text-fraco" title={d.cobertura}>
+          {d.cobertura}
+        </p>
+      ) : null}
     </div>
   )
 }

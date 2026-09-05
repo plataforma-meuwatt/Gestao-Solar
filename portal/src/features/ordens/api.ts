@@ -71,11 +71,19 @@ export function useOrdens(usinaId: number | null): Leitura<OrdensOut> {
  * alguém. É o estado da preventiva que o dono mais acompanha, e jogá-la em "concluídas" diria
  * que o assunto acabou.
  *
- * O terceiro bloco existe para não ESCONDER OS: uma cancelada não é "em andamento" nem
- * "concluída", e com dois blocos ela simplesmente sumiria da tela — o cliente contaria menos
- * ordens do que o total que o servidor mandou, sem nada explicando a diferença.
+ * **Cancelada tem bloco próprio, e ele não vira aba.** A pergunta desta tela é "está sendo
+ * feito?", e uma OS cancelada não está sendo feita nem foi feita — dar a ela uma aba ao lado
+ * de "Em andamento" foi o que colocou duas ordens de teste ("GATE aud5", técnico "T") na
+ * frente do cliente. Ela também não some calada: o rodapé conta quantas foram canceladas, e
+ * o total continua batendo.
+ *
+ * "Outras" sobra para um estado NOVO do meuPlano — que precisa aparecer, justamente por ser
+ * desconhecido daqui.
  */
-export type Bloco = 'andamento' | 'concluidas' | 'outras'
+export type Bloco = 'andamento' | 'concluidas' | 'outras' | 'cancelada'
+
+/** Os blocos que viram aba, na ordem em que aparecem. */
+export const BLOCOS_VISIVEIS: Bloco[] = ['andamento', 'concluidas', 'outras']
 
 const EM_CURSO = new Set(['ABERTA', 'PROGRAMADA', 'EM_EXECUCAO', 'FECHADA'])
 
@@ -83,6 +91,7 @@ export function blocoDaOrdem(o: Ordem): Bloco {
   const chave = (o.status ?? '').trim().toUpperCase()
   if (EM_CURSO.has(chave)) return 'andamento'
   if (chave === 'APROVADA') return 'concluidas'
+  if (chave === 'CANCELADA') return 'cancelada'
   return 'outras'
 }
 

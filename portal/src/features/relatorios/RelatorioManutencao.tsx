@@ -557,6 +557,11 @@ function Conteudo({
           <Kpi rotulo="Reprovados" valor={inteiro(dados.pareceres.reprovados)} tom="parado" />
           <Kpi rotulo="Sem parecer" valor={inteiro(dados.pareceres.sem_parecer)} tom="semDados" />
         </div>
+        {/* O recorte vem escrito do servidor: é ele que impede a página de exibir um
+            "Aprovado com ressalva" na OS em curso e "COM RESSALVA 0" logo abaixo. */}
+        {dados.pareceres.recorte ? (
+          <p className="mt-3 text-xs text-fraco">{dados.pareceres.recorte}</p>
+        ) : null}
       </Secao>
 
       {/* ---------------------------------------------------- problemas */}
@@ -570,7 +575,7 @@ function Conteudo({
       >
         {dados.problemas.total === 0 ? (
           <p className="text-sm text-fraco">
-            As fichas do período não registraram problema nenhum.
+            As fichas das ordens encerradas no período não registraram problema nenhum.
           </p>
         ) : (
           <>
@@ -601,6 +606,9 @@ function Conteudo({
             )}
           </>
         )}
+        {dados.problemas.recorte ? (
+          <p className="mt-3 text-xs text-fraco">{dados.problemas.recorte}</p>
+        ) : null}
       </Secao>
 
       {/* ---------------------------------------------------- pendências */}
