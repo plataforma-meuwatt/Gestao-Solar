@@ -1,0 +1,9 @@
+# O `.gitignore` da raiz deste repositório ignora `.env.*` e reabre só `!.env.example` — grafia
+# INGLESA. O arquivo de exemplo da Talk Solar veio do meuPlano com a grafia PORTUGUESA
+# (`server/.env.exemplo`) e, por causa dessa única letra, o git parava de vê-lo no destino.
+#
+# O caso real: na mudança de repositório os 35 arquivos foram copiados e conferidos byte a byte,
+# mas `git add --dry-run` pegava 34 — o exemplo de configuração era engolido em silêncio. Sem
+# esta linha, ele sumiria do controle de versão no instante em que a pasta de origem fosse
+# removida do meuPlano, e o próximo a subir o serviço não teria a lista de variáveis.
+!server/.env.exemplo

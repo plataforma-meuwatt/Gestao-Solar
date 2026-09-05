@@ -1,0 +1,56 @@
+{
+  "name": "talk-solar",
+  "productName": "Talk Solar",
+  "version": "0.1.0",
+  "description": "O mensageiro da equipe: conversa em tempo real ligada às usinas, OSs e tarefas do meuPlano",
+  "main": "electron/main.js",
+  "author": "Renan Marchesini <prmaquezini@gmail.com>",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "test": "node testes/talk.js"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "br.com.gestaosolar.talksolar",
+    "productName": "Talk Solar",
+    "artifactName": "TalkSolar-${version}-setup.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "app/**/*",
+      "Assets/icone.ico",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "Assets/icone.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "Assets/icone.ico",
+      "uninstallerIcon": "Assets/icone.ico",
+      "shortcutName": "Talk Solar"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://appslendor-updates-production.up.railway.app/talksolar"
+      }
+    ]
+  }
+}

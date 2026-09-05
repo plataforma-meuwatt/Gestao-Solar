@@ -1,0 +1,758 @@
+# -*- coding: utf-8 -*-
+"""INTEGRAÇÃO DE REFERÊNCIA — o lado do sistema (aqui, o meuPlano).
+
+╔══════════════════════════════════════════════════════════════════════════════════════════╗
+║ CÓPIA DE REFERÊNCIA, DATADA — NÃO É CÓDIGO VIVO. NÃO IMPORTE, NÃO EXECUTE.                ║
+║                                                                                          ║
+║ Origem: meuPlano, `backend/app/api/v1/talk.py`, tal como estava em **04/09/2026**, sobre  ║
+║         o commit `0f2007d9`, com os itens INT-1 (receptor + idempotência), INT-2          ║
+║         (isolamento por empresa) e INT-4 (menção → notificação) já aplicados — e ainda    ║
+║         NÃO commitados naquele momento. A extensão `.exemplo` existe para que nenhum      ║
+║         import o alcance.                                                                ║
+║                                                                                          ║
+║ A FONTE VIVA é o meuPlano — `backend/app/api/v1/talk.py`. Quem for corrigir a             ║
+║ integração corrige LÁ; aqui não se conserta nada.                                         ║
+╚══════════════════════════════════════════════════════════════════════════════════════════╝
+
+POR QUE ESTE ARQUIVO É UMA CÓPIA DATADA, E NÃO UM GÊMEO
+-------------------------------------------------------
+Até a mudança de repositório, este arquivo era **byte a byte idêntico** ao do meuPlano, e a
+regra era "mexeu num, mexe no outro". Isso funcionava enquanto os dois viviam na mesma árvore:
+um `diff -q` provava a igualdade. Com a Talk Solar num repositório próprio, nenhum gate — nem
+daqui, nem de lá — consegue mais conferir esse par, e uma cópia que se acredita sincronizada
+sem que nada a verifique é pior do que uma cópia declaradamente velha. Então ela é o que sempre
+foi de fato: uma **referência datada**, com a origem carimbada acima.
+
+✅ O QUE MUDOU DESDE O INSTANTÂNEO ANTERIOR (commit e13ffb5c) — E POR QUE AGORA DÁ PARA COPIAR
+----------------------------------------------------------------------------------------------
+O instantâneo anterior trazia um aviso grande dizendo **"não copie `_postar_no_feed` daqui"**:
+o receptor de webhook era um no-op silencioso. Ele montava
+`ServiceOrderComment(service_order_id=…, texto=…, autor=…)` e
+`ContainerComment(container_id=…, texto=…, autor=…)`, quando as colunas reais dos dois modelos
+são `os_id` / `author` / `content`. As duas construções levantavam `TypeError`, um
+`except Exception` engolia, o endpoint respondia `{ok: true}` e a Talk Solar marcava a entrega
+como ENTREGUE — o recado nunca aparecia no feed e nenhum log acusava. E a idempotência do
+`X-Talk-Entrega` estava só ilustrada: corrigido o primeiro defeito, o primeiro reenvio
+duplicaria o recado.
+
+**Os dois estão corrigidos nesta versão** (INT-1):
+
+· os kwargs certos, e o comentário nasce com `system=True` (é registro do sistema — vai para o
+  log de atividades e não é editável nem apagável por quem abre a OS);
+· `talk_webhook_entregas` guarda a marca de cada entrega, e **a marca e o efeito vão na MESMA
+  transação, com um único commit**. A ordem inversa — marcar e depois postar — perderia o
+  recado PARA SEMPRE se o insert falhasse, porque o reenvio bateria na marca e desistiria;
+· o `except` mudo virou `logging.warning` com evento e nº da entrega (cai em `app_logs`), sem
+  perder o 2xx: um erro nosso não pode fazer a Talk Solar reenviar para sempre.
+
+Prova disso do lado do meuPlano: `backend/scripts/validate_talk_webhook.py` (o check 0 prova que
+o bug antigo era real; os checks 6-9 provam a idempotência; o 13-14 provam que a marca NÃO
+sobrevive sozinha quando o alvo não existe). **Copie este arquivo inteiro e o gate passa.**
+
+⚠ O QUE VOCÊ AINDA TEM DE TROCAR
+--------------------------------
+Este arquivo é o molde, não a resposta. Três coisas são do SEU sistema, e nenhuma delas pode ser
+copiada como está:
+
+1. **Como o seu sistema valida um token** (`identidade`) — aqui reusa o `_decode_token` do
+   meuPlano.
+2. **O que é "citável"** (`refs_buscar` / `refs_label`) — aqui são usina, OS, tarefa,
+   equipamento e pendência, com o recorte de visibilidade do meuPlano. ⛔ O recorte é SEU: na
+   dúvida devolva NADA, nunca "tudo".
+3. **Onde o recado aparece** (`_postar_no_feed`) — aqui, comentário no feed da OS ou da
+   pendência. No seu sistema pode ser outra coisa. O que NÃO muda é a mecânica: conferir a
+   assinatura antes de ler o corpo, gravar a marca de idempotência na mesma transação do
+   efeito, e responder 2xx quando entendeu.
+
+E uma decisão de arquitetura que só vale para sistema MULTIEMPRESA: o `TalkApp` / o mapa
+`TALK_SECRETS` / `_alvo_e_da_empresa`. Se o seu sistema atende **um cliente por instalação**,
+esse aparato é peso morto — registre um app só, não declare `empresa_id`, e o código abaixo já
+se comporta como se ele não existisse (`TalkApp.isola` é False). Ver `docs/API.md §1`.
+
+COMO USAR COMO MOLDE
+--------------------
+    cp talksolar/integracoes/meuplano/talk.py.exemplo  <seu-backend>/app/api/v1/talk.py
+    # e no main.py:
+    from app.api.v1 import talk
+    app.include_router(talk.router)
+
+E do lado da Talk Solar, **uma vez por app** (num sistema multiempresa, um app POR EMPRESA):
+
+    python scripts/integrar_sistema.py <slug> "<nome que a pessoa vê>" \\
+        https://<host-vivo-do-sistema>/api/v1/talk \\
+        --webhook https://<host-vivo-do-sistema>/api/v1/talk/webhook
+
+⚠ O endereço ficou como marcador de propósito: o host `meuplano-production.up.railway.app`, que
+já esteve escrito aqui, responde **404 da borda do Railway** — não é o host vivo (o do meuPlano
+é `meuplano.up.railway.app`, conferido em 04/09/2026). Confirme o endereço com um `curl` ANTES
+de rodar o comando: ele grava a URL em `ts_apps` no banco de produção, e host errado gravado lá
+é caro de trocar.
+
+O comando imprime o `TALK_SECRET`; guarde-o como variável de ambiente no sistema — nunca no git.
+Para trocá-lo depois, siga a ordem de `docs/API.md §8`: gerar, atualizar o sistema, conferir.
+
+⚠ **Segurança em uma frase:** todo endpoint aqui é chamado servidor-a-servidor e é protegido
+pelo segredo compartilhado. Sem a conferência do `X-Talk-Secret`, qualquer um que descubra a
+URL pergunta "de quem é este token?" e recebe a resposta.
+
+--- daqui para baixo, o arquivo é o do meuPlano, sem uma linha alterada ---------------------
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import os
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_db
+
+router = APIRouter(prefix="/api/v1/talk", tags=["Talk Solar"])
+
+_log = logging.getLogger(__name__)
+
+#: para montar as URLs que o chip de citação abre
+BASE_WEB = os.getenv("PUBLIC_WEB_URL") or "https://meuplano.meuwatt.com.br"
+#: quem assina o comentário no feed — é registro do SISTEMA, não conversa de gente
+AUTOR_FEED = "Talk Solar"
+#: `ref_type` das notificações de menção da Talk Solar. O `ref_id` que anda com ele é o
+#: **CANAL** (não o alvo citado): quem foi chamado precisa cair na conversa em que o nome
+#: dele foi escrito — inclusive em conversa privada, que não tem alvo nenhum no meuPlano.
+#: Os dois clientes resolvem o destino a partir deste par (web: `/conversa?canal=N`;
+#: app: o mesmo endereço no navegador, porque o celular não tem tela de conversa).
+REF_MENCAO = "talk"
+#: teto de quantos mencionados uma única entrega pode alcançar. A Talk Solar já limita as
+#: menções por mensagem, mas o corpo vem da rede: sem teto, um payload forjado (ou um bug
+#: do outro lado) viraria milhares de push numa requisição só.
+MAX_MENCIONADOS = 50
+#: por quantos dias a marca de idempotência fica guardada. O reenvio mais tardio da Talk
+#: Solar acontece em 1 h; 90 dias é folga de sobra e ainda permite auditar "de onde veio
+#: este comentário" por um trimestre.
+RETENCAO_ENTREGAS_DIAS = int(os.getenv("TALK_ENTREGAS_RETENCAO_DIAS", "90"))
+#: dia da última poda NESTE processo (ver `_podar_entregas`)
+_ULTIMA_PODA: Optional[date] = None
+
+
+# ============================================================ 0) DE QUEM É ESTA CHAMADA
+@dataclass(frozen=True)
+class TalkApp:
+    """O app da Talk Solar que apresentou o segredo — ou seja, DE QUE EMPRESA é a chamada.
+
+    `empresa_id` é o `owners.id`. `None` significa "app sem empresa declarada", que só é
+    aceito quando existe UM app configurado (o modo de hoje: um app servindo o meuPlano
+    inteiro). Com dois ou mais, um app sem empresa é configuração incompleta e a porta se
+    FECHA — ver `_app_do_registro`.
+    """
+    slug: str
+    empresa_id: Optional[int]
+
+    @property
+    def isola(self) -> bool:
+        """Há recorte de empresa nesta chamada? (False = modo de app único, legado.)"""
+        return self.empresa_id is not None
+
+
+def _app_do_registro(cfg: Optional[dict], registro: dict) -> TalkApp:
+    """Transforma a resposta do registro (`talk_avisos.app_por_segredo`) no app desta chamada.
+
+    A porta de ENTRADA é mais dura que a de saída, e de propósito: lá, não saber a empresa
+    faz o aviso não sair (silêncio); aqui, não saber a empresa faz a conversa de uma empresa
+    ficar legível pela outra (vazamento). Por isso, com VÁRIOS apps configurados, um app que
+    não declara `empresa_id` é recusado com 503 nomeando o slug — em vez de servir sem
+    recorte e reabrir o buraco em silêncio, justo depois de alguém ter configurado o resto
+    das empresas direito.
+    """
+    if cfg is None:
+        raise HTTPException(401, "Segredo inválido.")
+    slug = str(cfg.get("slug") or "?")
+    empresa = cfg.get("empresa_id")
+    if empresa is None and len(registro) > 1:
+        raise HTTPException(503, f"Integração com o Talk Solar mal configurada: o app "
+                                 f"'{slug}' não declara `empresa_id` e há mais de um app em "
+                                 f"TALK_SECRETS — sem isso não dá para isolar as empresas.")
+    return TalkApp(slug=slug, empresa_id=int(empresa) if empresa is not None else None)
+
+
+def _empresa_do_segredo(x_talk_secret: Optional[str] = Header(None)) -> TalkApp:
+    """A porta. Antes ela perguntava "o segredo confere?"; agora pergunta **"de quem é?"**.
+
+    O registro dos apps é lido pela fonte única (`talk_avisos`), que já compara com
+    `compare_digest` — comparação comum vaza o segredo pelo TEMPO, e aqui se compara contra
+    vários.
+    """
+    from app.services.meuacesso.talk_avisos import app_por_segredo, apps_do_talk
+    registro = apps_do_talk()
+    if not registro:
+        raise HTTPException(503, "Integração com o Talk Solar não configurada (TALK_SECRETS).")
+    return _app_do_registro(app_por_segredo(x_talk_secret or ""), registro)
+
+
+def _app_da_assinatura(cru: bytes, assinatura: str) -> TalkApp:
+    """A MESMA porta, para o webhook: lá o segredo não vem no cabeçalho, vem ASSINANDO o corpo.
+
+    Testa o HMAC de cada app até achar o dono da assinatura — é o que permite N empresas
+    apontarem para a MESMA URL de webhook sem que uma escreva no feed da outra.
+    """
+    from app.services.meuacesso.talk_avisos import apps_do_talk
+    registro = apps_do_talk()
+    if not registro:
+        raise HTTPException(503, "Integração com o Talk Solar não configurada (TALK_SECRETS).")
+    for slug, cfg in registro.items():
+        esperada = "sha256=" + hmac.new(
+            str(cfg["segredo"]).encode(), cru, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(esperada, assinatura or ""):
+            return _app_do_registro({"slug": slug, **cfg}, registro)
+    raise HTTPException(401, "Assinatura inválida.")
+
+
+# ============================================================ 1) IDENTIDADE (obrigatório)
+class IdentidadeIn(BaseModel):
+    token: str
+
+
+@router.post("/identidade")
+def identidade(payload: IdentidadeIn, db: Session = Depends(get_db),
+               talk_app: TalkApp = Depends(_empresa_do_segredo)):
+    """De quem é este token? — a única pergunta que TODO sistema precisa responder.
+
+    Aqui reusamos o próprio decodificador do meuPlano: a Talk Solar não conhece o formato do
+    nosso token, e não deve conhecer. Se um dia trocarmos de JWT para outra coisa, só este
+    arquivo muda.
+
+    ⛔ **É AQUI que o isolamento por empresa realmente se decide.** Recusar o token de quem não
+    pertence à empresa daquele app impede a pessoa de sequer EXISTIR no espaço de conversa
+    dela — e, como apps não se enxergam, depois disso a Talk Solar cuida sozinha. As rotas de
+    citação e o webhook abaixo são o cinto e o suspensório: quem passasse por engano aqui
+    ainda não veria usina de fora nem escreveria no feed alheio.
+    """
+    from app.models.meuacesso import AppUser, UserOwner
+    from app.services.meuacesso.auth import ROLE_ADMIN_SISTEMA, _decode_token
+    try:
+        dados = _decode_token(payload.token)
+        uid = int(dados.get("sub"))
+    except Exception:                          # noqa: BLE001
+        raise HTTPException(401, "Token inválido.")
+    u = db.get(AppUser, uid)
+    if u is None:
+        raise HTTPException(401, "Usuário não encontrado.")
+    if talk_app.isola and u.role != ROLE_ADMIN_SISTEMA:
+        # o admin do sistema entra em qualquer app: é a MESMA régua do resto do meuPlano
+        # (ele já enxerga tudo), e sem a exceção ninguém da casa consegue dar suporte de
+        # dentro da conversa. Ele entra sob o próprio nome — fica rastreável.
+        vinculo = (db.query(UserOwner.id)
+                   .filter(UserOwner.app_user_id == u.id,
+                           UserOwner.owner_id == talk_app.empresa_id).first())
+        if vinculo is None:
+            raise HTTPException(401, "Usuário não pertence a esta empresa.")
+    return {"externo_id": str(u.id), "nome": u.name or u.email,
+            "email": u.email, "avatar_url": None, "ativo": bool(u.active)}
+
+
+# ============================================================ 2) ALVOS CITÁVEIS (opcional)
+class BuscaIn(BaseModel):
+    externo_id: str
+    q: str
+    limite: int = 6
+
+
+class LabelIn(BaseModel):
+    externo_id: str
+    alvos: list[dict]
+
+
+def _usuario(db: Session, externo_id: str):
+    from app.models.meuacesso import AppUser
+    u = db.get(AppUser, int(externo_id)) if str(externo_id).isdigit() else None
+    if u is None:
+        raise HTTPException(404, "Usuário não encontrado.")
+    return u
+
+
+def _usinas_da_empresa(db: Session, empresa_id: int) -> set[int]:
+    """Usinas em que a empresa aparece (`usina_owners`, qualquer vínculo)."""
+    from app.services.meuacesso.usina_owners import owner_usina_ids
+    try:
+        return owner_usina_ids(db, int(empresa_id))
+    except Exception:                          # noqa: BLE001
+        return set()                           # na dúvida, NADA — nunca "tudo"
+
+
+def _usinas_visiveis(db: Session, u, talk_app: TalkApp):
+    """⛔ O RECORTE É NOSSO, não da Talk Solar. E são DOIS recortes, não um.
+
+    1. o da PESSOA (`usinas_visiveis_para`: organizações + concessões), que já existia;
+    2. o da EMPRESA do segredo (`usina_owners`), que é o que o INT-2 acrescentou.
+
+    O segundo é o que importa aqui: a MESMA pessoa presta serviço a N empresas, e sem o corte
+    por empresa ela levaria para o chat da Marcheng a lista de usinas da Splendor — pela
+    porta dos fundos, sem ninguém perceber, porque a tela do chat não parece uma tela do
+    meuPlano. O resultado é a INTERSEÇÃO: nenhum dos dois recortes pode ampliar o outro.
+
+    Devolve `None` (= sem restrição) só no modo de app único sem empresa; com empresa,
+    sempre um conjunto.
+    """
+    from app.services.meuacesso.tenancy import usinas_visiveis_para
+    try:
+        da_pessoa = usinas_visiveis_para(db, u)
+    except Exception:                          # noqa: BLE001
+        da_pessoa = set()                      # na dúvida, NADA — nunca "tudo"
+    if not talk_app.isola:
+        return da_pessoa
+    da_empresa = _usinas_da_empresa(db, talk_app.empresa_id)
+    return da_empresa if da_pessoa is None else (da_pessoa & da_empresa)
+
+
+def _cond_container(ids, talk_app: TalkApp):
+    """Container SEM usina (funil global) aparece na busca? Depende de haver empresa.
+
+    Sem empresa (app único) segue a regra de sempre: o funil GLOBAL é de todos, e escondê-lo
+    faria sumir contrato e pendência. COM empresa, não: `pipeline_containers` não tem coluna
+    de empresa, então um container sem usina é INATRIBUÍVEL — mostrá-lo a todas as empresas é
+    justamente a mistura que este arquivo existe para impedir. Ele some, e este comentário
+    fica para o dia em que a coluna existir.
+    """
+    from app.models.pipelines import PipelineContainer
+    dentro = PipelineContainer.usina_id.in_(ids or {-1})
+    if talk_app.isola:
+        return dentro
+    return or_(dentro, PipelineContainer.usina_id.is_(None))
+
+
+@router.post("/refs/buscar")
+def refs_buscar(payload: BuscaIn, db: Session = Depends(get_db),
+                talk_app: TalkApp = Depends(_empresa_do_segredo)):
+    """O que ESTE usuário pode citar, no vocabulário do meuPlano — dentro DESTA empresa."""
+    from app.models.meuacesso import Node, Usina
+    from app.models.pipelines import PipelineContainer
+    from app.models.tasks import ServiceOrder, Task
+
+    u = _usuario(db, payload.externo_id)
+    ids = _usinas_visiveis(db, u, talk_app)
+    restrito = ids is not None
+    alvo = f"%{payload.q.strip()}%"
+    lim = max(1, min(payload.limite, 10))
+    itens: list[dict] = []
+
+    q = db.query(Usina).filter(Usina.name.ilike(alvo))
+    if restrito:
+        q = q.filter(Usina.id.in_(ids or {-1}))
+    for x in q.order_by(Usina.name).limit(lim):
+        itens.append({"tipo": "usina", "id": str(x.id), "label": x.name,
+                      "url": f"{BASE_WEB}/usinas/{x.id}"})
+
+    q = db.query(ServiceOrder)
+    q = (q.filter(or_(ServiceOrder.id == int(payload.q), ServiceOrder.name.ilike(alvo)))
+         if payload.q.strip().isdigit() else q.filter(ServiceOrder.name.ilike(alvo)))
+    if restrito:
+        q = q.filter(ServiceOrder.plant_id.in_(ids or {-1}))
+    for x in q.order_by(ServiceOrder.id.desc()).limit(lim):
+        itens.append({"tipo": "os", "id": str(x.id),
+                      "label": f"OS {x.id}" + (f" · {x.name}" if x.name else ""),
+                      "url": f"{BASE_WEB}/os-list?os={x.id}"})
+
+    q = db.query(Task).filter(Task.name.ilike(alvo))
+    if restrito:
+        q = q.filter(Task.plant_id.in_(ids or {-1}))
+    for x in q.order_by(Task.id.desc()).limit(lim):
+        itens.append({"tipo": "tarefa", "id": str(x.id), "label": x.name or f"Tarefa {x.id}",
+                      "url": f"{BASE_WEB}/tarefas?tarefa={x.id}"})
+
+    q = db.query(Node).filter(or_(Node.display_name.ilike(alvo), Node.code.ilike(alvo)))
+    if restrito:
+        q = q.filter(Node.usina_id.in_(ids or {-1}))
+    for x in q.order_by(Node.id.desc()).limit(lim):
+        itens.append({"tipo": "equipamento", "id": str(x.id),
+                      "label": x.display_name or x.code or f"Equipamento {x.id}",
+                      "url": f"{BASE_WEB}/ativos/{x.id}"})
+
+    q = db.query(PipelineContainer)
+    q = (q.filter(or_(PipelineContainer.numero == int(payload.q),
+                      PipelineContainer.title.ilike(alvo)))
+         if payload.q.strip().isdigit() else q.filter(PipelineContainer.title.ilike(alvo)))
+    if restrito:
+        q = q.filter(_cond_container(ids, talk_app))
+    for x in q.order_by(PipelineContainer.id.desc()).limit(lim):
+        itens.append({"tipo": "container", "id": str(x.id),
+                      "label": f"#{x.numero} · {x.title}" if x.numero else (x.title or ""),
+                      "url": f"{BASE_WEB}/pendencias?container={x.id}"})
+    return {"itens": itens}
+
+
+@router.post("/refs/label")
+def refs_label(payload: LabelIn, db: Session = Depends(get_db),
+               talk_app: TalkApp = Depends(_empresa_do_segredo)):
+    """Como se chamam estes alvos AGORA. Vira o rótulo congelado da citação.
+
+    O que não existe (ou não é desta pessoa, ou não é desta empresa) simplesmente NÃO volta —
+    e a Talk Solar recusa a citação em silêncio. Um marcador que leva a lugar nenhum é pior do
+    que marcador nenhum. É também esta rota que faz o "Conversar sobre isto" (INT-6) responder
+    404 num alvo de outra empresa: sem rótulo, a Talk Solar não abre o canal.
+    """
+    from app.models.meuacesso import Node, Usina
+    from app.models.pipelines import PipelineContainer
+    from app.models.tasks import ServiceOrder, Task
+
+    u = _usuario(db, payload.externo_id)
+    ids = _usinas_visiveis(db, u, talk_app)
+    restrito = ids is not None
+    # container global (sem usina) só passa quando NÃO há empresa — ver `_cond_container`
+    global_livre = not talk_app.isola
+    saida = []
+    for a in (payload.alvos or [])[:20]:
+        tipo, rid = str(a.get("tipo") or ""), str(a.get("id") or "")
+        if not rid.isdigit():
+            continue
+        n = int(rid)
+        if tipo == "usina":
+            x = db.get(Usina, n)
+            if x and (not restrito or x.id in (ids or ())):
+                saida.append({"tipo": tipo, "id": rid, "label": x.name,
+                              "url": f"{BASE_WEB}/usinas/{n}"})
+        elif tipo == "os":
+            x = db.get(ServiceOrder, n)
+            if x and (not restrito or x.plant_id in (ids or ())):
+                saida.append({"tipo": tipo, "id": rid,
+                              "label": f"OS {x.id}" + (f" · {x.name}" if x.name else ""),
+                              "url": f"{BASE_WEB}/os-list?os={n}"})
+        elif tipo == "tarefa":
+            x = db.get(Task, n)
+            if x and (not restrito or x.plant_id in (ids or ())):
+                saida.append({"tipo": tipo, "id": rid, "label": x.name or f"Tarefa {n}",
+                              "url": f"{BASE_WEB}/tarefas?tarefa={n}"})
+        elif tipo == "equipamento":
+            x = db.get(Node, n)
+            if x and (not restrito or x.usina_id in (ids or ())):
+                saida.append({"tipo": tipo, "id": rid,
+                              "label": x.display_name or x.code or f"Equipamento {n}",
+                              "url": f"{BASE_WEB}/ativos/{n}"})
+        elif tipo == "container":
+            x = db.get(PipelineContainer, n)
+            visivel = x is not None and (
+                not restrito
+                or (x.usina_id is None and global_livre)
+                or (x.usina_id is not None and x.usina_id in (ids or ())))
+            if visivel:
+                saida.append({"tipo": tipo, "id": rid,
+                              "label": f"#{x.numero} · {x.title}" if x.numero else (x.title or ""),
+                              "url": f"{BASE_WEB}/pendencias?container={n}"})
+    return {"itens": saida}
+
+
+# ============================================================ 3) WEBHOOK (recebe os avisos)
+@router.post("/webhook")
+async def webhook(request: Request, db: Session = Depends(get_db)):
+    """A Talk Solar avisa que houve conversa. Dois eventos, dois destinos DIFERENTES:
+
+    · `mensagem.criada` → comentário no feed do alvo citado (OS, pendência). REGISTRA.
+    · `mencao.criada`   → aviso na central de quem foi chamado (sino, push, Telegram).
+      NOTIFICA — e é o único que apita, porque avisar cada recado viraria ruído.
+
+    TRÊS COISAS QUE TODO RECEPTOR PRECISA FAZER — e é por isso que este arquivo existe:
+
+    1. **Conferir a assinatura ANTES de ler o corpo.** Sem isso, quem descobrir a URL escreve
+       no seu sistema.
+    2. **Ser idempotente.** Reenvio acontece (é o desenho): o `X-Talk-Entrega` vira uma MARCA
+       gravada em `talk_webhook_entregas`, e o repetido é ignorado.
+    3. **Responder rápido e sempre 2xx quando entendeu.** Um receptor lento faz a Talk Solar
+       marcar como falha e reenviar — e aí o recado aparece três vezes.
+    """
+    cru = await request.body()
+    # A assinatura confere E diz QUEM É: com N empresas apontando para esta mesma URL, é o
+    # segredo que assinou o corpo que define de qual delas é o recado.
+    talk_app = _app_da_assinatura(cru, request.headers.get("X-Talk-Assinatura", ""))
+
+    try:
+        dados = json.loads(cru or b"{}")
+    except ValueError:
+        raise HTTPException(400, "Corpo não é JSON.")
+    if not isinstance(dados, dict):
+        raise HTTPException(400, "Corpo não é um objeto JSON.")
+
+    evento = str(dados.get("evento") or request.headers.get("X-Talk-Evento") or "")
+    # A CHAVE DA IDEMPOTÊNCIA. Quando o cabeçalho não vem (integrador antigo, proxy que come
+    # cabeçalho custom), o sha256 do corpo CRU serve igual: o payload é gravado uma vez do
+    # lado de lá e reenviado idêntico, e duas mensagens distintas diferem pelo `mensagem.id`.
+    entrega = (request.headers.get("X-Talk-Entrega") or "").strip() \
+        or ("sha256:" + hashlib.sha256(cru).hexdigest())
+
+    postado = False
+    avisados = 0
+    if evento == "mensagem.criada":
+        alvo = (dados.get("canal") or {}).get("alvo") or {}
+        tipo, alvo_id = alvo.get("tipo"), alvo.get("id")
+        if tipo and alvo_id is not None and not _alvo_e_da_empresa(db, tipo, alvo_id, talk_app):
+            # 404 e não 2xx: aqui não entendemos, e não queremos entender. A Talk Solar
+            # tenta mais algumas vezes e desiste, deixando a entrega marcada como falha em
+            # `ts_entregas` — que é exatamente o rastro que se quer quando um segredo está
+            # sendo usado onde não devia. É a exceção deliberada ao item 3 acima.
+            raise HTTPException(404, "Alvo não existe (ou não é desta empresa).")
+        msg = dados.get("mensagem") or {}
+        texto = (f"[Talk Solar] {(msg.get('autor') or {}).get('nome', 'alguém')}: "
+                 f"{msg.get('conteudo') or '(arquivo)'}")[:500]
+        postado = _postar_no_feed(db, evento, tipo, alvo_id, texto, entrega)
+    elif evento == "mencao.criada":
+        avisados = _notificar_mencoes(db, dados, entrega, talk_app)
+
+    _podar_entregas(db)
+    # `postado`/`avisados` são diagnóstico honesto: a Talk Solar guarda os 500 primeiros
+    # caracteres da nossa resposta em `ts_entregas.resposta`, então quem for ver por que o
+    # recado não apareceu no feed — ou por que ninguém foi avisado — lê isto ali, sem
+    # precisar do nosso log.
+    return {"ok": True, "postado": postado, "avisados": avisados}
+
+
+def _usina_do_alvo(db: Session, tipo: Optional[str], alvo_id) -> Optional[int]:
+    """A usina a que um alvo pertence — é por ela que se descobre de que empresa ele é.
+
+    Mesmo caminho que o sentido inverso usa (`talk_avisos.empresa_da_usina`): tudo o que é
+    citável no meuPlano pendura numa usina, e a usina pendura na organização.
+    """
+    from app.models.meuacesso import Node, Usina
+    from app.models.pipelines import PipelineContainer
+    from app.models.tasks import ServiceOrder, Task
+    if not str(alvo_id or "").isdigit():
+        return None
+    n = int(alvo_id)
+    if tipo == "usina":
+        x = db.get(Usina, n)
+        return x.id if x else None
+    if tipo == "os":
+        x = db.get(ServiceOrder, n)
+        return x.plant_id if x else None
+    if tipo == "tarefa":
+        x = db.get(Task, n)
+        return x.plant_id if x else None
+    if tipo == "equipamento":
+        x = db.get(Node, n)
+        return x.usina_id if x else None
+    if tipo == "container":
+        x = db.get(PipelineContainer, n)
+        return x.usina_id if x else None
+    return None
+
+
+def _alvo_e_da_empresa(db: Session, tipo: Optional[str], alvo_id, talk_app: TalkApp) -> bool:
+    """O alvo citado é da empresa DONA do segredo que assinou este webhook?
+
+    Sem esta pergunta, o segredo de uma empresa escreve no feed da OS de outra — o mesmo
+    vazamento do canal público, só que na direção contrária e GRAVANDO no banco. Alvo
+    inexistente e container de funil global (sem usina, portanto inatribuível) também não
+    passam: um recado que não se sabe de quem é não entra no feed de ninguém.
+    """
+    if not talk_app.isola:
+        return True                            # app único, sem empresa declarada
+    usina_id = _usina_do_alvo(db, tipo, alvo_id)
+    if usina_id is None:
+        return False
+    return usina_id in _usinas_da_empresa(db, talk_app.empresa_id)
+
+
+def _falhou(evento: str, ref: str, tipo, alvo_id, msg: str) -> None:
+    """O log que faltava. WARNING vai para `app_logs` (visualizador do Admin) pelo
+    `DBLogHandler`; o `except` mudo de antes fazia o recado sumir sem deixar rastro."""
+    _log.warning(msg, exc_info=True, extra={
+        "event": "talk_webhook_falhou", "component": "talk",
+        "talk_evento": evento, "talk_entrega": ref,
+        "alvo_tipo": tipo, "alvo_id": alvo_id,
+    })
+
+
+def _postar_no_feed(db: Session, evento: str, tipo: Optional[str], alvo_id,
+                    texto: str, ref: str) -> bool:
+    """Onde o recado aparece no meuPlano. É a parte que MUDA em cada sistema.
+
+    Hoje: OS e pendência têm feed; usina e equipamento ainda não recebem (a conversa fica só na
+    Talk Solar). Está explícito de propósito — silenciar sem dizer seria pior.
+
+    ⛔ O COMENTÁRIO E A MARCA VÃO NA MESMA TRANSAÇÃO, com UM commit. A ordem inversa —
+    marcar e depois postar — perderia o recado PARA SEMPRE se o insert do comentário
+    falhasse: o reenvio bateria na marca e desistiria achando que já tinha entregado.
+
+    `system=True` porque isto é registro do sistema, não conversa humana: vai para o log de
+    atividades e não é editável nem apagável por quem abrir a OS.
+
+    Devolve `True` só quando o recado entrou AGORA (repetido e alvo sem feed devolvem False).
+    """
+    from app.models.meuacesso import TalkWebhookEntrega
+
+    if not str(alvo_id or "").isdigit():
+        return False
+    alvo_num = int(alvo_id)
+
+    def ja_marcada() -> bool:
+        return db.query(TalkWebhookEntrega.id).filter(
+            TalkWebhookEntrega.ref == ref).first() is not None
+
+    # caminho barato; a garantia de verdade é o UNIQUE de `ref` (ver o `except` abaixo)
+    if ja_marcada():
+        return False
+
+    if tipo == "os":
+        from app.models.tasks import ServiceOrderComment
+        linha = ServiceOrderComment(os_id=alvo_num, author=AUTOR_FEED,
+                                    content=texto, system=True)
+    elif tipo == "container":
+        from app.models.pipelines import ContainerComment
+        linha = ContainerComment(container_id=alvo_num, author=AUTOR_FEED,
+                                 content=texto, system=True)
+    else:
+        return False                           # usina e equipamento ainda não têm feed
+
+    try:
+        db.add(linha)
+        db.add(TalkWebhookEntrega(ref=ref, evento=evento,
+                                  alvo_tipo=tipo, alvo_id=alvo_num))
+        db.commit()
+        return True
+    except IntegrityError:
+        db.rollback()
+        # DOIS casos caem aqui e não podem ser tratados igual: a corrida de duas entregas
+        # iguais chegando juntas (benigna — o UNIQUE fez o trabalho) e o alvo que não existe
+        # (FK). Distinguimos pelo estado do banco, não pela mensagem do driver.
+        if ja_marcada():
+            return False
+        _falhou(evento, ref, tipo, alvo_num,
+                "talk webhook: alvo inexistente ou violação de integridade — recado NÃO "
+                "entrou no feed e a marca NÃO ficou (o reenvio ainda pode dar certo)")
+        return False
+    except Exception:                          # noqa: BLE001
+        db.rollback()
+        _falhou(evento, ref, tipo, alvo_num,
+                "talk webhook: recado NÃO entrou no feed")
+        # NUNCA propaga: um erro nosso não pode fazer a Talk Solar reenviar para sempre
+        return False
+
+
+def _alvos_da_mencao(db: Session, externos, empresa_id: Optional[int]) -> list[int]:
+    """`externo_id` da Talk Solar → usuários do meuPlano que PODEM ser avisados.
+
+    Uma consulta só (o banco é remoto): quem não existe, quem está inativo e — quando a
+    empresa é conhecida — quem não tem vínculo com ela simplesmente não volta. Silêncio é o
+    certo aqui: a Talk Solar não pode descobrir, pela diferença entre erro e sucesso, se um
+    id externo existe do nosso lado.
+    """
+    from app.models.meuacesso import AppUser, UserOwner
+
+    ids = sorted({int(x) for x in externos if str(x).isdigit()})[:MAX_MENCIONADOS]
+    if not ids:
+        return []
+    q = db.query(AppUser.id).filter(AppUser.id.in_(ids), AppUser.active.is_(True))
+    if empresa_id is not None:
+        q = q.filter(AppUser.id.in_(
+            db.query(UserOwner.app_user_id).filter(UserOwner.owner_id == empresa_id)))
+    return [r[0] for r in q.all()]
+
+
+def _notificar_mencoes(db: Session, dados: dict, ref: str, talk_app: TalkApp) -> int:
+    """`mencao.criada` → central de notificações (sino do site e do app, push, Telegram).
+
+    ⛔ NOTIFICAR ≠ REGISTRAR. Só a MENÇÃO chega ao celular de quem está em campo: mensagem
+    comum de canal vira comentário no feed do alvo (`_postar_no_feed`) e não apita nada.
+    Avisar cada recado transformaria o aviso em ruído e o time passaria a ignorá-lo — que é
+    o pior resultado possível para um canal de aviso.
+
+    A menção vale mesmo em canal SEM alvo (conversa privada): o chamado é da pessoa, não da
+    OS. Por isso o alvo do clique é o canal.
+
+    Idempotência: a mesma marca de `_postar_no_feed` (`talk_webhook_entregas`), gravada na
+    MESMA transação dos avisos — reenvio é o desenho da Talk Solar (30 s, 2 min, 10 min,
+    1 h), e sem isso o celular apitaria uma vez por reenvio. `mencao.criada` e
+    `mensagem.criada` são entregas DIFERENTES do lado de lá, com refs diferentes: uma não
+    consome a marca da outra.
+
+    Devolve quantas pessoas foram avisadas AGORA (repetido devolve 0).
+    """
+    from app.models.meuacesso import TalkWebhookEntrega
+    from app.services.meuacesso.user_notify import notify_mencoes
+
+    canal = dados.get("canal") or {}
+    msg = dados.get("mensagem") or {}
+    canal_id = canal.get("id")
+    if not isinstance(canal_id, int) or isinstance(canal_id, bool):
+        return 0
+
+    def ja_marcada() -> bool:
+        return db.query(TalkWebhookEntrega.id).filter(
+            TalkWebhookEntrega.ref == ref).first() is not None
+
+    # caminho barato; a garantia de verdade é o UNIQUE de `ref` (ver o `except` abaixo)
+    if ja_marcada():
+        return 0
+
+    # A empresa vem do SEGREDO que assinou (INT-2): a menção não alcança quem não é dela.
+    # Sem esse filtro, um payload da Talk Solar com ids arbitrários faria o celular de gente
+    # de OUTRA empresa apitar com o nome de uma conversa que ela não pode nem abrir.
+    alvos = _alvos_da_mencao(db, dados.get("mencionados") or [], talk_app.empresa_id)
+    if not alvos:
+        return 0
+
+    nome = (canal.get("nome") or "").strip()
+    autor = ((msg.get("autor") or {}).get("nome") or "").strip()
+    try:
+        # a marca entra ANTES e com `flush`, mas no MESMO commit dos avisos. O `flush` faz a
+        # corrida de duas entregas iguais estourar no UNIQUE aqui, e não lá embaixo — depois
+        # que `notify_mencoes` já tivesse disparado o push, que não tem rollback: o telefone
+        # apitaria por um aviso que o banco desfez. A atomicidade continua de pé: se a
+        # notificação falhar, o rollback leva a marca junto e o reenvio ainda dá certo.
+        db.add(TalkWebhookEntrega(ref=ref, evento="mencao.criada",
+                                  alvo_tipo="canal", alvo_id=canal_id))
+        db.flush()
+        n = notify_mencoes(
+            db, alvos,
+            author=autor or None,
+            # em conversa privada o conteúdo não viaja (é o desenho do outro lado): sem ele
+            # o aviso continua valendo, só não traz o trecho da mensagem
+            content=str(msg.get("conteudo") or ""),
+            ref_type=REF_MENCAO, ref_id=canal_id,
+            contexto=f"#{nome}" if nome else "uma conversa",
+        )
+        db.commit()
+        return n
+    except IntegrityError:
+        db.rollback()
+        if ja_marcada():
+            return 0                           # corrida de duas entregas iguais: o UNIQUE resolveu
+        _falhou("mencao.criada", ref, "canal", canal_id,
+                "talk webhook: menção NÃO virou aviso (violação de integridade)")
+        return 0
+    except Exception:                          # noqa: BLE001
+        db.rollback()
+        _falhou("mencao.criada", ref, "canal", canal_id,
+                "talk webhook: menção NÃO virou aviso")
+        # NUNCA propaga: um erro nosso não pode fazer a Talk Solar reenviar para sempre
+        return 0
+
+
+def _podar_entregas(db: Session) -> None:
+    """A tabela ganha uma linha por mensagem de canal com alvo — cresceria para sempre.
+
+    Uma vez por dia POR PROCESSO, nunca a cada requisição: o custo do DELETE não pode entrar
+    no caminho do webhook, que a Talk Solar reenvia se demorarmos. Perder a poda de um dia
+    porque o processo reiniciou é irrelevante — a linha sai no dia seguinte.
+    """
+    global _ULTIMA_PODA
+    from app.models.meuacesso import TalkWebhookEntrega
+
+    hoje = datetime.utcnow().date()
+    if _ULTIMA_PODA == hoje:
+        return
+    # marca ANTES de tentar: se o DELETE falhar, não insiste a cada webhook do dia
+    _ULTIMA_PODA = hoje
+    try:
+        corte = datetime.utcnow() - timedelta(days=RETENCAO_ENTREGAS_DIAS)
+        db.query(TalkWebhookEntrega).filter(
+            TalkWebhookEntrega.recebida_em < corte).delete(synchronize_session=False)
+        db.commit()
+    except Exception:                          # noqa: BLE001
+        db.rollback()
+        _log.warning("talk webhook: poda das entregas antigas falhou", exc_info=True,
+                     extra={"event": "talk_webhook_poda_falhou", "component": "talk"})

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <!-- CSP fechada: a tela não carrega script de fora, e a única origem de dados é o servidor.
+       `connect-src` precisa de https e wss (o tempo real). `img-src` aceita https porque as
+       fotos vêm com URL assinada do storage, e `blob:` por causa da prévia do arquivo que
+       ainda não subiu. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+                 img-src 'self' data: blob: https:; connect-src https: wss: http://localhost:*
+                 ws://localhost:*;" />
+  <title>Talk Solar</title>
+  <link rel="stylesheet" href="css/estilo.css" />
+</head>
+<body>
+
+<!-- ------------------------------------------------------------------ ENTRAR -->
+<section id="telaLogin" class="login">
+  <div class="loginCaixa">
+    <h1>Talk <b>Solar</b></h1>
+    <p class="sub">by Gestão Solar — o mensageiro da equipe, ligado às usinas, OSs e tarefas.</p>
+
+    <!-- DE ONDE VEM A IDENTIDADE. A Talk Solar não tem senha própria: você entra com a do
+         sistema que já usa, e ela empresta essa identidade. -->
+    <label>Entrar com a conta do
+      <select id="loginSistema"></select>
+    </label>
+    <label>E-mail
+      <input id="loginEmail" type="email" autocomplete="username" placeholder="voce@empresa.com" />
+    </label>
+    <label>Senha
+      <input id="loginSenha" type="password" autocomplete="current-password" />
+    </label>
+
+    <details class="avancado">
+      <summary>Servidores</summary>
+      <label>Talk Solar
+        <input id="loginBase" type="text" placeholder="https://talk-solar…up.railway.app" />
+      </label>
+      <label>Sistema escolhido
+        <input id="loginSistemaBase" type="text" placeholder="https://…" />
+      </label>
+      <small>Só mude isto se alguém pediu.</small>
+    </details>
+
+    <p id="loginErro" class="erro"></p>
+    <button id="btnEntrar" class="primario">Entrar</button>
+    <p class="rodape">Este computador fica conectado — você não precisa entrar de novo todo dia.</p>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ CONVERSA -->
+<main id="telaConversa" class="oculto">
+  <aside class="lateral">
+    <header class="lateralTopo">
+      <div>
+        <p class="eu" id="meuNome">—</p>
+        <p class="estado" id="estadoConexao">conectando…</p>
+      </div>
+      <button id="btnSair" class="linkFraco" title="Sair desta conta">sair</button>
+    </header>
+    <div class="buscaCanais">
+      <input id="filtroCanais" placeholder="buscar conversa…" />
+    </div>
+    <nav id="listaCanais" class="canais"></nav>
+    <footer class="lateralRodape">
+      <span class="marca">Talk Solar</span>
+      <span id="versaoApp" class="versao"></span>
+    </footer>
+  </aside>
+
+  <section class="conversa">
+    <header class="conversaTopo">
+      <div>
+        <h2 id="canalNome">Escolha uma conversa</h2>
+        <p id="canalTopico" class="topico"></p>
+      </div>
+      <a id="canalAlvo" class="chipAlvo oculto" href="#"></a>
+    </header>
+
+    <div id="mensagens" class="mensagens"></div>
+
+    <div id="composer" class="composer oculto">
+      <p id="erroEnvio" class="erro"></p>
+      <div id="pendentes" class="pendentes"></div>
+      <div id="citarCaixa" class="citarCaixa oculto">
+        <input id="citarTermo" placeholder="citar usina, OS, tarefa, equipamento…" />
+        <div id="citarLista" class="citarLista"></div>
+      </div>
+      <div class="linhaComposer" id="areaSolta">
+        <button id="btnAnexar" class="iconeBtn" title="Anexar arquivo">📎</button>
+        <button id="btnCitar" class="iconeBtn" title="Citar usina, OS, tarefa…">@</button>
+        <textarea id="texto" rows="1" placeholder="Escrever…"></textarea>
+        <button id="btnEnviar" class="primario pequeno">Enviar</button>
+      </div>
+      <p class="dica">Enter envia · Shift+Enter quebra linha · cole (Ctrl+V) ou arraste imagens</p>
+      <input id="arquivoInput" type="file" multiple class="oculto" />
+    </div>
+  </section>
+</main>
+
+<div id="lightbox" class="lightbox oculto"><img id="lightboxImg" alt="" /></div>
+
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/conversa.js"></script>
+</body>
+</html>
