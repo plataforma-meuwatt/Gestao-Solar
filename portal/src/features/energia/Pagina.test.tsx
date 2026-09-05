@@ -26,6 +26,9 @@
  *    literalmente como o portal chegou a exibir 36% numa tela e 101,7% na outra.
  * 11. **Estação que existe e não mediu hoje não é usina sem estação.** São duas perguntas,
  *    e a tela só nega o aparelho quando o CADASTRO disse que ele não existe.
+ * 12. **A aba e o período moram na URL.** Este portal é aberto por um diretor que manda o
+ *    endereço para o time; enquanto a aba vivia em `useState`, o endereço era sempre o
+ *    mesmo e o destinatário caía noutra tela — e um F5 desfazia a navegação.
  *
  * A data é congelada em 15/09/2026 porque a tela decide o que é passado, o que é o mês em
  * curso e o que é futuro; sem relógio fixo, metade destas asserções mudaria de resultado
@@ -34,7 +37,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -249,14 +252,27 @@ function servidor(pares: [string, unknown][]) {
   }) as never)
 }
 
-function montar() {
+/**
+ * O `MemoryRouter` guarda o endereço em memória e NÃO toca em `window.location` — ler dali
+ * daria sempre vazio e o teste passaria a medir o navegador do vitest, não o portal. Este
+ * espião publica a barra de endereço numa marca de teste, que é o que as asserções leem.
+ */
+function EspiaoDoEndereco() {
+  const { search } = useLocation()
+  return <span data-testid="endereco">{search}</span>
+}
+
+const enderecoAtual = () => screen.getByTestId('endereco').textContent ?? ''
+
+function montar(endereco = '/usinas/4/energia') {
   const cliente = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return render(
     <QueryClientProvider client={cliente}>
-      <MemoryRouter initialEntries={['/usinas/4/energia']}>
+      <MemoryRouter initialEntries={[endereco]}>
         <Routes>
           <Route path="/usinas/:id/energia" element={<PainelDeEnergia />} />
         </Routes>
+        <EspiaoDoEndereco />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -1166,6 +1182,81 @@ describe('Painel de energia', () => {
       expect(
         await screen.findByText(/Sem conexão com o servidor/, {}, { timeout: 5000 }),
       ).toBeTruthy()
+    })
+  })
+  /**
+   * O endereço é o que se manda por e-mail.
+   *
+   * O portal já decidira que a URL nomeia a família (`/manutencao/ordens`, e não `/ordens`)
+   * porque "link colado em e-mail tem de dizer de que assunto se trata". A aba ficou de fora
+   * dessa decisão e vivia em `useState`: abrir o Ano de Porto Ferreira e mandar o endereço
+   * levava o destinatário para setembro. Recarregar a página fazia o mesmo estrago.
+   */
+  describe('o endereço carrega a tela', () => {
+    it('`?aba=ano` abre no Ano — e pede ao BFF o painel do ano', async () => {
+      const get = servidor([
+        ['plants/4', USINA],
+        ['painel?recorte=ano', painel({ recorte: 'ano' })],
+        ['painel?recorte=mes', painel()],
+      ])
+      montar('/usinas/4/energia?aba=ano')
+
+      await screen.findByText('UFV Porto Ferreira')
+      // O conteúdo do ano é o que distingue a aba: o acumulado diz de que meses saiu.
+      expect(await screen.findByText(/O acumulado soma/)).toBeTruthy()
+      await waitFor(() => {
+        const pedidos = get.mock.calls.map((c) => String(c[0]))
+        expect(pedidos.some((p) => p.includes('painel?recorte=ano'))).toBe(true)
+      })
+    })
+
+    it('aba inexistente cai no padrão, calada — endereço truncado não vira tela quebrada', async () => {
+      const get = servidor([
+        ['plants/4', USINA],
+        ['painel?recorte=ano', painel({ recorte: 'ano' })],
+        ['painel?recorte=mes', painel()],
+      ])
+      montar('/usinas/4/energia?aba=trimestre')
+
+      await screen.findByText('UFV Porto Ferreira')
+      // Cliente de e-mail corta endereço; o que não pode é a tela sumir por causa disso.
+      // A prova de que valeu o padrão é o pedido do MÊS, que só a aba Mês faz.
+      await waitFor(() => {
+        const pedidos = get.mock.calls.map((c) => String(c[0]))
+        expect(pedidos.some((p) => p.includes('painel?recorte=mes'))).toBe(true)
+      })
+    })
+
+    it('trocar de aba ESCREVE no endereço — é o que torna o link mandável', async () => {
+      servidor([
+        ['plants/4', USINA],
+        ['painel?recorte=ano', painel({ recorte: 'ano' })],
+        ['painel?recorte=mes', painel()],
+      ])
+      montar()
+
+      await screen.findByText('UFV Porto Ferreira')
+      fireEvent.click(screen.getByRole('button', { name: 'Ano' }))
+
+      await waitFor(() => {
+        expect(enderecoAtual()).toContain('aba=ano')
+      })
+    })
+
+    it('o padrão não suja o endereço: voltar ao Mês limpa o parâmetro', async () => {
+      servidor([
+        ['plants/4', USINA],
+        ['painel?recorte=ano', painel({ recorte: 'ano' })],
+        ['painel?recorte=mes', painel()],
+      ])
+      montar('/usinas/4/energia?aba=ano')
+
+      await screen.findByText('UFV Porto Ferreira')
+      fireEvent.click(screen.getByRole('button', { name: 'Mês' }))
+
+      await waitFor(() => {
+        expect(enderecoAtual()).not.toContain('aba=')
+      })
     })
   })
 })

@@ -76,6 +76,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
+import { useEstadoNaUrl, useTextoNaUrl } from '@/lib/urlestado'
+
 import {
   CabecalhoCard,
   Cartao,
@@ -126,6 +128,18 @@ const RECORTES_DA_UNIDADE: { valor: RecortePainel; rotulo: string }[] = [
   { valor: 'mes', rotulo: 'No mês' },
   { valor: 'ano', rotulo: 'No ano' },
 ]
+
+/**
+ * Os valores que a URL aceita saem das MESMAS listas que desenham os botões: uma aba nova
+ * aparece na barra e passa a ser endereçável no mesmo ato, sem ninguém lembrar de um segundo
+ * lugar. `?aba=trimestre` não existe e cai no padrão, calado.
+ */
+const ABAS_ACEITAS = ABAS.map((a) => a.valor)
+const RECORTES_ACEITOS = RECORTES_DA_UNIDADE.map((r) => r.valor)
+
+/** Uma data de verdade em `?em=` — cliente de e-mail corta endereço, e cauda truncada não
+ *  pode virar tela quebrada. */
+const dataIso = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v))
 
 /* ------------------------------------------------------------------ mês */
 
@@ -254,9 +268,27 @@ export default function PainelDeEnergia() {
   const idUsina = Number(id)
   const valida = Number.isFinite(idUsina) && idUsina > 0
 
-  const [aba, setAba] = useState<Aba>('mes')
-  const [recorteUnidades, setRecorteUnidades] = useState<RecortePainel>('mes')
-  const [referencia, setReferencia] = useState<string>(hojeIso())
+  /**
+   * Aba e período moram na URL, não na memória: o portal é aberto por um diretor que manda o
+   * endereço para o time, e o time tem de cair na MESMA tela — a aba Ano de Porto Ferreira, e
+   * não em setembro. Enquanto isto era `useState`, o endereço nunca mudava, e recarregar a
+   * página também jogava tudo de volta no padrão. Ver `lib/urlestado.ts`.
+   */
+  const [aba, setAba] = useEstadoNaUrl<Aba>({
+    chave: 'aba',
+    padrao: 'mes',
+    aceitos: ABAS_ACEITAS,
+  })
+  const [recorteUnidades, setRecorteUnidades] = useEstadoNaUrl<RecortePainel>({
+    chave: 'uc',
+    padrao: 'mes',
+    aceitos: RECORTES_ACEITOS,
+  })
+  const [referencia, setReferencia] = useTextoNaUrl({
+    chave: 'em',
+    padrao: hojeIso(),
+    valido: dataIso,
+  })
 
   const usina = useUsinaDetalhe(idUsina, valida)
 
