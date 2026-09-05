@@ -258,7 +258,18 @@ export default function CompararManutencao() {
                     valor={porcento(totais.cumprimento_pct, 1)}
                     // O denominador ao lado do percentual, sempre. Sozinho, 41,9 % não quer
                     // dizer nada — e foi por isso que duas telas já discordaram.
-                    detalhe={totais.cumprimento_rotulo ?? 'sem cronograma publicado'}
+                    //
+                    // Sem percentual, porém, o denominador é outro travessão, e dois
+                    // travessões empilhados leem como defeito da tela em vez de como
+                    // resposta. Aí entra a FRASE, e ela diz qual das duas ausências é:
+                    // ninguém publicou cronograma, ou publicou e nada venceu ainda.
+                    detalhe={
+                      totais.cumprimento_pct !== null
+                        ? totais.cumprimento_rotulo
+                        : totais.denominador === 0
+                          ? 'nada era cobrável neste período'
+                          : 'sem cronograma publicado'
+                    }
                   />
                   <Kpi
                     rotulo="Ordens em andamento"
