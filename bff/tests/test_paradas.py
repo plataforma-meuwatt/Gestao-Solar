@@ -49,7 +49,7 @@ class ClienteFalso(MeuWattClient):
         self.chamadas_paradas = 0
         self.paginas_pedidas: list[int] = []
 
-    async def paradas(self, slug, inicio, fim):
+    async def paradas(self, slug, inicio, fim, timeout=None):
         self.chamadas_paradas += 1
         if self.erro_paradas:
             raise self.erro_paradas
@@ -399,3 +399,62 @@ def test_usina_de_outro_dono_e_404(http, cabecalho, minha, usinas, monkeypatch):
 
 def test_sem_sessao_e_401(http, minha):
     assert http.get(f"/api/v1/plants/{minha.id}/paradas").status_code == 401
+
+
+# ── o custo da descoberta ───────────────────────────────────────────────────
+#
+# A Visão geral pede paradas de sete usinas no mesmo instante. Enquanto cada uma tentava
+# a primária por conta própria, as sete pagavam a MESMA descoberta — e como o
+# `breakdowns/range` leva de 16 a 23 s para admitir o 500 sob carga, a primeira tela do
+# portal estourava o teto do navegador (30 s) sem que houvesse erro nenhum no servidor.
+
+
+@pytest.mark.asyncio
+async def test_a_primaria_e_tentada_uma_vez_so_quando_varias_usinas_perguntam_juntas(
+    db, dono, usinas, monkeypatch
+):
+    """Sete pedidos simultâneos, uma tentativa: quem chega junto espera a decisão do
+    primeiro e lê o circuito já aberto, em vez de repetir a espera."""
+    import asyncio
+
+    a, _ = usinas
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=a.id))
+    db.commit()
+    cliente = _usar(monkeypatch, ClienteFalso(erro_paradas=_erro_http(500), alertas=[]))
+
+    saidas = await asyncio.gather(
+        *(
+            modulo.paradas_da_usina(a.id, referencia=REFERENCIA, db=db, usuario=dono)
+            for _ in range(7)
+        )
+    )
+
+    assert cliente.chamadas_paradas == 1
+    # E todas responderam pela reserva — ninguém ficou sem dado por causa do portão.
+    assert {s.fonte for s in saidas} == {"alertas"}
+
+
+@pytest.mark.asyncio
+async def test_a_espera_da_primaria_tem_teto_proprio(db, dono, usinas, monkeypatch):
+    """A primária tem substituta, então ela ganha um teto curto — e não os 30 s do
+    cliente. O teto é passado à chamada; sem isso, o portal esperava pela fonte quebrada
+    quatro vezes mais do que pela boa."""
+    a, _ = usinas
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=a.id))
+    db.commit()
+
+    class EspiaOTeto(ClienteFalso):
+        def __init__(self):
+            super().__init__(erro_paradas=_erro_http(500), alertas=[])
+            self.teto = None
+
+        async def paradas(self, slug, inicio, fim, timeout=None):
+            self.teto = timeout
+            return await super().paradas(slug, inicio, fim, timeout=timeout)
+
+    cliente = _usar(monkeypatch, EspiaOTeto())
+
+    await modulo.paradas_da_usina(a.id, referencia=REFERENCIA, db=db, usuario=dono)
+
+    assert cliente.teto == modulo.ESPERA_DA_PRIMARIA_SEG
+    assert modulo.ESPERA_DA_PRIMARIA_SEG < 30.0

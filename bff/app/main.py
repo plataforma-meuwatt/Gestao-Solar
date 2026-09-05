@@ -14,8 +14,15 @@ explícita de origens (`GS_CORS_ORIGENS`).
 Contrato completo em `docs/CONTRATO_API.md`.
 """
 
-from fastapi import FastAPI
+import logging
+import traceback
+import uuid
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import (
     auth,
@@ -35,14 +42,25 @@ from app.api.v1 import (
     relatorio,
     resumo,
 )
+from app.clients import http as http_upstream
 from app.core.config import get_settings
 
 settings = get_settings()
 settings.validar_producao()
 
+@asynccontextmanager
+async def _ciclo_de_vida(_app: FastAPI):
+    """As sessões com os upstreams vivem enquanto o processo vive (keep-alive, ver
+    `clients/http.py`); no desligamento elas são devolvidas, para não ficar conexão
+    pendurada."""
+    yield
+    await http_upstream.fechar_sessoes()
+
+
 app = FastAPI(
     title="Gestão Solar API",
     version="0.1.0",
+    lifespan=_ciclo_de_vida,
     # Em produção o Swagger fica fora — mesma postura da mw-api.
     docs_url=None if settings.producao else "/docs",
     redoc_url=None,
@@ -54,6 +72,46 @@ app = FastAPI(
 # roda em 5180, o Expo web sorteia a sua, e o celular com Expo Go entra pelo IP da rede.
 _origens = settings.cors_origens
 _regex_local = None if settings.producao else r"http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+):\d+"
+
+_log = logging.getLogger("gs.erro")
+
+
+async def _erro_com_cors(request: Request, chamar_proximo):
+    """Todo erro não previsto vira 500 com corpo — e com os cabeçalhos de CORS.
+
+    Sem isto, uma exceção não tratada sobe até o `ServerErrorMiddleware`, que fica ACIMA
+    do CORS: a resposta sai sem `Access-Control-Allow-Origin`, o navegador a classifica
+    como falha de rede e o portal exibe "Sem conexão com o servidor." — mandando o
+    cliente corporativo culpar a própria internet por um defeito nosso. Foi exatamente o
+    que aconteceu com o 500 do "Ficha em PDF" (nome de tarefa com travessão no
+    `Content-Disposition`): o defeito era do servidor e a tela acusava a rede.
+
+    Este middleware é registrado ANTES do CORS de propósito — no Starlette o último
+    `add_middleware` é o mais externo, então o CORS envolve este e carimba a resposta.
+    """
+    try:
+        return await chamar_proximo(request)
+    except Exception:  # noqa: BLE001
+        referencia = uuid.uuid4().hex[:8]
+        _log.error(
+            "erro nao tratado ref=%s %s %s\n%s",
+            referencia,
+            request.method,
+            request.url.path,
+            traceback.format_exc(),
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": (
+                    "O servidor não conseguiu concluir esta operação. "
+                    f"Tente de novo; se continuar, informe o código {referencia}."
+                )
+            },
+        )
+
+
+app.add_middleware(BaseHTTPMiddleware, dispatch=_erro_com_cors)
 
 app.add_middleware(
     CORSMiddleware,

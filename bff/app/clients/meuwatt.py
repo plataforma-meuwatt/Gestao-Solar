@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from app.clients.http import sessao
 from app.core.config import get_settings
 
 
@@ -65,8 +66,8 @@ class MeuWattClient:
         upstream não pode ser confundido com "senha inválida", senão o usuário vê
         "credencial incorreta" quando o problema é o servidor.
         """
-        async with httpx.AsyncClient(timeout=self._timeout) as c:
-            r = await c.post(f"{self.base_url}/auth/login", json={"email": email, "password": senha})
+        c = sessao(self.base_url, self._timeout)
+        r = await c.post(f"{self.base_url}/auth/login", json={"email": email, "password": senha})
         if r.status_code == 401:
             return None
         r.raise_for_status()
@@ -88,14 +89,19 @@ class MeuWattClient:
         self._service_token = dados["access_token"]
         return self._service_token
 
-    async def _get(self, path: str, token: str | None = None, **params: Any) -> Any:
+    async def _get(
+        self, path: str, token: str | None = None, timeout: float | None = None, **params: Any
+    ) -> Any:
+        """`timeout` sobrepõe o teto do cliente, e existe para quem TEM plano B: esperar
+        trinta segundos por uma fonte que tem substituta é o que faz a tela demorar."""
         jwt = token or await self._token_servico()
-        async with httpx.AsyncClient(timeout=self._timeout) as c:
-            r = await c.get(
-                f"{self.base_url}{path}",
-                headers={"Authorization": f"Bearer {jwt}"},
-                params={k: v for k, v in params.items() if v is not None},
-            )
+        c = sessao(self.base_url, self._timeout)
+        r = await c.get(
+            f"{self.base_url}{path}",
+            headers={"Authorization": f"Bearer {jwt}"},
+            params={k: v for k, v in params.items() if v is not None},
+            timeout=timeout or self._timeout,
+        )
         # 401 com token de serviço = token expirou; limpa e deixa a próxima chamada renovar.
         if r.status_code == 401 and token is None:
             self._service_token = None
@@ -243,14 +249,21 @@ class MeuWattClient:
             offset += limit
         return todos
 
-    async def paradas(self, slug: str, inicio: date, fim: date) -> dict[str, Any]:
+    async def paradas(
+        self, slug: str, inicio: date, fim: date, timeout: float | None = None
+    ) -> dict[str, Any]:
         """`BreakdownRangeResponse{plant, start, end, total, total_loss_kwh,
         total_off_time_minutes, breakdowns[]}` — as paradas cujo INÍCIO cai no período.
 
-        Responde 500 em produção (ver `api/v1/paradas.py`, que tem a fonte reserva).
+        Responde 500 em produção (ver `api/v1/paradas.py`, que tem a fonte reserva) — e
+        demora entre 16 e 23 s para dizê-lo, medido nas 7 usinas do escopo de homologação.
+        Daí o `timeout`: quem chama passa um teto curto, porque o plano B responde em 2 s.
         """
         return await self._get(
-            f"/plants/{slug}/breakdowns/range", start=inicio.isoformat(), end=fim.isoformat()
+            f"/plants/{slug}/breakdowns/range",
+            timeout=timeout,
+            start=inicio.isoformat(),
+            end=fim.isoformat(),
         )
 
     async def slots(self, slug: str) -> list[dict[str, Any]]:
@@ -287,10 +300,11 @@ class MeuWattClient:
             raise MeuWattError(f"peça de relatório desconhecida: {kind!r}")
 
         jwt = await self._token_servico()
-        async with httpx.AsyncClient(timeout=60.0) as c:
-            r = await c.get(
-                f"{self.base_url}/reports/{int(report_id)}/files/{kind}",
-                headers={"Authorization": f"Bearer {jwt}"},
-            )
+        c = sessao(self.base_url, self._timeout)
+        r = await c.get(
+            f"{self.base_url}/reports/{int(report_id)}/files/{kind}",
+            headers={"Authorization": f"Bearer {jwt}"},
+            timeout=60.0,
+        )
         r.raise_for_status()
         return r.content

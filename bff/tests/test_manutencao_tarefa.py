@@ -140,3 +140,33 @@ def test_saida_da_tarefa_e_a_mesma_da_lista():
     assert out.feita is True
     assert out.grupo == "CFTV"
     assert out.equipamento == "Skid 04 > Câmera 2"
+
+
+# ── o nome do arquivo ───────────────────────────────────────────────────────
+#
+# O gerador de tarefas do cronograma carimba o mês do contrato no nome, com TRAVESSÃO:
+# "Inspeção do cercamento — 08/2026". Cabeçalho HTTP é latin-1 no Starlette, e o travessão
+# (U+2014) não existe em latin-1 — então montar o `Content-Disposition` com o nome cru
+# estourava `UnicodeEncodeError` ao construir a resposta, e as 17 tarefas da OS 1016
+# devolviam 500. Pior: a exceção subia antes do CORS e a tela do cliente dizia "Sem
+# conexão com o servidor", culpando a internet dele por um defeito nosso.
+
+
+def test_nome_com_travessao_e_acento_vira_cabecalho_valido():
+    from app.api.v1.manutencao import _pdf
+
+    resposta = _pdf(b"%PDF-1.4 x", "Inspeção do cercamento — 08/2026 - Porto Ferreira.pdf")
+    cabecalho = resposta.headers["content-disposition"]
+
+    # Não estourou, e o cabeçalho inteiro cabe no que o protocolo aceita.
+    cabecalho.encode("latin-1")
+    # O nome ASCII perdeu o travessão e o cedilha, mas continua reconhecível...
+    assert 'filename="Inspecao-do-cercamento-08-2026-Porto-Ferreira.pdf"' in cabecalho
+    # ...e quem entende RFC 5987 recebe o nome de verdade, acento e tudo.
+    assert "filename*=UTF-8''Inspe%C3%A7%C3%A3o" in cabecalho
+
+
+def test_nome_sem_nenhuma_letra_ascii_nao_vira_arquivo_sem_nome():
+    from app.api.v1.manutencao import _nome_ascii
+
+    assert _nome_ascii("——— ///") == "documento.pdf"

@@ -1197,6 +1197,11 @@ class DesempenhoOut(BaseModel):
     tom: str
     situacao: str
     aviso: str | None = None
+    #: O que a comparação COBRIU, quando cobriu menos do que o período pedido. Fica fora do
+    #: `aviso` de propósito: aviso é coisa que deu errado (fonte fora, sem leitura), e isto
+    #: aqui é a leitura correta de um período parcialmente medido — a frase acompanha o KPI,
+    #: não a faixa de erro. Ver `_aviso_do_recorte`.
+    cobertura: str | None = None
 
 
 class MesHistorico(BaseModel):
@@ -1428,6 +1433,58 @@ async def _meta_do_projeto(cliente, slug: str, inicio: date, fim: date) -> _Meta
     return meta
 
 
+#: Meses em português, para dizer QUAIS meses a comparação cobriu.
+_MES_CURTO = ("jan", "fev", "mar", "abr", "mai", "jun",
+              "jul", "ago", "set", "out", "nov", "dez")
+
+
+def _meses_medidos(relatorio: Any, meses: list[str]) -> list[str]:
+    """Dos meses do intervalo, os que o monitoramento REALMENTE mediu.
+
+    Existe por causa de um número que acusava de doente uma usina saudável: no recorte
+    "ano", a energia soma só os meses com leitura (o `total_generation_kwh` do range),
+    mas a meta somava o PVsyst do 1º de janeiro até hoje. Porto Ferreira, cuja série
+    começa em junho, aparecia com 2.884 MWh contra 7.433 MWh = 38,8% e tom "parado" —
+    ao lado do selo verde de 98,3% do mês, na mesma tela, no mesmo instante. Nenhum dos
+    dois números era inventado; a razão entre eles é que não significava nada.
+
+    `monthly_summaries` vazio (o upstream não mandou o detalhe) devolve lista vazia, e
+    quem chama volta ao intervalo inteiro — sem detalhe não há como alinhar, e inventar
+    alinhamento seria pior do que a comparação larga.
+    """
+    por_mes = _resumo_por_mes(relatorio)
+    if not por_mes:
+        return []
+    return [
+        m for m in meses
+        if _numero((por_mes.get(m) or {}).get("generation_kwh")) is not None
+    ]
+
+
+def _rotulo_de_meses(meses: list[str]) -> str:
+    """`['2026-06', '2026-09']` → "jun a set de 2026"; um mês só → "jun de 2026"."""
+    primeiro, ultimo = meses[0], meses[-1]
+    nome = lambda c: f"{_MES_CURTO[int(c[5:7]) - 1]}"  # noqa: E731
+    if primeiro == ultimo:
+        return f"{nome(primeiro)} de {primeiro[:4]}"
+    if primeiro[:4] == ultimo[:4]:
+        return f"{nome(primeiro)} a {nome(ultimo)} de {ultimo[:4]}"
+    return f"{nome(primeiro)}/{primeiro[:4]} a {nome(ultimo)}/{ultimo[:4]}"
+
+
+def _aviso_do_recorte(meses: list[str], comparaveis: list[str]) -> str | None:
+    """Quando a comparação cobre menos do que o período pedido, ela diz isso.
+
+    Sem esta frase o cliente leria "no ano" e veria a conta de quatro meses — correta,
+    mas apresentada como se fosse do ano inteiro."""
+    if not comparaveis or len(comparaveis) == len(meses):
+        return None
+    return (
+        f"Comparação feita só com os meses que têm medição "
+        f"({_rotulo_de_meses(comparaveis)}); o monitoramento não tem dado do resto do período."
+    )
+
+
 def _situacao_do_projeto(
     energia: float | None, esperado: float | None, meta_indisponivel: bool = False
 ) -> tuple[float | None, str, str]:
@@ -1536,7 +1593,9 @@ async def desempenho_da_usina(
 
     meses = _meses_entre(_chave_mes(inicio), _chave_mes(fim))
     energia = _energia_do_periodo(relatorio)
-    esperado = meta.total(meses)
+    # A meta soma os MESMOS meses que a medição cobre — nunca o intervalo inteiro.
+    comparaveis = _meses_medidos(relatorio, meses) or meses
+    esperado = meta.total(comparaveis)
     pct, tom, situacao = _situacao_do_projeto(energia, esperado, meta.indisponivel)
 
     saida = DesempenhoOut(
@@ -1561,6 +1620,7 @@ async def desempenho_da_usina(
             "O monitoramento não devolveu geração para este período." if energia is None else None,
             meta.aviso,
         ),
+        cobertura=_aviso_do_recorte(meses, comparaveis) if energia is not None else None,
     )
 
     if recorte == "ano":

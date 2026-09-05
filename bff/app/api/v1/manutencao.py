@@ -18,9 +18,12 @@ para o mais antigo, e o meuPlano não garante ordem nenhuma na lista que devolve
 """
 
 import asyncio
+import re
 import time
+import unicodedata
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -829,13 +832,41 @@ async def detalhar_ordem(
 # que no Android dá tela preta silenciosa (regra do CLAUDE.md).
 
 
+def _nome_ascii(nome: str) -> str:
+    """O mesmo nome, reduzido ao que cabe num cabeçalho HTTP.
+
+    Cabeçalho é latin-1 no Starlette, e o meuPlano carimba o mês do contrato em TODA
+    tarefa gerada pelo cronograma no formato ' — MM/AAAA', com travessão (U+2014), que
+    não existe em latin-1: montar o `Content-Disposition` com o nome cru estourava
+    `UnicodeEncodeError` ao construir o Response — antes do middleware de CORS, então o
+    navegador via "falha de rede" e o portal acusava a internet do cliente por um defeito
+    do servidor. Aconteceu nas 17 tarefas da OS 1016 (Porto Ferreira, 08/2026).
+
+    Não basta trocar o travessão: acento também não pode viajar cru num cabeçalho. Aqui
+    o nome vira ASCII (o `filename*` logo abaixo devolve o nome bonito a quem entende
+    RFC 5987) e nunca fica vazio — nome sem uma letra ASCII viraria `.pdf`.
+    """
+    limpo = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode("ascii")
+    limpo = re.sub(r'[\\/:*?"<>|\r\n]+', "-", limpo)
+    limpo = re.sub(r"[^A-Za-z0-9._-]+", "-", limpo).strip("-._")
+    limpo = re.sub(r"-{2,}", "-", limpo)
+    return limpo or "documento.pdf"
+
+
 def _pdf(conteudo: bytes, nome: str) -> Response:
+    ascii_nome = _nome_ascii(nome)
     return Response(
         content=conteudo,
         media_type="application/pdf",
         headers={
             # `inline`: o destino é o visualizador embutido, não a pasta de downloads.
-            "Content-Disposition": f'inline; filename="{nome}"',
+            # Dois nomes de propósito: o ASCII para qualquer cliente, e o `filename*` em
+            # UTF-8 para quem sabe lê-lo — assim o cliente salva "Inspeção do cercamento"
+            # e não "Inspecao-do-cercamento".
+            "Content-Disposition": (
+                f'inline; filename="{ascii_nome}"; '
+                f"filename*=UTF-8''{quote(nome, safe='')}"
+            ),
             "Cache-Control": "private, max-age=300",
         },
     )
@@ -856,7 +887,7 @@ async def pdf_da_ordem(
         raise _erro_do_upstream(exc, "Não deu para gerar o PDF desta OS") from exc
     if not conteudo:
         raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
-    return _pdf(conteudo, f"OS-{so_id}-{link.nome}.pdf".replace(" ", "-"))
+    return _pdf(conteudo, f"OS {so_id} - {link.nome}.pdf")
 
 
 async def _tarefa_autorizada(
@@ -1152,7 +1183,7 @@ async def pdf_da_tarefa(
     if not conteudo:
         raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
     nome = (tarefa.get("name") or f"tarefa-{task_id}")[:60]
-    return _pdf(conteudo, f"{nome}-{link.nome}.pdf".replace(" ", "-").replace("/", "-"))
+    return _pdf(conteudo, f"{nome} - {link.nome}.pdf")
 
 
 @router.get("/manutencao/cronograma/tarefas", response_model=list[TarefaOut])
@@ -1311,7 +1342,7 @@ async def pdf_do_cronograma(
         raise _erro_do_upstream(exc, "Não deu para gerar o cronograma em PDF") from exc
     if not conteudo:
         raise HTTPException(502, f"O {MANUTENCAO} devolveu um PDF vazio.")
-    return _pdf(conteudo, f"Cronograma-{link.nome}.pdf".replace(" ", "-"))
+    return _pdf(conteudo, f"Cronograma - {link.nome}.pdf")
 
 
 # ── cronograma ──────────────────────────────────────────────────────────────

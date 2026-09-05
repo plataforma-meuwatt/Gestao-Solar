@@ -84,7 +84,7 @@ class MeuWattFalso:
     async def pvsyst_manual(self, slug, ano):
         return {"year": ano, "rows": []}
 
-    async def paradas(self, slug, inicio, fim):
+    async def paradas(self, slug, inicio, fim, timeout=None):
         if slug != "porto-ferreira":
             return {"plant": slug, "total": 0, "breakdowns": []}
         return {

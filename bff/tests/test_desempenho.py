@@ -341,7 +341,10 @@ def test_sem_token_e_401(cenario):
 
 def test_no_ano_cada_mes_ate_hoje_vem_com_o_esperado_ao_lado(cenario):
     """Jan..ago (hoje é 14/08): o mês sem `monthly_summaries` fica NULO, não zero; o
-    esperado acompanha cada mês que tem meta."""
+    esperado acompanha cada mês que tem meta.
+
+    E o TOTAL do esperado soma só os meses medidos (jan e mar): agosto tem meta de 700
+    mas nenhuma medição, e somá-lo compararia oito meses de meta com dois de energia."""
     http, caixa, usina = cenario
     relatorio = _range(
         dias_com_dado=200, energia=60000.0,
@@ -375,4 +378,65 @@ def test_no_ano_cada_mes_ate_hoje_vem_com_o_esperado_ao_lado(cenario):
     assert por_mes["2026-02"]["esperado_projeto_kwh"] is None
     assert por_mes["2026-08"]["energia_kwh"] is None
     assert por_mes["2026-08"]["esperado_projeto_kwh"] == 700.0
-    assert corpo["esperado_projeto_kwh"] == 16300.0
+    assert corpo["esperado_projeto_kwh"] == 15600.0  # 8100 (jan) + 7500 (mar), sem agosto
+    assert "só com os meses que têm medição" in (corpo["cobertura"] or "")
+
+
+# ── a contradição que este recorte resolve ──────────────────────────────────
+#
+# Porto Ferreira, na captura de homologação: selo VERDE "98,3% · Dentro do esperado" no
+# mês e, a quinze centímetros, selo VERMELHO "38,8% · Bem abaixo do esperado" no ano — a
+# mesma usina, no mesmo instante. A causa não era o dado: era somar quatro meses de
+# energia contra nove meses de meta.
+
+
+def test_ano_com_serie_que_comeca_no_meio_nao_acusa_usina_saudavel(cenario):
+    """A série começa em junho; a meta do ano inteiro está cadastrada.
+
+    Antes: 4 meses de energia ÷ 9 meses de meta = alarme vermelho numa usina que gera o
+    que promete. Agora a meta acompanha os meses medidos, e a % diz o que a tela afirma.
+    """
+    http, caixa, usina = cenario
+    medidos = [
+        {"month": f"2026-{m:02d}", "generation_kwh": 10_000.0, "lost_kwh": 0.0,
+         "availability_contratual_pct": 100.0}
+        for m in (6, 7, 8)
+    ]
+    relatorio = _range(dias_com_dado=90, energia=30_000.0, monthly_summaries=medidos)
+    # Meta de 10.100 kWh por mês, o ano inteiro até hoje (jan a ago).
+    pvsyst = {
+        "rows": [
+            {"date": f"2026-{m:02d}-10", "globinc": 5, "e_array": 10_100, "e_grid": 10_100.0}
+            for m in range(1, 9)
+        ],
+        "years": [2026], "count": 8,
+    }
+    caixa["cliente"] = ClienteFalso(relatorio=relatorio, pvsyst=pvsyst)
+
+    corpo = http.get(
+        f"/api/v1/plants/{usina.id}/desempenho?recorte=ano&referencia=2026-08-14"
+    ).json()
+
+    assert corpo["energia_kwh"] == 30_000.0
+    assert corpo["esperado_projeto_kwh"] == 30_300.0  # só jun..ago, não jan..ago
+    assert corpo["pct_do_projeto"] == 99.0
+    assert corpo["tom"] == "ok"
+    assert corpo["situacao"] == "Dentro do esperado"
+    # E a tela é avisada de que a conta cobriu menos do que o período pedido.
+    assert "jun a ago de 2026" in (corpo["cobertura"] or "")
+
+
+def test_periodo_todo_medido_nao_ganha_aviso_de_recorte(cenario):
+    """Quando não há mês faltando, a frase some — aviso que aparece sempre vira ruído."""
+    http, caixa, usina = cenario
+    caixa["cliente"] = ClienteFalso(
+        relatorio=_range(),
+        pvsyst={"rows": [{"date": "2026-08-10", "globinc": 5, "e_array": 9000,
+                          "e_grid": 9000.0}], "years": [2026], "count": 1},
+    )
+
+    corpo = http.get(
+        f"/api/v1/plants/{usina.id}/desempenho?recorte=mes&referencia=2026-08-14"
+    ).json()
+
+    assert corpo["cobertura"] is None

@@ -135,6 +135,14 @@ class PareceresOut(BaseModel):
     com_ressalva: int = 0
     reprovados: int = 0
     sem_parecer: int = 0
+    #: De quantas ordens ENCERRADAS sai a contagem, e quantas em curso ficaram de fora.
+    #: Sem isto o relatório se contradizia numa página só: a OS em curso mostrava
+    #: "Aprovado com ressalva" e o agregado dizia "com ressalva 0". Os dois números
+    #: estavam certos; faltava dizer o recorte. A frase pronta é o `recorte`, para tela e
+    #: PDF lerem a mesma coisa.
+    ordens_consideradas: int = 0
+    ordens_em_curso_fora: int = 0
+    recorte: str | None = None
 
 
 #: Criticidade do meuPlano (`nulo|baixo|alto|urgente`, vocabulário do modelo) → tom e
@@ -171,6 +179,10 @@ class ProblemasOut(BaseModel):
     total: int = 0
     por_criticidade: list[CriticidadeOut] = []
     por_os: list[ProblemasPorOsOut] = []
+    #: Mesmo recorte dos pareceres (ver `PareceresOut`).
+    ordens_consideradas: int = 0
+    ordens_em_curso_fora: int = 0
+    recorte: str | None = None
 
 
 class PendenciaResumoOut(BaseModel):
@@ -428,12 +440,43 @@ def _ordens(lista: Any, link: PlantLink) -> list[OrdemOut]:
     return [_ordem_com_tarefas(o, link) for o in lista if isinstance(o, dict) and o.get("id")]
 
 
+def _ordens_no_plural(n: int) -> str:
+    return "1 ordem" if n == 1 else f"{n} ordens"
+
+
+def _recorte(bruto: Any) -> tuple[int, int, str | None]:
+    """`(consideradas, em curso de fora, frase)` — de onde sai um agregado do período.
+
+    A frase é montada aqui, e não na tela, porque tela e PDF precisam dizer a MESMA coisa:
+    o agregado conta as fichas das ordens ENCERRADAS, e a ordem que ainda está em execução
+    aparece na lista acima sem entrar na conta. Enquanto isso ficava implícito, o relatório
+    exibia "Aprovado com ressalva" e "com ressalva 0" na mesma página.
+    """
+    consideradas = _contagem(bruto, "ordens_consideradas")
+    fora = _contagem(bruto, "ordens_em_curso_fora")
+    if not consideradas and not fora:
+        return 0, 0, None
+    frase = f"Conta as fichas de {_ordens_no_plural(consideradas)} "
+    frase += "encerrada" if consideradas == 1 else "encerradas"
+    frase += " no período."
+    if fora:
+        frase += (
+            f" {_ordens_no_plural(fora)} ainda em execução aparece acima e não entra nesta "
+            "conta: enquanto a ordem não encerra, o parecer ainda pode mudar."
+        )
+    return consideradas, fora, frase
+
+
 def _pareceres(bruto: Any) -> PareceresOut:
+    consideradas, fora, frase = _recorte(bruto)
     return PareceresOut(
         aprovados=_contagem(bruto, "aprovados", "aprovado"),
         com_ressalva=_contagem(bruto, "com_ressalva", "ressalva"),
         reprovados=_contagem(bruto, "reprovados", "reprovado"),
         sem_parecer=_contagem(bruto, "sem_parecer", "sem"),
+        ordens_consideradas=consideradas,
+        ordens_em_curso_fora=fora,
+        recorte=frase,
     )
 
 
@@ -484,7 +527,15 @@ def _problemas(bruto: Any) -> ProblemasOut:
                 tom=_tom_dos_problemas(total, urgentes),
             )
         )
-    return ProblemasOut(total=_contagem(bruto, "total"), por_criticidade=faixas, por_os=por_os)
+    consideradas, fora, frase = _recorte(bruto)
+    return ProblemasOut(
+        total=_contagem(bruto, "total"),
+        por_criticidade=faixas,
+        por_os=por_os,
+        ordens_consideradas=consideradas,
+        ordens_em_curso_fora=fora,
+        recorte=frase,
+    )
 
 
 def _pendencia(p: dict[str, Any], hoje: date) -> PendenciaResumoOut:
@@ -657,4 +708,4 @@ async def pdf_do_relatorio(
     if not conteudo:
         raise HTTPException(502, "O PDF veio vazio. Tente de novo em instantes.")
     nome = f"Relatorio-manutencao-{link.nome}-{periodo[0]}-{periodo[1]}.pdf"
-    return _pdf(conteudo, nome.replace(" ", "-").replace("/", "-"))
+    return _pdf(conteudo, nome)

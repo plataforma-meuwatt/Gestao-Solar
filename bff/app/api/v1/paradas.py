@@ -31,6 +31,7 @@ memória do processo, não do sistema; num deploy com duas instâncias cada uma 
 conta própria, e isso é aceitável para um defeito que dura semanas.
 """
 
+import asyncio
 import time
 from datetime import UTC, date, datetime
 from typing import Any
@@ -97,9 +98,22 @@ class ParadasOut(BaseModel):
 #: Segundos durante os quais a primária não é tentada de novo depois de falhar.
 INDISPONIVEL_POR_SEG = 3600.0
 
+#: Teto de espera da fonte primária. Ela TEM substituta, então esperar os 30 s do cliente
+#: não compra nada: o `breakdowns/range` leva de 16 a 23 s para admitir o 500 (medido nas
+#: 7 usinas do escopo), e a Visão geral pede paradas das sete de uma vez.
+ESPERA_DA_PRIMARIA_SEG = 6.0
+
 #: Instante (`time.monotonic`) até o qual a primária é considerada fora. Um valor só, e
 #: não um por usina: o defeito está na consulta do mw-api, não no dado de uma usina.
 _primaria_fora_ate: float | None = None
+
+#: Enquanto a primária não provar que responde, só UMA tentativa por vez. Sem isto as sete
+#: usinas da Visão geral saem juntas e as sete pagam a mesma descoberta; com isto a
+#: primeira paga (no máximo `ESPERA_DA_PRIMARIA_SEG`) e as demais já leem o circuito
+#: aberto. Depois do primeiro sucesso o portão sai do caminho — serializar uma fonte
+#: saudável seria trocar um defeito por outro.
+_portao_primaria = asyncio.Lock()
+_primaria_confirmada = False
 
 
 def _primaria_disponivel() -> bool:
@@ -111,10 +125,16 @@ def _marcar_primaria_fora() -> None:
     _primaria_fora_ate = time.monotonic() + INDISPONIVEL_POR_SEG
 
 
+def _marcar_primaria_boa() -> None:
+    global _primaria_confirmada
+    _primaria_confirmada = True
+
+
 def esquecer_indisponibilidade() -> None:
     """Volta a tentar a primária na próxima chamada. Para testes e para quem operar."""
-    global _primaria_fora_ate
+    global _primaria_fora_ate, _primaria_confirmada
     _primaria_fora_ate = None
+    _primaria_confirmada = False
 
 
 def _e_falha_da_fonte(exc: BaseException) -> bool:
@@ -247,7 +267,7 @@ def _consolidar(saida: ParadasOut, paradas: list[ParadaOut], fonte: str) -> Para
 
 
 async def _pela_primaria(cliente, slug: str, inicio: date, fim: date) -> list[ParadaOut]:
-    resposta = await cliente.paradas(slug, inicio, fim)
+    resposta = await cliente.paradas(slug, inicio, fim, timeout=ESPERA_DA_PRIMARIA_SEG)
     linhas = resposta.get("breakdowns") if isinstance(resposta, dict) else resposta
     if not isinstance(linhas, list):
         raise ValueError("breakdowns/range respondeu sem a lista de paradas")
@@ -305,12 +325,24 @@ async def paradas_da_usina(
     motivo_primaria: str | None = None
 
     if _primaria_disponivel():
+        # O portão só existe enquanto a primária não se provou. Quem chega junto espera a
+        # decisão de quem entrou (segundos, não a espera cheia) e depois relê o circuito:
+        # se o primeiro descobriu o 500, este nem tenta.
+        portao = _portao_primaria if not _primaria_confirmada else None
+        if portao is not None:
+            await portao.acquire()
         try:
-            return _consolidar(saida, await _pela_primaria(cliente, slug, inicio, fim), "paradas")
+            if _primaria_disponivel():
+                paradas = await _pela_primaria(cliente, slug, inicio, fim)
+                _marcar_primaria_boa()
+                return _consolidar(saida, paradas, "paradas")
         except Exception as exc:  # noqa: BLE001
             if _e_falha_da_fonte(exc):
                 _marcar_primaria_fora()
             motivo_primaria = f"{type(exc).__name__}: {exc}"[:200]
+        finally:
+            if portao is not None:
+                portao.release()
 
     try:
         _consolidar(saida, await _pela_reserva(cliente, slug, inicio, fim), "alertas")

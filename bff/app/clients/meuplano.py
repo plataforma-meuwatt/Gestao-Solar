@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from app.clients.http import sessao
 from app.core.config import get_settings
 
 
@@ -64,11 +65,11 @@ class MeuPlanoClient:
         return await self._get("/api/v1/meuacesso/auth/me/profile", token=token)
 
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
-        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as c:
-            r = await c.post(
-                f"{self.base_url}/api/v1/meuacesso/auth/login",
-                json={"email": email, "senha": senha},
-            )
+        c = sessao(self.base_url, self._timeout, follow_redirects=True)
+        r = await c.post(
+            f"{self.base_url}/api/v1/meuacesso/auth/login",
+            json={"email": email, "senha": senha},
+        )
         if r.status_code in (401, 403):
             return None
         r.raise_for_status()
@@ -98,10 +99,14 @@ class MeuPlanoClient:
         demoram — gerar o PDF de uma ficha grande no meuPlano leva alguns segundos na
         primeira vez, e cortar isso no timeout padrão daria erro num caminho que funciona."""
         jwt = token or await self._token_servico()
-        async with httpx.AsyncClient(timeout=timeout or self._timeout, follow_redirects=True) as c:
-            r = await c.request(
-                metodo, f"{self.base_url}{path}", headers={"Authorization": f"Bearer {jwt}"}, **kwargs
-            )
+        c = sessao(self.base_url, self._timeout, follow_redirects=True)
+        r = await c.request(
+            metodo,
+            f"{self.base_url}{path}",
+            headers={"Authorization": f"Bearer {jwt}"},
+            timeout=timeout or self._timeout,
+            **kwargs,
+        )
         if r.status_code == 401 and token is None:
             self._service_token = None
         r.raise_for_status()

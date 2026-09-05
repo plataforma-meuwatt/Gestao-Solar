@@ -135,9 +135,12 @@ AGREGADO = {
         {"id": 1030, "name": "Corretiva relé", "objetivo": None, "classification": "CORRETIVA",
          "status": "EM_EXECUCAO", "task_count": 3, "task_realized_count": 1, "tarefas": []},
     ],
-    "pareceres": {"aprovados": 4, "com_ressalva": 1, "reprovados": 0, "sem_parecer": 2},
+    "pareceres": {"aprovados": 4, "com_ressalva": 1, "reprovados": 0, "sem_parecer": 2,
+                  "ordens_consideradas": 2, "ordens_em_curso_fora": 1},
     "problemas": {
         "total": 3,
+        "ordens_consideradas": 2,
+        "ordens_em_curso_fora": 1,
         "por_criticidade": {"urgente": 1, "alto": 2},
         "por_os": [{"os_id": 1016, "objetivo": "Preventiva agosto", "total": 3, "urgentes": 1,
                     "por_criticidade": {"urgente": 1, "alto": 2},
@@ -557,3 +560,51 @@ def test_pelo_http_com_sessao_de_cliente(db, dono, usinas, cenario, cliente_http
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400 and "depois de" in r.json()["detail"]
+
+
+# ── o recorte dos agregados ─────────────────────────────────────────────────
+#
+# O relatório se contradizia numa página só: exibia "Aprovado com ressalva" na OS EM CURSO
+# e, logo abaixo, "COM RESSALVA 0" e "as fichas não registraram problema nenhum". Os dois
+# números estavam certos — o agregado é das ordens ENCERRADAS —, mas ninguém dizia isso ao
+# leitor. A frase vem pronta do BFF para que tela e PDF digam a MESMA coisa.
+
+
+async def test_os_agregados_dizem_de_quantas_ordens_saem(db, dono, usinas, cenario):
+    minha, _ = usinas
+    saida = await relatorio_de_manutencao(minha.id, "2026-03", "2026-08", None, db, dono)
+
+    for bloco in (saida.pareceres, saida.problemas):
+        assert bloco.ordens_consideradas == 2
+        assert bloco.ordens_em_curso_fora == 1
+        assert bloco.recorte is not None
+        assert "2 ordens encerradas no período" in bloco.recorte
+        assert "1 ordem ainda em execução" in bloco.recorte
+
+
+async def test_sem_ordem_em_curso_a_frase_nao_fala_de_execucao(db, dono, usinas, cenario):
+    """Aviso que aparece sempre vira ruído: sem OS aberta, a ressalva não é dita."""
+    minha, _ = usinas
+    cenario.agregado = {
+        **cenario.agregado,
+        "pareceres": {"aprovados": 4, "com_ressalva": 0, "reprovados": 0, "sem_parecer": 0,
+                      "ordens_consideradas": 3, "ordens_em_curso_fora": 0},
+    }
+
+    saida = await relatorio_de_manutencao(minha.id, "2026-03", "2026-08", None, db, dono)
+
+    assert saida.pareceres.recorte == "Conta as fichas de 3 ordens encerradas no período."
+
+
+async def test_upstream_antigo_sem_os_campos_nao_inventa_frase(db, dono, usinas, cenario):
+    """Um meuPlano que ainda não manda o recorte não vira "0 ordens" na tela."""
+    minha, _ = usinas
+    cenario.agregado = {
+        **cenario.agregado,
+        "pareceres": {"aprovados": 1, "com_ressalva": 0, "reprovados": 0, "sem_parecer": 0},
+    }
+
+    saida = await relatorio_de_manutencao(minha.id, "2026-03", "2026-08", None, db, dono)
+
+    assert saida.pareceres.recorte is None
+    assert saida.pareceres.aprovados == 1
