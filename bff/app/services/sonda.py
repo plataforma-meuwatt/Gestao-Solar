@@ -116,8 +116,17 @@ MEUWATT: list[Rota] = [
     # linha aqui — a versão por prefixo do teste antigo nunca reclamou.
     Rota("mw.slot", "GET", "/plants/{slug}/slots/{slot_id}",
          "A ficha de um inversor (slot), no detalhe do equipamento", essencial=False),
+    # A fronteira é MEDIÇÃO de outro aparelho, não uma conta derivada da geração: sem ela
+    # o Painel esconde o "medido na fronteira", a perda até o ponto de entrega e a
+    # conciliação com a conta de energia — três blocos a menos, não uma ponte quebrada.
+    # Usina sem medidor responde 200 com o mapa vazio, e isso é estado normal.
+    Rota("mw.ssu_mensal", "GET", "/plants/{slug}/ssu-readers/monthly-totals",
+         "A energia medida na fronteira, mês a mês — o 'medido na fronteira' do Painel "
+         "e a conciliação com a conta de energia",
+         essencial=False, params={"year": "{ano}"}),
     Rota("mw.bills", "GET", "/plants/{slug}/utility-bills",
-         "Faturas da concessionária", essencial=False),
+         "Faturas da concessionária — o MWh faturado por UC, na conciliação do Painel",
+         essencial=False, params={"year": "{ano}"}),
     Rota("mw.users", "GET", "/admin/users",
          "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
     Rota("mw.user_plants", "GET", "/admin/user-plants",
@@ -280,6 +289,41 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Renderiza o PDF inteiro a cada chamada. A tela do portal "
                             "exercita sob demanda."),
+    # O pacote de fichas do portal: baixar TODOS os PDFs das tarefas de um período. O
+    # inventário é leitura pura e é sondado — é ele que descobre, antes do cliente, que a
+    # rota mudou de lugar. Os outros três não: PREPARAR escreve (gera PDF no meuPlano), o
+    # ANDAMENTO só existe depois desse POST, e o PACOTE baixa dezenas de megabytes e
+    # depende de um período que tenha ficha. Declarados com o motivo, como as demais.
+    Rota("mp.vc_fichas", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas",
+         "O índice das fichas do período — o que a tela de Relatórios lista antes de "
+         "oferecer o pacote de PDFs",
+         essencial=False,
+         params={"de": "{mes_passado}", "ate": "{mes_atual}"}),
+    Rota("mp.vc_fichas_preparar", "POST",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/preparar",
+         "Manda gerar as fichas que ainda não têm PDF, antes de montar o pacote",
+         essencial=False,
+         sonda=False,
+         nao_sondada_porque="Escreve no produto de origem (gera versões de PDF). A sonda "
+                            "não escreve em sistema de terceiro."),
+    Rota("mp.vc_fichas_preparo", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/preparo/{preparo_id}",
+         "O andamento do preparo — o \"14 de 17\" da tela",
+         essencial=False,
+         sonda=False,
+         nao_sondada_porque="O número do preparo só existe depois do POST que o abre — e "
+                            "esse POST a sonda não chama."),
+    Rota("mp.vc_fichas_pacote", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/pacote/view",
+         "O ZIP com todas as fichas do período, em partes numeradas",
+         essencial=False,
+         params={"de": "{mes_passado}", "ate": "{mes_atual}"},
+         sonda=False,
+         nao_sondada_porque="É download: monta um ZIP de dezenas de megabytes lendo "
+                            "arquivo por arquivo do armazenamento, e só existe pacote "
+                            "num período que tenha ficha pronta. A tela de Relatórios "
+                            "exercita sob demanda, depois do inventário."),
     Rota("mp.assistente", "POST", "/api/v1/meuacesso/assistant/chat",
          "O assistente", essencial=False,
          sonda=False,

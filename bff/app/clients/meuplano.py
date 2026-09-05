@@ -12,6 +12,8 @@ Duas coisas do meuPlano que este cliente respeita e não tenta contornar:
   resposta chega por polling em `GET /assistant/runs/{id}`. Não existe versão síncrona.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -370,6 +372,160 @@ class MeuPlanoClient:
             timeout=180.0,
         )
         return r.content
+
+    # ------------------------- pacote de fichas (visão do cliente)
+    #
+    # O dono, sobre a inspeção de agosto de Porto Ferreira: *"de alguma forma eu preciso
+    # conseguir baixar TODOS os PDFs das tarefas"*. A cesta interna do meuPlano
+    # (`/pdf-basket/download-zip`) NÃO serve para isto: exige ids de uma cesta global, não
+    # confere usina nenhuma e está atrás de permissão de ESCRITA. O router `visao-cliente`
+    # do meuPlano é que aplica o corte do cliente sempre, e é só ele que este cliente chama.
+    #
+    # São três atos, de propósito separados: INVENTARIAR (quantas fichas o filtro pegou e
+    # quantas já estão prontas), PREPARAR (gerar as que faltam, fora do request — 17 fichas
+    # frias passam de qualquer prazo de proxy) e BAIXAR o pacote, em partes numeradas quando
+    # não cabe num arquivo só.
+
+    async def vc_fichas(
+        self,
+        usina_id: int,
+        de: str,
+        ate: str,
+        *,
+        classificacao: str | None = None,
+        situacao: str | None = None,
+        os_id: int | None = None,
+        busca: str | None = None,
+        container_id: int | None = None,
+    ) -> dict[str, Any]:
+        """O índice das fichas do período: que ordens, que tarefas, quais já têm PDF.
+
+        O eixo de período é o do RELATÓRIO do meuPlano (`coalesce(approved_at, closed_at,
+        scheduled_date)`), não `contract_month` — que é nulo em corretiva avulsa e faria
+        "as corretivas de agosto" voltar vazio.
+
+        Leva `bytes_estimados` e `partes` porque o portal precisa dizer o tamanho ANTES do
+        clique: baixar cego um pacote de dezenas de megabytes é o que se está corrigindo.
+        """
+        return await self._get(
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas",
+            de=de,
+            ate=ate,
+            classificacao=classificacao,
+            situacao=situacao,
+            os_id=os_id,
+            busca=busca,
+            container_id=container_id,
+        )
+
+    async def vc_fichas_preparar(
+        self,
+        usina_id: int,
+        de: str,
+        ate: str,
+        *,
+        classificacao: str | None = None,
+        situacao: str | None = None,
+        os_id: int | None = None,
+        busca: str | None = None,
+        container_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Manda gerar as fichas que ainda não têm PDF e devolve `{preparo_id, total, prontas}`.
+
+        É POST porque escreve no meuPlano (gera versão de PDF), mas é idempotente por
+        fingerprint: repetir num período já pronto não regera nada. O trabalho corre lá em
+        segundo plano — aqui só se abre a ordem e se anota o número dela.
+        """
+        r = await self._req(
+            "POST",
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/preparar",
+            params={
+                k: v
+                for k, v in {
+                    "de": de,
+                    "ate": ate,
+                    "classificacao": classificacao,
+                    "situacao": situacao,
+                    "os_id": os_id,
+                    "busca": busca,
+                    "container_id": container_id,
+                }.items()
+                if v is not None
+            },
+            timeout=60.0,
+        )
+        return r.json()
+
+    async def vc_fichas_preparo(self, usina_id: int, preparo_id: str) -> dict[str, Any]:
+        """O andamento do preparo — `{prontas, total, concluido, erros}`.
+
+        O `usina_id` vai no caminho e não é decoração: é ele que permite ao meuPlano recusar
+        um `preparo_id` de outra usina. Sem isso, trocar o número devolveria os ids de tarefa
+        do preparo alheio.
+        """
+        return await self._get(
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/preparo/{preparo_id}"
+        )
+
+    @asynccontextmanager
+    async def vc_fichas_pacote(
+        self,
+        usina_id: int,
+        de: str,
+        ate: str,
+        *,
+        parte: int = 1,
+        classificacao: str | None = None,
+        situacao: str | None = None,
+        os_id: int | None = None,
+        busca: str | None = None,
+        container_id: int | None = None,
+    ) -> AsyncIterator[httpx.Response]:
+        """O ZIP de uma parte do pacote, ABERTO e ainda não lido.
+
+        Contexto assíncrono, e não `-> bytes`, porque o pacote de uma inspeção mensal passa
+        de dezenas de megabytes: materializá-lo aqui o guardaria inteiro na memória deste
+        processo, e de novo na do portal. Quem chama repassa os pedaços conforme chegam.
+
+        `/pacote/view` e não `/pacote` nem `/download`: a auditoria de permissões do meuPlano
+        dispensa por `fullmatch` qualquer GET terminado em `/pdf` ou `/download`, e a rota
+        sairia aberta a anônimo — é a mesma razão do `/pdf/view` do cronograma.
+
+        Prazo de LEITURA folgado (300 s): o pacote é montado no meuPlano lendo arquivo por
+        arquivo do armazenamento, e o primeiro byte demora. Conectar continua rápido — um
+        destino fora do ar tem de falhar depressa, não em cinco minutos.
+        """
+        jwt = await self._token_servico()
+        c = sessao(self.base_url, self._timeout, follow_redirects=True)
+        params = {
+            k: v
+            for k, v in {
+                "de": de,
+                "ate": ate,
+                "parte": parte,
+                "classificacao": classificacao,
+                "situacao": situacao,
+                "os_id": os_id,
+                "busca": busca,
+                "container_id": container_id,
+            }.items()
+            if v is not None
+        }
+        async with c.stream(
+            "GET",
+            f"{self.base_url}/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/fichas/pacote/view",
+            headers={"Authorization": f"Bearer {jwt}"},
+            params=params,
+            timeout=httpx.Timeout(30.0, read=300.0),
+        ) as r:
+            if r.status_code >= 400:
+                # O corpo do erro é JSON curto: lê-se inteiro para a frase do meuPlano
+                # chegar ao portal. Só o caminho FELIZ é que não pode ser materializado.
+                await r.aread()
+                if r.status_code == 401:
+                    self._service_token = None
+                r.raise_for_status()
+            yield r
 
     # ------------------------------------- pendências (visão do cliente)
     #

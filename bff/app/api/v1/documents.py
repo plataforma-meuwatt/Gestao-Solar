@@ -14,6 +14,7 @@ outras rotas — a autorização é do BFF, nunca do upstream.
 from datetime import date, datetime
 from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -28,7 +29,9 @@ router = APIRouter(prefix="/api/v1", tags=["app · documentos"])
 
 
 class ArquivoOut(BaseModel):
-    #: `geracao` (Relatório de Geração) ou `paradas` (Anexo de Paradas).
+    #: `geracao` (Relatório de Geração), `paradas` (Anexo de Paradas) ou `resumo`
+    #: (Resumo Executivo). Um fechamento pode ter qualquer subconjunto delas: o Resumo só
+    #: existe quando o mês teve a análise concluída, e peça ausente é estado normal.
     tipo: str
     nome: str
 
@@ -128,7 +131,7 @@ async def meus_documentos(
 @router.get("/documents/{documento_id}/file")
 async def arquivo_do_documento(
     documento_id: int,
-    tipo: Literal["geracao", "paradas"] = "geracao",
+    tipo: Literal["geracao", "paradas", "resumo"] = "geracao",
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
 ) -> Response:
@@ -143,9 +146,10 @@ async def arquivo_do_documento(
     que costuma ser de administrador. Como texto livre, `../../../admin/users` normalizava
     para outra rota da mw-api e devolvia os bytes: qualquer cliente com um único documento
     lia a plataforma inteira com credencial de admin. Uma linha anulava toda a disciplina
-    de escopo do resto do BFF.
+    de escopo do resto do BFF. Por isso o Resumo Executivo entrou ACRESCENTANDO um valor à
+    lista, e não trocando o `Literal` por `str`.
 
-    A segunda tranca é o cruzamento com os arquivos daquele documento: mesmo entre os dois
+    A segunda tranca é o cruzamento com os arquivos daquele documento: mesmo entre os três
     valores válidos, só se baixa a peça que o relatório realmente tem.
     """
     docs = await meus_documentos(db=db, usuario=usuario)
@@ -158,6 +162,22 @@ async def arquivo_do_documento(
     try:
         cliente = await integracoes.cliente_meuwatt(db)
         conteudo = await cliente.arquivo_relatorio(documento_id, tipo)
+    except httpx.HTTPStatusError as exc:
+        # Recusa por PUBLICAÇÃO não é falha de rede, e o cliente precisa ler a diferença.
+        # Reabrir um fechamento no monitoramento zera o "enviado ao cliente" mas NÃO apaga
+        # os arquivos: o link que o cliente guardou continua existindo e passa a responder
+        # **403** (lá em cima o PDF só abre para relatório publicado). O **404** é o irmão
+        # disso — o relatório sumiu, ou a peça foi retirada dele (medido: o fechamento 36
+        # tem o Resumo e responde 404 na Geração). Achatar os dois no 503 genérico mandava
+        # a pessoa procurar defeito onde houve decisão de quem publica.
+        if exc.response.status_code in (403, 404):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Este relatório não está mais publicado, ou este arquivo foi retirado dele.",
+            ) from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, f"Não foi possível baixar: {exc}"
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, f"Não foi possível baixar: {exc}"
@@ -166,5 +186,9 @@ async def arquivo_do_documento(
     return Response(
         content=conteudo,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="relatorio-{documento_id}.pdf"'},
+        # O `tipo` entra no nome porque um fechamento tem até três peças: sem ele, as três
+        # chegariam ao computador do cliente com o mesmo nome de arquivo.
+        headers={
+            "Content-Disposition": f'inline; filename="relatorio-{documento_id}-{tipo}.pdf"'
+        },
     )

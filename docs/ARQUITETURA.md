@@ -1,5 +1,12 @@
 # Arquitetura — Gestão Solar
 
+> **Estado deste documento (04/09/2026).** As seções de **desenho**, **de onde vem cada
+> informação** e **motor de PDF** descrevem o código de hoje. A de **autenticação** foi
+> reescrita nesta data: o desenho que constava aqui — cada cliente conectando as contas
+> dele, numa tabela `gs_conexoes` — **nunca foi construído**. O que existe é uma ponte por
+> produto, configurada pelo gestor. O desenho antigo e o porquê da troca continuam em
+> [DECISAO_IDENTIDADE.md](DECISAO_IDENTIDADE.md) §§ 1–2; o que foi feito está na § 2b.
+
 ## O problema que este app resolve
 
 O proprietário de uma usina solar não tem para onde olhar. O **meuWatt** monitora geração,
@@ -14,61 +21,114 @@ cumprida, os documentos em PDF, e se as mensalidades estão em dia.
 ## Desenho
 
 ```
-   ┌─────────────────────────────┐
-   │  App Gestão Solar (Expo)    │   1 base de código, iOS + Android
-   └──────────────┬──────────────┘
-                  │  HTTPS, 1 token só
-   ┌──────────────▼──────────────┐
-   │  BFF Gestão Solar (FastAPI) │   autoriza, agrega, cacheia, gera PDF
-   │  + Postgres próprio         │   usuários, vínculo de usinas, assinaturas
-   │  + Chromium headless        │   roda o motor vetorial do mw-fe
-   └───────┬─────────────┬───────┘
-           │             │  token pessoal, server-to-server (ver DECISAO_IDENTIDADE § 2b)
-   ┌───────▼──────┐ ┌────▼─────────┐
-   │   mw-api     │ │  meuPlano    │
-   │  (meuWatt)   │ │   backend    │
-   └──────────────┘ └──────────────┘
+  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+  │  app/  (Expo)    │  │ portal/  (web)   │  │ painel/  (web)   │
+  │  dono da usina   │  │  dono da usina   │  │     o gestor     │
+  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
+           │                     │                     │
+           └─────────────────────┼─────────────────────┘
+                                 │  HTTPS · 1 token por pessoa
+                  ┌──────────────▼──────────────┐
+                  │  BFF Gestão Solar (FastAPI) │  autoriza, agrega, cacheia, gera PDF
+                  │  + Postgres próprio         │  usuários, vínculo de usinas, assinaturas
+                  │  + Chromium headless        │  roda o motor vetorial do mw-fe
+                  └───────┬─────────────┬───────┘
+                          │             │  token pessoal por produto, server-to-server
+                  ┌───────▼──────┐ ┌────▼─────────┐        (ver DECISAO_IDENTIDADE § 2b)
+                  │   mw-api     │ │  meuPlano    │
+                  │  (meuWatt)   │ │   backend    │
+                  └──────────────┘ └──────────────┘
 ```
+
+**São três consumidores do mesmo BFF, não dois.** O app e o portal servem a mesma pessoa —
+o dono da usina, no celular e no navegador — e usam a mesma conta e o mesmo login. O painel
+serve o time interno e tem porta própria (`/api/painel/...`, sessão marcada com
+`escopo: "painel"`, que o BFF recusa nas rotas de cliente).
+
+**O `talksolar/` não aparece neste desenho de propósito.** É um produto à parte que mora no
+mesmo repositório: servidor próprio, banco próprio (tabelas `ts_*`), sessão própria, e
+nenhuma linha do `bff/` importada. Ele conversa com o meuPlano por HTTP como qualquer
+sistema de fora, e não participa do caminho de dados do dono da usina. Documentação em
+`talksolar/docs/`.
 
 ### Por que um BFF e não chamada direta às duas APIs
 
-Sem ele, o app precisaria de dois logins e dois tokens, cruzar as usinas dos dois sistemas
-no cliente, e o financeiro de mensalidades não teria onde morar (não existe em nenhum dos
-dois). Com o BFF, o app tem um só endereço, um só token, e a regra de "o que o dono pode
-ver" fica num lugar só.
+Sem ele, o cliente precisaria de dois logins e dois tokens, cruzar as usinas dos dois
+sistemas no próprio aparelho, e o financeiro de mensalidades não teria onde morar (não
+existe em nenhum dos dois). Com o BFF, o app tem um só endereço, um só token, e a regra de
+"o que o dono pode ver" fica num lugar só.
 
-CORS não é problema: app nativo não é browser, e o BFF fala com os upstreams
-server-to-server. Nada a mudar no `CORS_ORIGINS` do mw-api.
+CORS **é** problema — mas só para os dois fronts web. O app nativo não é browser e o BFF
+fala com os upstreams server-to-server (nada a mudar no `CORS_ORIGINS` do mw-api); já o
+painel e o portal chamam de outra origem, e por isso o BFF mantém `GS_CORS_ORIGENS` com a
+lista explícita de quem pode. **Front que sobe sem a origem dele nessa lista abre em tela
+branca**, com o erro só no console do navegador.
 
-## Autenticação — contas conectadas
+## Autenticação — uma ponte por produto, configurada pelo gestor
 
-> Decisão detalhada em [DECISAO_IDENTIDADE.md](DECISAO_IDENTIDADE.md). Este desenho
-> substitui a tentativa dupla de login que constava no plano original.
+> Decisão detalhada em [DECISAO_IDENTIDADE.md](DECISAO_IDENTIDADE.md) § 2b. **Esta seção
+> foi reescrita em 04/09/2026** para descrever o que o código faz. O desenho anterior —
+> cada cliente conectando as contas dele pelo app, em `gs_conexoes` — não foi construído.
 
-**O Gestão Solar tem conta própria** (e-mail + senha dele). Cada produto mantém o login que
-já tem — nada muda para quem usa o meuWatt ou o meuPlano hoje.
+**A conta é do Gestão Solar, e quem entra é o apelido.** `gs_users.apelido` é único; o
+e-mail é contato, opcional e não único, e serve para achar a conta da pessoa nos dois
+produtos. O motivo está no `bff/app/core/apelido.py`: a mesma pessoa pode ter duas contas
+aqui, com poderes diferentes (`renanmarquezini`, gestor; `renan.marquezini`, dono de
+usina) — com o e-mail como chave, a segunda seria recusada como duplicada.
 
-Dentro do app, o cliente **conecta** as contas dos outros produtos, uma vez cada. A conexão
-não guarda a senha: guarda um **token de aplicativo**, longo, revogável e cifrado em
-repouso, específico para o Gestão Solar.
+**A ponte com cada produto é uma só, e é do sistema, não do cliente.** Alguém gera um
+**token pessoal** na própria conta do meuWatt e do meuPlano e cola em **Painel → Conexões**.
+São duas linhas no banco, no máximo — `produto` é único:
 
 ```
-gs_users        id, email, senha própria, nome
-gs_conexoes     gs_user_id, produto, usuario_remoto, token_cifrado,
-                conectado_em, ultima_renovacao, revogado_em
+gs_integracoes         produto (meuwatt|meuplano, ÚNICO), base_url, ativa,
+                       token_cifrado, token_prefixo, token_dono_nome/_email,
+                       estado + testada_em + detalhe_teste  ← o último teste
+                       usuario_servico / senha_cifrada       ← caminho ANTIGO, ainda lido
+
+gs_users               apelido (ÚNICO), email, nome, senha_hash, trocar_senha,
+                       perfil: cliente | atendimento | administrador
+                       nivel_acesso (espelho do meuPlano), ativo
+gs_vinculos_produto    gs_user_id, produto, usuario_remoto_id/_email/_nome
+gs_user_plant_access   user_id, plant_link_id       ← o escopo, dado pelo gestor
+gs_senhas_provisorias  registro de que o acesso foi entregue — nunca a senha
 ```
 
-O meuPlano **já tem o fluxo pronto** (`app_login.py` — autorizar → trocar por `device_token`
-revogável → renovar), construído para o Analisador de Instrumentos; o Gestão Solar entra
-como mais um aplicativo autorizado. O meuWatt precisa do equivalente: tem device flow, mas
-sem token renovável.
+Isso mora no banco, e não no `.env`, por um motivo prático: quem configura é o gestor, pela
+tela, e ele precisa **testar** — digitar, ver se responde, corrigir. Segredo em variável de
+ambiente exigiria um redeploy por tentativa.
 
-Conectar o meuWatt e conectar o meuPlano são passos **independentes** — quem contratou só um
-produto conecta só ele, e o app esconde a aba correspondente.
+**O token vale exatamente o que a conta de quem o gerou vale.** Se aquela pessoa não enxerga
+uma usina no produto de origem, o Gestão Solar também não. É o teto de tudo o que o sistema
+consegue ler.
 
-**O escopo de usinas** vem de cada conexão: com o token daquela conexão, o BFF pergunta a
-cada produto quais usinas aquela pessoa vê. É isso que também recorta a conciliação para
-"as poucas usinas deste cliente" (abaixo).
+**O recorte do cliente é outro, e é do gestor.** Dentro daquele teto, quem decide o que cada
+cliente vê é `gs_user_plant_access`, concedida em Painel → Clientes. Duas camadas, nesta
+ordem: o token limita o sistema; a concessão limita a pessoa. Nunca confie num `plant_id`
+que veio do cliente sem checar contra o escopo dele.
+
+Três coisas a respeitar:
+
+- **O formato do token é acordo de três repositórios** (`bff/app/core/tokens_produto.py` e
+  os dois produtos). Mudá-lo de um lado exige mudar dos outros; os testes ficam vermelhos
+  se divergir, e é para isso que existem.
+- **Verificar antes de gravar.** `integracoes.salvar_token` só persiste depois de o token
+  passar por formato, identidade e alcance — senão o gestor ficaria com a conexão nova
+  quebrada *e* a antiga perdida.
+- **Desconectar não é revogar.** Remover o token aqui só faz o BFF parar de usá-lo; ele
+  continua válido no produto de origem, e é lá que a porta se fecha.
+
+O caminho **antigo** — conta de serviço com senha (`usuario_servico`/`senha_cifrada`) —
+segue funcionando para o que já está gravado, mas a tela não oferece mais criar assim, e
+conectar por token apaga a senha guardada.
+
+### O que continua valendo do desenho antigo
+
+O fluxo de autorização pelo navegador (o cliente conectando as contas dele, sem gestor no
+meio) continua sendo o caminho certo para quando o **cliente** conectar sozinho — e a
+máquina de tokens construída agora é a base dele. O meuPlano já tem a peça
+(`app_login.py`, feito para o Analisador de Instrumentos); o meuWatt tem device flow sem
+token renovável.
 
 ### Papéis que já existem e são reaproveitados
 
@@ -84,21 +144,33 @@ Não se inventa autorização do zero — o BFF confia nesses papéis e apenas o
 Os dois sistemas nunca se falaram. O `Usina.plant_code` do meuPlano existe "p/ reconciliação
 futura" mas está vazio.
 
-**A conexão de contas recorta o problema:** quando o cliente conecta os dois produtos, o BFF
-descobre quais usinas de cada lado são dele. O casamento deixa de ser "todas contra todas" e
-vira "as poucas deste cliente" — tipicamente 3 contra 2. Nesse recorte, quem confirma é o
-próprio cliente, no primeiro acesso; ele conhece as usinas dele melhor que qualquer
-algoritmo. O vínculo confirmado mora no BFF, em `gs_plant_link`:
+**Quem casa as usinas é o gestor, em Painel → Usinas** (`services/conciliacao.montar`). O
+sistema não decide sozinho: ele mostra os dois inventários lado a lado, aponta o par
+provável (`par_provavel_*`) e oferece o botão que confirma. O vínculo mora no BFF, em
+`gs_plant_links`:
 
 | coluna | conteúdo |
 |---|---|
 | `id` | identificador da usina no Gestão Solar |
 | `mw_plant_slug` | slug no meuWatt (ex.: `porto-ferreira`) |
 | `mp_usina_id` | `usinas.id` (int) no meuPlano |
+| `ativo` | o interruptor do gestor: só usina ligada pode ser concedida a um cliente |
 | `nome`, `cidade`, `uf`, `kwp` | denormalizado, para a lista carregar rápido |
 
-Preenchido por seed ou tela de admin. Uma usina pode existir só de um lado — o app esconde
-a aba correspondente.
+Três regras que não devem ser "simplificadas":
+
+- **Existir num produto ≠ estar no aplicativo.** `ativo` é do gestor. Desligar preserva
+  vínculos e concessões; apagar é recusado enquanto houver cliente com aquela usina.
+- **Usina não casada aparece duas vezes, uma em cada grupo.** O sistema não *sabe* que são
+  a mesma; esconder uma delas seria decidir no lugar de quem decide.
+- **Os três formatos aparecem:** nos dois produtos, só no meuWatt, e **só no meuPlano**. O
+  terceiro é comum — manutenção contratada sem monitoramento — e a primeira versão da tela
+  o omitia por percorrer só o meuWatt procurando par: onze das dezessete usinas reais eram
+  invisíveis.
+
+**Vínculo que aponta para upstream inexistente é fantasma:** a usina aparece na lista e
+todas as telas dela vêm vazias. Ter só um dos dois lados é legítimo (o app esconde a aba
+correspondente); ter nenhum, não.
 
 ## De onde vem cada informação
 
@@ -198,13 +270,18 @@ Toda revelação continua auditada em `AccessRevealLog`.
 
 ## Dependências fora deste repositório
 
-| Onde | O quê | Bloqueia |
+| Onde | O quê | Estado |
 |---|---|---|
-| `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | PDF sob demanda |
-| `mw-api` | Conta de serviço para o BFF | Tudo do meuWatt |
-| `meuPlano` | Conta de serviço equivalente | Tudo do meuPlano |
-| `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | L2 no assistente |
-| `meuPlano` | Cadastrar os proprietários com `nivel_acesso = 2` | L2 no assistente |
+| `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito e no ar** (13/08/2026) |
+| `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito e no ar** (13/08/2026) |
+| `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | pendente — bloqueia o PDF sob demanda |
+| `mw-api` | `GET /plants/{slug}/breakdowns/range` responde **500** em qualquer intervalo | pendente — bloqueia Paradas e o histórico do equipamento |
+| `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | pendente — bloqueia L2 no assistente |
+| `meuPlano` | Cadastrar os proprietários com `nivel_acesso = 2` | pendente — bloqueia L2 no assistente |
 
-Nenhuma bloqueia começar: o BFF sobe com dados de leitura e as telas de PDF sob demanda
-entram depois.
+As duas linhas de "conta de serviço" que constavam aqui saíram: foram **substituídas pelo
+token pessoal**, que está feito e testado contra produção (`api.meuwatt.com.br` e
+`meuplano.up.railway.app`).
+
+Nenhuma pendência bloqueia começar: o BFF sobe com dados de leitura e as telas de PDF sob
+demanda entram depois.

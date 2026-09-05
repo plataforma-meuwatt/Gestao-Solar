@@ -28,12 +28,14 @@ from app.api.v1 import (
     auth,
     billing,
     documents,
+    energia,
     equipamentos,
     avisos,
     home,
     manutencao,
     permissoes,
     notifications,
+    pacotes,
     painel,
     painel_clientes,
     paradas,
@@ -120,6 +122,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Em origem cruzada o navegador ESCONDE do JavaScript todo cabeçalho que não esteja
+    # aqui — o corpo chega, os cabeçalhos não. O portal baixaria a parte 1 de 2 do pacote
+    # de fichas sem ter como descobrir que existe uma parte 2, e sem o nome do arquivo. A
+    # lista mora junto de quem escreve esses cabeçalhos (`api/v1/pacotes.py`); uma segunda
+    # cópia aqui divergiria no dia em que um deles fosse acrescentado.
+    expose_headers=pacotes.CABECALHOS_EXPOSTOS,
 )
 
 app.include_router(auth.router)
@@ -132,10 +140,12 @@ app.include_router(home.router)
 app.include_router(equipamentos.router)
 app.include_router(notifications.router)
 app.include_router(manutencao.router)
+app.include_router(pacotes.router)
 app.include_router(pendencias.router)
 app.include_router(permissoes.router)
 app.include_router(avisos.router)
 app.include_router(documents.router)
+app.include_router(energia.router)
 app.include_router(resumo.router)
 app.include_router(relatorio.router)
 

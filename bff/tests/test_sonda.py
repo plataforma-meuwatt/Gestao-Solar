@@ -6,6 +6,8 @@ parâmetro, e a que decidimos não chamar. Confundir qualquer duas delas manda a
 investigar a coisa errada — daí os testes serem, quase todos, sobre a classificação.
 """
 
+from datetime import date
+
 import httpx
 import pytest
 import respx
@@ -131,6 +133,24 @@ async def test_falha_secundaria_nao_derruba_a_ponte(db, conectado):
 
     assert v.ok
     assert "secundárias" in v.detalhe
+
+
+@respx.mock
+async def test_a_fronteira_esta_no_catalogo_e_e_exercitada_com_o_ano(db, conectado):
+    """`ssu-readers/monthly-totals` sustenta o 'medido na fronteira', a perda até o ponto
+    de entrega e a conciliação com a conta de energia. Sem linha aqui, ela sumiria num
+    deploy do meuWatt e o Painel abriria com três blocos escondidos, sem ninguém saber
+    por quê. É secundária de propósito: usina sem medidor é estado normal."""
+    fronteira = respx.mock.get(f"{BASE}/plants/porto-ferreira/ssu-readers/monthly-totals")
+    fronteira.respond(200, json={"year": 2026, "by_month": {"8": 158.1}})
+    _tudo_responde(respx.mock)
+
+    v = await sonda.varrer(db, Produto.MEUWATT)
+
+    alvo = next(r for r in v.rotas if r.chave == "mw.ssu_mensal")
+    assert alvo.situacao == "ok" and not alvo.essencial
+    # O ano vem do contexto da varredura, como as datas das outras rotas.
+    assert fronteira.calls.last.request.url.params["year"] == str(date.today().year)
 
 
 @respx.mock

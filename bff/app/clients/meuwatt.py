@@ -274,9 +274,67 @@ class MeuWattClient:
     async def slot(self, slug: str, slot_id: int) -> dict[str, Any]:
         return await self._get(f"/plants/{slug}/slots/{slot_id}")
 
-    async def faturas_concessionaria(self, slug: str) -> list[dict[str, Any]]:
-        """UC no meuWatt é o TRANSFORMADOR — cada fatura pertence a um transformer.id."""
-        return await self._get(f"/plants/{slug}/utility-bills")
+    async def ssu_totais_mensais(self, slug: str, ano: int) -> dict[int, float]:
+        """A FRONTEIRA do ano, mês a mês, em MWh: `{mês (1-12): MWh}`.
+
+        É outra MEDIÇÃO, não outra conta. Os inversores medem o que geraram; o medidor
+        SSU mede o que atravessou o ponto de entrega. A diferença entre os dois é a
+        perda até a fronteira, e é este número — não o dos inversores — que se concilia
+        com a conta da distribuidora.
+
+        Mês sem leitura fica **fora do mapa**, nunca zero, e usina sem medidor devolve
+        `{}`: o portal diz "sem medição na fronteira" em vez de publicar uma queda que
+        nunca houve. O atalho antigo — medido × 0,987 — foi removido do próprio meuWatt
+        por ser um número inventado vestido de medição; não volta por aqui.
+        """
+        corpo = await self._get(f"/plants/{slug}/ssu-readers/monthly-totals", year=int(ano))
+        bruto = corpo.get("by_month") if isinstance(corpo, dict) else None
+        if not isinstance(bruto, dict):
+            return {}
+
+        totais: dict[int, float] = {}
+        for mes, mwh in bruto.items():
+            # As chaves chegam como texto (é JSON) e o mês é índice, não rótulo: quem
+            # consome compara com `data.month`, que é int.
+            try:
+                totais[int(mes)] = float(mwh)
+            except (TypeError, ValueError):
+                continue
+        return totais
+
+    #: O que pode sair de uma fatura. A listagem do upstream traz também `titular`,
+    #: `installation_number` e `tariff` — dado contratual do cliente, que o portal não
+    #: usa e não tem por que atravessar a ponte. Os irmãos `/{id}/pdf` e
+    #: `/{id}/password` (a senha do PDF é CPF/CNPJ parcial do titular) não têm método
+    #: aqui de propósito: o que não existe no cliente não vaza por descuido de rota nova.
+    CAMPOS_DA_FATURA = ("transformer_id", "year", "month", "billed_mwh")
+
+    async def faturas_concessionaria(
+        self, slug: str, ano: int | None = None
+    ) -> list[dict[str, Any]]:
+        """O MWh faturado pela distribuidora, por UC e por mês.
+
+        UC no meuWatt é o TRANSFORMADOR — cada fatura pertence a um transformer.id.
+        Sem `ano` o upstream devolve o histórico inteiro; a conciliação do painel é
+        sempre de um ano, então quem chama passa o ano em vez de arrastar anos de
+        fatura para recortar um deles.
+
+        A resposta vem em envelope (`{"bills": [...]}`) e sai daqui como lista, já
+        recortada aos campos de `CAMPOS_DA_FATURA`. Recortar no cliente é a exceção
+        declarada à regra do módulo (traduzir é dos serviços): a PII não pode depender
+        de cada chamador lembrar de descartá-la.
+        """
+        corpo = await self._get(
+            f"/plants/{slug}/utility-bills", year=int(ano) if ano is not None else None
+        )
+        brutas = corpo.get("bills") if isinstance(corpo, dict) else corpo
+        if not isinstance(brutas, list):
+            return []
+        return [
+            {campo: f.get(campo) for campo in self.CAMPOS_DA_FATURA}
+            for f in brutas
+            if isinstance(f, dict)
+        ]
 
     async def portal_relatorios(self, token: str | None = None) -> dict[str, Any]:
         """Portal do Cliente: relatórios publicados.
@@ -288,12 +346,18 @@ class MeuWattClient:
         """
         return await self._get("/reports/portal", token=token)
 
-    #: As duas peças de um fechamento. É lista fechada porque `kind` entra na URL do
+    #: As peças de um fechamento. É lista fechada porque `kind` entra na URL do
     #: upstream, e a chamada usa o token de serviço — que costuma ser de administrador.
     #: Com texto livre, `../../../admin/users` normaliza para outra rota da mw-api e o
     #: cliente recebe os bytes. A validação existe aqui **além** da rota que chama, para
     #: que um chamador futuro não reabra o buraco por descuido.
-    PECAS = ("geracao", "paradas")
+    #:
+    #: `resumo` é o Resumo Executivo, o terceiro documento do fechamento. Ele entrou de
+    #: propósito, acrescentando um valor à lista — nunca afrouxando o tipo —, porque a
+    #: mw-api já o publica (`_FILE_KINDS = {geracao, paradas, resumo}`) e o download daqui
+    #: o recusava. É a peça mais RARA das três: o deck só é gerado quando o mês teve uma
+    #: análise de IA concluída, então fechamento sem ela é estado normal, não defeito.
+    PECAS = ("geracao", "paradas", "resumo")
 
     async def arquivo_relatorio(self, report_id: int, kind: str) -> bytes:
         if kind not in self.PECAS:
