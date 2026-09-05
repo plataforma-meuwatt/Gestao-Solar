@@ -1,7 +1,7 @@
 /**
  * O que o Painel de energia lê do BFF — e nada além disso.
  *
- * Quatro leituras, todas do mesmo assunto ("quanto esta usina gerou e era para gerar"):
+ * Cinco leituras, todas do mesmo assunto ("quanto esta usina gerou e era para gerar"):
  *
  * - `plants/{id}` — quem é a usina (nome, cidade, capacidade) e como ela está agora. É só o
  *   cabeçalho da página; os números do painel vêm das outras três.
@@ -12,6 +12,10 @@
  * - `energia/usinas/{id}/unidades?recorte=mes|ano` — o comparativo entre unidades
  *   consumidoras. **Endereço próprio, não `?recorte=unidades`**: a tela carrega o
  *   comparativo sem arrastar o painel inteiro junto.
+ * - `energia/usinas/{id}/relatorio-mes?referencia=` — o FECHAMENTO do mês: energia
+ *   potencial, perdas com a base declarada, causas classificadas, horas paradas com o
+ *   denominador, as considerações escritas pela equipe e a timeline curada. **Sem
+ *   `recorte`**: o fechamento é sempre mensal.
  *
  * Os tipos são o espelho dos schemas de `bff/app/api/v1/energia.py`, com uma regra que
  * atravessa todos: **`null` é ausência, e ausência não é zero.** Onde o BFF escreve
@@ -470,10 +474,186 @@ export type Unidades = {
   aviso: string | null
 }
 
+/* ------------------------------------------------------------------ o fechamento */
+
+/**
+ * Uma fatia do ranking de causas — por que a usina parou e quanto isso custou.
+ *
+ * `classificada: false` é a categoria "Não classificada": não é uma causa, é a AUSÊNCIA
+ * dela. Ela fica no ranking de propósito — escondê-la esconderia justamente a energia sem
+ * explicação, que é a parcela que ainda pode mudar de lado na conta contratual.
+ */
+export type CausaDaParada = {
+  categoria: string
+  eventos: number
+  /** Nulo = o monitoramento não trouxe o número em nenhum evento da categoria. */
+  energia_kwh: number | null
+  /** Horas somadas por inversor afetado. Nulo quando algum evento veio sem duração —
+   *  somar só os que têm faria a conta parecer menor do que foi. */
+  horas: number | null
+  /** A causa estava fora do alcance da manutenção. É o que a contratual desconta. */
+  externa: boolean
+  classificada: boolean
+}
+
+/**
+ * Uma parada do mês, com a causa e a classificação.
+ *
+ * **A contagem é por parada, não por evento agrupado por escopo.** O agrupamento
+ * "usina / skid / inversor" do meuWatt mora no front dele e em endpoints que respondem 403
+ * ao nosso token; a frase que declara isso vem pronta do servidor (`eventos_agrupamento`) e
+ * a tela a imprime. Inventar um segundo detector aqui daria duas contagens para a mesma
+ * pergunta na primeira vez que o de lá mudasse.
+ */
+export type EventoDeParada = {
+  /** Dia BRT de início, `YYYY-MM-DD` — o mesmo critério de recorte da tela de Paradas. */
+  inicio: string
+  /** Nulo = ainda em aberto. */
+  fim: string | null
+  em_aberto: boolean
+  /** `parada` (inversor sem produzir) ou `degradacao` (produzindo abaixo dos pares). */
+  tipo: string
+  unidade: string | null
+  /** Nulo = ainda não classificada. */
+  causa: string | null
+  origem: string | null
+  externa: boolean
+  classificada: boolean
+  /** Só passa de 1 quando a própria equipe agrupou as linhas no monitoramento. */
+  inversores_afetados: number
+  horas: number | null
+  energia_kwh: number | null
+}
+
+/** Um card da timeline curada. Conteúdo 100% autorado pela operação. */
+export type MarcoDaTimeline = {
+  id: string
+  /** Instante do marco, ISO. */
+  em: string
+  /** `parada | retomada | normalizado | recorrente | degradacao | manutencao | info` —
+   *  vocabulário NARRATIVO do meuWatt, que não é o dos seis tons do portal. Quem traduz é
+   *  `tomDoMarco`, em `Relatorio.tsx`. */
+  tom: string
+  chip: string
+  titulo: string
+  sub: string | null
+  grupo: string | null
+}
+
+export type TimelineCurada = {
+  /**
+   * A operação LIGOU a seção para este mês. Falso — ou mês nunca curado — significa que a
+   * seção **não existe** no mês, e a tela não desenha uma espinha vazia. É decisão de
+   * produto do meuWatt, e ela atravessa: seção nenhuma é melhor que seção vazia.
+   */
+  exibir: boolean
+  marcos: MarcoDaTimeline[]
+}
+
+/**
+ * O fechamento narrativo do mês, escrito pela equipe.
+ *
+ * **Somente leitura no portal.** Escrever é trabalho de operação: um campo de edição aqui
+ * poria o cliente dentro do caderno da equipe, e o texto que ele lê é justamente o que a
+ * equipe assinou. A tela não tem `<textarea>` nem `<input>` nesta seção — e há teste para
+ * isso.
+ */
+export type ConsideracoesDoMes = {
+  texto: string
+  autor: string | null
+  /** Instante da última edição, ISO. */
+  em: string | null
+}
+
+/** As fórmulas do fechamento, em linguagem de cliente. A tela imprime; não recalcula. */
+export type RegraDoFechamento = {
+  potencial: string
+  perda: string
+  horas: string
+  causas: string
+}
+
+/**
+ * O fechamento do mês — a quinta aba do painel.
+ *
+ * Espelho de `RelatorioMesOut` (`bff/app/api/v1/energia.py`). Os quatro primeiros números
+ * são **cópia do painel do mesmo mês**, e estão aqui para o potencial ser conferível na
+ * própria resposta: `potencial_kwh` é exatamente `medido_inversores_kwh + perdida_kwh`, e
+ * não um parecido. Foi assim que o portal deixou de ter duas respostas para a mesma perda.
+ */
+export type RelatorioMes = {
+  referencia: string
+  inicio: string
+  fim: string
+  rotulo: string
+  em_curso: boolean
+  /** Dia do mês até onde há medição. Nulo em mês fechado. */
+  dia_de_corte: number | null
+
+  medido_inversores_kwh: number | null
+  perdida_kwh: number | null
+  projeto_proporcional_kwh: number | null
+  medido_vs_projeto_pct: number | null
+
+  /** `medido + perdido em paradas` — o que a usina teria entregue se não tivesse parado. */
+  potencial_kwh: number | null
+  /**
+   * `(potencial − projeto) ÷ projeto`, em %.
+   *
+   * O par mais valioso da aba: com este bom e o `medido_vs_projeto_pct` ruim, o mês foi de
+   * PARADAS; com os dois ruins, faltou SOL. Sem os dois lado a lado, um mês fraco tem duas
+   * explicações possíveis e nenhuma escrita.
+   */
+  potencial_vs_projeto_pct: number | null
+
+  /** Quanto da geração do mês se perdeu: `perdida ÷ (base + perdida)`, em %. */
+  perda_pct: number | null
+  /** `fronteira` ou `inversor` — sobre QUAL medição o percentual acima foi tirado. Sai
+   *  declarado porque as duas bases dão números diferentes para a mesma pergunta, e a
+   *  tela é obrigada a escrever qual delas falou. */
+  perda_base: string | null
+  /** De onde veio `perdida_kwh`. É o mesmo número que sustenta a disponibilidade. */
+  perda_origem: string | null
+
+  /** Horas paradas somadas por inversor afetado, no recorte diurno. */
+  horas_paradas: number | null
+  /** O denominador: horas de sol decorridas × nº de inversores. Sem ele, "141 h" soam
+   *  como uma semana parada. */
+  horas_possiveis: number | null
+  inversores_considerados: number | null
+  /** Eventos cuja duração o monitoramento não soube calcular — é o motivo de
+   *  `horas_paradas` sair em travessão. */
+  eventos_sem_duracao: number
+
+  causas: CausaDaParada[]
+  eventos: EventoDeParada[]
+  /** `alertas` = as paradas foram lidas. Nulo = NÃO foram, e listas vazias significam
+   *  "não sei", não "não parou" — a tela precisa dizer coisas diferentes nos dois casos. */
+  paradas_origem: string | null
+  causas_total_kwh: number | null
+  causas_origem: string | null
+  /** As duas leituras da mesma perda batem. Falso = a tela DIZ de que janela cada número
+   *  saiu, em vez de reescalar uma pela outra (rateio produz número que ninguém mediu). */
+  causas_conferem: boolean | null
+  /** A frase que declara a limitação do agrupamento. Vem do servidor porque é limitação
+   *  da FONTE: se ela mudar, muda lá. */
+  eventos_agrupamento: string
+
+  consideracoes: ConsideracoesDoMes | null
+  timeline: TimelineCurada
+
+  regra: RegraDoFechamento
+  aviso: string | null
+}
+
 /* ------------------------------------------------------------------ leituras */
 
-/** As quatro abas do Painel. `unidades` tem recorte próprio (mês ou ano). */
-export type Aba = 'dia' | 'mes' | 'ano' | 'unidades'
+/**
+ * As cinco abas do Painel. `unidades` tem recorte próprio (mês ou ano); `relatorio` é
+ * travada no MÊS — o fechamento narrativo de um ano não existe, porque as considerações, a
+ * timeline e a classificação das paradas são todas escritas mês a mês.
+ */
+export type Aba = 'dia' | 'mes' | 'ano' | 'unidades' | 'relatorio'
 
 /** O recorte de período que o painel e as unidades aceitam. */
 export type RecortePainel = 'mes' | 'ano'
@@ -511,6 +691,29 @@ export function usePainel(
 ): Leitura<Painel> {
   const ref = referenciaDoRecorte(recorte, referencia)
   return useLeitura<Painel>(`energia/usinas/${id}/painel?recorte=${recorte}&referencia=${ref}`, {
+    ativo,
+    prazoMs: 90_000,
+  })
+}
+
+/**
+ * O fechamento do mês.
+ *
+ * A referência é normalizada para o **dia 1**: o BFF só usa o mês dela, e sem normalizar
+ * andar do dia 3 para o dia 4 do mesmo mês criaria duas chaves de cache para a MESMA
+ * resposta. `dia_de_corte` e `em_curso` de lá saem do relógio da usina, não daqui — então
+ * normalizar não muda nenhum número.
+ *
+ * Prazo maior que o padrão pelo mesmo motivo do painel: lá atrás são oito leituras do
+ * meuWatt em paralelo (as cinco do painel mais paradas, considerações e timeline).
+ */
+export function useRelatorioMes(
+  id: number,
+  referencia: string,
+  ativo = true,
+): Leitura<RelatorioMes> {
+  const ref = `${referencia.slice(0, 7)}-01`
+  return useLeitura<RelatorioMes>(`energia/usinas/${id}/relatorio-mes?referencia=${ref}`, {
     ativo,
     prazoMs: 90_000,
   })

@@ -59,6 +59,11 @@ const Ordens = lazyRetry(() => import('@/features/ordens/Pagina'))
 const Ordem = lazyRetry(() => import('@/features/ordem/Pagina'))
 const Tarefa = lazyRetry(() => import('@/features/tarefa/Pagina'))
 const Pendencias = lazyRetry(() => import('@/features/pendencias/Pagina'))
+// Comparativos de CARTEIRA: sem `:id`, porque a pergunta que eles respondem ("qual gera
+// mais", "qual está mais atrasada") não cabe dentro de uma usina. São dois, e não um com
+// abas, porque cada um pertence a uma família — quem cobra kWh não abre ordem de serviço.
+const CompararEnergia = lazyRetry(() => import('@/features/comparar/Energia'))
+const CompararManutencao = lazyRetry(() => import('@/features/comparar/Manutencao'))
 // Guarda as duas famílias, e por isso fica fora das duas.
 const Relatorios = lazyRetry(() => import('@/features/relatorios/Pagina'))
 
@@ -88,6 +93,24 @@ function Mudou({ familia }: { familia: 'energia' | 'manutencao' }) {
   if (!id) return <Navigate to="/" replace />
   const resto = local.pathname.slice(`/usinas/${id}`.length)
   return <Navigate to={`/usinas/${id}/${familia}${resto}${local.search}`} replace />
+}
+
+/**
+ * `/usinas/3/comparar/energia` → `/comparar/energia`, com a query intacta.
+ *
+ * O comparativo é da CARTEIRA e o endereço dele não tem usina — mas a navegação lateral
+ * (`shell/Layout.tsx`) ainda monta TODA entrada de menu como `/usinas/${atual}${fim}`, sem
+ * consultar `paraDaSecao`. Enquanto ela não o fizer, é este redirecionamento que mantém os
+ * dois itens funcionando nas três larguras em vez de levarem a uma tela em branco.
+ *
+ * Ele fica de pé mesmo depois: um link com usina no meio pode ter sido colado num e-mail, e
+ * favorito do cliente não pode virar tela em branco — a mesma regra dos endereços antigos.
+ * A usina é DESCARTADA de propósito: a comparação é de todas, e carregar uma no endereço
+ * prometeria um recorte que a tela não faz.
+ */
+function ComparativoDaCarteira({ familia }: { familia: 'energia' | 'manutencao' }) {
+  const local = useLocation()
+  return <Navigate to={`/comparar/${familia}${local.search}`} replace />
 }
 
 /** A raiz da usina não é tela: é o Painel, a primeira pergunta ("gerei o esperado?"). */
@@ -134,6 +157,10 @@ export function App() {
               <Route path="/" element={<VisaoGeral />} />
               <Route path="/conta" element={<Conta />} />
 
+              {/* Carteira: comparar usinas. Fora de `/usinas/:id` de propósito. */}
+              <Route path="/comparar/energia" element={<CompararEnergia />} />
+              <Route path="/comparar/manutencao" element={<CompararManutencao />} />
+
               {/* Geração de energia */}
               <Route path="/usinas/:id/energia" element={<Energia />} />
               <Route path="/usinas/:id/energia/paradas" element={<Paradas />} />
@@ -151,6 +178,16 @@ export function App() {
 
               {/* Relatórios guarda as duas famílias, e por isso fica fora das duas. */}
               <Route path="/usinas/:id/relatorios" element={<Relatorios />} />
+
+              {/* O comparativo é da carteira: a usina no meio do endereço é descartada. */}
+              <Route
+                path="/usinas/:id/comparar/energia"
+                element={<ComparativoDaCarteira familia="energia" />}
+              />
+              <Route
+                path="/usinas/:id/comparar/manutencao"
+                element={<ComparativoDaCarteira familia="manutencao" />}
+              />
 
               {/* Endereços antigos: favorito do cliente não pode virar tela em branco. */}
               <Route path="/usinas/:id" element={<RaizDaUsina />} />

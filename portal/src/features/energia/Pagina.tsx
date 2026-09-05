@@ -6,6 +6,11 @@
  * segmentado: **Dia**, **Mês**, **Ano** e **Unidades**. As unidades consumidoras são um
  * recorte, e não um item de menu, porque a pergunta é a mesma — só a lente muda.
  *
+ * A quinta aba, **Relatório**, não é um quinto recorte: é a pergunta SEGUINTE ("o mês rendeu
+ * menos por falta de sol ou por parada?") e o fechamento que a equipe escreveu. Por isso ela
+ * é travada no mês — as considerações, a timeline e a classificação das paradas são escritas
+ * mês a mês, e um fechamento narrativo de um ano não existe.
+ *
  * Três decisões de tela que não devem ser "simplificadas" depois:
  *
  * **Uma referência só.** Os quatro recortes andam no MESMO ponto do tempo: quem foi ver o
@@ -18,10 +23,12 @@
  * com ele esconderia do cliente que aquele mês não foi medido, e deixá-lo clicável abriria
  * uma tela vazia que se lê como falha do portal.
  *
- * **Aqui não se gera PDF.** A aba Relatório do meuWatt (a fábrica de PDF, com os botões de
- * imprimir e salvar) ficou de fora por pedido do dono. Os três documentos consolidados —
- * Geração, Paradas e o Resumo Executivo — o cliente baixa em Relatórios, prontos, sem ter
- * de montar nada.
+ * **Aqui não se gera PDF.** A aba Relatório do meuWatt trouxe o CONTEÚDO e deixou lá a
+ * fábrica de impressão inteira, por pedido do dono: nada de capa, contracapa, marca, QR,
+ * cabeçalho corrente, botão de imprimir, `beforeprint` ou folha A4. Os três documentos
+ * consolidados — Geração, Paradas e o Resumo Executivo — o cliente baixa em Relatórios,
+ * prontos, sem ter de montar nada. Um painel que republicasse o PDF seria a terceira cópia
+ * do mesmo conteúdo, e a que envelhece.
  *
  * **Todo acumulado diz de que meses ele saiu.** O servidor manda a janela (`painel.janela`:
  * os meses somados, os que ficaram de fora e o motivo de cada um) e as duas abas de período
@@ -30,11 +37,17 @@
  * desempenho, e o cartão do topo não fechava com a coluna da tabela logo abaixo. Consertar
  * os números sem dizer de onde eles saem só adiaria a pergunta seguinte.
  *
- * Também ficaram de fora, com motivo: o ranking de causas, o detalhamento parada a parada e
- * o desvio entre inversores (não são do painel — vivem dentro do Anexo de Paradas, que
- * chega em PDF); o derating e a indisponibilidade do PVsyst (são parâmetros de ENTRADA do
- * projeto, não medição do período); e os botões de rolagem do cabeçalho, que são muleta de
- * página longa de operador.
+ * Também ficaram de fora, com motivo: o desvio entre inversores (é o comparativo de
+ * equipamentos, e com régua diferente — o de lá compara contra a média diária da usina, o
+ * nosso contra a mediana dos pares; publicá-los juntos exigiria escrever isso na tela); o
+ * derating e a indisponibilidade do PVsyst (são parâmetros de ENTRADA do projeto, não
+ * medição do período); e os botões de rolagem do cabeçalho, que são muleta de página longa
+ * de operador.
+ *
+ * ⚠ O ranking de causas e o detalhamento parada a parada JÁ NÃO estão fora: eles eram a
+ * justificativa que faltava ao lado da disponibilidade contratual — um número de teor
+ * contratual publicado sem nada que o sustente — e entraram na aba Relatório. O Anexo de
+ * Paradas continua existindo em Relatórios, com o mesmo assunto em documento fechado.
  *
  * ─────────────────────────────────────────────────────────────────────────────────────
  * CONFERÊNCIA CAMPO A CAMPO contra o dashboard de origem (05/09/2026)
@@ -42,7 +55,8 @@
  * Feita bloco a bloco no código do meuWatt — `mw-fe/src/pages/DashboardPage.tsx` e
  * `mw-fe/src/components/DashboardPage/` —, e não de memória: "todas as informações" era,
  * até aqui, autoavaliação de quem construiu. Lá são cinco abas; quatro viraram os quatro
- * recortes daqui, e a quinta (Relatório) é a fábrica de PDF que o dono mandou não trazer.
+ * recortes daqui, e a quinta (Relatório) virou a quinta aba **sem a fábrica de PDF** — ver
+ * a lista do que dela entrou e do que ficou fora, logo abaixo do MEDIDORES.
  *
  *   MENSAL → Mês. Os quatro KPIs de geração (MEDIDO INVERSORES · MEDIDO FRONTEIRA ·
  *   PROJETO PVSYST · PREVISTO METEO) e os quatro de rendimento (PRODUTIVIDADE ·
@@ -62,6 +76,22 @@
  *   MEDIDORES → Unidades. UCS ATIVAS · CAPACIDADE TOTAL · ENERGIA · MAIOR CONTRIBUINTE;
  *   GERAÇÃO POR DIA DA UC; os três rankings (geração, PR com a referência de 80 %,
  *   produtividade); DISPONIBILIDADE ENERGÉTICA POR UC; e a tabela POR UC com o faturado.
+ *   RELATÓRIO → Relatório (05/09/2026). ENTROU o que as outras quatro abas não respondem:
+ *   ENERGIA POTENCIAL e POTENCIAL VS PVSYST (o único par do dashboard inteiro que separa
+ *   clima de parada); o cartão de PERDAS com o percentual e a BASE declarada (fronteira ou
+ *   inversor — as duas dão números diferentes para a mesma pergunta); as CONSIDERAÇÕES
+ *   GERAIS do mês, somente leitura, com autor e data; o RANKING DE CAUSAS e os EVENTOS com
+ *   a classificação externa/interna/não classificada, ao lado da disponibilidade
+ *   contratual que eles explicam; HORAS PARADAS com o denominador e a régua; e a TIMELINE
+ *   curada, que some quando a operação não curou o mês.
+ *   FICOU FORA, com motivo: os gráficos de geração e PR diários, o histórico mensal, as
+ *   condições meteorológicas e a produtividade/PR mês a mês (§2, §6 e §7 — já são as abas
+ *   Mês e Ano, e repeti-los obrigaria o cliente a comparar dois lugares que dizem a mesma
+ *   coisa); os rankings por UC (§3 — é a aba Unidades); a geração por skid e por inversor
+ *   (§8 e §9 — é o comparativo de equipamentos); as caixas de observação das seções §2 a
+ *   §9 (são conversa interna de operação; só a `dash:gerais` é dirigida ao cliente); e a
+ *   fábrica de PDF inteira — capa, contracapa, marca, QR, cabeçalho corrente, o sinal
+ *   `ready` do capturador, os dois botões de exportar e o `@media print`.
  *
  * A conferência achou UMA coisa de lá que não estava aqui, e ela foi trazida: o
  * `PerdasCard` tem um segundo modo — quando a usina declara POA/GHI de projeto, ele troca
@@ -105,6 +135,7 @@ import {
   ehUsinaAusente,
   useDia,
   usePainel,
+  useRelatorioMes,
   useUnidades,
   useUsinaDetalhe,
   type Aba,
@@ -114,6 +145,7 @@ import {
 import { AbaAno } from './Ano'
 import { AbaDia } from './Dia'
 import { AbaMes } from './Mes'
+import { AbaRelatorio } from './Relatorio'
 import { AbaUnidades } from './Unidades'
 import { Bloco, capacidade } from './graficos'
 
@@ -122,6 +154,7 @@ const ABAS: { valor: Aba; rotulo: string }[] = [
   { valor: 'mes', rotulo: 'Mês' },
   { valor: 'ano', rotulo: 'Ano' },
   { valor: 'unidades', rotulo: 'Unidades' },
+  { valor: 'relatorio', rotulo: 'Relatório' },
 ]
 
 const RECORTES_DA_UNIDADE: { valor: RecortePainel; rotulo: string }[] = [
@@ -292,7 +325,18 @@ export default function PainelDeEnergia() {
 
   const usina = useUsinaDetalhe(idUsina, valida)
 
-  const painelMes = usePainel(idUsina, 'mes', referencia, valida && aba === 'mes')
+  /**
+   * O painel do MÊS serve as duas abas mensais. A do Relatório o consome para publicar a
+   * disponibilidade que as causas explicam — e, como a chave de cache é a mesma, quem
+   * chega pela aba Mês e troca para Relatório não paga uma segunda leitura. O número da
+   * disponibilidade, aí, é literalmente o mesmo byte nas duas telas.
+   */
+  const painelMes = usePainel(
+    idUsina,
+    'mes',
+    referencia,
+    valida && (aba === 'mes' || aba === 'relatorio'),
+  )
   /**
    * O painel do ANO serve a duas coisas com UMA leitura: é o conteúdo da aba Ano e é a
    * fonte de `meses_disponiveis` para o seletor de mês. A chave de cache normaliza a
@@ -307,6 +351,7 @@ export default function PainelDeEnergia() {
     referencia,
     valida && aba === 'unidades',
   )
+  const relatorio = useRelatorioMes(idUsina, referencia, valida && aba === 'relatorio')
 
   const disponiveis = painelAno.dados?.meses_disponiveis ?? null
 
@@ -314,7 +359,10 @@ export default function PainelDeEnergia() {
   const recortePasso: Recorte = useMemo(() => {
     if (aba === 'dia') return 'dia'
     if (aba === 'ano') return 'ano'
-    if (aba === 'mes') return 'mes'
+    // O Relatório é TRAVADO no mês: o fechamento narrativo de um ano não existe — as
+    // considerações, a timeline e a classificação das paradas são escritas mês a mês. Por
+    // isso ele herda o seletor de mês, e não ganha um de dia ou de ano.
+    if (aba === 'mes' || aba === 'relatorio') return 'mes'
     return recorteUnidades
   }, [aba, recorteUnidades])
 
@@ -415,6 +463,12 @@ export default function PainelDeEnergia() {
             {aba === 'unidades' ? (
               <Bloco leitura={unidades} altura={280}>
                 {(dados) => <AbaUnidades unidades={dados} />}
+              </Bloco>
+            ) : null}
+
+            {aba === 'relatorio' ? (
+              <Bloco leitura={relatorio} altura={280}>
+                {(r) => <AbaRelatorio relatorio={r} painel={painelMes.dados} />}
               </Bloco>
             ) : null}
 

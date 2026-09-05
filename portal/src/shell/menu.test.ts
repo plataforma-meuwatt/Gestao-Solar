@@ -14,7 +14,16 @@
  * - **o padrão é explícito.** Caminho que não é seção nenhuma cai no Painel; devolver vazio
  *   mandaria o cliente para a raiz da usina, que é só um redirecionamento;
  * - **toda seção tem família e todo grupo tem seções**, que é o que sustenta a separação
- *   entre Geração de energia e Manutenção nas três larguras.
+ *   entre Geração de energia e Manutenção nas três larguras;
+ * - **os dois comparativos são de CARTEIRA**, e o endereço deles não carrega usina. Três
+ *   defeitos moram aqui, e cada um tem o seu teste: (a) montar o endereço por concatenação
+ *   levaria a `/usinas/3/comparar/energia`, que só existe como redirecionamento, e o item
+ *   nunca ficaria aceso; (b) `'/comparar/energia'.endsWith('/energia')` é VERDADEIRO, então
+ *   a busca pelas seções de usina reconheceria o comparativo como "Painel" — e devolveria a
+ *   resposta certa pelo caminho errado, de modo que no dia em que o Painel mudasse de sufixo
+ *   o comparativo passaria a mandar o cliente para outra família sem nada quebrar; (c)
+ *   escolher uma usina a partir de "Comparar manutenção" tem de cair no Cronograma dela, e
+ *   não no painel de energia.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -24,9 +33,18 @@ import {
   SECAO_PADRAO,
   SECOES,
   casamentoExato,
+  ehDaCarteira,
+  paraDaSecao,
   secoesDaFamilia,
+  secoesDaUsina,
   sufixoDaSecao,
 } from '@/shell/menu'
+
+/** O endereço do item de carteira de uma família, montado como o menu o monta. */
+function paraDaCarteira(familia: 'geracao' | 'manutencao'): string | null {
+  const item = SECOES.find((s) => s.carteira && s.familia === familia)
+  return item ? paraDaSecao(item, 7) : null
+}
 
 describe('sufixo da seção', () => {
   it('não deixa o pai engolir o filho', () => {
@@ -70,9 +88,15 @@ describe('catálogo das seções', () => {
     for (const s of SECOES) expect(['geracao', 'manutencao', 'geral']).toContain(s.familia)
   })
 
-  it('a URL nomeia a família', () => {
-    for (const s of secoesDaFamilia('geracao')) expect(s.fim.startsWith('/energia')).toBe(true)
-    for (const s of secoesDaFamilia('manutencao')) expect(s.fim.startsWith('/manutencao')).toBe(true)
+  it('a URL nomeia a família — nas seções de usina e nos comparativos', () => {
+    for (const s of secoesDaUsina()) {
+      if (s.familia === 'geracao') expect(s.fim.startsWith('/energia')).toBe(true)
+      if (s.familia === 'manutencao') expect(s.fim.startsWith('/manutencao')).toBe(true)
+    }
+    // Na carteira o assunto é o segundo trecho, porque o primeiro é o verbo da pergunta.
+    // Link colado num e-mail continua dizendo de que família se trata.
+    expect(paraDaCarteira('geracao')).toBe('/comparar/energia')
+    expect(paraDaCarteira('manutencao')).toBe('/comparar/manutencao')
   })
 
   it('todo grupo tem pelo menos uma seção, e nenhuma seção fica de fora de um grupo', () => {
@@ -96,5 +120,79 @@ describe('destaque no menu', () => {
     expect(casamentoExato('/manutencao/ordens')).toBe(false)
     expect(casamentoExato('/manutencao/pendencias')).toBe(false)
     expect(casamentoExato('/relatorios')).toBe(false)
+  })
+})
+
+describe('os comparativos de carteira', () => {
+  it('existe um por família, e cada um é o PRIMEIRO item dela', () => {
+    for (const familia of ['geracao', 'manutencao'] as const) {
+      const itens = secoesDaFamilia(familia)
+      expect(itens[0].carteira).toBe(true)
+      expect(itens.filter((s) => s.carteira)).toHaveLength(1)
+    }
+  })
+
+  it('cada um tem rótulo e ícone próprios — no trilho estreito só há o ícone', () => {
+    const carteira = SECOES.filter((s) => s.carteira)
+    expect(carteira.map((s) => s.rotulo)).toEqual(['Geração', 'Manutenção das usinas'])
+    expect(new Set(carteira.map((s) => s.icone)).size).toBe(2)
+    // E nenhum repete o ícone-cabeçalho da própria família: dois iguais empilhados
+    // apagariam a separação que o cabeçalho existe para mostrar.
+    for (const s of carteira) {
+      const grupo = GRUPOS.find((g) => g.familia === s.familia)
+      expect(s.icone).not.toBe(grupo?.icone)
+    }
+  })
+
+  it('o endereço NÃO carrega usina — nem quando há uma escolhida', () => {
+    expect(paraDaCarteira('geracao')).toBe('/comparar/energia')
+    expect(paraDaCarteira('manutencao')).toBe('/comparar/manutencao')
+    const item = SECOES.find((s) => s.carteira)
+    expect(item).toBeDefined()
+    expect(paraDaSecao(item!, null)).toBe('/comparar/energia')
+  })
+
+  it('a seção de usina, essa sim, é colada no /usinas/:id — e some sem usina', () => {
+    const painel = secoesDaUsina().find((s) => s.fim === '/energia')
+    expect(painel).toBeDefined()
+    expect(paraDaSecao(painel!, 7)).toBe('/usinas/7/energia')
+    // Sem usina não há para onde ir: quem desenha o menu esconde a entrada, em vez de
+    // montar `/usinas/null/energia`.
+    expect(paraDaSecao(painel!, null)).toBeNull()
+  })
+
+  it('trocar de usina a partir de um comparativo cai na família certa', () => {
+    // `/comparar/energia` TERMINA em `/energia`: sem a checagem de carteira vir primeiro, a
+    // busca pelas seções de usina o reconheceria como "Painel". Aqui a resposta bate por
+    // coincidência — é a linha seguinte que separa as duas.
+    expect(sufixoDaSecao('/comparar/energia')).toBe('/energia')
+    // De "Comparar manutenção" o cliente cai no Cronograma daquela usina, e não no painel
+    // de energia dela.
+    expect(sufixoDaSecao('/comparar/manutencao')).toBe('/manutencao/cronograma')
+  })
+
+  it('o comparativo nunca exige casamento exato', () => {
+    expect(casamentoExato('/comparar/energia')).toBe(false)
+    expect(casamentoExato('/comparar/manutencao')).toBe(false)
+  })
+
+  it('reconhece o caminho de carteira, e só ele', () => {
+    expect(ehDaCarteira('/comparar/energia')).toBe(true)
+    expect(ehDaCarteira('/comparar/manutencao')).toBe(true)
+    expect(ehDaCarteira('/usinas/7/energia')).toBe(false)
+    expect(ehDaCarteira('/')).toBe(false)
+  })
+
+  it('as seções de usina são as mesmas de antes — nada saiu do menu', () => {
+    // A entrada dos comparativos não pode ter empurrado nenhuma seção para fora: o catálogo
+    // de usina continua com as seis de sempre, na mesma ordem.
+    expect(secoesDaUsina().map((s) => s.fim)).toEqual([
+      '/energia',
+      '/energia/paradas',
+      '/manutencao/cronograma',
+      '/manutencao/ordens',
+      '/manutencao/pendencias',
+      '/relatorios',
+    ])
   })
 })

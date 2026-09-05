@@ -6,11 +6,26 @@
  * feito? — e por isso não mostra medição, checklist nem equipamento: quem quiser descer até
  * o laudo abre a tarefa e, de lá, o PDF.
  *
- * Quatro decisões que não podem se perder numa refatoração:
+ * **A matriz deixou de ser a primeira coisa.** Ela abria com quinze cabeçalhos de bloco
+ * cinza-chapado, recolhidos, e as doze colunas de mês vazias: 94 % da altura da tabela era
+ * um bloco cinza e nenhuma das 269 marcas do contrato aparecia — nem o mês que fechou 13 de
+ * 13. Agora a tela responde na ordem em que o cliente pergunta: **o veredito** ("em dia" ou
+ * a atrasada mais antiga), **a fita dos doze meses**, **o que está acontecendo neste mês** e,
+ * por último, **a matriz inteira atrás de um clique**, como UM bloco. O "X" não saiu; ele
+ * virou o detalhe, que é o lugar dele.
+ *
+ * Cinco decisões que não podem se perder numa refatoração:
  *
  * **Os meses são os do CONTRATO.** A ordem vem de `meses` (a âncora da vigência), então um
  * contrato que começa em março abre em "mar/26". Desenhar janeiro→dezembro entregaria um
- * cronograma que não é o que foi assinado.
+ * cronograma que não é o que foi assinado — e é por isso que "hoje" também vem do servidor
+ * (`mes_referencia`), nunca do relógio do navegador.
+ *
+ * **O número grande é o "até aqui".** `cumprido_ate_hoje / previsto_ate_hoje` — o recorte de
+ * vigência, calculado no meuPlano. O total do ano (`previsto_no_contrato`) fica como contexto
+ * pequeno, e não como denominador: foi dividir por um ano que ainda não aconteceu que fez a
+ * mesma usina, sem uma única atividade atrasada, aparecer como "13 de 270" (4,8 %) numa tela
+ * e "41,9 %" na outra. A tela não faz aritmética nenhuma com estes campos.
  *
  * **Feito ≠ dispensado.** O X cheio é executado; o X vazado com "D" é dispensa registrada
  * com motivo. Fundir os dois faria o cliente ler "cumprido" onde a equipe registrou "não
@@ -20,8 +35,8 @@
  * vazia e a frase do servidor. Desenhar uma grade em branco seria pior que não desenhar
  * nada: lê-se como "nada foi feito", que é uma acusação — e não é o que o dado diz.
  *
- * **A célula abre.** Clicar num mês previsto mostra as tarefas por trás daquele X, com a
- * porta para a OS que as executou.
+ * **A célula abre.** Clicar num mês previsto — na grade ou nas listas do mês — mostra as
+ * tarefas por trás daquele X, com a porta para a OS que as executou.
  */
 
 import { useState, type ReactNode } from 'react'
@@ -34,6 +49,7 @@ import {
   Cartao,
   Combobox,
   Esqueleto,
+  FaixaAtencao,
   Kpi,
   Modal,
   Num,
@@ -47,17 +63,24 @@ import { abrirPdf } from '@/lib/arquivo'
 import { competencia, competenciaCurta, dataCurta, inteiro, porcento } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
 import { classesDoTom } from '@/lib/tons'
+import FitaDosMeses, { type MesDaFita } from '@/features/cronograma/FitaDosMeses'
 import {
+  atividadesDoMes,
+  atrasadasPorMes,
   caminhoPdfCronograma,
   chaveContratos,
   chaveCronograma,
   chaveTarefasDoMes,
+  mesDeReferencia,
+  primeiraAtrasada,
   rotuloDoContrato,
   tomDaCelula,
+  totalAtrasadas,
   type Celula,
   type Contrato,
   type ContratosOut,
   type CronogramaOut,
+  type ItemDoMes,
   type LinhaCronograma,
   type Tarefa,
 } from '@/features/cronograma/api'
@@ -133,8 +156,11 @@ function Marca({ celula }: { celula: Celula }) {
     )
   }
 
-  // Mês sem previsão fica VAZIO na tela. Uma marca cinza aqui se leria como "pendente".
-  return <span className="sr-only">Sem previsão</span>
+  // Mês sem previsão fica VAZIO — na tela E na leitura por voz. A marca cinza se leria
+  // como "pendente"; e o texto invisível "Sem previsão", que estava aqui, repetia dez vezes
+  // por linha numa atividade semestral, enchendo a grade de ruído sem acrescentar nada que
+  // a legenda ("célula vazia = o contrato não prevê nada no mês") já não diga uma vez só.
+  return null
 }
 
 const CELULA_BASE: Celula = {
@@ -299,9 +325,21 @@ function Grade({
 }) {
   const fixa = 'sticky left-0 z-10 bg-painel'
   const grupos = porGrupo(dados.linhas)
-  // Um bloco só não é agrupamento: abre inteiro, sem cabeçalho que não separa nada.
+  // Um bloco só não é agrupamento: abre inteiro, sem cabeçalho que não separa nada. E o
+  // bloco que TEM movimento (algo executado, dispensado ou atrasado) abre sozinho: quinze
+  // cabeçalhos cinza fechados sobre doze colunas vazias foi exatamente o que o dono viu, e
+  // esconder justo as linhas que respondem "o que foi feito?" é o pior corte possível. O
+  // bloco parado continua recolhido — ele é contexto, não notícia.
   const [abertos, setAbertos] = useState<Record<string, boolean>>(() =>
-    grupos.length <= 1 ? Object.fromEntries(grupos.map((g) => [g.nome, true])) : {},
+    Object.fromEntries(
+      grupos.map((g) => [
+        g.nome,
+        grupos.length <= 1 ||
+          g.linhas.some(
+            (l) => l.feitos > 0 || l.meses.some((c) => c.atrasado || c.dispensado),
+          ),
+      ]),
+    ),
   )
   const alternar = (nome: string) =>
     setAbertos((atual) => ({ ...atual, [nome]: !atual[nome] }))
@@ -332,13 +370,13 @@ function Grade({
         {grupos.map((grupo) => (
         <tbody key={grupo.nome}>
           {grupos.length > 1 ? (
-            <tr className="border-b border-borda bg-superficie-alta/40">
+            <tr className="border-b border-borda bg-superficie-alta">
               <td colSpan={dados.meses.length + 2} className="p-0">
                 <button
                   type="button"
                   onClick={() => alternar(grupo.nome)}
                   aria-expanded={Boolean(abertos[grupo.nome])}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left transition hover:bg-superficie-alta"
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left transition hover:bg-superficie-destacada"
                 >
                   <span aria-hidden className="text-fraco">
                     {abertos[grupo.nome] ? '⌄' : '›'}
@@ -421,6 +459,329 @@ function EsqueletoDaGrade() {
       </div>
     </Cartao>
   )
+}
+
+/* ------------------------------------------------------------------ o veredito */
+
+/**
+ * A primeira frase da tela: **estou em dia?**
+ *
+ * "13 de 270" não responde isso — foi exatamente esse par que fez a mesma usina, sem uma
+ * única atividade atrasada, parecer 4,8 % cumprida. A pergunta do cliente é binária, e a
+ * resposta binária mora nas atividades ATRASADAS, que independem do tamanho do contrato.
+ *
+ * Quando há atraso, o número sozinho não move ninguém: a faixa nomeia a mais antiga e o mês
+ * dela, e clicar abre as tarefas daquele X. Quando não há, a faixa diz isso com todas as
+ * letras — silêncio se leria como "a tela não sabe".
+ */
+function Veredito({
+  dados,
+  aoAbrirCelula,
+}: {
+  dados: CronogramaOut
+  aoAbrirCelula: (celula: CelulaAberta) => void
+}) {
+  const atrasadas = totalAtrasadas(dados.linhas)
+  if (atrasadas === 0) {
+    return (
+      <FaixaAtencao
+        tom="ok"
+        titulo="Em dia — nenhuma atividade atrasada"
+        detalhe={
+          dados.mes_referencia
+            ? `Conferido até ${competencia(dados.mes_referencia)}. O que ainda não venceu não é cobrança.`
+            : 'Nenhuma atividade do contrato passou do mês previsto.'
+        }
+      />
+    )
+  }
+
+  const maisAntiga = primeiraAtrasada(dados)
+  const planItemId = maisAntiga === null ? null : maisAntiga.planItemId
+  const abrir =
+    maisAntiga !== null && planItemId !== null
+      ? () => aoAbrirCelula({ planItemId, nome: maisAntiga.nome, mes: maisAntiga.mes })
+      : undefined
+
+  return (
+    <FaixaAtencao
+      tom="parado"
+      titulo={`${inteiro(atrasadas)} ${atrasadas === 1 ? 'atividade atrasada' : 'atividades atrasadas'}`}
+      detalhe={
+        maisAntiga ? (
+          <>
+            A mais antiga é <strong className="font-medium">{maisAntiga.nome}</strong>, prevista
+            para {competencia(maisAntiga.mes)}.
+          </>
+        ) : undefined
+      }
+      aoAbrir={abrir}
+    />
+  )
+}
+
+/* ------------------------------------------------------------------ a fita dos meses */
+
+/**
+ * Os doze meses prontos para a fita.
+ *
+ * `previsto`/`cumprido`/`situacao` são do SERVIDOR (`meses_estado`, o recorte de vigência do
+ * meuPlano). As ATRASADAS vêm da matriz, porque é a única fonte que as localiza por mês — e
+ * é a mesma fonte que pinta a célula de vermelho, então a fita e a grade concordam por
+ * construção. Sem `meses_estado` a fita simplesmente não existe: classificar mês em
+ * fechado/corrente/futuro aqui seria adivinhar a âncora do contrato pelo relógio.
+ */
+function fitaDosMeses(dados: CronogramaOut): MesDaFita[] {
+  const estados = dados.meses_estado ?? []
+  if (estados.length === 0) return []
+  const atrasos = atrasadasPorMes(dados.linhas)
+  return estados.map((m) => {
+    const n = atrasos.get(m.mes)
+    return {
+      mes: m.mes,
+      situacao: m.situacao,
+      previsto: m.previsto,
+      cumprido: m.cumprido,
+      atrasadas: n === undefined ? 0 : n,
+    }
+  })
+}
+
+/* ------------------------------------------------------------------ as listas do mês */
+
+/** Uma linha das duas listas do mês — abre as mesmas tarefas que a célula da grade abriria. */
+function LinhaDoMes({
+  item,
+  aoAbrirCelula,
+}: {
+  item: ItemDoMes
+  aoAbrirCelula: (celula: CelulaAberta) => void
+}) {
+  const planItemId = item.planItemId
+  const conteudo = (
+    <>
+      <Marca celula={item.celula} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-corpo">{item.nome}</span>
+        <span className="block truncate text-xs text-fraco">
+          {item.grupo}
+          {item.celula.dispensado ? ' · dispensada com motivo' : ''}
+          {item.celula.atrasado ? ' · atrasada' : ''}
+        </span>
+      </span>
+    </>
+  )
+  if (planItemId === null) {
+    // Sem item de plano não há como perguntar quais tarefas estão atrás do X: a linha fica,
+    // porque o dado é verdadeiro, mas não finge ser um botão. Clique morto é pior que texto.
+    return <li className="flex items-start gap-3 py-2">{conteudo}</li>
+  }
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => aoAbrirCelula({ planItemId, nome: item.nome, mes: item.celula.mes })}
+        className="flex w-full items-start gap-3 rounded-campo px-1 py-2 text-left transition hover:bg-superficie-alta"
+      >
+        {conteudo}
+      </button>
+    </li>
+  )
+}
+
+/**
+ * O agora, em duas colunas: **o que já foi feito** × **o que ainda está previsto** no mês de
+ * referência.
+ *
+ * É a única parte da tela que o cliente usa sem abrir nada: as poucas atividades do mês
+ * corrente cabem na tela, ao contrário das 94 linhas do contrato inteiro.  O mês vem do
+ * SERVIDOR (`mes_referencia`) — deduzi-lo do relógio apontaria para a coluna errada num
+ * contrato que não começa em janeiro.
+ *
+ * Lista vazia não some: ela diz por que está vazia. "Nada previsto para este mês" é uma
+ * resposta legítima do contrato, e um espaço em branco no lugar dela se lê como falha.
+ */
+function ListasDoMes({
+  dados,
+  mes,
+  aoAbrirCelula,
+}: {
+  dados: CronogramaOut
+  mes: string
+  aoAbrirCelula: (celula: CelulaAberta) => void
+}) {
+  const { feitas, previstas } = atividadesDoMes(dados, mes)
+  const coluna = (titulo: string, itens: ItemDoMes[], vazio: string) => (
+    <Cartao>
+      <div className="mb-1 flex items-baseline justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-rotulo">{titulo}</h2>
+        <span className="text-xs text-fraco">
+          <Num>{inteiro(itens.length)}</Num>
+        </span>
+      </div>
+      {itens.length === 0 ? (
+        <p className="py-2 text-sm text-fraco">{vazio}</p>
+      ) : (
+        <ul className="divide-y divide-borda-fraca">
+          {itens.map((item, i) => (
+            <LinhaDoMes
+              key={item.planItemId === null ? `sem-plano-${i}` : item.planItemId}
+              item={item}
+              aoAbrirCelula={aoAbrirCelula}
+            />
+          ))}
+        </ul>
+      )}
+    </Cartao>
+  )
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {coluna(
+        `Feito em ${competencia(mes)}`,
+        feitas,
+        'Nada registrado neste mês ainda — executadas e dispensadas apareceriam aqui.',
+      )}
+      {coluna(
+        `Previsto para ${competencia(mes)}`,
+        previstas,
+        'Nada previsto para este mês neste contrato.',
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ a matriz, recolhida */
+
+/**
+ * A matriz inteira, atrás de um clique, como UM bloco.
+ *
+ * Ela nasce FECHADA de propósito. Aberta, são 94 linhas de ensaio — "Medição do TTR",
+ * "Resistência das bobinas", "Isolação CC" —, que é a análise de equipamento que o dono
+ * disse que o cliente corporativo não quer ver de saída. Fechada, quem precisa do "X"
+ * continua a um clique dele, e quem só quer saber se está sendo feito já leu a resposta três
+ * blocos acima.
+ *
+ * Fechada quer dizer NÃO MONTADA — sem tabela no DOM, e não uma tabela escondida por CSS.
+ * São mais de mil células que o navegador montaria antes de a primeira frase aparecer.
+ */
+function MatrizInteira({
+  dados,
+  aoAbrirCelula,
+}: {
+  dados: CronogramaOut
+  aoAbrirCelula: (celula: CelulaAberta) => void
+}) {
+  // ABERTA por padrão. Fechada, a tela ficava com um veredito, um número e um botão — e o
+  // cliente que quer "ver o que foi feito" tinha de descobrir que havia mais um clique. O
+  // botão continua, para recolher quando a grade atrapalha.
+  const [aberta, setAberta] = useState(true)
+  const linhas = dados.linhas.length
+  return (
+    <Cartao semPadding>
+      <button
+        type="button"
+        onClick={() => setAberta((v) => !v)}
+        aria-expanded={aberta}
+        className="flex w-full items-center gap-2 px-5 py-4 text-left transition hover:bg-superficie-alta"
+      >
+        <span aria-hidden className="text-fraco">
+          {aberta ? '⌄' : '›'}
+        </span>
+        {/* Rótulo ESTÁVEL: quem diz o estado é o chevron e o `aria-expanded`. Um título que
+            troca de palavra ao abrir some do olho de quem procurava a seção pelo nome. */}
+        <span className="text-sm font-medium text-forte">Cronograma inteiro</span>
+        <span className="text-xs text-fraco">
+          <Num>{inteiro(linhas)}</Num> {linhas === 1 ? 'atividade' : 'atividades'} ·{' '}
+          <Num>{inteiro(dados.meses.length)}</Num> meses
+        </span>
+      </button>
+      {aberta ? (
+        <div className="border-t border-borda">
+          <div className="px-5 py-3">
+            <Legenda />
+          </div>
+          <Grade dados={dados} aoAbrirCelula={aoAbrirCelula} />
+        </div>
+      ) : null}
+    </Cartao>
+  )
+}
+
+/* ------------------------------------------------------------------ o número grande */
+
+/**
+ * O número grande — e de QUE JANELA ele fala.
+ *
+ * Há duas perguntas parecidas e elas não são a mesma: "quanto já foi cumprido do que já
+ * VENCEU" (o recorte de vigência, `cumprido_ate_hoje / previsto_ate_hoje`, calculado no
+ * meuPlano) e "quanto já foi cumprido do ANO INTEIRO" (`feitos_ano / previsto_ano`, a soma
+ * da matriz que está logo abaixo na tela). A primeira é a boa, e é a que o cartão mostra
+ * quando o servidor a publica.
+ *
+ * O que este bloco resolve é o outro caso. Enquanto o recorte não chega, a tela escrevia um
+ * travessão — com 94 linhas, 269 células e 13 X verdes na mão, logo abaixo. Travessão é para
+ * ausência de dado, não para dado que ainda não foi resumido: agora ela responde pela
+ * matriz, e o rótulo TROCA junto ("no ano", não "até aqui"), porque um número respondendo a
+ * outra pergunta com o rótulo da primeira é exatamente como nasceram os dois números
+ * discordantes que este projeto já pagou caro.
+ *
+ * A tela continua sem dividir nada: `pct_ate_hoje` é do servidor, e no caso do ano nenhum
+ * percentual é impresso — inventá-lo aqui daria uma terceira resposta.
+ */
+type ResumoDoTopo = {
+  rotulo: string
+  valor: string
+  detalhe: ReactNode
+}
+
+function resumoDoTopo(d: CronogramaOut): ResumoDoTopo {
+  const cumprido = d.cumprido_ate_hoje
+  const previsto = d.previsto_ate_hoje
+  const total =
+    d.previsto_no_contrato === null || d.previsto_no_contrato === undefined
+      ? d.previsto_ano
+      : d.previsto_no_contrato
+
+  if (cumprido !== null && cumprido !== undefined) {
+    return {
+      rotulo: 'Atividades cumpridas até aqui',
+      valor:
+        previsto === null || previsto === undefined
+          ? inteiro(cumprido)
+          : `${inteiro(cumprido)} de ${inteiro(previsto)}`,
+      detalhe: (
+        <>
+          <span className="block">
+            {d.mes_referencia ? `até ${competencia(d.mes_referencia)} · ` : ''}
+            executadas e dispensadas
+          </span>
+          <span className="block">
+            <Num>{inteiro(total)}</Num> previstas no contrato
+            {d.pct_ate_hoje === null || d.pct_ate_hoje === undefined ? null : (
+              <>
+                {' · '}
+                <Num>{porcento(d.pct_ate_hoje, 1)}</Num> do que já venceu
+              </>
+            )}
+          </span>
+        </>
+      ),
+    }
+  }
+
+  return {
+    rotulo: 'Atividades cumpridas no ano',
+    valor: `${inteiro(d.feitos_ano)} de ${inteiro(d.previsto_ano)}`,
+    detalhe: (
+      <>
+        <span className="block">somadas da grade inteira, o ano do contrato</span>
+        <span className="block">
+          inclui os meses que ainda nem venceram — o servidor não publicou o recorte por
+          vigência deste contrato
+        </span>
+      </>
+    ),
+  }
 }
 
 /* ------------------------------------------------------------------ a tela */
@@ -559,10 +920,13 @@ export default function Cronograma() {
         ) : null}
 
         <Tela4Estados leitura={cronograma} esqueleto={<EsqueletoDaGrade />}>
-          {(d) =>
+          {(d) => {
+            const fita = fitaDosMeses(d)
+            const resumo = resumoDoTopo(d)
+            const agora = mesDeReferencia(d)
             // Sem versão consolidada NÃO se desenha grade: a frase é do servidor, e ela diz
             // "ainda não foi publicado" — nunca "nada foi feito".
-            d.status === null || d.linhas.length === 0 ? (
+            return d.status === null || d.linhas.length === 0 ? (
               <Vazio
                 titulo="Cronograma ainda não publicado"
                 descricao={
@@ -572,30 +936,43 @@ export default function Cronograma() {
             ) : (
               <>
                 {d.aviso ? <Aviso>{d.aviso}</Aviso> : null}
-                <Cartao semPadding>
-                  <div className="flex flex-wrap items-end justify-between gap-4 border-b border-borda px-5 py-4">
+
+                <Veredito dados={d} aoAbrirCelula={setCelulaAberta} />
+
+                <Cartao>
+                  <div className="flex flex-wrap items-end justify-between gap-4">
                     <Kpi
-                      rotulo="Atividades cumpridas no ano do contrato"
-                      valor={inteiro(d.feitos_ano)}
-                      detalhe={
-                        <>de {inteiro(d.previsto_ano)} previstas — executadas e dispensadas</>
-                      }
+                      rotulo={resumo.rotulo}
+                      valor={resumo.valor}
+                      detalhe={resumo.detalhe}
                       tamanho="grande"
                     />
-                    <div className="flex flex-col items-start gap-2 sm:items-end">
-                      <AtualizadoAs
-                        em={cronograma.atualizadoEm}
-                        offlineDesde={cronograma.offlineDesde}
-                      />
-                      <Legenda />
-                    </div>
+                    <AtualizadoAs
+                      em={cronograma.atualizadoEm}
+                      offlineDesde={cronograma.offlineDesde}
+                    />
                   </div>
 
-                  <Grade dados={d} aoAbrirCelula={setCelulaAberta} />
+                  {fita.length > 0 ? (
+                    <div className="mt-5">
+                      <FitaDosMeses meses={fita} />
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-sm text-fraco">
+                      O servidor ainda não publicou o recorte por mês deste contrato: o
+                      número acima é a soma da grade inteira, que está logo abaixo.
+                    </p>
+                  )}
                 </Cartao>
+
+                {agora === null ? null : (
+                  <ListasDoMes dados={d} mes={agora} aoAbrirCelula={setCelulaAberta} />
+                )}
+
+                <MatrizInteira dados={d} aoAbrirCelula={setCelulaAberta} />
               </>
             )
-          }
+          }}
         </Tela4Estados>
       </div>
 

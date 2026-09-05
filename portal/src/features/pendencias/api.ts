@@ -44,13 +44,40 @@ export type Pendencia = {
   status: string | null
   situacao: string
   tom: string
+  /**
+   * Em qual das TRÊS colunas do quadro esta pendência mora: `aguardando`, `em_andamento`
+   * ou `concluida`. **Não é `situacao` em minúsculas.** O servidor deriva a coluna só do
+   * status: uma pendência com prazo vencido continua em "aguardando", pintada de vermelho
+   * por `tom`. Se o kanban agrupasse pela frase, a atrasada — justo a que importa — cairia
+   * numa quarta coluna e discordaria dos contadores do topo.
+   */
+  coluna: string
   criticidade: string | null
   criticidade_tom: string | null
+  /**
+   * A posição na escala de criticidade (0 crítica … 4 sem criticidade declarada), crescente.
+   * Vem do servidor porque a escala é dele: remontá-la aqui poria "média" depois de "baixa"
+   * na primeira ordenação alfabética, e as duas telas ordenariam a mesma lista diferente.
+   */
+  criticidade_rank: number
   responsavel: string | null
   aberta_em: string | null
   prazo: string | null
   ultima_atividade_em: string | null
+  /**
+   * `hoje` | `7d` | `30d` | `+30d` — há quanto tempo ninguém mexe, medido pelo servidor no
+   * fuso da usina. Nulo quando não há atividade datada: aí a tela mostra travessão, nunca
+   * "+30d", que seria uma acusação inventada a partir de um campo ausente.
+   */
+  faixa_parada: string | null
   concluida_em: string | null
+  /** O equipamento principal (o 1º vinculado), como o card do meuPlano mostra. */
+  equipamento: string | null
+  /** Quantos equipamentos ao todo — o card diz "principal +N". Nulo = o servidor não contou. */
+  equip_count: number | null
+  /** Subitem: o id da pendência-mãe. O meuPlano permite UM nível. */
+  parent_id: number | null
+  child_count: number | null
   /** Quantos documentos foram PUBLICADOS ao cliente. Nulo = o servidor não contou. */
   documentos: number | null
   os_count: number | null
@@ -61,6 +88,16 @@ export type PendenciasOut = {
   abertas: number | null
   concluidas: number | null
   prazo_vencido: number | null
+  /**
+   * As três colunas do quadro, contadas pelo SERVIDOR. `aguardando + em_andamento +
+   * concluidas` fecha com `total` por construção — os cartões do topo e as colunas do
+   * kanban descrevem o mesmo conjunto, e o cliente não pode somar as colunas e achar um
+   * número diferente do cartão.
+   */
+  aguardando: number | null
+  em_andamento: number | null
+  /** O que ELE cobrou e ainda não voltou. `abertas` conta o time todo; esta, só a marca dele. */
+  cobradas_abertas: number | null
   pendencias: Pendencia[]
   usinas_com_manutencao: number
   aviso: string | null

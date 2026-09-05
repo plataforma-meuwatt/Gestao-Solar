@@ -34,7 +34,15 @@ import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-rout
 
 import { AtualizadoAs, Cartao, Erro } from '@/components/base'
 import { useLeitura } from '@/lib/leitura'
-import { GRUPOS, SECAO_PADRAO, VISAO_GERAL, casamentoExato, secoesDaFamilia } from '@/shell/menu'
+import {
+  GRUPOS,
+  SECAO_PADRAO,
+  VISAO_GERAL,
+  casamentoExato,
+  paraDaSecao,
+  secoesDaCarteira,
+  secoesDaFamilia,
+} from '@/shell/menu'
 import { SeletorUsina, type UsinasOut } from '@/shell/SeletorUsina'
 import { useAuth } from '@/store/auth'
 import { useUsina } from '@/store/usina'
@@ -167,13 +175,46 @@ export function Layout() {
         </div>
       )}
 
+      {/*
+        A CARTEIRA vem antes, e em bloco próprio. Sob o cabeçalho "Esta usina" — onde estes
+        dois itens estavam — a comparação parecia ser daquela usina, quando ela é justamente
+        das outras seis. E o bloco não depende de haver usina escolhida: nenhum dos dois
+        endereços carrega `:id`.
+      */}
+      <div className={soIcone ? 'mb-3' : 'mb-4'}>
+        {soIcone ? null : (
+          <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">
+            Comparar usinas
+          </p>
+        )}
+        <ul className="space-y-0.5">
+          {secoesDaCarteira().map((s) => {
+            const para = paraDaSecao(s, atual)
+            if (para === null) return null
+            return (
+              <li key={s.fim}>
+                <Link
+                  para={para}
+                  rotulo={s.rotulo}
+                  Icone={s.icone}
+                  fim={casamentoExato(s.fim)}
+                  soIcone={soIcone}
+                  aoNavegar={aoNavegar}
+                />
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+
       {atual ? (
         <>
           {soIcone ? null : (
             <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">Esta usina</p>
           )}
           {GRUPOS.map((grupo, i) => {
-            const itens = secoesDaFamilia(grupo.familia)
+            // Só as seções DA USINA: as de carteira já saíram no bloco acima.
+            const itens = secoesDaFamilia(grupo.familia).filter((x) => !x.carteira)
             if (itens.length === 0) return null
             const CabecalhoIcone = grupo.icone
             return (
@@ -201,7 +242,9 @@ export function Layout() {
                   {itens.map((s) => (
                     <li key={s.fim}>
                       <Link
-                        para={`/usinas/${atual}${s.fim}`}
+                        // `paraDaSecao` é quem monta endereço de menu — a concatenação
+                        // crua mandava item de carteira para `/usinas/4/comparar/energia`.
+                        para={paraDaSecao(s, atual) ?? `/usinas/${atual}${s.fim}`}
                         rotulo={s.rotulo}
                         Icone={s.icone}
                         fim={casamentoExato(s.fim)}

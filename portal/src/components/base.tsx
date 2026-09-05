@@ -632,8 +632,81 @@ export function Tabela<T>({
   vazio?: ReactNode
 }) {
   if (linhas.length === 0 && vazio) return <>{vazio}</>
+  return <TabelaRolavel colunas={colunas} linhas={linhas} chave={chave} aoClicar={aoClicar} />
+}
+
+/**
+ * A tabela dentro do contêiner que rola — e que AVISA que rola.
+ *
+ * Separada só para poder ter estado: o contêiner tem `overflow-x-auto` e, quando as colunas
+ * não cabem, o navegador corta a última no meio da palavra sem nenhum sinal. A tabela de
+ * Comparar manutenção tem oito colunas e transborda até num monitor de 1500 px: o cabeçalho
+ * saía "Cl…" e lia como defeito de renderização, não como "role para o lado".
+ *
+ * O aviso é medido, nunca presumido: `scrollWidth > clientWidth + 1` (o +1 absorve o
+ * arredondamento de sub-pixel do zoom), refeito a cada `resize` e sempre que as linhas
+ * mudam. Sem transbordo não há sombra nenhuma — decoração permanente ensinaria o olho a
+ * ignorá-la justo quando ela significasse alguma coisa. A sombra some ao chegar ao fim da
+ * rolagem, que é o que confirma ao leitor que não há mais coluna escondida.
+ */
+function TabelaRolavel<T>({
+  colunas,
+  linhas,
+  chave,
+  aoClicar,
+}: {
+  colunas: { titulo: string; alinhar?: 'esq' | 'dir'; celula: (item: T) => ReactNode }[]
+  linhas: T[]
+  chave: (item: T) => string | number
+  aoClicar?: (item: T) => void
+}) {
+  const caixa = useRef<HTMLDivElement | null>(null)
+  const [sombra, setSombra] = useState<{ esq: boolean; dir: boolean }>({
+    esq: false,
+    dir: false,
+  })
+
+  useEffect(() => {
+    const el = caixa.current
+    if (!el) return
+    const medir = () => {
+      const sobra = el.scrollWidth - el.clientWidth - el.scrollLeft
+      setSombra({ esq: el.scrollLeft > 1, dir: sobra > 1 })
+    }
+    medir()
+    el.addEventListener('scroll', medir, { passive: true })
+    window.addEventListener('resize', medir)
+    return () => {
+      el.removeEventListener('scroll', medir)
+      window.removeEventListener('resize', medir)
+    }
+  }, [colunas.length, linhas.length])
+
   return (
-    <div className="overflow-x-auto">
+    <div className="relative">
+      {sombra.esq ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 left-0 z-10 w-6 bg-gradient-to-r from-fundo to-transparent"
+        />
+      ) : null}
+      {sombra.dir ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-fundo to-transparent"
+        />
+      ) : null}
+      <div
+        ref={caixa}
+        className="overflow-x-auto"
+        role={sombra.dir || sombra.esq ? 'region' : undefined}
+        aria-label={
+          sombra.dir || sombra.esq
+            ? 'Tabela mais larga que a tela — role para o lado para ver todas as colunas'
+            : undefined
+        }
+        tabIndex={sombra.dir || sombra.esq ? 0 : undefined}
+      >
       {/*
         `min-w-max` em vez de largura fixa: com `min-w-[640px]` a tabela sempre cabia no
         cartão, e o navegador ESPREMIA as colunas para caber. A de Pendências, com sete,
@@ -679,6 +752,7 @@ export function Tabela<T>({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
