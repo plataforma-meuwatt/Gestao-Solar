@@ -121,14 +121,34 @@ export type ResumoOut = {
 const PRAZO_DA_CARTEIRA_MS = 120_000
 
 /**
- * A leitura da carteira num mês.
+ * A leitura da carteira num mês, EM DUAS ONDAS.
  *
  * `referencia` é `YYYY-MM-DD` e entra na chave do cache: cada mês guarda o seu, então andar
  * para trás e voltar não repete a viagem, e o mês aberto ontem reabre na hora — com o selo de
  * offline em cima — quando a rede estiver fora.
+ *
+ * Por que duas: a chamada inteira levava 22 s contra os upstreams reais, e esta tela tinha um
+ * esqueleto só — a PRIMEIRA tela do portal ficava perto de meio minuto cinza, enquanto todas
+ * as outras respondiam entre 1 e 8 s. A energia (monitoramento) chega em segundos; é a
+ * manutenção — cronograma, ordens e pendências de cada usina — que arrasta. Separadas, a
+ * carteira aparece com a energia e as colunas de manutenção preenchem sozinhas depois.
+ *
+ * As duas leituras são a MESMA rota com recortes diferentes, então nenhum número muda de
+ * origem: o que a segunda traz é exatamente o que a chamada única trazia.
  */
 export function useResumo(referencia: string): Leitura<ResumoOut> {
-  return useLeitura<ResumoOut>(`resumo?referencia=${referencia}`, {
+  return useLeitura<ResumoOut>(`resumo?referencia=${referencia}&blocos=energia`, {
+    prazoMs: PRAZO_DA_CARTEIRA_MS,
+  })
+}
+
+/**
+ * A segunda onda: cronograma, ordens e pendências. Enquanto ela não chega, as colunas de
+ * manutenção mostram "—" com um aviso de que ainda estão carregando — nunca zero, que se
+ * leria como "ninguém está trabalhando".
+ */
+export function useResumoManutencao(referencia: string): Leitura<ResumoOut> {
+  return useLeitura<ResumoOut>(`resumo?referencia=${referencia}&blocos=manutencao`, {
     prazoMs: PRAZO_DA_CARTEIRA_MS,
   })
 }

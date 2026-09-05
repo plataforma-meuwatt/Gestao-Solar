@@ -64,8 +64,17 @@ export type LinhaCronograma = {
   /** Sem ele a célula é uma marca sem porta: é por ele que se abrem as tarefas do mês. */
   plan_item_id: number | null
   nome: string
+  /** Selo JÁ em português ("Ensaio", "Inspeção") — o código cru fica em `categoria_codigo`. */
   categoria: string | null
+  categoria_codigo?: string | null
+  /** "Semestral", "A cada 5 meses" — nunca "6/MONTH". */
   periodicidade: string | null
+  /**
+   * O bloco sob o qual a linha aparece na tela ("Subestação", "CFTV"). O servidor sempre
+   * manda algo; agrupar é o que transforma 94 linhas de ensaio — a análise de equipamento
+   * que o cliente disse não querer — em "está sendo feito?" com o detalhe atrás de um clique.
+   */
+  grupo: string
   previsto_ano: number
   feitos: number
   meses: Celula[]
@@ -76,6 +85,8 @@ export type CronogramaOut = {
   usina_id: number
   contrato_id: number | null
   contrato: string | null
+  /** O servidor diz se a rota irmã do PDF tem o que gerar — botão que só erra é ruído. */
+  pdf_disponivel?: boolean
   /** Nulo = a equipe ainda não publicou o cronograma deste contrato (a frase vem em `aviso`). */
   status: string | null
   versao: number | null

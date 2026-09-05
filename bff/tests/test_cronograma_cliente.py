@@ -278,3 +278,41 @@ async def test_o_pdf_de_contrato_alheio_e_404(db, dono, cenario, usinas):
         await pdf_do_cronograma(porto.id, 30, db, dono)
     assert e.value.status_code == 404
     assert cenario.pedidos == []
+
+
+# ── o par JSON × PDF responde a mesma coisa ─────────────────────────────────
+
+
+async def test_o_json_diz_se_o_pdf_existe(db, dono, usinas, cenario):
+    """Sem consolidação o JSON responde 200 com a frase e o PDF responde 404: duas formas
+    para o mesmo fato. Quem chamasse o PDF direto (um link salvo) recebia erro em vez do
+    vazio explicado. Agora o JSON diz, e ninguém oferece o botão que só dá erro."""
+    com = await cronograma_da_usina(usina_id=usinas[0].id, db=db, usuario=dono)
+    assert com.pdf_disponivel is True
+
+    sem = await cronograma_da_usina(usina_id=usinas[1].id, db=db, usuario=dono)
+    assert sem.pdf_disponivel is False
+    assert sem.aviso == NAO_PUBLICADO
+
+
+async def test_a_linha_do_cronograma_chega_traduzida_e_agrupada(db, dono, usinas, cenario):
+    """94 linhas planas com "ensaio" e "4/ano" eram a análise de equipamento que o dono
+    disse que o cliente NÃO quer ver. O selo e a periodicidade saem em português, e a
+    linha diz sob que bloco a tela deve recolhê-la."""
+    saida = await cronograma_da_usina(usina_id=usinas[0].id, db=db, usuario=dono)
+    linha = saida.linhas[0]
+    assert linha.categoria == "Ensaio"
+    assert linha.categoria_codigo == "ensaio"          # auditoria mantida
+    assert linha.periodicidade == "A cada 4 anos"
+    assert linha.grupo == "Outras atividades"          # sem grupo no upstream, nunca vazio
+
+
+async def test_o_grupo_vem_do_plano_quando_o_upstream_o_declara(db, dono, usinas, cenario):
+    cenario.consolidados[20] = {
+        **MATRIZ,
+        "rows": [{**MATRIZ["rows"][0], "group_name": "Subestação"},
+                 {**MATRIZ["rows"][0], "plan_item_id": 78, "group_name": None,
+                  "agrupamento_nome": "Grandeza elétrica"}],
+    }
+    saida = await cronograma_da_usina(usina_id=usinas[0].id, db=db, usuario=dono)
+    assert [l.grupo for l in saida.linhas] == ["Subestação", "Grandeza elétrica"]

@@ -37,6 +37,7 @@ import {
   Num,
   Pagina,
   Selo,
+  SeloClasse,
   Tela4Estados,
   Vazio,
 } from '@/components/base'
@@ -51,20 +52,6 @@ import {
   type Ordem as OrdemDeServico,
   type Tarefa,
 } from '@/features/ordem/api'
-
-/** Corretiva é conserto (algo quebrou); preventiva é rotina cumprida. Mesma régua do app. */
-function tomDaClasse(c: string | null): string {
-  const v = (c ?? '').toUpperCase()
-  if (v.includes('CORRETIVA')) return 'alerta'
-  if (v.includes('PREVENTIVA')) return 'ok'
-  return 'semDados'
-}
-
-function rotuloDaClasse(c: string | null): string {
-  if (!c) return 'sem classificação'
-  const limpo = c.replace(/_/g, ' ').toLowerCase()
-  return limpo.charAt(0).toUpperCase() + limpo.slice(1)
-}
 
 /** As seções na ordem em que vieram — o BFF já ordenou por grupo e nome. */
 function agrupar(itens: Tarefa[]): [string, Tarefa[]][] {
@@ -210,7 +197,7 @@ function Cabecalho({ ordem: o }: { ordem: OrdemDeServico }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <h2 className="min-w-0 text-lg font-semibold leading-snug text-forte">{o.objetivo}</h2>
         <div className="flex flex-wrap items-center gap-2">
-          <Selo tom={tomDaClasse(o.classificacao)}>{rotuloDaClasse(o.classificacao)}</Selo>
+          <SeloClasse classificacao={o.classificacao} tom={o.classificacao_tom} />
           <Selo tom={o.tom}>{o.situacao}</Selo>
         </div>
       </div>
@@ -219,7 +206,7 @@ function Cabecalho({ ordem: o }: { ordem: OrdemDeServico }) {
         <Dado rotulo="Técnico">{o.tecnico ?? '—'}</Dado>
         <Dado rotulo="Contrato">
           {/* Número de contrato é identificador: sem separador de milhar. */}
-          <Num>{o.numero === null ? '—' : `nº ${o.numero}`}</Num>
+          <Num>{o.contrato_numero === null ? '—' : `nº ${o.contrato_numero}`}</Num>
         </Dado>
         <Dado rotulo="Agendada">
           <Num>{dataPorExtenso(o.agendada_para)}</Num>

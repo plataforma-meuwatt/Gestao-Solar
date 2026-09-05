@@ -267,6 +267,29 @@ function TarefasDoMes({
  * cabem, e sem a âncora do nome o cliente perde de que atividade é a linha que está lendo).
  * A rolagem acontece DENTRO do cartão — a página nunca rola de lado.
  */
+/**
+ * As linhas por BLOCO, na ordem em que o servidor as mandou.
+ *
+ * O cronograma chegava com 94 linhas planas — "Medição do TTR", "Resistência das bobinas",
+ * "Isolação CC", "Curva IV" —, que é exatamente a análise de equipamento que o dono disse
+ * que o cliente corporativo não quer ver ("ele só quer saber se está sendo feito"). O X é
+ * inerentemente uma matriz atividade × mês, então a linha não sai; o que muda é que ela
+ * nasce RECOLHIDA sob o bloco a que pertence, com o total do bloco à mostra.
+ */
+function porGrupo(linhas: LinhaCronograma[]): { nome: string; linhas: LinhaCronograma[] }[] {
+  const ordem: string[] = []
+  const mapa = new Map<string, LinhaCronograma[]>()
+  for (const l of linhas) {
+    const nome = l.grupo || 'Outras atividades'
+    if (!mapa.has(nome)) {
+      mapa.set(nome, [])
+      ordem.push(nome)
+    }
+    mapa.get(nome)!.push(l)
+  }
+  return ordem.map((nome) => ({ nome, linhas: mapa.get(nome)! }))
+}
+
 function Grade({
   dados,
   aoAbrirCelula,
@@ -275,6 +298,13 @@ function Grade({
   aoAbrirCelula: (celula: CelulaAberta) => void
 }) {
   const fixa = 'sticky left-0 z-10 bg-painel'
+  const grupos = porGrupo(dados.linhas)
+  // Um bloco só não é agrupamento: abre inteiro, sem cabeçalho que não separa nada.
+  const [abertos, setAbertos] = useState<Record<string, boolean>>(() =>
+    grupos.length <= 1 ? Object.fromEntries(grupos.map((g) => [g.nome, true])) : {},
+  )
+  const alternar = (nome: string) =>
+    setAbertos((atual) => ({ ...atual, [nome]: !atual[nome] }))
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-sm">
@@ -299,8 +329,32 @@ function Grade({
             </th>
           </tr>
         </thead>
-        <tbody>
-          {dados.linhas.map((linha: LinhaCronograma, i) => (
+        {grupos.map((grupo) => (
+        <tbody key={grupo.nome}>
+          {grupos.length > 1 ? (
+            <tr className="border-b border-borda bg-superficie-alta/40">
+              <td colSpan={dados.meses.length + 2} className="p-0">
+                <button
+                  type="button"
+                  onClick={() => alternar(grupo.nome)}
+                  aria-expanded={Boolean(abertos[grupo.nome])}
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left transition hover:bg-superficie-alta"
+                >
+                  <span aria-hidden className="text-fraco">
+                    {abertos[grupo.nome] ? '⌄' : '›'}
+                  </span>
+                  <span className="text-sm font-medium text-forte">{grupo.nome}</span>
+                  <span className="text-xs text-fraco">
+                    <Num>{inteiro(grupo.linhas.reduce((t, l) => t + l.feitos, 0))}</Num> de{' '}
+                    <Num>{inteiro(grupo.linhas.reduce((t, l) => t + l.previsto_ano, 0))}</Num> ·{' '}
+                    <Num>{inteiro(grupo.linhas.length)}</Num>{' '}
+                    {grupo.linhas.length === 1 ? 'atividade' : 'atividades'}
+                  </span>
+                </button>
+              </td>
+            </tr>
+          ) : null}
+          {(grupos.length > 1 && !abertos[grupo.nome] ? [] : grupo.linhas).map((linha: LinhaCronograma, i) => (
             <tr
               key={linha.plan_item_id ?? `linha-${i}`}
               className="border-b border-borda-fraca last:border-0"
@@ -349,6 +403,7 @@ function Grade({
             </tr>
           ))}
         </tbody>
+        ))}
       </table>
     </div>
   )
@@ -474,8 +529,12 @@ export default function Cronograma() {
       acoes={
         <>
           {seletor}
-          {/* Sem versão publicada não há PDF para pedir: botão que só sabe errar é ruído. */}
-          {dados?.status ? (
+          {/* Sem versão publicada não há PDF para pedir: botão que só sabe errar é ruído.
+              Quem responde isso é o SERVIDOR (`pdf_disponivel`): a rota do PDF é a única
+              que sabe se tem o que gerar — o JSON responde 200 com a frase e o PDF, 404 —,
+              e a tela não pode deduzir o par sozinha. Sem o campo, vale `status`, que era
+              a régua anterior. */}
+          {(dados?.pdf_disponivel ?? Boolean(dados?.status)) ? (
             <Botao variante="secundario" onClick={() => void baixarPdf()} desabilitado={baixando}>
               {baixando ? 'Gerando PDF…' : 'PDF'}
             </Botao>

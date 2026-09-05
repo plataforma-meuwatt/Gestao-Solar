@@ -218,9 +218,11 @@ do meuPlano; omitido, vale todas as usinas concedidas.
 {
   "total": 6,
   "em_andamento": {
-    "id": 1016, "usina": "Porto Ferreira", "usina_id": 4, "numero": 12,
+    "id": 1016, "usina": "Porto Ferreira", "usina_id": 4, "contrato_numero": 665,
     "objetivo": "Manunteção preventiva do mês de agosto.",
-    "classificacao": "PREVENTIVA",
+    "classificacao": "Preventiva",
+    "classificacao_codigo": "PREVENTIVA",
+    "classificacao_tom": "ok",
     "status": "EM_EXECUCAO",
     "situacao": "Executada · aguardando verificação",
     "tom": "tempoRuim",
@@ -235,6 +237,14 @@ do meuPlano; omitido, vale todas as usinas concedidas.
   "aviso": null
 }
 ```
+
+**A OS se identifica pelo `id`** — ela não tem número próprio no meuPlano. `contrato_numero`
+é o número do CONTRATO que a rege, e chamava-se `numero`: com esse nome, o drawer da
+pendência imprimia "OS #665" (o contrato) enquanto a lista chamava a mesma ordem de
+"OS 1016", e toda OS daquele contrato virava "OS #665". `classificacao` é o rótulo PRONTO
+("Serviços adicionais"), com o código cru ao lado em `classificacao_codigo` — a tela de
+Ordens traduzia por conta própria e a de Relatórios imprimia "SERVICOS_ADICIONAIS" com
+underscore, para a MESMA ordem.
 
 `status` é o código cru do meuPlano (`ServiceOrderStatus`), preservado para auditoria.
 `situacao` é a frase que a tela mostra, e **não** é tradução palavra a palavra:
@@ -315,16 +325,29 @@ A matriz do contrato. **12 meses a partir da âncora do contrato**, não do ano 
             "2027-02","2027-03","2027-04","2027-05","2027-06","2027-07"],
   "linhas": [
     { "nome": "Limpeza e alinhamento dos sensores",
-      "categoria": "servico", "periodicidade": "1/MES",
+      "categoria": "Serviço", "categoria_codigo": "servico",
+      "periodicidade": "Mensal", "grupo": "Estação solarimétrica",
       "previsto_ano": 12, "feitos": 1,
       "meses": [
         { "mes": "2026-08", "previsto": 1, "estado": "verde",
           "feito": true, "dispensado": false, "atrasado": false }
       ] }
   ],
-  "previsto_ano": 148, "feitos_ano": 1, "aviso": null
+  "previsto_ano": 148, "feitos_ano": 1, "pdf_disponivel": true, "aviso": null
 }
 ```
+
+`categoria` e `periodicidade` saem **traduzidas**: o meuPlano manda `INSPECAO`/`ensaio`
+(duas caixas) e `6/MONTH`, e isso chegava à tela de um cliente corporativo brasileiro. Os
+códigos crus ficam em `categoria_codigo` e nos campos de origem, para auditoria.
+
+`grupo` diz sob que bloco a tela recolhe a linha. O cronograma real tem 94 linhas de ensaio
+("Medição do TTR", "Isolação CC", "Curva IV") — a análise de equipamento que o dono disse que
+o cliente não quer ver. Agrupadas e recolhidas, o que fica à mostra é a resposta que ele quer.
+
+`pdf_disponivel` diz se a rota irmã do PDF tem o que gerar. Sem versão consolidada este JSON
+responde 200 com matriz vazia e a frase, mas o PDF responde 404 — um arquivo não tem como
+avisar por dentro. O campo é o que impede a tela de oferecer um botão que só sabe errar.
 
 `estado` é o `cell_status` do meuPlano, **repassado como vem**: `verde` · `azul` ·
 `laranja` · `vermelho` · `verde_ressalva` · `null`. Aquela cor é conformidade calculada

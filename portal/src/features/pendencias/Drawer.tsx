@@ -105,7 +105,11 @@ function OrdemLinha({ ordem, aoAbrir }: { ordem: OrdemVinculada; aoAbrir: () => 
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm text-corpo">{ordem.objetivo}</span>
           <span className="block truncate text-xs text-fraco">
-            {ordem.numero === null ? `OS ${ordem.id}` : <>OS <Num>#{ordem.numero}</Num></>}
+            {/* A OS se identifica pelo `id` — é o único número que ela tem. Aqui saía
+                `contrato_numero` como "OS #665": o número do CONTRATO. Toda ordem daquele
+                contrato virava "OS #665", e o cliente não achava na lista de Ordens. */}
+            OS <Num>{ordem.id}</Num>
+            {ordem.classificacao ? ` · ${ordem.classificacao}` : ''}
             {ordem.agendada_para ? ` · ${dataCurta(ordem.agendada_para)}` : ''}
           </span>
         </span>

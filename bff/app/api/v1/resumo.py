@@ -318,6 +318,12 @@ def _falha(resultado: Any) -> str | None:
     return None
 
 
+#: As ondas em que a Visão geral pode ser pedida. "energia" = geração + paradas (meuWatt,
+#: rápido); "manutencao" = cronograma + ordens + pendências (meuPlano, cinco idas por
+#: usina). Pedir tudo de uma vez é o padrão — e continua valendo para quem já chamava.
+TODOS_OS_BLOCOS = frozenset({"energia", "manutencao"})
+
+
 @dataclass
 class _Recorte:
     """Uma usina montada, mais o que só serve aos totais e à faixa de atenção — números
@@ -329,16 +335,30 @@ class _Recorte:
     pendencias: dict[str, Any] = field(default_factory=dict)
 
 
+async def _nada() -> None:
+    """O bloco que esta onda não pediu. Devolve `None`, que os montadores abaixo já leem
+    como "sem dado" — diferente de exceção, que viraria aviso de falha na tela."""
+    return None
+
+
 async def _resumo_da_usina(
-    base: UsinaOut, link: PlantLink, referencia: date, db: Session, usuario: User
+    base: UsinaOut, link: PlantLink, referencia: date, db: Session, usuario: User,
+    blocos: frozenset[str] = TODOS_OS_BLOCOS,
 ) -> _Recorte:
-    """Os quatro blocos de uma usina, em paralelo, cada um nulo se falhar."""
+    """Os blocos pedidos de uma usina, em paralelo, cada um nulo se falhar.
+
+    `blocos` existe por causa do tempo: a carteira inteira levava 22 s contra os upstreams
+    reais e a Visão geral tem UM esqueleto — o cliente corporativo olhava meio minuto de
+    tela cinza na PRIMEIRA tela do portal. Energia (meuWatt) responde em segundos;
+    manutenção e pendências (meuPlano, cinco idas por usina) é que arrastam. Separados em
+    duas ondas, a tabela aparece cedo e as colunas de manutenção preenchem depois.
+    """
     referencia_mes = referencia.strftime("%Y-%m")
     energia, paradas, manutencao, pendencias = await asyncio.gather(
-        _bloco_energia(link, referencia, db, usuario),
-        _bloco_paradas(link, referencia, db, usuario),
-        _bloco_manutencao(link, referencia_mes, db, usuario),
-        _bloco_pendencias(link, db, usuario),
+        _bloco_energia(link, referencia, db, usuario) if "energia" in blocos else _nada(),
+        _bloco_paradas(link, referencia, db, usuario) if "energia" in blocos else _nada(),
+        _bloco_manutencao(link, referencia_mes, db, usuario) if "manutencao" in blocos else _nada(),
+        _bloco_pendencias(link, db, usuario) if "manutencao" in blocos else _nada(),
         return_exceptions=True,
     )
 
@@ -351,7 +371,9 @@ async def _resumo_da_usina(
     if base.aviso:
         avisos.append(base.aviso)
 
-    if (motivo := _falha(energia)) is not None:
+    if energia is None:
+        pass                              # onda que não pediu este bloco
+    elif (motivo := _falha(energia)) is not None:
         avisos.append(f"Energia: {motivo}")
     else:
         u.energia_mes_kwh = energia["energia"]
@@ -360,7 +382,9 @@ async def _resumo_da_usina(
         if energia["aviso"]:
             avisos.append(f"Energia: {energia['aviso']}")
 
-    if (motivo := _falha(paradas)) is not None:
+    if paradas is None:
+        pass                              # onda que não pediu este bloco
+    elif (motivo := _falha(paradas)) is not None:
         avisos.append(f"Paradas: {motivo}")
     else:
         u.paradas_mes = paradas["total"]
@@ -369,7 +393,9 @@ async def _resumo_da_usina(
         if paradas["aviso"]:
             avisos.append(f"Paradas: {paradas['aviso']}")
 
-    if (motivo := _falha(manutencao)) is not None:
+    if manutencao is None:
+        pass                              # onda que não pediu este bloco
+    elif (motivo := _falha(manutencao)) is not None:
         avisos.append(f"Manutenção: {motivo}")
     else:
         u.manutencao = ManutencaoDaUsinaOut(
@@ -383,7 +409,9 @@ async def _resumo_da_usina(
         if manutencao.get("aviso"):
             avisos.append(f"Manutenção: {manutencao['aviso']}")
 
-    if (motivo := _falha(pendencias)) is not None:
+    if pendencias is None:
+        pass                              # onda que não pediu este bloco
+    elif (motivo := _falha(pendencias)) is not None:
         avisos.append(f"Pendências: {motivo}")
     else:
         u.pendencias_abertas = pendencias["abertas"]
@@ -463,9 +491,24 @@ def _somar_inteiros(valores: list[int | None]) -> int | None:
     return sum(com_dado) if com_dado else None
 
 
+def _blocos_pedidos(valor: str | None) -> frozenset[str]:
+    """"energia", "manutencao" ou os dois separados por vírgula. Ausente ou "tudo" = tudo.
+    Nome desconhecido é recusado com a frase — silenciar viraria uma tela sem explicação
+    para colunas vazias."""
+    if valor is None or valor.strip().lower() in {"", "tudo", "todos"}:
+        return TODOS_OS_BLOCOS
+    pedidos = {p.strip().lower() for p in valor.split(",") if p.strip()}
+    desconhecidos = pedidos - TODOS_OS_BLOCOS
+    if desconhecidos or not pedidos:
+        aceitos = ", ".join(sorted(TODOS_OS_BLOCOS))
+        raise HTTPException(400, f"Bloco desconhecido: {', '.join(sorted(desconhecidos)) or valor}. Use {aceitos} ou tudo.")
+    return frozenset(pedidos)
+
+
 @router.get("/resumo", response_model=ResumoOut)
 async def resumo(
     referencia: str | None = None,
+    blocos: str | None = None,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
 ) -> ResumoOut:
@@ -474,9 +517,16 @@ async def resumo(
     `listar_usinas` é chamado uma vez para todas — ele já consulta o meuWatt em paralelo
     — e os outros blocos correm em paralelo por usina. Em série, três usinas a quatro
     upstreams cada dariam uma tela de vinte segundos.
+
+    `blocos` pede uma ONDA só: `energia` (geração e paradas) ou `manutencao` (cronograma,
+    ordens e pendências); ausente = as duas, como sempre foi. Existe porque a Visão geral
+    levava 22 s contra os upstreams reais, com um esqueleto único — a primeira tela do
+    portal ficava meio minuto cinza. Em duas ondas a tabela aparece com a energia e as
+    colunas de manutenção preenchem depois, sem que nenhum número deixe de ser do servidor.
     """
     data = _referencia_pedida(referencia)
     referencia_mes = data.strftime("%Y-%m")
+    pedidos = _blocos_pedidos(blocos)
     lista = await listar_usinas(db=db, usuario=usuario)
 
     saida = ResumoOut(
@@ -496,7 +546,7 @@ async def resumo(
     links = {l.id: l for l in usinas_do_usuario(db, usuario)}
     recortes: list[_Recorte] = list(await asyncio.gather(
         *(
-            _resumo_da_usina(base, links[base.id], data, db, usuario)
+            _resumo_da_usina(base, links[base.id], data, db, usuario, pedidos)
             for base in lista.usinas
             if base.id in links
         )

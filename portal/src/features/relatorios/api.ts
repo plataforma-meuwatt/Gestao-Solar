@@ -75,6 +75,15 @@ export type CronogramaDoRelatorio = {
   sem_ativo: number
   /** Percentual (0–100) calculado no meuPlano. NULO quando nada estava previsto. */
   pct_cumprido: number | null
+  /**
+   * A frase que reconcilia este bloco com a aba Cronograma. O portal dava DUAS respostas
+   * para "está sendo feito?": "13 de 270 previstas" lá e "cumprido 41,9%" sobre 31 aqui —
+   * porque o período pedido começava antes da vigência do contrato. Nula quando não há
+   * diferença a explicar; aviso que aparece sempre ninguém lê.
+   */
+  recorte?: string | null
+  /** Σ de X do contrato inteiro — o denominador da aba Cronograma, para conferir a conta. */
+  previstas_no_contrato?: number | null
   linhas: LinhaDoCronograma[]
   dispensas: Dispensa[]
 }
@@ -108,8 +117,10 @@ export type Ordem = {
   id: number
   usina: string
   usina_id: number
-  numero: number | null
+  /** Número do CONTRATO que rege a OS — **nunca** o número da OS (que é o `id`). */
+  contrato_numero: number | null
   objetivo: string
+  /** Rótulo pronto do servidor ("Serviços adicionais"), nunca o código cru. */
   classificacao: string | null
   status: string | null
   situacao: string

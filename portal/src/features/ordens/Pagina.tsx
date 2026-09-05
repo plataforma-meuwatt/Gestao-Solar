@@ -37,6 +37,7 @@ import {
   Pagina,
   Segmentado,
   Selo,
+  SeloClasse,
   Tabela,
   Tela4Estados,
   Vazio,
@@ -46,8 +47,6 @@ import {
   blocoDaOrdem,
   dataDaOrdem,
   pctDeTarefas,
-  rotuloDaClasse,
-  tomDaClasse,
   useOrdens,
   type Bloco,
   type Ordem,
@@ -182,9 +181,10 @@ export default function Ordens() {
                       <CabecalhoCard
                         rotulo="Acontecendo agora"
                         direita={
-                          <Selo tom={tomDaClasse(emCurso.classificacao)}>
-                            {rotuloDaClasse(emCurso.classificacao)}
-                          </Selo>
+                          <SeloClasse
+                            classificacao={emCurso.classificacao}
+                            tom={emCurso.classificacao_tom}
+                          />
                         }
                       />
                       <p className="text-lg font-semibold text-forte">{emCurso.objetivo}</p>
@@ -259,9 +259,10 @@ export default function Ordens() {
                         {
                           titulo: 'Classificação',
                           celula: (o) => (
-                            <Selo tom={tomDaClasse(o.classificacao)}>
-                              {rotuloDaClasse(o.classificacao)}
-                            </Selo>
+                            <SeloClasse
+                              classificacao={o.classificacao}
+                              tom={o.classificacao_tom}
+                            />
                           ),
                         },
                         {

@@ -63,37 +63,66 @@ Idioma do produto e da UI: **português do Brasil**.
 
 ## 2. Estrutura
 
-Monorepo com três aplicativos:
+Monorepo com cinco aplicações:
 
 ```
 Gestao Solar/            ← o repositório Git é aqui, na raiz
 ├── bff/          BACK  — FastAPI. A API, e só a API. Agrega mw-api + meuPlano, gera PDF
 ├── painel/       FRONT — React + Vite servido por nginx. O gestor (time interno)
-├── app/          APP   — Expo / React Native. O dono da usina
-├── dev.ps1       sobe as três
+├── portal/       FRONT — React + Vite servido por nginx. O cliente, no navegador
+├── app/          APP   — Expo / React Native. O dono da usina, no celular
+├── talksolar/    PRODUTO À PARTE — o mensageiro da equipe: servidor, banco e app de PC
+│                 próprios. Chegou do repositório do meuPlano em 04/09/2026
+├── dev.ps1       sobe back + painel + portal (e, sob demanda, o app e o Talk Solar)
 └── docs/         ARQUITETURA · CONTRATO_API · TELAS · DECISAO_IDENTIDADE · PROMPT_DESIGNER
 ```
 
-**São três aplicações independentes, não um monolito em pastas.** Cada uma tem seu deploy:
-back e front são dois serviços separados no Railway (`Dockerfile` + `railway.json` dentro
-de cada pasta, Root Directory apontando para ela); o app vai para as lojas via EAS.
+**São aplicações independentes, não um monolito em pastas.** Cada uma tem seu deploy: no
+Railway são serviços separados, um por pasta (`Dockerfile` + `railway.json` dentro dela,
+Root Directory apontando para ela); o app vai para as lojas via EAS. A tabela de serviços —
+Root Directory, `railwayConfigFile` e variáveis de cada um — está no
+[`README.md`](README.md#deploy).
+
+**O `talksolar/` não é parte do Gestão Solar** — é um produto hospedado aqui. Não importa
+uma linha de `bff/`, não usa o banco do Gestão Solar e não responde à REGRA 0 (lá o dado é
+a mensagem que alguém digitou). Fala com o meuPlano e com este BFF por HTTP, como faria
+qualquer sistema de fora. O que vale lá está em [`talksolar/README.md`](talksolar/README.md)
+e em `talksolar/docs/`.
 
 Consequências que o código carrega, e que não devem ser "simplificadas" de volta:
 
 - **A API não serve tela.** Já serviu o painel em `/painel`; não serve mais. Um deploy de
   tela não reinicia o processo que atende o aplicativo de ninguém.
-- **Toda chamada do painel é origem cruzada.** Daí `GS_CORS_ORIGENS`, com lista explícita
-  — nunca `*`, porque as respostas carregam sessão de gestor.
-- **O endereço da API não é compilado no bundle.** Vem de `API_URL` em tempo de execução
-  (`painel/entrypoint.sh` escreve `config.js`), para o mesmo artefato servir qualquer
+- **Toda chamada do painel e do portal é origem cruzada.** Daí `GS_CORS_ORIGENS`, com lista
+  explícita — nunca `*`, porque as respostas carregam sessão. **Front que sobe sem a origem
+  dele nessa lista abre em tela branca**: o erro fica no console do navegador e nada no
+  servidor acusa. Em produção, `ENVIRONMENT=production` desliga o regex de localhost, que é
+  a rede de segurança do desenvolvimento — não há a que recorrer.
+- **O endereço da API não é compilado no bundle.** Vem de `API_URL` em tempo de execução (o
+  `entrypoint.sh` de cada front escreve `config.js`), para o mesmo artefato servir qualquer
   ambiente.
-- **As fontes moram no front** (`painel/public/fontes/`), que é quem as usa.
+- **As fontes moram no front** (`painel/public/fontes/`, `portal/public/fontes/`), que é
+  quem as usa.
 
-O `bff/` continua sendo o único que fala com o mundo externo.
+O `bff/` continua sendo o único que fala com os upstreams **em nome do app e do portal**:
+nenhum dos dois conhece o endereço do meuWatt ou do meuPlano.
+
+**Painel, portal e app repetem a mesma camada, e não há lugar compartilhado.** Não existe
+workspace nem pacote comum: `portal/src/lib/api.ts` é uma reescrita do
+`painel/src/lib/api.ts` (o cabeçalho de lá lista as diferenças deliberadas) e as fontes
+estão duplicadas byte a byte. As divergências já começaram — o portal roda a regra 0 dentro
+do `build` e o painel não. Ao corrigir defeito nessa camada, procure os irmãos antes de dar
+o trabalho por encerrado.
 
 **O painel é onde o cliente nasce.** Cadastrar, vincular as contas dele no meuWatt e no
 meuPlano, conceder usinas, entregar a senha provisória e conferir no diagnóstico que o dado
 chega dos dois lados. Sem ele, o app não tem a quem servir.
+
+**O portal é o mesmo cliente, no navegador.** Mesma conta e mesmo login do app
+(`POST /api/v1/auth/login`, com `apelido` e `senha`) — o BFF é que recusa a sessão de
+painel nas rotas de cliente, porque ela carrega `escopo: "painel"`. Cada front guarda a
+sessão sob a sua própria chave no `localStorage` (`gs_painel_sessao`, `gs_portal_sessao`),
+para as duas conviverem no mesmo navegador sem uma derrubar a outra.
 
 Leia [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) antes de mexer em qualquer coisa — é lá
 que está o desenho, o modelo de autenticação e o mapa de qual dado vem de onde.
@@ -102,20 +131,36 @@ que está o desenho, o modelo de autenticação e o mapa de qual dado vem de ond
 
 ## 3. Como rodar
 
-O caminho normal é o `dev.ps1` da raiz, que sobe backend e painel em janelas separadas:
+O caminho normal é o `dev.ps1` da raiz, que sobe cada parte na própria janela:
 
 ```powershell
 .\dev.ps1 -Instalar    # primeira vez: venv, dependências, migrations
-.\dev.ps1              # backend + painel
-.\dev.ps1 -App         # backend + painel + aplicativo (Expo)
+.\dev.ps1              # back + painel + portal
+.\dev.ps1 -App         # + aplicativo (Expo)
+.\dev.ps1 -Talk        # + servidor do Talk Solar
 ```
 
-Back em `http://localhost:8100` (Swagger em `/docs`), front em `http://localhost:5180`.
+**Cada porta é de um dono, e nenhuma se repete.** Porta ocupada não dá erro claro: o
+segundo servidor recusa subir, ou — pior — quem chama encontra o programa errado atendendo
+no endereço certo.
 
-Em desenvolvimento o front chama a API por **proxy do Vite**, não por CORS — a origem fica
-a mesma e o caminho exercitado (`/api/painel/...`) é o mesmo de produção. Para reproduzir
-produção de verdade, `docker build` nas duas pastas e rodar com `API_URL` e
-`GS_CORS_ORIGENS`.
+| Porta | Quem | Onde está escrito |
+|---|---|---|
+| **8100** | back (API) · Swagger em `/docs` | `dev.ps1`, `Dockerfile` |
+| **5180** | painel (gestor) | `painel/vite.config.ts` |
+| **5181** | portal (cliente) | `portal/vite.config.ts` |
+| **8081** | Metro, do Expo | padrão do Expo |
+| **8110** | servidor do Talk Solar · `/saude` e `/docs` | `dev.ps1`, `talksolar/README.md` |
+
+O 8110 é escolha registrada aqui: deixa a faixa `810x` livre para o back e não colide com
+nenhuma das quatro acima. O Talk Solar veio do repositório do meuPlano documentado na
+**8100** — lá ela estava livre, aqui é a do back —, e o `README.md` de lá foi corrigido
+junto com esta tabela.
+
+Em desenvolvimento os fronts chamam a API por **proxy do Vite**, não por CORS — a origem
+fica a mesma e o caminho exercitado é o mesmo de produção (`/api/painel/...` no painel,
+`/api/v1/...` no portal). Para reproduzir produção de verdade, `docker build` na pasta e
+rodar com `API_URL` e `GS_CORS_ORIGENS`.
 
 À mão, se precisar de uma parte só:
 
@@ -126,9 +171,17 @@ $env:PYTHONPATH = "$PWD"
 .\venv\Scripts\python.exe -m pytest
 .\venv\Scripts\python.exe -m alembic upgrade head
 
-# painel/ e app/
-npm run dev  ·  npm start  ·  npx tsc --noEmit
+# painel/ · portal/ · app/
+npm run dev  ·  npm start  ·  npm run check  ·  npx tsc --noEmit
+
+# talksolar/server/ — venv PRÓPRIO, .env próprio, banco próprio
+.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8110
 ```
+
+⚠ **O Talk Solar tem `PYTHONPATH` próprio, e o do BFF o quebra.** Os dois têm um pacote
+chamado `app`: com o `PYTHONPATH` do BFF exportado, os testes de lá morrem em
+`ImportError: cannot import name 'webhooks' from 'app'` — que parece defeito do projeto e
+não é. Rode `talksolar/server/testes/test_contrato.py` com o `PYTHONPATH` **vazio**.
 
 O banco é o Postgres do Supabase, configurado em `bff/.env` (não versionado; modelo em
 `.env.example`). Duas armadilhas já resolvidas, que voltariam se alguém refizer a
@@ -137,6 +190,9 @@ configuração do zero:
 - A senha vai **url-encoded** na `DATABASE_URL` (`#` → `%23`), senão chega truncada.
 - A porta é a **5432** (session pooler), não a 6543: o transaction pooler não mantém a
   sessão entre comandos e o Alembic precisa disso.
+
+O Talk Solar tem **banco próprio** (nove tabelas `ts_*`), com a sua `DATABASE_URL` em
+`talksolar/server/.env` — modelo em `.env.exemplo`. As duas armadilhas acima valem igual.
 
 ---
 
@@ -157,6 +213,25 @@ expo-secure-store · expo-notifications · react-native-webview · expo-updates.
 O app **nunca** fala direto com a mw-api nem com o meuPlano. Tudo passa pelo BFF, que
 autoriza, agrega e traduz. Se uma tela precisa de um dado novo, o caminho é: endpoint no
 BFF → cliente do upstream em `bff/app/clients/` → tela.
+
+### O vocabulário é traduzido UMA vez, no BFF — e cada coisa tem UM nome
+
+Duas telas que traduzem por conta própria acabam discordando, e o cliente vê duas verdades
+sobre o mesmo fato. Foi o que aconteceu na integração do portal (04/09/2026):
+
+- **a mesma OS com três identidades.** `OrdemOut.numero` vinha de `container_numero`, que é o
+  número do **contrato** — o drawer da pendência imprimia "OS #665", a lista chamava a mesma
+  ordem de "OS 1016" e o cabeçalho do relatório escrevia "CONTRATO #665". O campo passou a se
+  chamar `contrato_numero`, e a OS se identifica pelo `id`, que é o único número que ela tem
+  no meuPlano;
+- **código de banco na tela.** A aba Ordens traduzia a classificação com uma função própria e
+  a de Relatórios imprimia `SERVICOS_ADICIONAIS`, com underscore. O cronograma mostrava
+  `INSPECAO`, `ensaio` e `6/MONTH`. A tradução desceu para `manutencao.py`, onde já moram
+  `SITUACAO` e `PARECER`, e sai pronta em `classificacao`, `categoria` e `periodicidade` —
+  com o código cru ao lado (`*_codigo`) para auditoria, no mesmo par de `situacao`/`status`.
+
+Regra: **rótulo que o cliente lê é dado da API.** A tela nunca monta o texto a partir do
+código, e um mapa de tradução no front é dívida a mover para cá.
 
 ### Quem entra é o apelido, não o e-mail
 
@@ -274,30 +349,89 @@ Carregando (skeleton, nunca spinner solto), vazio, erro, offline com selo de hor
 **Expo Go exige a build do SDK 57.** Cada build do Expo Go embute uma única versão de SDK.
 A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev/go).
 
-**O endereço de produção é o do Railway, não o domínio próprio.** O que está no ar é
-`https://gestao-solar-production.up.railway.app` (API) e `https://gestaosolar.up.railway.app`
-(painel). O `api-gestaosolar.meuwatt.com.br` que o `eas.json` trazia responde **404** — é um
-domínio que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
+**O endereço de produção é o do Railway, não o domínio próprio.** Conferido por probe em
+04/09/2026:
 
-Duas armadilhas do deploy pelo CLI, ambas já pagas:
+| | Endereço | Estado |
+|---|---|---|
+| back (API) | `https://gestao-solar-production.up.railway.app` | **no ar** — `/health` → 200 |
+| painel | `https://gestaosolar.up.railway.app` | **no ar** — 200 |
+| portal | `https://appgestao.up.railway.app` (é o nome que o código declara) | **não existe** — 404 da borda |
+| Talk Solar | — | serviço ainda não criado |
+
+O `api-gestaosolar.meuwatt.com.br` que o `eas.json` trazia responde **404** — é um domínio
+que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
+
+⚠ **O portal está pronto no repositório e não está publicado.** `portal/Dockerfile` e
+`portal/vite.config.ts` afirmam que ele é "o terceiro serviço no Railway (`appgestao`)",
+mas esse endereço devolve o 404 da borda do Railway (`{"status":"error","code":404,
+"message":"Application not found"}`), que é o que aparece quando não há serviço atrás do
+domínio. Nenhum dos arquivos do portal foi exercitado por um build do Railway — quem for
+criar o serviço não deve tratá-los como padrão já provado.
+
+Três armadilhas do deploy, todas já pagas:
 
 - **`railway up` roda da raiz do repositório**, nunca de dentro de `bff/`. O serviço tem
   *Root Directory* em `bff/`, então subir de lá faz o Railway procurar `bff/bff/Dockerfile`
   e o deploy falha — sem derrubar o que está no ar, o que torna a falha fácil de não notar:
   o `/health` continua respondendo 200 pela versão antiga.
+- **`railwayConfigFile` é ajuste de painel do Railway, invisível no repositório**, e o
+  caminho dele é relativo à **raiz** (`portal/railway.json`), não ao Root Directory. Sem
+  ele, o builder cai no Railpack, **ignora o `Dockerfile`** e o `entrypoint.sh` nunca
+  escreve o `config.js`: o front sobe sem `window.__GS_API__`, chama a si mesmo, recebe o
+  próprio HTML e o console diz `Unexpected token '<'` — longe da causa. A tabela de deploy
+  do [`README.md`](README.md#deploy) traz o valor de cada serviço.
 - **O token do `.env.txt` é de projeto, não de conta.** Vai em `RAILWAY_TOKEN`; com
   `RAILWAY_API_TOKEN` ou em `railway whoami` responde `Unauthorized`.
+
+**A carteira depende de duas ondas para não abrir em cinza.** `GET /api/v1/resumo` compõe
+energia, paradas, cronograma, ordens e pendências de TODAS as usinas: contra os upstreams
+reais isso levava 22 s, e a Visão geral tem um esqueleto só — a primeira tela do portal
+ficava perto de meio minuto cinza, enquanto as outras respondiam entre 1 e 8 s. A rota
+passou a aceitar `?blocos=energia|manutencao|tudo` e a tela faz as duas leituras em
+paralelo, desenhando com a energia. **Ausente = tudo**, então qualquer chamador antigo
+continua funcionando. Se uma onda nova precisar entrar, ela entra em `TODOS_OS_BLOCOS` —
+bloco desconhecido é 400 com a frase, nunca coluna vazia sem explicação.
+
+**A lentidão do relatório de manutenção era o pooler, não a consulta.** O gate
+`validate_relatorio_manutencao.py` mede o tempo numa usina real: com o pooler do Supabase
+saturado (teto de 15 clientes em modo sessão), cada uma das 12 idas custava ~1,5 s e o
+relatório levava 18–23 s; com o pooler livre, as MESMAS 12 idas custam ~200 ms e o total é
+2,4 s. Antes de investigar consulta lenta, confira quantas sessões estão abertas contra o
+banco — o erro `EMAXCONNSESSION` aparece nos logs quando o teto estoura.
+
+**Não há CI: nada roda os gates além de quem desenvolve.** Não existe `.github/` neste
+repositório. Os únicos automáticos são os que moram dentro do `docker build`, e eles não
+cobrem todo mundo: o `build` do portal é `tsc --noEmit && node scripts/regra0.mjs && vite
+build`, o do painel é só `tsc -b && vite build` — o painel não passa pela regra 0. Um push
+com tipo quebrado não é barrado em lugar nenhum: vira um deploy que falha no build e deixa
+a versão antiga no ar, em silêncio. Front novo nasce com o `regra0.mjs` no `build`, ou
+nasce sem gate.
+
+**O healthcheck do painel mente, e o do portal não.** `painel/railway.json` aponta para
+`/`, que devolve o `index.html` mesmo com o bundle quebrado — o Railway declara saudável um
+painel que não abre. O portal corrigiu isso com `location = /saude { return 200 "ok"; }` no
+nginx e `healthcheckPath: "/saude"`. Ao criar serviço de front novo, copie o **portal**;
+copiar o painel (que é o que está no ar, e por isso o modelo natural) reintroduz o defeito.
 
 **Testar contra o BFF local a partir do celular não funciona sem preparo.** O firewall do
 Windows não tem regra para a porta 8100 — o `python.exe` do venv não é o `node.exe`, que já
 tem permissão e por isso o Metro na 8081 funciona —, e o Android recusa HTTP em claro num
 build release.
 
-**O aplicativo é quase todo maquete.** Uma tela lê do BFF — a lista de Usinas
-(`GET /api/v1/plants`) — e o login. As outras dez (Início, Financeiro, Documentos,
-Assistente, Notificações, Perfil, Fatura, Equipamentos, detalhe da Usina) desenham
-`src/features/exemplo.ts`, e os endpoints correspondentes não existem no servidor. Ao
-ligar uma delas, o caminho é o da §5: endpoint no BFF → cliente do upstream → tela.
+**O aplicativo deixou de ser maquete — e o `docs/TELAS.md` ainda não acompanhou.** O texto
+que estava aqui dizia que só o login e a lista de Usinas liam do BFF, e que as demais telas
+desenhavam `src/features/exemplo.ts`: **esse arquivo não existe.** Conferido em 04/09/2026,
+os módulos de `app/src/features/` leem do BFF por `fetchWithCache` (`app/src/lib/cache.ts`,
+e não o `lib/offline.ts` que a documentação citava), nas chaves `home`, `plants`,
+`plants/{id}`, `billing`, `documents`, `notifications`, `manutencao`,
+`manutencao/cronograma-{id}`, `manutencao/ordem-{id}` e `me/permissoes`.
+
+O que **de fato** está desatualizado é o inventário de telas: a árvore de rotas do
+`docs/TELAS.md` lista sete que não existem (`(tabs)/financeiro`, `usina/[id]/geracao`,
+`usina/[id]/mapa`, `usina/[id]/manutencao`, `paradas/[usinaId]`, `pdf`, `config`) e não
+lista quatro que existem (`(tabs)/manutencao`, `cronograma/[usinaId]`, `documento/[id]`,
+`tarefa/[id]`). Reescrevê-lo contra as rotas reais é trabalho pendente, anotado lá.
 
 ---
 
@@ -307,7 +441,7 @@ ligar uma delas, o caminho é o da §5: endpoint no BFF → cliente do upstream 
 - Não há endpoint `/equipment/{id}/history` no mw-api. A visão de histórico do equipamento
   é montada pelo BFF cruzando `slots` + `breakdowns`.
 - Não há vínculo automático entre a usina do meuWatt e a do meuPlano. O vínculo é a tabela
-  `gs_plant_link`, preenchida à mão.
+  `gs_plant_links`, preenchida à mão.
 - O motor de PDF vetorial **não roda em React Native** — depende de DOM. Roda no Chromium
   headless do BFF.
 
@@ -357,10 +491,11 @@ export EXPO_TOKEN=$(sed -n 's/^Expo:[[:space:]]*//p' "/c/dev/Gestao Solar/.env.t
 O arquivo é `.txt` e mora na raiz — é por isso que uma busca por `.env` não acha, e é por isso
 que o `rg`/Grep passa batido: sendo ignorado pelo git, ele fica invisível na busca padrão.
 
-### BFF e painel → Railway, no push
+### BFF, painel e portal → Railway, no push
 
-Não há CLI no caminho normal: **o push para `main` já dispara o deploy** dos dois serviços
-(cada um com seu Root Directory). Leva ~1–2 min.
+Não há CLI no caminho normal: **o push para `main` já dispara o deploy** de cada serviço
+web existente, com o Root Directory dele. Leva ~1–2 min. Hoje isso vale para o back e o
+painel; o portal e o Talk Solar passam a entrar quando os serviços forem criados (§6).
 
 Confirme por probe, nunca pelo push. `/openapi.json` **não serve** — docs está desabilitado em
 produção e a resposta vem vazia. Use o par rota-nova × caminho-irmão-inexistente:

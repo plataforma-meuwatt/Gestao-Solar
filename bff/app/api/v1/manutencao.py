@@ -425,10 +425,19 @@ class OrdemOut(BaseModel):
     usina: str
     #: `id` do vínculo neste sistema — é por ele que o app navega, não pelo id do meuPlano.
     usina_id: int
-    numero: int | None = None
+    #: Número do CONTRATO que rege a OS. **Nunca é o número da OS** — ela não tem um: no
+    #: meuPlano a ordem se identifica pelo `id`. O campo se chamava `numero`, e o drawer da
+    #: pendência imprimia "OS #665" para o contrato 665 enquanto a lista chamava a MESMA
+    #: ordem de "OS 1016". Toda OS daquele contrato virava "OS #665" — o nome era a causa.
+    contrato_numero: int | None = None
 
     objetivo: str
+    #: Rótulo PRONTO ("Serviços adicionais"); o código cru fica em `classificacao_codigo`.
+    #: Mesmo par de `situacao`/`status`: a tela de Ordens traduzia e a de Relatórios não,
+    #: então a mesma OS saía "Serviços adicionais" numa e "SERVICOS_ADICIONAIS" na outra.
     classificacao: str | None = None
+    classificacao_codigo: str | None = None
+    classificacao_tom: str = "semDados"
 
     #: Código cru do meuPlano, para auditoria.
     status: str | None = None
@@ -486,9 +495,19 @@ class LinhaCronogramaOut(BaseModel):
     #: estão atrás do X de um mês — sem ele, a célula é uma marca sem porta.
     plan_item_id: int | None = None
     nome: str
-    #: 'ensaio' | 'servico' | inspeção — o selo da linha.
+    #: O selo da linha, JÁ EM PORTUGUÊS ("Ensaio", "Serviço", "Inspeção"). O upstream manda
+    #: 'ensaio', 'SERVICO', 'INSPECAO' — caixas misturadas, vocabulário de banco. O código
+    #: cru fica em `categoria_codigo` para auditoria.
     categoria: str | None = None
+    categoria_codigo: str | None = None
+    #: "A cada 6 meses", "Anual", "Trimestral". Vinha "6/MONTH", "1/YEAR", "3/MONTH" —
+    #: periodicidade em inglês na tela de um cliente corporativo brasileiro.
     periodicidade: str | None = None
+    #: Sob que bloco esta atividade aparece na tela ("Subestação", "CFTV", "Inversores"…).
+    #: 94 linhas planas eram a análise de equipamento que o dono disse que o cliente NÃO
+    #: quer; agrupadas e recolhidas, viram "está sendo feito?" com o detalhe atrás de um
+    #: clique. Vem do grupo de equipamentos do plano, senão do agrupamento de ensaio do tipo.
+    grupo: str = "Outras atividades"
     previsto_ano: int = 0
     feitos: int = 0
     meses: list[CelulaOut] = []
@@ -535,6 +554,11 @@ class CronogramaOut(BaseModel):
     #: Σ previsto e Σ feito do ano — o cabeçalho "18 de 24 atividades cumpridas".
     previsto_ano: int = 0
     feitos_ano: int = 0
+    #: Se a rota irmã `/cronograma/pdf` tem o que gerar. Sem consolidação o JSON responde
+    #: 200 com matriz vazia e a frase, mas o PDF responde 404 — um arquivo não tem como
+    #: avisar por dentro. O par ficava incoerente para quem chamasse o PDF direto (um link
+    #: salvo, um relatório); com este campo, ninguém oferece o botão que só dá erro.
+    pdf_disponivel: bool = False
     aviso: str | None = None
 
 
@@ -579,13 +603,102 @@ def _situacao_da_ordem(o: dict[str, Any]) -> tuple[str | None, str, str]:
     return cru, frase, tom
 
 
+#: Categoria da linha do cronograma → o selo que a tela mostra. O meuPlano manda a
+#: categoria da TELA de ensaio ('ensaio'/'servico', minúsculo) ou a natureza do CHECKLIST
+#: ('INSPECAO', maiúsculo) — dois vocabulários, duas caixas, ambos de banco.
+CATEGORIA_LINHA: dict[str, str] = {
+    "ENSAIO": "Ensaio",
+    "SERVICO": "Serviço",
+    "INSPECAO": "Inspeção",
+    "MANUTENCAO": "Manutenção",
+    "LIMPEZA": "Limpeza",
+}
+
+#: Unidade de periodicidade do meuPlano → (singular, plural). O vocabulário canônico é
+#: `DAY|WEEK|MONTH|YEAR` (a coluna do modelo diz isso), mas há linhas gravadas em
+#: português — e o plural cai errado quando a unidade não está no mapa ("A cada 4 ano").
+#: Os dois vocabulários entram porque os dois chegam.
+_UNIDADE = {
+    "MONTH": ("mês", "meses"), "YEAR": ("ano", "anos"),
+    "WEEK": ("semana", "semanas"), "DAY": ("dia", "dias"),
+    "MES": ("mês", "meses"), "MÊS": ("mês", "meses"), "ANO": ("ano", "anos"),
+    "SEMANA": ("semana", "semanas"), "DIA": ("dia", "dias"),
+}
+
+#: Unidade em português → a chave canônica, para a periodicidade nomeada valer nos dois.
+_UNIDADE_CANONICA = {"MES": "MONTH", "MÊS": "MONTH", "ANO": "YEAR",
+                     "SEMANA": "WEEK", "DIA": "DAY"}
+
+#: Os casos que têm nome próprio em português. Fora deles, "a cada N <unidade>".
+_PERIODICIDADE_NOMEADA = {
+    (1, "MONTH"): "Mensal", (2, "MONTH"): "Bimestral", (3, "MONTH"): "Trimestral",
+    (4, "MONTH"): "Quadrimestral", (6, "MONTH"): "Semestral", (12, "MONTH"): "Anual",
+    (1, "YEAR"): "Anual", (2, "YEAR"): "Bienal", (1, "WEEK"): "Semanal",
+    (1, "DAY"): "Diária",
+}
+
+
+def _categoria_da_linha(r: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(selo em português, código cru). Código desconhecido vira Capitalizado — o cliente
+    corporativo nunca lê 'INSPECAO' na tela, e o auditor ainda tem o código."""
+    codigo = _texto(r.get("screen_categoria")) or _texto(r.get("checklist_natureza"))
+    if codigo is None:
+        return None, None
+    chave = codigo.strip().upper()
+    return CATEGORIA_LINHA.get(chave, chave.replace("_", " ").capitalize()), codigo
+
+
+def _periodicidade(valor: int | None, unidade: str | None) -> str | None:
+    """"6/MONTH" → "Semestral"; "5/MONTH" → "A cada 5 meses". Sem valor, só a unidade
+    traduzida; sem unidade, nada (nunca o código cru)."""
+    bruta = (unidade or "").strip().upper()
+    if not bruta:
+        return None
+    chave = _UNIDADE_CANONICA.get(bruta, bruta)
+    if valor is None:
+        singular, _plural = _UNIDADE.get(chave, (chave.lower(), chave.lower()))
+        return singular.capitalize()
+    nomeada = _PERIODICIDADE_NOMEADA.get((valor, chave))
+    if nomeada:
+        return nomeada
+    singular, plural = _UNIDADE.get(chave, (chave.lower(), chave.lower()))
+    return f"A cada {valor} {singular if valor == 1 else plural}"
+
+
+#: Código de classificação do meuPlano → como o cliente lê. É a ÚNICA tradução: quem
+#: quiser o código tem `classificacao_codigo`. O `SERVICOS_ADICIONAIS` cru chegou à tela do
+#: relatório com underscore e tudo, ao lado da mesma OS já traduzida na lista de ordens.
+CLASSIFICACAO: dict[str, tuple[str, str]] = {
+    "CORRETIVA": ("Corretiva", "alerta"),
+    "PREVENTIVA": ("Preventiva", "ok"),
+    "SERVICOS_ADICIONAIS": ("Serviços adicionais", "semDados"),
+    "SINISTRO": ("Sinistro", "parado"),
+    "GARANTIA": ("Garantia", "multiplos"),
+}
+
+
+def _classificacao(valor: Any) -> tuple[str | None, str | None, str]:
+    """(rótulo, código cru, tom). Código desconhecido vira Frase Capitalizada sem underscore
+    — nunca o código cru, que é vocabulário de banco na cara do cliente."""
+    codigo = _texto(valor)
+    if codigo is None:
+        return None, None, "semDados"
+    chave = codigo.strip().upper()
+    if chave in CLASSIFICACAO:
+        rotulo, tom = CLASSIFICACAO[chave]
+        return rotulo, codigo, tom
+    limpo = chave.replace("_", " ").capitalize()
+    return limpo, codigo, "semDados"
+
+
 def _ordem_out(o: dict[str, Any], link: PlantLink) -> OrdemOut:
     cru, frase, tom = _situacao_da_ordem(o)
+    classificacao, classe_codigo, classe_tom = _classificacao(o.get("classification"))
     return OrdemOut(
         id=_inteiro(o.get("id")) or 0,
         usina=link.nome,
         usina_id=link.id,
-        numero=_inteiro(o.get("container_numero")),
+        contrato_numero=_inteiro(o.get("container_numero")),
         # Mesma cascata de `_para_saida`: `objetivo` vem vazio nas OSs reais destas
         # usinas, e parar nele deixaria a lista inteira como "OS 1005".
         objetivo=(
@@ -594,7 +707,9 @@ def _ordem_out(o: dict[str, Any], link: PlantLink) -> OrdemOut:
             or _texto(o.get("container_title"))
             or f"OS {o.get('id')}"
         ),
-        classificacao=_texto(o.get("classification")),
+        classificacao=classificacao,
+        classificacao_codigo=classe_codigo,
+        classificacao_tom=classe_tom,
         status=cru,
         situacao=frase,
         tom=tom,
@@ -1433,8 +1548,7 @@ async def cronograma_da_usina(
                     atrasado=estado in ATRASADO,
                 )
             )
-        valor = _inteiro(r.get("periodicity_value"))
-        unidade = _texto(r.get("periodicity_unit"))
+        categoria, categoria_codigo = _categoria_da_linha(r)
         linhas.append(
             LinhaCronogramaOut(
                 plan_item_id=_inteiro(r.get("plan_item_id")),
@@ -1444,11 +1558,15 @@ async def cronograma_da_usina(
                     or _texto(r.get("type_code"))
                     or "Atividade"
                 ),
-                categoria=(
-                    _texto(r.get("screen_categoria")) or _texto(r.get("checklist_natureza"))
+                categoria=categoria,
+                categoria_codigo=categoria_codigo,
+                periodicidade=_periodicidade(
+                    _inteiro(r.get("periodicity_value")), _texto(r.get("periodicity_unit"))
                 ),
-                periodicidade=(
-                    f"{valor}/{unidade}" if valor is not None and unidade else unidade
+                grupo=(
+                    _texto(r.get("group_name"))
+                    or _texto(r.get("agrupamento_nome"))
+                    or "Outras atividades"
                 ),
                 previsto_ano=_inteiro(r.get("expected_per_year")) or 0,
                 # Cumprido conta `verde` E `verde_ressalva`: o dispensado saiu da conta
@@ -1462,6 +1580,9 @@ async def cronograma_da_usina(
     saida.linhas = linhas
     saida.previsto_ano = sum(l.previsto_ano for l in linhas)
     saida.feitos_ano = sum(l.feitos for l in linhas)
+    # Chegar até aqui é a prova de que existe versão consolidada: o 404 do upstream já
+    # teria devolvido lá em cima com a frase de não publicado.
+    saida.pdf_disponivel = bool(linhas)
 
     if not linhas:
         saida.aviso = "O cronograma consolidado deste contrato não tem nenhuma atividade."

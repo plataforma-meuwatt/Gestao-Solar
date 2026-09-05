@@ -156,6 +156,25 @@ export function Selo({ tom: valor, children }: { tom: Tom | string; children: Re
   )
 }
 
+/**
+ * O selo da classificação — rótulo e tom vêm PRONTOS do servidor.
+ *
+ * Havia duas cópias deste par de funções no portal (`ordens/api.ts` e `ordem/Pagina.tsx`) e
+ * a tela de Relatórios não usava nenhuma: a mesma OS saía "Serviços adicionais" na lista e
+ * "SERVICOS_ADICIONAIS" no relatório. Traduzir é do BFF, onde já moram `situacao` e
+ * `parecer`; aqui só se desenha. `classificacao_tom` pode não vir de um servidor antigo —
+ * daí o `semDados`, que é a ausência de cor, nunca uma cor errada.
+ */
+export function SeloClasse({
+  classificacao,
+  tom,
+}: {
+  classificacao: string | null
+  tom?: string
+}) {
+  return <Selo tom={tom ?? 'semDados'}>{classificacao ?? 'sem classificação'}</Selo>
+}
+
 /* ------------------------------------------------------------------ botões */
 
 export function Botao({
@@ -615,13 +634,22 @@ export function Tabela<T>({
   if (linhas.length === 0 && vazio) return <>{vazio}</>
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-sm">
+      {/*
+        `min-w-max` em vez de largura fixa: com `min-w-[640px]` a tabela sempre cabia no
+        cartão, e o navegador ESPREMIA as colunas para caber. A de Pendências, com sete,
+        a 1440 px reduzia a última a um caractere — o cabeçalho "Última atividade" saía
+        como um "A" partido e a coluna ficava ilegível SEM barra de rolagem, porque nada
+        transbordava. Agora a tabela nunca fica menor que o conteúdo e o contêiner rola;
+        `w-full` mantém o preenchimento quando sobra espaço. Quem pode ter texto longo é
+        a célula, e ela se limita com `max-w` (ver a coluna "Pendência").
+      */}
+      <table className="w-full min-w-max border-collapse text-sm">
         <thead>
           <tr className="border-b border-borda">
             {colunas.map((c) => (
               <th
                 key={c.titulo}
-                className={`px-3 py-2 text-xs font-medium uppercase tracking-wide text-rotulo ${
+                className={`whitespace-nowrap px-3 py-2 text-xs font-medium uppercase tracking-wide text-rotulo ${
                   c.alinhar === 'dir' ? 'text-right' : 'text-left'
                 }`}
               >

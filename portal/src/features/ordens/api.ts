@@ -23,8 +23,13 @@ export type Ordem = {
   usina: string
   /** `id` do vínculo neste sistema — é por ele que a rota navega, não pelo id do meuPlano. */
   usina_id: number
-  /** Número do CONTRATO que rege a OS (não o número da OS). Nulo em OS sem contrato. */
-  numero: number | null
+  /** Número do CONTRATO que rege a OS. **Nunca** o número da OS — ela não tem um: a
+   * identidade dela é o `id`. O nome antigo (`numero`) fez o drawer da pendência imprimir
+   * "OS #665" para o contrato 665, enquanto a lista chamava a mesma ordem de "OS 1016". */
+  contrato_numero: number | null
+  /** Rótulo pronto ("Serviços adicionais"); o código cru fica em `classificacao_codigo`. */
+  classificacao_codigo?: string | null
+  classificacao_tom?: string
   /** Já resolvido no servidor: objetivo → nome → título do contrato → "OS {id}". */
   objetivo: string
   classificacao: string | null
@@ -95,25 +100,6 @@ export function blocoDaOrdem(o: Ordem): Bloco {
   return 'outras'
 }
 
-/**
- * A classificação chega em caixa alta com underscore ("SERVICOS_ADICIONAIS").
- *
- * O tom não é decoração: corretiva é conserto (algo quebrou), preventiva é rotina cumprida —
- * ler a diferença de relance é metade do valor desta tela. Mesma régua do aplicativo
- * (`app/src/app/(tabs)/manutencao.tsx`), para quem usa os dois ler a mesma cor.
- */
-export function tomDaClasse(c: string | null): string {
-  const v = (c ?? '').toUpperCase()
-  if (v.includes('CORRETIVA')) return 'alerta'
-  if (v.includes('PREVENTIVA')) return 'ok'
-  return 'semDados'
-}
-
-export function rotuloDaClasse(c: string | null): string {
-  if (!c) return 'sem classificação'
-  const limpo = c.replace(/_/g, ' ').toLowerCase()
-  return limpo.charAt(0).toUpperCase() + limpo.slice(1)
-}
 
 /**
  * A data que vale para esta OS: a de conclusão quando existe, senão a de agendamento, senão a

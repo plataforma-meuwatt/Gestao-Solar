@@ -608,3 +608,83 @@ async def test_upstream_antigo_sem_os_campos_nao_inventa_frase(db, dono, usinas,
 
     assert saida.pareceres.recorte is None
     assert saida.pareceres.aprovados == 1
+
+
+# ── o denominador tem escopo, e ele é dito ──────────────────────────────────
+
+
+async def test_a_taxa_de_cumprimento_diz_de_quais_meses_saiu(db, dono, usinas, cenario):
+    """O portal dava DUAS respostas para "está sendo feito?": a aba Cronograma dizia
+    "13 de 270 previstas" e o relatório estampava "cumprido 41,9%" com 31 previstas, sob o
+    rótulo "Outubro de 2025 a Setembro de 2026" — período que começa 9 meses ANTES da
+    vigência do contrato. Os dois números estavam certos; faltava a frase que reconcilia."""
+    cenario.agregado = {
+        **AGREGADO,
+        "cronograma": {
+            **AGREGADO["cronograma"],
+            "meses_do_cronograma": ["2026-07", "2026-08"],
+            "meses_fora_do_cronograma": ["2025-10", "2025-11", "2025-12"],
+            "previsto_no_contrato": 270,
+        },
+    }
+    saida = await relatorio_de_manutencao(
+        usina_id=usinas[0].id, de="2025-10", ate="2026-08", db=db, usuario=dono
+    )
+    recorte = saida.cronograma.recorte
+    assert recorte is not None
+    assert "2 meses" in recorte and "jul/2026 a ago/2026" in recorte
+    assert "3 ficaram de fora" in recorte
+    assert "270" in recorte                       # o total do contrato, para conferir
+    assert saida.cronograma.previstas_no_contrato == 270
+
+
+async def test_periodo_dentro_do_contrato_nao_ganha_frase(db, dono, usinas, cenario):
+    """Aviso que sempre aparece ninguém lê: quando o período cabe na vigência não há
+    diferença a explicar."""
+    cenario.agregado = {
+        **AGREGADO,
+        "cronograma": {**AGREGADO["cronograma"],
+                       "meses_do_cronograma": ["2026-07", "2026-08"],
+                       "meses_fora_do_cronograma": [], "previsto_no_contrato": 270},
+    }
+    saida = await relatorio_de_manutencao(
+        usina_id=usinas[0].id, de="2026-07", ate="2026-08", db=db, usuario=dono
+    )
+    assert saida.cronograma.recorte is None
+
+
+async def test_periodo_todo_fora_da_vigencia_e_dito_sem_rodeio(db, dono, usinas, cenario):
+    cenario.agregado = {
+        **AGREGADO,
+        "cronograma": {**AGREGADO["cronograma"], "meses_do_cronograma": [],
+                       "meses_fora_do_cronograma": ["2025-10", "2025-11"],
+                       "previsto_no_contrato": 270},
+    }
+    saida = await relatorio_de_manutencao(
+        usina_id=usinas[0].id, de="2025-10", ate="2025-11", db=db, usuario=dono
+    )
+    assert "Nenhum mês do período" in (saida.cronograma.recorte or "")
+
+
+async def test_o_relatorio_le_o_mesmo_vocabulario_da_aba_ordens(db, dono, usinas, cenario):
+    """A OS 969 saía "OS 969 · SERVICOS_ADICIONAIS" no relatório e "Instalação da
+    Comunicação · Serviços adicionais" na lista — a mesma ordem, no mesmo portal."""
+    cenario.agregado = {
+        **AGREGADO,
+        "ordens": [{**AGREGADO["ordens"][0], "id": 969, "name": None, "objetivo": None,
+                    "container_title": "Instalação da Comunicação", "container_numero": 665,
+                    "classification": "SERVICOS_ADICIONAIS", "tarefas": []}],
+        "cronograma": {**AGREGADO["cronograma"], "linhas": [
+            {**AGREGADO["cronograma"]["linhas"][0], "categoria": "INSPECAO"},
+        ]},
+    }
+    saida = await relatorio_de_manutencao(
+        usina_id=usinas[0].id, de="2026-03", ate="2026-08", db=db, usuario=dono
+    )
+    ordem = saida.ordens[0]
+    assert ordem.objetivo == "Instalação da Comunicação"
+    assert ordem.classificacao == "Serviços adicionais"
+    assert ordem.contrato_numero == 665           # o contrato, com o nome certo
+    assert ordem.id == 969                        # e a OS pelo id, que é o número dela
+    # A categoria da linha também sai traduzida — "INSPECAO" era o que ia para a tela.
+    assert saida.cronograma.linhas[0].categoria == "Inspeção"

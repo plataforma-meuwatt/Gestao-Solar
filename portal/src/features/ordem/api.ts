@@ -53,10 +53,13 @@ export type Ordem = {
   usina: string
   /** Id do vínculo NESTE sistema — é por ele que a URL do portal navega. */
   usina_id: number
-  /** Número do contrato que rege a OS. Nulo em OS sem contrato. */
-  numero: number | null
+  /** Número do CONTRATO que rege a OS — **nunca** o número da OS, que é o `id`. */
+  contrato_numero: number | null
   objetivo: string
+  /** Rótulo pronto do servidor ("Serviços adicionais"), com o código cru ao lado. */
   classificacao: string | null
+  classificacao_codigo?: string | null
+  classificacao_tom?: string
   status: string | null
   /** A frase que a tela mostra ("Em verificação"). */
   situacao: string

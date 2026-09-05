@@ -45,7 +45,7 @@ const ORDEM: Ordem = {
   id: 962,
   usina: 'UFV Porto Ferreira',
   usina_id: 7,
-  numero: 962,
+  contrato_numero: 665,
   objetivo: 'Manutenção preventiva trimestral',
   classificacao: 'PREVENTIVA',
   status: 'APROVADA',
@@ -234,7 +234,7 @@ describe('tela de Relatórios', () => {
   it('distingue "não deu para buscar as tarefas" de "ordem sem tarefas"', async () => {
     servidor(
       relatorio({
-        ordens: [ORDEM, { ...ORDEM, id: 963, numero: 963, itens: null }, { ...ORDEM, id: 964, numero: 964, itens: [] }],
+        ordens: [ORDEM, { ...ORDEM, id: 963, itens: null }, { ...ORDEM, id: 964, itens: [] }],
       }),
     )
     montar()
@@ -253,7 +253,7 @@ describe('tela de Relatórios', () => {
     servidor(
       relatorio({
         ordens: [],
-        em_curso: [{ ...ORDEM, id: 1016, numero: 1016, status: 'EM_EXECUCAO', situacao: 'Em execução' }],
+        em_curso: [{ ...ORDEM, id: 1016, status: 'EM_EXECUCAO', situacao: 'Em execução' }],
         pareceres: {
           aprovados: 0,
           com_ressalva: 0,
@@ -290,5 +290,54 @@ describe('tela de Relatórios', () => {
     const links = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(links.some((h) => (h ?? '').includes('/api/'))).toBe(false)
     expect(screen.getByText('Baixar PDF')).toBeTruthy()
+  })
+  it('diz de quais meses saiu a taxa de cumprimento quando o período passa da vigência', async () => {
+    // O portal dava duas respostas para "está sendo feito?": "13 de 270" na aba Cronograma
+    // e "cumprido 41,9%" aqui, com um denominador de dois meses sob o rótulo de doze.
+    servidor(
+      relatorio({
+        cronograma: {
+          status: 'CONSOLIDATED',
+          versao: 1,
+          consolidado_em: '2026-03-02T10:00:00-03:00',
+          previstas: 31,
+          executadas: 12,
+          dispensadas: 1,
+          atrasadas: 2,
+          no_prazo: 15,
+          sem_ativo: 1,
+          pct_cumprido: 41.9,
+          linhas: [],
+          dispensas: [],
+          previstas_no_contrato: 270,
+          recorte:
+            'Contagem feita só sobre os 2 meses do período em que este contrato está vigente (jul/2026 a ago/2026); os outros 3 ficaram de fora. O contrato inteiro prevê 270 atividades no ano.',
+        },
+      }),
+    )
+    montar()
+    expect(await screen.findByText(/Contagem feita só sobre os 2 meses/)).toBeTruthy()
+  })
+
+  it('a identidade da OS é o id, e a classificação vem traduzida do servidor', async () => {
+    // "OS #665" era o número do CONTRATO, e "SERVICOS_ADICIONAIS" chegava cru à tela.
+    servidor(
+      relatorio({
+        ordens: [
+          {
+            ...ORDEM,
+            id: 969,
+            objetivo: 'Instalação da Comunicação',
+            classificacao: 'Serviços adicionais',
+            contrato_numero: 665,
+          },
+        ],
+      }),
+    )
+    montar()
+    const linha = await screen.findByText(/OS/)
+    expect(linha.textContent).toContain('969')
+    expect(linha.textContent).not.toContain('#665')
+    expect(screen.queryByText(/SERVICOS_ADICIONAIS/)).toBeNull()
   })
 })

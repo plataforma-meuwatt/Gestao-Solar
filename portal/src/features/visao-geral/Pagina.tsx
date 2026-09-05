@@ -33,6 +33,7 @@ import {
   CarregandoCartao,
   Cartao,
   FaixaAtencao,
+  GraficoBarras,
   Kpi,
   Num,
   Pagina,
@@ -44,7 +45,12 @@ import {
 import { SeletorPeriodo } from '@/components/SeletorPeriodo'
 import { competencia, duracao, energia, hora, inteiro, porcento, potencia } from '@/lib/format'
 import { competenciaDe, competenciaParaIso, hojeIso } from '@/lib/periodo'
-import { useResumo, type UsinaResumo } from '@/features/visao-geral/api'
+import {
+  useResumo,
+  useResumoManutencao,
+  type ResumoOut,
+  type UsinaResumo,
+} from '@/features/visao-geral/api'
 
 /** O mês corrente, ancorado no dia 1 — uma chave de cache por mês, não por dia. */
 const mesCorrente = () => competenciaParaIso(competenciaDe(hojeIso()))
@@ -55,10 +61,47 @@ function local(u: UsinaResumo): string | null {
   return partes.length ? partes.join(', ') : null
 }
 
+/**
+ * A usina da 2ª onda, casada por id — ou `undefined` enquanto a manutenção não chegou.
+ *
+ * `undefined` e "veio nulo" são coisas diferentes na tela: o primeiro vira "carregando" e o
+ * segundo vira "—" com o aviso do servidor. Trocar um pelo outro faria a carteira dizer
+ * "nenhum atrasado" antes de ter perguntado.
+ */
+function manutencaoDe(
+  segunda: ResumoOut | null,
+  id: number,
+): UsinaResumo | undefined {
+  return segunda?.usinas.find((u) => u.id === id)
+}
+
+/**
+ * Uma célula da 2ª onda: ponto pulsante enquanto ela não chegou, o número depois.
+ *
+ * O ponto existe para não escrever "—" no lugar de "ainda estou perguntando": um traço se lê
+ * como "não há", e o cliente concluiria "nenhuma OS em andamento" antes de o servidor ter
+ * respondido. Nulo depois da resposta continua "—", que é a régua de sempre.
+ */
+function DaSegundaOnda({ pronta, valor }: { pronta: boolean; valor: number | null | undefined }) {
+  if (!pronta) {
+    return (
+      <span
+        aria-label="carregando"
+        title="Carregando a manutenção desta usina"
+        className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-borda align-middle"
+      />
+    )
+  }
+  return <Num>{inteiro(valor ?? null)}</Num>
+}
+
 export default function VisaoGeral() {
   const navigate = useNavigate()
   const [referencia, setReferencia] = useState(mesCorrente)
   const leitura = useResumo(referencia)
+  // A segunda onda corre SOZINHA, em paralelo: a tela não a espera para desenhar. Ver o
+  // porquê em `api.ts` — a chamada única levava 22 s e esta é a primeira tela do portal.
+  const manutencao = useResumoManutencao(referencia)
 
   return (
     <Pagina
@@ -138,6 +181,27 @@ export default function VisaoGeral() {
                   />
                   <Kpi rotulo="Potência agora" valor={potencia(d.potencia_agora_kw)} />
                 </div>
+
+                {/*
+                  A carteira desenhada: uma barra por usina, com o esperado do projeto
+                  sobreposto. Esta era a tela mais fraca do portal em desenho — só números
+                  em fonte monoespaçada e uma tabela —, justo a que o cliente abre primeiro
+                  e a que mais deveria parecer um painel. Os gráficos já existiam; faltava
+                  usá-los aqui. Ponto sem leitura não vira barra (regra do componente), e
+                  uma carteira de uma usina só não ganha gráfico: comparar uma coisa com
+                  ela mesma não é comparação.
+                */}
+                {d.usinas.length > 1 ? (
+                  <div className="mt-6 border-t border-borda-fraca pt-5">
+                    <GraficoBarras
+                      pontos={d.usinas.map((u) => ({
+                        rotulo: u.nome,
+                        valor: u.energia_mes_kwh,
+                        esperado: u.esperado_mes_kwh,
+                      }))}
+                    />
+                  </div>
+                ) : null}
               </Cartao>
 
               {/* 2 — uma linha por usina; a linha inteira abre a usina (a URL vira o contexto) */}
@@ -186,14 +250,26 @@ export default function VisaoGeral() {
                         celula: (u) => <Selo tom={u.tom}>{u.situacao}</Selo>,
                       },
                       {
+                        // Medido e esperado na MESMA célula: eram duas colunas, e a tabela
+                        // chegava a nove — uma acima do teto de oito da revisão de
+                        // simplicidade. Aqui os dois se leem juntos, que é como a pergunta
+                        // é feita ("gerei o que o projeto prometia?").
                         titulo: 'Energia no mês',
                         alinhar: 'dir',
-                        celula: (u) => <Num>{energia(u.energia_mes_kwh)}</Num>,
-                      },
-                      {
-                        titulo: 'Esperado',
-                        alinhar: 'dir',
-                        celula: (u) => <Num>{energia(u.esperado_mes_kwh)}</Num>,
+                        celula: (u) => (
+                          <>
+                            <Num>{energia(u.energia_mes_kwh)}</Num>
+                            <span className="block text-xs text-fraco">
+                              {u.esperado_mes_kwh === null ? (
+                                'sem meta'
+                              ) : (
+                                <>
+                                  de <Num>{energia(u.esperado_mes_kwh)}</Num>
+                                </>
+                              )}
+                            </span>
+                          </>
+                        ),
                       },
                       {
                         titulo: '% do esperado',
@@ -219,17 +295,34 @@ export default function VisaoGeral() {
                       {
                         titulo: 'Atrasados',
                         alinhar: 'dir',
-                        celula: (u) => <Num>{inteiro(u.manutencao?.atrasados)}</Num>,
+                        celula: (u) => (
+                          <DaSegundaOnda
+                            pronta={manutencao.dados !== null}
+                            valor={manutencaoDe(manutencao.dados, u.id)?.manutencao?.atrasados}
+                          />
+                        ),
                       },
                       {
                         titulo: 'OS em andamento',
                         alinhar: 'dir',
-                        celula: (u) => <Num>{inteiro(u.manutencao?.os_em_andamento)}</Num>,
+                        celula: (u) => (
+                          <DaSegundaOnda
+                            pronta={manutencao.dados !== null}
+                            valor={
+                              manutencaoDe(manutencao.dados, u.id)?.manutencao?.os_em_andamento
+                            }
+                          />
+                        ),
                       },
                       {
                         titulo: 'Pendências abertas',
                         alinhar: 'dir',
-                        celula: (u) => <Num>{inteiro(u.pendencias_abertas)}</Num>,
+                        celula: (u) => (
+                          <DaSegundaOnda
+                            pronta={manutencao.dados !== null}
+                            valor={manutencaoDe(manutencao.dados, u.id)?.pendencias_abertas}
+                          />
+                        ),
                       },
                     ]}
                   />
@@ -237,22 +330,24 @@ export default function VisaoGeral() {
               </Cartao>
 
               <div className="grid gap-4 lg:grid-cols-2">
-                {/* 3 — a manutenção está sendo feita? */}
+                {/* 3 — a manutenção está sendo feita? (chega na 2ª onda) */}
                 <Cartao>
                   <CabecalhoCard rotulo="Manutenção" />
-                  {d.manutencao ? (
+                  {manutencao.dados === null ? (
+                    <CarregandoCartao linhas={1} />
+                  ) : manutencao.dados.manutencao ? (
                     <div className="grid grid-cols-3 gap-4">
                       <Kpi
                         rotulo="OS em andamento"
-                        valor={inteiro(d.manutencao.os_em_andamento)}
+                        valor={inteiro(manutencao.dados.manutencao.os_em_andamento)}
                       />
                       <Kpi
                         rotulo="Concluídas no mês"
-                        valor={inteiro(d.manutencao.os_concluidas_mes)}
+                        valor={inteiro(manutencao.dados.manutencao.os_concluidas_mes)}
                       />
                       <Kpi
                         rotulo="Atrasados"
-                        valor={inteiro(d.manutencao.atrasados_total)}
+                        valor={inteiro(manutencao.dados.manutencao.atrasados_total)}
                         detalhe="no cronograma do contrato"
                       />
                     </div>
@@ -267,17 +362,19 @@ export default function VisaoGeral() {
                 {/* 4 — o que eu cobrei da equipe andou? */}
                 <Cartao>
                   <CabecalhoCard rotulo="Pendências" />
-                  {d.pendencias ? (
+                  {manutencao.dados === null ? (
+                    <CarregandoCartao linhas={1} />
+                  ) : manutencao.dados.pendencias ? (
                     <div className="grid grid-cols-3 gap-4">
-                      <Kpi rotulo="Abertas" valor={inteiro(d.pendencias.abertas)} />
+                      <Kpi rotulo="Abertas" valor={inteiro(manutencao.dados.pendencias.abertas)} />
                       <Kpi
                         rotulo="Prazo vencido"
-                        valor={inteiro(d.pendencias.prazo_vencido)}
-                        tom={d.pendencias.prazo_vencido ? 'parado' : undefined}
+                        valor={inteiro(manutencao.dados.pendencias.prazo_vencido)}
+                        tom={manutencao.dados.pendencias.prazo_vencido ? 'parado' : undefined}
                       />
                       <Kpi
                         rotulo="Cobradas por mim"
-                        valor={inteiro(d.pendencias.cobradas_abertas)}
+                        valor={inteiro(manutencao.dados.pendencias.cobradas_abertas)}
                         detalhe="abertas que você pediu"
                       />
                     </div>

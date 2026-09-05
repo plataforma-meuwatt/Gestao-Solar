@@ -366,3 +366,53 @@ def test_a_rota_exige_sessao_e_a_irma_inexistente_e_404(cliente_http, dono):
     r = cliente_http.get("/api/v1/resumo", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["usinas"] == []
+
+
+# ── ondas ───────────────────────────────────────────────────────────────────
+
+
+async def test_onda_de_energia_nao_espera_o_meuplano(db, dono, cenario):
+    """A primeira tela do portal levava 22 s e tinha UM esqueleto: meio minuto cinza para
+    o cliente corporativo. Pedindo só `energia`, o meuPlano nem é consultado — e o que
+    ele traria fica NULO com o resto da tela pronta, nunca zerado."""
+    chamadas: list[int] = []
+    meuplano = cenario["meuplano"]
+    original = meuplano.ordens_servico
+
+    async def _contando(usina_id, status=None):
+        chamadas.append(usina_id)
+        return await original(usina_id, status)
+
+    meuplano.ordens_servico = _contando
+
+    saida = await resumo(referencia=REFERENCIA.isoformat(), blocos="energia", db=db, usuario=dono)
+
+    assert chamadas == []                                # o upstream lento não foi tocado
+    porto = _por_nome(saida, "Porto Ferreira")
+    assert porto.energia_mes_kwh == 9500.0               # a energia veio inteira
+    assert porto.manutencao is None                      # e o que não foi pedido é nulo
+    assert porto.pendencias_abertas is None
+    # Bloco não pedido não vira aviso de falha: a tela diria que o meuPlano caiu.
+    assert "Manutenção" not in (porto.aviso or "")
+    assert saida.manutencao is None and saida.pendencias is None
+
+
+async def test_onda_de_manutencao_traz_so_o_que_faltava(db, dono, cenario):
+    """A segunda onda preenche as colunas de manutenção com os MESMOS números da chamada
+    inteira — a divisão é de tempo, não de conteúdo."""
+    saida = await resumo(referencia=REFERENCIA.isoformat(), blocos="manutencao", db=db, usuario=dono)
+
+    porto = _por_nome(saida, "Porto Ferreira")
+    assert porto.energia_mes_kwh is None                 # esta onda não pediu energia
+    assert porto.manutencao is not None
+    assert porto.manutencao.previsto_ate_mes == 6
+    assert porto.manutencao.feitos == 3
+    assert porto.pendencias_abertas == 2
+
+
+async def test_bloco_desconhecido_recusa_com_a_frase(db, dono, cenario):
+    """Silenciar o nome errado deixaria a tela com colunas vazias e nenhuma explicação."""
+    with pytest.raises(HTTPException) as erro:
+        await resumo(referencia=REFERENCIA.isoformat(), blocos="financeiro", db=db, usuario=dono)
+    assert erro.value.status_code == 400
+    assert "financeiro" in erro.value.detail

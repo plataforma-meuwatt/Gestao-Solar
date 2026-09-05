@@ -178,12 +178,15 @@ function KpiDoPeriodo({
       {/* Quando o monitoramento não tem leitura do período inteiro, o servidor compara só os
           meses medidos — e DIZ isso aqui. Sem a frase, "no ano" pareceria o ano fechado, que
           é justamente a leitura errada que fazia a mesma usina sair verde no mês e vermelha
-          no ano. `title` guarda o texto inteiro; a linha fica em uma só para não empurrar o
-          cartão. */}
+          no ano.
+
+          A frase aparece INTEIRA, em quantas linhas precisar. Estava com `truncate` e só se
+          completava no tooltip: sobre um gráfico com cinco meses sem barra, quem lia sem
+          passar o mouse — o modo normal de ler um número grande — via um selo verde de ano
+          inteiro sustentado por quatro meses. A ressalva que torna o número honesto não pode
+          ser a parte escondida; empurrar o cartão dois milímetros é o preço certo. */}
       {d.cobertura ? (
-        <p className="mt-1 truncate text-xs text-fraco" title={d.cobertura}>
-          {d.cobertura}
-        </p>
+        <p className="mt-1 text-xs leading-snug text-fraco">{d.cobertura}</p>
       ) : null}
     </div>
   )

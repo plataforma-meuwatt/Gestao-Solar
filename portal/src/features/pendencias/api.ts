@@ -83,8 +83,10 @@ export type DocumentoPendencia = {
 export type OrdemVinculada = {
   id: number
   usina_id: number
-  numero: number | null
+  /** Número do CONTRATO que rege a OS — **nunca** o número da OS (que é o `id`). */
+  contrato_numero: number | null
   objetivo: string
+  /** Rótulo pronto do servidor ("Serviços adicionais"), nunca o código cru. */
   classificacao: string | null
   situacao: string
   tom: string

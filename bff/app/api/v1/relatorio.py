@@ -48,6 +48,7 @@ from app.api.v1.manutencao import (
     OrdemOut,
     _data,
     _erro_do_upstream,
+    _categoria_da_linha,
     _inteiro,
     _link_do_escopo,
     _ordem_out,
@@ -124,6 +125,15 @@ class CronogramaRelatorioOut(BaseModel):
     #: (executadas + dispensadas) / previstas, calculado no meuPlano. NULO quando nada
     #: estava previsto — e fica nulo: a tela mostra "—", nunca "0 %".
     pct_cumprido: float | None = None
+    #: A frase que reconcilia este bloco com a aba Cronograma. As duas telas respondiam
+    #: "está sendo feito?" com números diferentes — "13 de 270" lá, "cumprido 41,9%" sobre
+    #: 31 previstas aqui — porque o relatório conta só os meses do período em que o
+    #: contrato existe, e o período pedido começava 9 meses ANTES da vigência. Os dois
+    #: números estavam certos; ninguém dizia o recorte. Nula quando período ⊆ contrato.
+    recorte: str | None = None
+    #: Σ de X do contrato inteiro (12 meses) — o denominador da aba Cronograma, para quem
+    #: quiser conferir a conta sem trocar de tela.
+    previstas_no_contrato: int | None = None
     linhas: list[LinhaCronogramaRelatorioOut] = []
     dispensas: list[DispensaOut] = []
 
@@ -365,6 +375,55 @@ MOTIVO_SEM_CRONOGRAMA: dict[str, str] = {
 }
 
 
+#: Meses em português para a frase do recorte — os mesmos rótulos curtos do resto do BFF.
+_MES_CURTO = ("jan", "fev", "mar", "abr", "mai", "jun",
+              "jul", "ago", "set", "out", "nov", "dez")
+
+
+def _mes_por_extenso(ym: Any) -> str | None:
+    """'2026-07' → 'jul/2026'. Competência malformada não vira frase (some da explicação)."""
+    if not isinstance(ym, str) or len(ym) < 7:
+        return None
+    try:
+        ano, mes = int(ym[:4]), int(ym[5:7])
+    except ValueError:
+        return None
+    if not 1 <= mes <= 12:
+        return None
+    return f"{_MES_CURTO[mes - 1]}/{ano}"
+
+
+def _recorte_do_cronograma(dentro: Any, fora: Any, no_contrato: int | None) -> str | None:
+    """A frase que diz de QUAIS meses saiu a porcentagem — e por que ela difere da aba
+    Cronograma.
+
+    Sem ela, o cliente lia "cumprido 41,9%" sob o rótulo "Outubro de 2025 a Setembro de
+    2026" e "13 de 270 previstas" na outra aba, sem nada explicando que o contrato só
+    existe em 2 dos 12 meses pedidos. Quando o período inteiro cabe no contrato não há o
+    que reconciliar, e a frase não aparece — aviso que sempre aparece ninguém lê.
+    """
+    dentro_lista = [m for m in (dentro or []) if isinstance(m, str)]
+    fora_lista = [m for m in (fora or []) if isinstance(m, str)]
+    if not fora_lista:
+        return None
+    if not dentro_lista:
+        return (
+            "Nenhum mês do período pedido está dentro da vigência deste contrato — "
+            "escolha um período que cubra a vigência para ver o cumprimento."
+        )
+    inicio = _mes_por_extenso(dentro_lista[0])
+    fim = _mes_por_extenso(dentro_lista[-1])
+    janela = f"{inicio} a {fim}" if inicio and fim and inicio != fim else (inicio or fim or "")
+    frase = (
+        f"Contagem feita só sobre os {len(dentro_lista)} "
+        f"{'mês' if len(dentro_lista) == 1 else 'meses'} do período em que este contrato "
+        f"está vigente ({janela}); os outros {len(fora_lista)} ficaram de fora."
+    )
+    if no_contrato:
+        frase += f" O contrato inteiro prevê {no_contrato} atividades no ano."
+    return frase
+
+
 def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | None:
     """O bloco do cronograma. `dispensas_brutas` vem à parte porque o meuPlano as põe no
     topo do agregado, não dentro do bloco — lidas de dentro, a seção sairia sempre vazia."""
@@ -378,7 +437,13 @@ def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | N
             LinhaCronogramaRelatorioOut(
                 plan_item_id=_inteiro(r.get("plan_item_id")),
                 nome=_texto(_pega(r, "nome", "name", "conjunto_nome")) or "Atividade",
-                categoria=_texto(_pega(r, "categoria", "screen_categoria", "checklist_natureza")),
+                # Mesmo tradutor da aba Cronograma (fonte única): sem ele o relatório
+                # que vai à diretoria estampava 'INSPECAO' e 'ensaio' ao lado de
+                # 'Inspeção' e 'Ensaio' na outra tela do mesmo portal.
+                categoria=_categoria_da_linha(
+                    {"screen_categoria": _pega(r, "categoria", "screen_categoria"),
+                     "checklist_natureza": r.get("checklist_natureza")}
+                )[0],
                 previstas=_contagem(r, "previstas", "previsto"),
                 executadas=_contagem(r, "executadas", "feito", "feitas"),
                 dispensadas=_contagem(r, "dispensadas", "dispensado"),
@@ -400,6 +465,7 @@ def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | N
     ]
     totais = bruto.get("totais") if isinstance(bruto.get("totais"), dict) else bruto
     consolidado_em = _instante_medida(_pega(bruto, "consolidado_em", "consolidated_at"))
+    no_contrato = _inteiro(_pega(bruto, "previsto_no_contrato"))
     return CronogramaRelatorioOut(
         # O agregado só traz o bloco quando há versão CONSOLIDADA — o carimbo de
         # consolidação é a prova; sem ele, o status fica o que o upstream disser (ou nulo).
@@ -414,6 +480,12 @@ def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | N
         sem_ativo=_contagem(totais, "sem_ativo"),
         # Repassado, não recalculado — e nulo fica nulo (ver o cabeçalho do módulo).
         pct_cumprido=_numero(_pega(totais, "pct_cumprido")),
+        recorte=_recorte_do_cronograma(
+            bruto.get("meses_do_cronograma"),
+            bruto.get("meses_fora_do_cronograma"),
+            no_contrato,
+        ),
+        previstas_no_contrato=no_contrato,
         linhas=linhas,
         dispensas=dispensas,
     )

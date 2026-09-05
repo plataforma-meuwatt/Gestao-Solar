@@ -166,7 +166,10 @@ function CartaoDaOrdem({ o, aoAbrir }: { o: Ordem; aoAbrir: () => void }) {
             {o.objetivo}
           </span>
           <span className="mt-0.5 block text-xs text-fraco">
-            {o.numero === null ? `OS ${o.id}` : `OS #${o.numero}`}
+            {/* `id`, não `contrato_numero`: a mesma OS era "OS 969" aqui e
+                "Instalação da Comunicação · OS 969" na lista. E `classificacao` já vem
+                traduzida do servidor — esta tela imprimia "SERVICOS_ADICIONAIS" cru. */}
+            OS <Num>{o.id}</Num>
             {o.classificacao ? ` · ${o.classificacao}` : ''}
             {o.tecnico ? ` · ${o.tecnico}` : ''}
           </span>
@@ -197,11 +200,26 @@ function CartaoDaOrdem({ o, aoAbrir }: { o: Ordem; aoAbrir: () => void }) {
       ) : o.itens.length === 0 ? (
         <p className="mt-3 text-sm text-fraco">Ordem sem tarefas registradas.</p>
       ) : (
-        <ul className="mt-3">
-          {o.itens.map((t, i) => (
-            <TarefaDaLista key={t.id === null ? `${o.id}-${i}` : t.id} t={t} />
-          ))}
-        </ul>
+        // O laudo ensaio a ensaio ("Isolação · TC proteção 1 — Aprovado") é o detalhe que
+        // PROVA que foi feito, e o dono pediu o relatório justamente por isso — mas o
+        // cliente corporativo "não quer fazer análise de equipamento". Fica atrás de um
+        // clique: a contagem "N de M" acima já responde a pergunta dele.
+        <details className="group mt-3">
+          <summary className="cursor-pointer list-none text-sm text-fraco transition hover:text-corpo">
+            <span aria-hidden className="mr-1 inline-block group-open:hidden">
+              ›
+            </span>
+            <span aria-hidden className="mr-1 hidden group-open:inline-block">
+              ⌄
+            </span>
+            Ver o que foi feito, item por item (<Num>{inteiro(o.itens.length)}</Num>)
+          </summary>
+          <ul className="mt-2">
+            {o.itens.map((t, i) => (
+              <TarefaDaLista key={t.id === null ? `${o.id}-${i}` : t.id} t={t} />
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   )
@@ -429,7 +447,7 @@ function Conteudo({
               valor={inteiro(c.previstas)}
               detalhe={
                 <>
-                  no prazo <Num>{inteiro(c.no_prazo)}</Num> · sem ativo{' '}
+                  no prazo <Num>{inteiro(c.no_prazo)}</Num> · sem equipamento no escopo{' '}
                   <Num>{inteiro(c.sem_ativo)}</Num>
                 </>
               }
@@ -445,6 +463,13 @@ function Conteudo({
             />
             <Kpi rotulo="Cumprido" valor={porcento(c.pct_cumprido)} tamanho="grande" />
           </div>
+
+          {/* De QUAIS meses saiu esta porcentagem — e por que ela difere da aba Cronograma.
+              Sem a frase, o cliente lia "cumprido 41,9%" sob o rótulo de um período de 12
+              meses e "13 de 270 previstas" na outra aba, sem nada explicando que o contrato
+              só existe em dois daqueles meses. Vem escrita do servidor: a régua que separa
+              "período pedido" de "período coberto pelo contrato" mora onde a conta é feita. */}
+          {c.recorte ? <p className="mt-3 text-xs text-fraco">{c.recorte}</p> : null}
 
           <div className="mt-5">
             <Tabela
@@ -473,7 +498,13 @@ function Conteudo({
                   ),
                 },
                 { titulo: 'No prazo', alinhar: 'dir', celula: (l) => <Num>{inteiro(l.no_prazo)}</Num> },
-                { titulo: 'Sem ativo', alinhar: 'dir', celula: (l) => <Num>{inteiro(l.sem_ativo)}</Num> },
+                {
+                  // "Sem ativo" é o nome INTERNO da condição (X num item de plano que não
+                  // cobre equipamento nenhum). O cliente lê o que aquilo quer dizer.
+                  titulo: 'Sem equipamento',
+                  alinhar: 'dir',
+                  celula: (l) => <Num>{inteiro(l.sem_ativo)}</Num>,
+                },
               ]}
               linhas={c.linhas}
               chave={(l) => (l.plan_item_id === null ? l.nome : l.plan_item_id)}

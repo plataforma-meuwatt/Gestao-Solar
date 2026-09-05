@@ -125,8 +125,12 @@ function Lista({
     {
       titulo: 'Pendência',
       celula: (p: Pendencia) => (
-        <span className="block min-w-0">
-          <span className="block truncate font-medium text-forte">{p.titulo}</span>
+        // `max-w` porque a tabela agora cresce até caber o conteúdo: sem teto, um título
+        // longo esticaria a linha inteira e devolveria a rolagem que ninguém pediu.
+        <span className="block min-w-0 max-w-[24rem]">
+          <span className="block truncate font-medium text-forte" title={p.titulo}>
+            {p.titulo}
+          </span>
           {/* A marca só faz sentido no segmento misto — no recorte "cobradas" seria uma
               etiqueta repetida em toda linha. */}
           {segmento === 'todas' && p.cobrada_pelo_cliente ? (
