@@ -356,18 +356,49 @@ A da loja pode estar atrás; a build certa sai de [expo.dev/go](https://expo.dev
 |---|---|---|
 | back (API) | `https://gestao-solar-production.up.railway.app` | **no ar** — `/health` → 200 |
 | painel | `https://gestaosolar.up.railway.app` | **no ar** — 200 |
-| portal | `https://appgestao.up.railway.app` (é o nome que o código declara) | **não existe** — 404 da borda |
+| portal (cliente) | `https://appgestao-production-15cb.up.railway.app` | **no ar** — 200, servindo `config.js` |
 | Talk Solar | — | serviço ainda não criado |
 
 O `api-gestaosolar.meuwatt.com.br` que o `eas.json` trazia responde **404** — é um domínio
 que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
 
-⚠ **O portal está pronto no repositório e não está publicado.** `portal/Dockerfile` e
-`portal/vite.config.ts` afirmam que ele é "o terceiro serviço no Railway (`appgestao`)",
-mas esse endereço devolve o 404 da borda do Railway (`{"status":"error","code":404,
-"message":"Application not found"}`), que é o que aparece quando não há serviço atrás do
-domínio. Nenhum dos arquivos do portal foi exercitado por um build do Railway — quem for
-criar o serviço não deve tratá-los como padrão já provado.
+✅ **O portal do cliente foi publicado em 04/09/2026** e é o **terceiro serviço** do projeto
+(`appgestao`), separado do painel de gestão por decisão do dono: gestão vai para
+`adm.gestao.solar` e o cliente para `app.gestao.solar` (os dois domínios ainda a comprar e
+apontar). O endereço que o código declarava (`appgestao.up.railway.app`) nunca existiu — o
+domínio real que o Railway gerou é `appgestao-production-15cb.up.railway.app`.
+
+⚠ **O serviço `appgestao` não está ligado ao GitHub.** O token do `.env.txt` é de projeto e
+não tem permissão para `service source connect`, então **não há deploy automático no push**:
+cada mudança do portal exige `cd portal && railway up --service appgestao --detach`. Quem
+tiver acesso de conta ao Railway deve conectar o repositório e apagar este aviso. Enquanto
+isso, **um push que mexe só em `portal/` não muda nada em produção** — é a armadilha desta
+frente, e ela não dá erro: o site continua no ar, com o código antigo.
+
+**Como provar o portal AO VIVO, sem a senha do dono.** Uma tela do portal só responde com
+sessão: sem ela toda rota devolve 401, e o SPA devolve 200 em qualquer caminho — o que faz um
+`curl` na rota parecer prova quando não é (200 ali é só o `index.html`). O caminho que funciona:
+
+```python
+# de dentro de bff/, com PYTHONPATH=.
+from app.core.security import criar_token
+token, expira = criar_token(2)          # usuário 2 = a conta do dono, cliente, 7 usinas
+```
+
+Para a API, `Authorization: Bearer <token>`. Para a TELA, Playwright (o chromium já está no venv
+do bff) com a sessão gravada **antes do primeiro render** — o store a lê de forma síncrona, então
+injetar depois do `goto` da rota final não adianta:
+
+```python
+pag.goto(f'{PORTAL}/entrar', wait_until='domcontentloaded')
+pag.evaluate("([k,v]) => localStorage.setItem(k,v)",
+             ['gs_portal_sessao', json.dumps({'token': token, 'expira_em': expira.isoformat(),
+                                              'usuario': <GET /api/v1/auth/eu>})])
+```
+
+O valor do token nunca é impresso: ele nasce e morre dentro do processo. Sem esse caminho, a
+conferência de uma entrega no portal para na porta — foi o que aconteceu numa leva de 04/09/2026,
+em que os gates automatizados passaram e ninguém tinha aberto a tela.
 
 Três armadilhas do deploy, todas já pagas:
 
