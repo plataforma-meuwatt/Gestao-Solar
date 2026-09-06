@@ -42,7 +42,13 @@
  * consegue exercitá-las no Node sem subir um aparelho.
  */
 
-import { PECAS, ROTULO_DO_PUBLICO, type Publico } from '@/features/relatorios'
+import {
+  DESTINO_DO_MENSAL,
+  NOME_CURTO_DO_MENSAL,
+  PECAS,
+  ROTULO_DO_PUBLICO,
+  type Publico,
+} from '@/features/relatorios'
 import { baseURL, tokenDaSessao } from '@/lib/api'
 import { fetchWithCache, type Leitura } from '@/lib/cache'
 import { competencia } from '@/lib/format'
@@ -84,19 +90,56 @@ export type EnergiaDoMes = {
   pecas: PecaDoAno[]
 }
 
+/**
+ * Um relatório mensal de manutenção **já liberado ao cliente**, na medida da célula.
+ *
+ * Só o par que a folha precisa para oferecer o toque: qual dos dois documentos é, e qual id
+ * abrir. O resto do cartão — usina, competência, data de publicação — viaja completo em
+ * `/documents`, e repeti-lo aqui daria duas cópias da mesma verdade no mesmo pedido.
+ *
+ * **Não tem peso.** O BFF não manda bytes nesta lista, e inventar um número para mostrar
+ * antes do toque seria exatamente o que a Regra 0 proíbe.
+ */
+export type MensalDaCelula = {
+  /** `executivo` · `tecnico`, **cru**. Um valor novo do meuPlano chega à tela, não some. */
+  tipo: string
+  /** O id do relatório **no meuPlano** — o que a rota do PDF mensal aceita. */
+  relatorio_id: number
+}
+
 export type ManutencaoDoMes = {
   /** `fechado` · `corrente` · `futuro`, como o meuPlano classificou. */
   situacao: string | null
   /** Σ de X previstos no mês. Nulo = não disse; **zero é resposta**. */
   previsto: number | null
   cumprido: number | null
+  /**
+   * Os relatórios mensais liberados daquele mês, **executivo primeiro** — a ordem é do BFF
+   * e não se refaz aqui: duas ordens seriam duas respostas para a mesma pergunta.
+   *
+   * ⚠ **Não entra na marca da célula.** A cor responde "foi feito?" (conformidade, dos três
+   * campos acima); isto responde "há papel sobre isso?". Se a existência do documento
+   * pintasse a célula, a grade responderia duas perguntas com uma cor só — e hoje ficaria
+   * inteira em travessão nas 22 usinas, porque o acervo liberado começou este mês.
+   */
+  mensais?: MensalDaCelula[]
 }
 
 export type CelulaDoAno = {
   /** `YYYY-MM`. */
   mes: string
   energia: EnergiaDoMes
-  /** Ausente quando o mês **não pertence ao contrato** — nunca um bloco de zeros. */
+  /**
+   * Ausente quando o mês não pertence ao contrato **e** não há relatório liberado nele —
+   * nunca um bloco de zeros.
+   *
+   * ⚠ **`manutencao != null` deixou de significar "mês do contrato".** O mês fora da
+   * vigência que tem documento liberado (acontece assim que o contrato vira e o
+   * `meses_estado` passa a cobrir outra janela) ganha um bloco trazendo **só** `mensais`,
+   * com `situacao`/`previsto`/`cumprido` ausentes — senão o relatório que a equipe
+   * entregou sumiria da grade do ano em que foi entregue. Quem pergunta "é mês do
+   * contrato?" testa `manutencao.situacao`, não a presença do bloco.
+   */
   manutencao: ManutencaoDoMes | null
 }
 
@@ -147,6 +190,15 @@ export type UsinaDoAno = {
    * célula que falava de outra coisa. Motivo só aparece na aba de que ele é.
    */
   aviso_manutencao: string | null
+  /**
+   * O que falhou ao buscar o **acervo mensal liberado** desta usina.
+   *
+   * Campo próprio, e não um pedaço de `aviso_manutencao`, porque as duas coisas respondem
+   * a perguntas diferentes: "a equipe publicou o cronograma?" (conformidade) × "o
+   * documento do mês está disponível?" (papel). Juntá-las repetiria, com outro nome, o
+   * defeito que este módulo já pagou uma vez.
+   */
+  aviso_mensais: string | null
 }
 
 export type GradeDoAnoOut = {
@@ -443,14 +495,114 @@ export function rotuloDoPublico(tipo: string): string | null {
 }
 
 /**
- * Por que não há executivo na manutenção — e por que a tela DIZ isso.
+ * Onde mora o executivo da manutenção — e por que esta consulta continua saindo num formato só.
  *
- * Varridos o serviço do BFF e o PDF do meuPlano: **não há parâmetro de modo**. O relatório de
- * manutenção sai num formato só. Desenhar um segmentado "técnico · executivo" com uma metade
- * morta seria inventar um produto; a frase abaixo devolve a decisão a quem manda construir.
+ * A frase anterior dizia, numa tela em produção, que *"uma versão executiva, resumida para a
+ * diretoria, ainda não existe no sistema"*. **Existe**: o meuPlano ganhou o relatório mensal
+ * em dois documentos (`executivo` e `tecnico`), e o executivo de Porto Ferreira de agosto foi
+ * medido em 403.775 B, 3 páginas.
+ *
+ * Mas apagar a frase deixaria o buraco sem nome, porque a metade que **continua** faltando é
+ * outra: **não há parâmetro de modo nesta consulta**. A janela livre (`de`..`ate`) sai num
+ * formato só, e o executivo não é um modo dela — é outro documento, de outro fluxo, que
+ * nasce no fechamento de um mês e passa por liberação. Manter a frase mentiria; apagá-la
+ * esconderia o limite. Ela passa a apontar onde o executivo mora.
  */
 export function frasePublicoDaManutencao(): string {
-  return 'O relatório de manutenção sai num formato só. Uma versão executiva, resumida para a diretoria, ainda não existe no sistema.'
+  return 'Esta consulta sai num formato só: o relatório técnico da janela escolhida. A versão executiva, resumida para a diretoria, é outro documento — ela existe no relatório mensal liberado, mês a mês, e aparece na folha do mês assim que a equipe o libera.'
+}
+
+/* ═════════════════════════════════════════════════════ o relatório mensal liberado ══ */
+
+/**
+ * Como se chama cada um dos dois documentos do mês — **lido da fonte única**
+ * (`features/relatorios`), nunca copiado.
+ *
+ * Aqui vale o nome CURTO ("Executivo"), porque ele entra dentro de um botão cujo cabeçalho
+ * já disse que a folha é de manutenção; na lista do acervo vale o nome inteiro ("Relatório
+ * executivo"). São dois comprimentos do mesmo nome, decididos num arquivo só — o mapa já
+ * esteve duplicado nesta base, e duas cópias é o mesmo que duas respostas.
+ *
+ * O BFF repassa o `tipo` **cru** de propósito — um valor novo do meuPlano tem de chegar à
+ * tela, não sumir num mapa deste lado. Por isso tipo desconhecido devolve `null`, e a tela
+ * escreve o código como veio em vez de achatá-lo num dos dois nomes.
+ */
+export function rotuloDoMensal(tipo: string): string | null {
+  return NOME_CURTO_DO_MENSAL[tipo] ?? null
+}
+
+/** Para quem cada um dos dois foi escrito — a MESMA frase do portal e da lista do acervo. */
+export function destinoDoMensal(tipo: string): string | null {
+  return DESTINO_DO_MENSAL[tipo] ?? null
+}
+
+/**
+ * Os documentos liberados de um mês, na ordem em que o servidor os mandou.
+ *
+ * **Não reordena.** A ordem é uma decisão só, e ela é do BFF (`ORDEM_DO_TIPO`, executivo
+ * antes de técnico, porque a diretoria é o destino declarado do executivo). Refazê-la aqui
+ * criaria a segunda fonte da mesma regra — e no dia em que as duas discordassem, o portal e
+ * o celular mostrariam ordens diferentes para o mesmo mês.
+ */
+export function mensaisDoMes(m: ManutencaoDoMes | null | undefined): MensalDaCelula[] {
+  return m?.mensais ?? []
+}
+
+/**
+ * Por que a folha do mês não tem documento liberado para oferecer.
+ *
+ * Duas razões diferentes, e a tela **nunca fica muda** com nenhuma delas: ou a ponte não
+ * respondeu (aí a frase é a do servidor, que sabe o que caiu), ou ninguém liberou ainda —
+ * que foi o estado de **toda a base** no dia desta entrega (os 26 relatórios de agosto/2026
+ * estavam em rascunho, e a rota do cliente respondia 200 com lista vazia, corretamente).
+ *
+ * Uma tela vazia ali se leria como defeito do aplicativo. E a frase manda para a saída que
+ * existe: a consulta logo abaixo, que monta os mesmos números agora.
+ */
+export function fraseSemMensal(mes: string, avisoDaUsina: string | null): string {
+  if (avisoDaUsina) return avisoDaUsina
+  return `O relatório de ${competencia(mes).toLowerCase()} ainda não foi liberado pela equipe. A consulta abaixo monta os mesmos números agora.`
+}
+
+/**
+ * A frase que fica embaixo da consulta — e por que ela tem DUAS versões.
+ *
+ * O defeito, medido na tela pelo dono (06/09/2026): na folha de setembro, que não tem
+ * documento liberado, o rodapé continuava dizendo *"o relatório liberado **acima**"* — não
+ * havia nada acima. Uma tela que aponta para o que não está nela é pior que uma tela muda:
+ * manda procurar.
+ *
+ * Com documento liberado, a frase existe para o caso em que os dois números discordam: são
+ * a MESMA apuração lida em tempos diferentes, e dizer isso é o que impede a pergunta "qual
+ * é o certo?". Sem documento, ela diz onde o do fechamento vai aparecer.
+ */
+export function fraseDaConsulta(temLiberado: boolean): string {
+  if (temLiberado) {
+    return 'A consulta é montada agora, com o que o sistema sabe hoje. O relatório liberado acima é o do fechamento: se os dois discordarem, a diferença é o tempo entre um e outro, não erro de nenhum deles.'
+  }
+  return 'A consulta é montada agora, com o que o sistema sabe hoje. Quando a equipe liberar o relatório deste mês, ele aparece aqui em cima — e é ele o documento do fechamento, assinado.'
+}
+
+/**
+ * O PDF de um relatório mensal liberado.
+ *
+ * O id é o do **relatório no meuPlano**, não o do vínculo: os dois são inteiros pequenos e
+ * trocá-los abriria outro documento sem erro nenhum. A sessão vai em cabeçalho, como todo
+ * arquivo deste aplicativo — token nunca entra em URL, que vai para log.
+ */
+export function urlDoRelatorioMensal(relatorioId: number): string {
+  return `${baseURL}/api/v1/manutencao/relatorios-mensais/${relatorioId}/pdf`
+}
+
+/**
+ * O nome com que o arquivo desce.
+ *
+ * Distinto do da consulta por janela (`relatorio-manutencao-…`) **de propósito**: dois
+ * arquivos homônimos na pasta de Downloads do cliente é como a pergunta "qual é o certo?"
+ * começa. Um é o documento assinado do fechamento; o outro é uma leitura ao vivo.
+ */
+export function arquivoDoMensal(usinaId: number, mes: string, tipo: string): string {
+  return `relatorio-mensal-${tipo}-${usinaId}-${mes}.pdf`
 }
 
 /** Por que não há fechamento anual de geração — e por que não existe botão nessa célula. */
@@ -617,10 +769,12 @@ export const CAMPOS_LIDOS = {
     'meses',
     'anual',
     'aviso_manutencao',
+    'aviso_mensais',
   ],
   CelulaOut: ['mes', 'energia', 'manutencao'],
   EnergiaCelulaOut: ['estado', 'documento_id', 'publicado_em', 'pecas'],
-  ManutencaoCelulaOut: ['situacao', 'previsto', 'cumprido'],
+  ManutencaoCelulaOut: ['situacao', 'previsto', 'cumprido', 'mensais'],
+  MensalNaCelulaOut: ['tipo', 'relatorio_id'],
   PecaOut: ['tipo', 'nome', 'bytes'],
   AnualEnergiaOut: ['disponivel', 'motivo', 'estado', 'documento_id', 'pecas'],
   AnualManutencaoOut: ['disponivel', 'motivo', 'de', 'ate'],

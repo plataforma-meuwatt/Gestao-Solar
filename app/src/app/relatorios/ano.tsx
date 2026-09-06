@@ -7,22 +7,36 @@
  *
  * ## A matriz que ele imaginou tem buracos reais, e a tela os nomeia
  *
- * Das quatro combinações pedidas, **duas não existem** — e isso foi medido, não suposto:
+ * Das quatro combinações pedidas, **uma ainda não existe** — e isso foi medido, não suposto:
  *
  * | | mensal | anual |
  * |---|---|---|
  * | **geração · técnico** (`geracao`, `paradas`) | existe | **não existe** |
  * | **geração · executivo** (`resumo`) | existe | **não existe** |
  * | **manutenção · técnico** (relatório + fichas) | existe | existe |
- * | **manutenção · executivo** | **não existe em nenhuma** | — |
+ * | **manutenção · executivo** | existe **no mensal liberado** | **não existe na consulta** |
  *
  * O anual de geração: a aba Anual do meuWatt cria a linha, mas o gerador de PDF de lá só
  * roda para MENSAL — um relatório ANUAL nasce sem arquivo nenhum, e em produção há **zero
- * linhas ANUAL**. Existe o continente, não o conteúdo. O executivo de manutenção: varridos
- * o serviço e o PDF, **não há parâmetro de modo**.
+ * linhas ANUAL**. Existe o continente, não o conteúdo.
  *
- * Uma grade que desenhasse as quatro células cheias mentiria em duas. Aqui as duas ausentes
- * dizem o que falta e **não têm botão** — botão morto é pior que a frase.
+ * O executivo de manutenção **passou a existir**: o meuPlano ganhou o relatório mensal em
+ * dois documentos, e o executivo de Porto Ferreira de agosto foi medido em 403.775 B, 3
+ * páginas (o técnico, 263.255 B e 9 páginas). O que continua faltando é outra coisa, e a
+ * tela diz qual — **não há parâmetro de modo na consulta por janela livre**. O executivo
+ * não é um modo dela: é outro documento, de outro fluxo, que nasce no fechamento de um mês
+ * e só sai depois de liberado. Por isso ele aparece na folha do MÊS, ao lado da consulta,
+ * e não como um segundo botão da janela.
+ *
+ * Uma grade que desenhasse as células ausentes como cheias mentiria. Aqui o que falta diz o
+ * que falta e **não tem botão** — botão morto é pior que a frase.
+ *
+ * ## O documento não pinta a célula
+ *
+ * A cor do mês responde **"foi feito?"** e sai de `situacao`/`previsto`/`cumprido`. Se a
+ * existência do PDF a pintasse, a grade responderia duas perguntas com uma cor só — e hoje
+ * ficaria inteira em travessão, porque o acervo liberado começou este mês. O relatório do mês
+ * é **oferta dentro da folha aberta**, nunca marca na matriz.
  *
  * ## Tela EMPURRADA, não a sexta aba
  *
@@ -75,26 +89,34 @@ import { frasePecaAusente, peso, PECAS } from '@/features/relatorios'
 import {
   andamentoDoPreparo,
   anosOferecidos,
+  arquivoDoMensal,
+  destinoDoMensal,
   fraseAnualDeEnergia,
   frasePublicoDaManutencao,
+  fraseDaConsulta,
+  fraseSemMensal,
   inventarioDeFichas,
   janelaPorExtenso,
   linhasVisiveis,
   marcaDaEnergia,
   marcaDaManutencao,
+  mensaisDoMes,
   ofertaDoPacote,
   opcoesDeUsina,
   prepararFichas,
   recorteDoAno,
+  rotuloDoMensal,
   rotuloDoPublico,
   urlDoPacoteDeFichas,
   urlDoRelatorioDeManutencao,
+  urlDoRelatorioMensal,
   useGradeDoAno,
   usinaEscolhida,
   type CelulaDoAno,
   type Familia,
   type InventarioDeFichas,
   type Marca,
+  type MensalDaCelula,
   type PecaDoAno,
   type PreparoDeFichas,
   type UsinaDoAno,
@@ -668,14 +690,47 @@ function PecaAbrivel({
   )
 }
 
+/**
+ * A folha de um mês da manutenção: o combinado, o documento entregue e a consulta.
+ *
+ * ## Duas ofertas, nesta ordem
+ *
+ * Primeiro **o relatório daquele mês** — o documento que a equipe fechou, aprovou e liberou,
+ * e que o cliente já tem na mão. Depois a **consulta**, que monta os números agora. Não são
+ * dois cálculos: o `apurar` do meuPlano reusa a mesma função que responde a consulta, o que
+ * foi medido rodando o tradutor sobre o JSON congelado (mesmos 13/13, 100 %, 56+1 pareceres,
+ * 8 problemas e 102 fotos). São **um documento em dois estados**, e a folha diz qual é qual:
+ * um é do fechamento e está assinado, o outro é leitura ao vivo. Quem abrir os dois em
+ * janeiro verá números diferentes de agosto — e precisa saber que a diferença é o **tempo**.
+ *
+ * A consulta **nunca sai**: é a única que funciona nos doze meses, inclusive nos que ninguém
+ * liberou (que era o estado de toda a base no dia desta entrega).
+ */
 function ManutencaoDoMes({ usina, celula }: { usina: UsinaDoAno; celula: CelulaDoAno }) {
   const m = celula.manutencao
-  if (!m || m.situacao === null) {
+  const mensais = mensaisDoMes(m)
+  // `manutencao != null` deixou de significar "mês do contrato": o mês fora da vigência que
+  // tem documento liberado ganha um bloco só com `mensais`. Quem pergunta pelo contrato
+  // pergunta pela `situacao` — e só o mês sem contrato E sem papel é que não tem nada aqui.
+  if (!m || (m.situacao === null && mensais.length === 0)) {
     return (
       <View style={estilos.folhaMiolo}>
         <Text style={estilos.folhaTexto}>
           Este mês não faz parte do contrato desta usina — não havia nada combinado para ele.
         </Text>
+      </View>
+    )
+  }
+  if (m.situacao === null) {
+    // Fora do contrato, mas com documento entregue. Nenhum número: `previsto`/`cumprido` não
+    // vieram, e escrever "0 de 0" aqui seria inventar um combinado que não existiu.
+    return (
+      <View style={estilos.folhaMiolo}>
+        <Text style={estilos.folhaTexto}>
+          Este mês está fora da vigência do contrato atual, mas a equipe liberou o relatório
+          dele.
+        </Text>
+        <RelatorioDoMes usina={usina} celula={celula} mensais={mensais} />
       </View>
     )
   }
@@ -721,10 +776,24 @@ function ManutencaoDoMes({ usina, celula }: { usina: UsinaDoAno; celula: CelulaD
         número é o agregado do mês, como a manutenção o registrou.
       </Text>
 
-      {/* O RELATÓRIO DO MÊS. O pedido do dono é "mês a mês, geração E manutenção": sem
-          isto, a manutenção só tinha papel na coluna do ano e esta folha explicava o mês
-          sem oferecer nada para ler. É a MESMA rota do fecho do ano, com a janela de um
-          mês só — medido em Porto Ferreira/agosto: 200, 408.192 B, 2,13 s.
+      {/* O DOCUMENTO QUE A EQUIPE ENTREGOU vem primeiro: é o que o cliente já tem na mão,
+          e o que ele procura quando abre a folha de um mês fechado. A consulta vem depois,
+          nomeada pelo que é.
+
+          Mês que ainda não venceu NÃO ganha esta seção: o relatório mensal FECHA um mês,
+          então não há o que ter sido liberado — e a frase do vazio manda para a consulta,
+          que é justamente o botão que o `futuro` não ganha (o servidor responde 400 ali).
+          Seria apontar para uma saída que não está na tela. Se mesmo assim vier documento
+          num mês futuro, ele aparece: esconder o que o servidor mandou seria pior. */}
+      {m.situacao === 'futuro' && mensais.length === 0 ? null : (
+        <RelatorioDoMes usina={usina} celula={celula} mensais={mensais} />
+      )}
+
+      {/* A CONSULTA. O pedido do dono é "mês a mês, geração E manutenção": sem isto, a
+          manutenção só tinha papel na coluna do ano e esta folha explicava o mês sem
+          oferecer nada para ler. É a MESMA rota do fecho do ano, com a janela de um mês só
+          — medido em Porto Ferreira/agosto: 200, 408.192 B, 2,13 s. Ela NUNCA sai da
+          folha: é a única que responde nos doze meses, inclusive nos que ninguém liberou.
 
           Mês `futuro` não ganha botão porque o servidor recusa: pedir dezembro responde
           400 "ate não pode ser um mês futuro." (medido no mesmo turno). Oferecer o botão
@@ -734,8 +803,72 @@ function ManutencaoDoMes({ usina, celula }: { usina: UsinaDoAno; celula: CelulaD
           url={urlDoRelatorioDeManutencao(usina.id, celula.mes, celula.mes)}
           arquivo={`relatorio-manutencao-${usina.id}-${celula.mes}.pdf`}
           titulo={`Relatório de manutenção — ${usina.nome}`}
-          rotulo="Abrir o relatório deste mês"
+          rotulo="Abrir a consulta deste mês"
+          // SECUNDÁRIO quando o documento assinado está logo acima: o texto declara a
+          // hierarquia ("o liberado é o do fechamento") e três botões do mesmo amarelo a
+          // contradiziam. Sem documento liberado, este é o único caminho do mês — e aí ele
+          // volta a ser o botão principal, porque é o que a pessoa veio fazer.
+          variante={mensais.length > 0 ? 'secundario' : 'primario'}
         />
+      )}
+      {m.situacao === 'futuro' ? null : (
+        // A frase muda com o que está na tela: apontar para "o relatório liberado acima"
+        // num mês em que ninguém liberou nada manda o dono procurar o que não existe.
+        <Text style={estilos.folhaApoio}>{fraseDaConsulta(mensais.length > 0)}</Text>
+      )}
+    </View>
+  )
+}
+
+/**
+ * O relatório mensal liberado daquele mês — **duas linhas dentro de um bloco**, nunca um
+ * segmentado nem chip.
+ *
+ * Executivo primeiro, técnico depois: a ordem vem do BFF e não é refeita aqui (duas fontes
+ * da mesma ordem dariam ordens diferentes no site e no celular no dia em que discordassem),
+ * e a razão é que a diretoria é o destino declarado do executivo pelo próprio meuPlano.
+ *
+ * **Nenhum peso é anunciado.** O BFF não manda bytes nesta lista, e a Regra 0 proíbe
+ * inventar o número — o cartão do acervo, na lista de relatórios, é quem os traz.
+ *
+ * Sem documento liberado a folha **não fica muda nem com botão morto**: sai a frase que
+ * separa "a ponte caiu" de "ninguém liberou ainda", e a consulta logo abaixo continua de pé.
+ */
+function RelatorioDoMes({
+  usina,
+  celula,
+  mensais,
+}: {
+  usina: UsinaDoAno
+  celula: CelulaDoAno
+  mensais: MensalDaCelula[]
+}) {
+  return (
+    <View style={estilos.secao}>
+      <Text style={estilos.secaoTitulo}>O relatório deste mês</Text>
+      {mensais.length === 0 ? (
+        <Text style={estilos.folhaApoio}>
+          {fraseSemMensal(celula.mes, usina.aviso_mensais)}
+        </Text>
+      ) : (
+        mensais.map((r) => {
+          const nome = rotuloDoMensal(r.tipo)
+          const destino = destinoDoMensal(r.tipo)
+          return (
+            <View key={`${r.tipo}-${r.relatorio_id}`}>
+              <AbrirPdf
+                url={urlDoRelatorioMensal(r.relatorio_id)}
+                arquivo={arquivoDoMensal(usina.id, celula.mes, r.tipo)}
+                titulo={`Relatório ${nome ?? r.tipo} — ${usina.nome}`}
+                // Tipo desconhecido chega à tela com o código como veio: o BFF repassa o
+                // `tipo` cru justamente para que um documento novo do meuPlano apareça, em
+                // vez de sumir num mapa deste lado.
+                rotulo={`Abrir o ${nome ?? r.tipo}`}
+              />
+              {destino ? <Text style={estilos.folhaApoio}>{destino}</Text> : null}
+            </View>
+          )
+        })
       )}
     </View>
   )
@@ -877,8 +1010,8 @@ function PacoteDeFichas({ usina, de, ate }: { usina: UsinaDoAno; de: string; ate
   const oferta = inventario ? ofertaDoPacote(inventario) : null
 
   return (
-    <View style={estilos.pacote}>
-      <Text style={estilos.pacoteTitulo}>Fichas preenchidas do período</Text>
+    <View style={estilos.secao}>
+      <Text style={estilos.secaoTitulo}>Fichas preenchidas do período</Text>
 
       {inventario === null ? (
         <>
@@ -1147,14 +1280,17 @@ const estilos = StyleSheet.create({
     marginTop: 2,
   },
 
-  pacote: {
+  // O bloco com título dentro da folha: uma regra em cima, o nome do assunto, o conteúdo.
+  // É a MESMA peça no relatório do mês e no pacote de fichas — dois nomes para o mesmo
+  // desenho é como duas telas do mesmo aplicativo começam a parecer de produtos diferentes.
+  secao: {
     gap: espaco.sm,
     marginTop: espaco.sm,
     paddingTop: espaco.md,
     borderTopWidth: 1,
     borderTopColor: cores.bordaFraca,
   },
-  pacoteTitulo: { fontFamily: fontes.uiSemi, fontSize: 14.5, color: cores.textoForte },
+  secaoTitulo: { fontFamily: fontes.uiSemi, fontSize: 14.5, color: cores.textoForte },
   parte: { marginTop: espaco.xs },
   motivoAnual: { gap: 2, marginTop: espaco.xs },
 

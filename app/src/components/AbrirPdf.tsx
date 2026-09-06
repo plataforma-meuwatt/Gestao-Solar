@@ -39,6 +39,7 @@ export function AbrirPdf({
   arquivo,
   titulo,
   rotulo = 'Abrir PDF',
+  variante = 'primario',
 }: {
   url: string
   /** Nome do arquivo em cache. Sem extensão o Android não sabe o que abrir. */
@@ -46,12 +47,21 @@ export function AbrirPdf({
   /** O que aparece no cabeçalho da folha e no diálogo do sistema. */
   titulo: string
   rotulo?: string
+  /**
+   * O peso do botão na tela. **Padrão `primario`, e por isso nada muda para quem já
+   * chamava** — a OS, a tarefa e o cronograma continuam idênticos.
+   *
+   * Existe porque uma folha pode oferecer mais de um documento: quando o documento
+   * assinado do fechamento está logo acima, a consulta ao vivo é a segunda opção, e três
+   * botões do mesmo amarelo contradizem a hierarquia que o texto da própria folha declara.
+   */
+  variante?: 'primario' | 'secundario'
 }) {
   const [aberto, setAberto] = useState(false)
 
   return (
     <View style={estilos.raiz}>
-      <Botao titulo={rotulo} onPress={() => setAberto(true)} />
+      <Botao titulo={rotulo} variante={variante} onPress={() => setAberto(true)} />
 
       <Modal
         visible={aberto}

@@ -27,7 +27,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { join } from 'node:path'
 import { describe, test } from 'node:test'
@@ -83,9 +83,17 @@ const {
   mesesComConteudo,
   ofertaDoPacote,
   opcoesDeUsina,
+  arquivoDoMensal,
+  destinoDoMensal,
+  fraseDaConsulta,
+  frasePublicoDaManutencao,
+  fraseSemMensal,
+  mensaisDoMes,
   recorteDoAno,
+  rotuloDoMensal,
   rotuloDoPublico,
   TETO_DO_PACOTE,
+  urlDoRelatorioMensal,
   urlDoPacoteDeFichas,
   urlDoRelatorioDeManutencao,
   usinaEscolhida,
@@ -155,6 +163,7 @@ function portoFerreira(): Usina {
       manutencao: { disponivel: true, motivo: null, de: '2026-01', ate: '2026-09' },
     },
     aviso_manutencao: null,
+    aviso_mensais: null,
   }
 }
 
@@ -549,6 +558,170 @@ describe('o filtro de usina não deixa a tela muda', () => {
   })
 })
 
+/* ══════════════════════════════════════════ o relatório mensal liberado do meuPlano ══ */
+
+describe('o relatório mensal liberado — o documento assinado, ao lado da consulta', () => {
+  /**
+   * O DEFEITO QUE ESTE TESTE GUARDA: a tela dizia, em produção, que *"uma versão executiva,
+   * resumida para a diretoria, ainda não existe no sistema"*. Ela existe — o meuPlano passou
+   * a fechar o mês em DOIS documentos, e o executivo de Porto Ferreira de agosto foi medido
+   * em 403.775 B e 3 páginas. Uma frase que mente numa tela do dono é pior que uma ausência:
+   * ele decide não pedir o que já tem.
+   *
+   * Apagar a frase, porém, deixaria o buraco sem nome: continua **não havendo parâmetro de
+   * modo** na consulta por janela livre. Por isso ela é reescrita, e não removida.
+   */
+  test('a frase não nega mais o executivo, e aponta onde ele mora', () => {
+    const frase = frasePublicoDaManutencao()
+    assert.equal(
+      /ainda não existe no sistema/.test(frase),
+      false,
+      'a frase voltou a negar um documento que existe',
+    )
+    assert.match(frase, /mensal/, 'a frase não diz onde o executivo mora')
+    assert.match(frase, /consulta/, 'a frase deixou de nomear o limite que ainda existe')
+  })
+
+  /** Guarda: a frase antiga sobrevive numa cópia esquecida em outro arquivo do aplicativo, e
+   *  o dono continua lendo a negativa numa das telas. */
+  test('a frase antiga não existe em lugar nenhum do aplicativo', () => {
+    const achados: string[] = []
+    const varrer = (dir: string) => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        const caminho = join(dir, item.name)
+        if (item.isDirectory()) varrer(caminho)
+        else if (/[.](ts|tsx)$/.test(item.name)) {
+          // Sem tirar os comentários, esta guarda acusaria o próprio docstring que
+          // EXPLICA a correção — e o jeito de "consertar" seria apagar a explicação.
+          const codigo = semComentarios(readFileSync(caminho, 'utf8'))
+          if (codigo.includes('ainda não existe no sistema')) achados.push(caminho)
+        }
+      }
+    }
+    varrer(RAIZ)
+    assert.deepEqual(achados, [], `a frase antiga sobreviveu em: ${achados.join(', ')}`)
+  })
+
+  /**
+   * O DEFEITO: o documento passa a pintar a célula do ano.
+   *
+   * A marca responde **"foi feito?"** — conformidade, de `situacao`/`previsto`/`cumprido`.
+   * Se a existência do PDF entrasse na cor, a grade responderia duas perguntas com uma cor
+   * só — e hoje ficaria INTEIRA em travessão nas 22 usinas, porque o acervo liberado começou
+   * este mês. Trinta e seis comparações: os doze meses do ano, nas três situações.
+   */
+  test('a cor da célula não muda por existir documento liberado (12 meses × 3 situações)', () => {
+    const situacoes = ['fechado', 'corrente', 'futuro'] as const
+    const documentos = [
+      { tipo: 'executivo', relatorio_id: 61 },
+      { tipo: 'tecnico', relatorio_id: 14 },
+    ]
+    let comparacoes = 0
+    for (let mes = 1; mes <= 12; mes += 1) {
+      for (const situacao of situacoes) {
+        const base = { situacao, previsto: 13, cumprido: 13 }
+        const sem = marcaDaManutencao({ ...base })
+        const com = marcaDaManutencao({ ...base, mensais: documentos })
+        assert.deepEqual(
+          com,
+          sem,
+          `2026-${String(mes).padStart(2, '0')} · ${situacao}: o documento entrou na marca`,
+        )
+        comparacoes += 1
+      }
+    }
+    assert.equal(comparacoes, 36)
+  })
+
+  /** Guarda: o mês fora do contrato que TEM documento liberado ganha cor de mês cumprido.
+   *  O bloco chega sem `situacao`, e inventar uma marca ali afirmaria um combinado que não
+   *  existiu — ele continua em branco na grade e só aparece na folha aberta. */
+  test('mês fora do contrato com documento liberado continua sem marca', () => {
+    const m = marcaDaManutencao({
+      situacao: null,
+      previsto: null,
+      cumprido: null,
+      mensais: [{ tipo: 'tecnico', relatorio_id: 84 }],
+    })
+    assert.equal(m.letra, '')
+    assert.equal(m.rotulo, 'Fora do contrato')
+  })
+
+  /** Guarda: a ordem passa a ser refeita no celular. Ela é do BFF — executivo antes de
+   *  técnico, porque a diretoria é o destino declarado do executivo — e duas fontes da mesma
+   *  ordem dariam ordens diferentes no site e no aplicativo. */
+  test('os documentos saem na ordem em que o servidor os mandou', () => {
+    const documentos = [
+      { tipo: 'executivo', relatorio_id: 61 },
+      { tipo: 'tecnico', relatorio_id: 14 },
+    ]
+    assert.deepEqual(
+      mensaisDoMes({ situacao: 'fechado', previsto: 13, cumprido: 13, mensais: documentos }),
+      documentos,
+    )
+    assert.deepEqual(mensaisDoMes({ situacao: 'fechado', previsto: 1, cumprido: 1 }), [])
+    assert.deepEqual(mensaisDoMes(null), [])
+
+    // E a ordem, do lado do servidor, é declarada: executivo = 0, técnico = 1.
+    const documents = readFileSync(join(BFF, 'documents.py'), 'utf8')
+    assert.match(documents, /ORDEM_DO_TIPO = [{]"executivo": 0, "tecnico": 1[}]/)
+    const grade = readFileSync(join(BFF, 'relatorios_ano.py'), 'utf8')
+    assert.match(grade, /ORDEM_DO_TIPO[.]get[(]m[.]tipo/, 'a célula deixou de ordenar pelo tipo')
+  })
+
+  /** Guarda: um tipo novo do meuPlano some num mapa deste lado. O BFF repassa `tipo` CRU de
+   *  propósito; achatá-lo aqui esconderia da tela um documento que passou a existir. */
+  test('tipo desconhecido não é achatado num dos dois', () => {
+    assert.equal(rotuloDoMensal('executivo'), 'Executivo')
+    assert.equal(rotuloDoMensal('tecnico'), 'Técnico')
+    assert.equal(rotuloDoMensal('juridico'), null)
+    assert.equal(destinoDoMensal('executivo'), 'O resumo do mês, para a diretoria.')
+    assert.equal(destinoDoMensal('juridico'), null)
+  })
+
+  /**
+   * O DEFEITO: dois arquivos com o MESMO nome na pasta de Downloads do cliente — um do
+   * fechamento assinado, outro montado agora. É assim que a pergunta "qual é o certo?"
+   * começa, e ela não tem resposta olhando o nome.
+   */
+  test('o arquivo do mensal não se confunde com o da consulta', () => {
+    const mensal = arquivoDoMensal(4, '2026-08', 'executivo')
+    assert.notEqual(mensal, 'relatorio-manutencao-4-2026-08.pdf')
+    assert.match(mensal, /executivo/)
+    assert.match(mensal, /2026-08/)
+  })
+
+  /** Guarda: a tela monta a url do PDF mensal por conta própria e leva 404 no primeiro
+   *  toque; e a sessão vai parar na URL, que entra em log de servidor. */
+  test('a url do PDF mensal bate com a rota do BFF, e não carrega token', () => {
+    const url = urlDoRelatorioMensal(61)
+    assert.equal(url, 'https://exemplo/api/v1/manutencao/relatorios-mensais/61/pdf')
+    assert.equal(/[?&](token|access_token|jwt)=/.test(url), false)
+    const relatorio = readFileSync(join(BFF, 'relatorio.py'), 'utf8')
+    assert.match(relatorio, /@router[.]get[(]"\/manutencao\/relatorios-mensais\/[{]rid[}]\/pdf"[)]/)
+  })
+
+  /**
+   * O DEFEITO MEDIDO: a folha fica muda quando ninguém liberou o mês.
+   *
+   * No dia desta entrega o acervo do cliente estava VAZIO em todas as usinas — os 26
+   * relatórios de agosto/2026 existiam, todos em rascunho, e a rota do cliente respondia 200
+   * com lista vazia, corretamente. Uma seção em branco ali se lê como defeito do aplicativo.
+   * A frase separa "a ponte caiu" (a do servidor) de "ninguém liberou ainda", e manda para a
+   * saída que existe: a consulta logo abaixo.
+   */
+  test('sem documento liberado sai frase, e ela separa quem não respondeu de quem não liberou', () => {
+    const ninguemLiberou = fraseSemMensal('2026-08', null)
+    assert.match(ninguemLiberou, /agosto de 2026/)
+    assert.match(ninguemLiberou, /não foi liberado/)
+    assert.match(ninguemLiberou, /consulta/, 'a frase deixou de apontar a saída que existe')
+
+    const daPonte = 'Não deu para buscar os relatórios mensais desta usina.'
+    assert.equal(fraseSemMensal('2026-08', daPonte), daPonte)
+    assert.notEqual(fraseSemMensal('2026-08', daPonte), ninguemLiberou)
+  })
+})
+
 /* ═══════════════════════════════════════════════════════════════ o pacote de fichas ══ */
 
 describe('o pacote anuncia o que traz antes do primeiro byte', () => {
@@ -792,16 +965,122 @@ describe('fonte — o que não pode voltar a existir na tela do ano', () => {
    * explicava "13 de 13" e não oferecia papel nenhum: o relatório de manutenção só existia
    * na coluna do ano. Medido em Porto Ferreira/agosto: `200, 408.192 B, 2,13 s`.
    *
+   * O rótulo deixou de ser "o relatório deste mês" porque a folha passou a ter DOIS papéis:
+   * o documento liberado pela equipe e esta consulta. Um nome que serve aos dois não
+   * identifica nenhum — e é confundir os dois que produz "por que os números diferem?".
+   *
    * E o mês que ainda não venceu NÃO ganha botão: pedir dezembro ao mesmo endereço responde
    * `400 "ate não pode ser um mês futuro."` (medido). Botão que só sabe dar erro é pior que
    * botão nenhum.
    */
-  test('a folha do mês oferece o relatório de manutenção daquele mês', () => {
-    assert.match(tela, /Abrir o relatório deste mês/)
+  test('a folha do mês oferece a consulta daquele mês, nomeada pelo que ela é', () => {
+    assert.match(tela, /Abrir a consulta deste mês/)
     assert.match(
       tela,
       /urlDoRelatorioDeManutencao\(usina\.id, celula\.mes, celula\.mes\)/,
       'a janela do relatório do mês deixou de ser aquele mês',
+    )
+  })
+
+  /**
+   * O DEFEITO: a consulta aparece ANTES do documento assinado.
+   *
+   * Quem abre a folha de um mês fechado procura o documento que já recebeu. Os dois não são
+   * dois cálculos — o `apurar` do meuPlano reusa a função que responde a consulta —, mas
+   * são um documento em dois ESTADOS: um congelado no fechamento, outro lido agora. Oferecer
+   * a leitura ao vivo primeiro faz o cliente baixar o número que ninguém assinou.
+   */
+  test('o documento liberado vem antes da consulta, e a folha diz que a diferença é o tempo', () => {
+    // A partir do bloco dos NÚMEROS: `RelatorioDoMes` também aparece ANTES, no ramo do mês
+    // fora do contrato que tem documento liberado. Sem esta âncora a guarda ficaria cega —
+    // apagar a oferta do ramo principal passaria por ela (medido, mutando).
+    const bloco = tela.slice(tela.indexOf('atividades combinadas para este mês'))
+    const liberado = bloco.indexOf('<RelatorioDoMes')
+    const consulta = bloco.indexOf('Abrir a consulta deste mês')
+    assert.ok(liberado > 0, 'o relatório liberado sumiu da folha do mês')
+    assert.ok(consulta > 0, 'a consulta sumiu da folha do mês')
+    assert.ok(liberado < consulta, 'a consulta passou a ser oferecida antes do documento')
+    // A frase mora em `fraseDaConsulta` (testada abaixo, nas duas versões) e é a folha que
+    // a chama com o que está na tela — não um texto solto no JSX.
+    assert.match(bloco, /fraseDaConsulta\(mensais\.length > 0\)/,
+      'a folha deixou de explicar a divergência')
+    assert.match(fraseDaConsulta(true), /a diferença é o tempo/)
+  })
+
+  /**
+   * O DEFEITO, medido na tela pelo dono (06/09/2026): na folha de SETEMBRO — que não tem
+   * documento liberado — o rodapé continuava dizendo "o relatório liberado ACIMA". Não havia
+   * nada acima. A tela mandava procurar o que não existe.
+   */
+  test('a frase da consulta só cita "o relatório liberado acima" quando ele está lá', () => {
+    assert.match(fraseDaConsulta(true), /acima/)
+    assert.equal(fraseDaConsulta(false).includes('acima'), false)
+    // Sem documento, ela não fica muda: diz onde o do fechamento vai aparecer.
+    assert.match(fraseDaConsulta(false), /liberar o relatório deste mês/)
+    // E as duas continuam dizendo que a consulta é montada agora — que é o que separa os
+    // dois números quando eles discordam.
+    for (const f of [fraseDaConsulta(true), fraseDaConsulta(false)]) {
+      assert.match(f, /montada agora/)
+    }
+  })
+
+  /**
+   * O botão da consulta perde o destaque quando o documento assinado está logo acima: o
+   * texto da folha declara a hierarquia ("o liberado é o do fechamento") e três botões do
+   * mesmo amarelo a contradiziam.
+   */
+  test('com documento liberado a consulta vira o botão secundário', () => {
+    assert.match(
+      tela,
+      /variante=\{mensais\.length > 0 \? 'secundario' : 'primario'\}/,
+      'a hierarquia dos botões da folha do mês sumiu',
+    )
+  })
+
+  /**
+   * O DEFEITO: sem documento liberado a seção fica vazia — ou pior, ganha um botão que
+   * responde 404. Medido no dia da entrega: as sete usinas do dono tinham ZERO relatórios
+   * liberados, porque os 26 de agosto estavam em rascunho.
+   */
+  test('sem documento liberado a seção traz frase, e nunca um botão', () => {
+    const bloco = tela.slice(tela.indexOf('function RelatorioDoMes'))
+    const frase = bloco.indexOf('fraseSemMensal(celula.mes, usina.aviso_mensais)')
+    const botao = bloco.indexOf('<AbrirPdf')
+    assert.ok(frase > 0, 'a frase do vazio sumiu')
+    assert.ok(botao > 0, 'o botão do documento sumiu')
+    assert.ok(frase < botao, 'o ramo vazio deixou de vir antes do botão')
+    assert.match(bloco, /mensais\.length === 0 \?/, 'o vazio deixou de ter ramo próprio')
+  })
+
+  /**
+   * O DEFEITO: os dois documentos viram um segmentado ou uma fileira de pílulas — o dono
+   * detesta chip, e aqui seria pior que feio: técnico e executivo não são dois MODOS de um
+   * documento, são dois documentos, com dois motores e dois destinos.
+   */
+  test('os dois documentos são duas linhas, nunca um segmentado nem chip', () => {
+    const bloco = tela.slice(
+      tela.indexOf('function RelatorioDoMes'),
+      tela.indexOf('const estilos'),
+    )
+    assert.equal(/<Segmentado/.test(bloco), false, 'os dois documentos viraram um segmentado')
+    assert.equal(/chip/i.test(bloco), false, 'apareceu chip na escolha do documento')
+    assert.match(bloco, /mensais\.map\(/, 'as linhas deixaram de sair da lista do servidor')
+  })
+
+  /**
+   * O DEFEITO: a frase do vazio aponta para um botão que aquele mês não tem.
+   *
+   * O mês `futuro` não ganha a consulta (o servidor responde 400), e o relatório mensal
+   * FECHA um mês — num mês que não venceu não há o que ter sido liberado. Se a seção
+   * aparecesse ali, o dono leria "a consulta abaixo monta os mesmos números agora" olhando
+   * para uma folha sem consulta nenhuma. A seção inteira sai — mas só quando está vazia:
+   * documento que o servidor mandou nunca é escondido.
+   */
+  test('mês que não venceu não mostra a seção do documento — a menos que venha um', () => {
+    assert.match(
+      tela,
+      /m\.situacao === 'futuro' && mensais\.length === 0 \? null : \(\s*<RelatorioDoMes/,
+      'a seção do documento passou a aparecer no mês que não venceu, apontando para uma consulta que não existe',
     )
   })
 

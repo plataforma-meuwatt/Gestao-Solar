@@ -45,6 +45,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { LeitorPdf } from '@/components/LeitorPdf'
 import {
+  ehTipoDoMensal,
   gavetaDoRelatorio,
   rotuloDaGaveta,
   rotuloDaPeca,
@@ -109,9 +110,16 @@ export default function Relatorio() {
   // O acervo que a lista já leu. Só é consultado para preencher o que não veio na rota;
   // o TanStack devolve a mesma leitura, sem uma segunda ida à rede.
   const { dados } = useRelatorios()
-  const doAcervo = dados?.documentos.find((r) => String(r.id) === String(id)) ?? null
-
   const peca = tipo ?? 'geracao'
+  // O acervo de GERAÇÃO só responde por documento de geração. O relatório mensal de
+  // manutenção é numerado pelo meuPlano, e um id dele pode coincidir com o de um
+  // fechamento daqui (medido: 14 existe nos dois) — procurá-lo nesta lista carimbaria o
+  // cabeçalho com a usina e o mês de OUTRO documento. Hoje a lista sempre manda `usina`,
+  // `competencia` e `nome` na rota; isto é a trava para o deep-link antigo que não manda.
+  const doAcervo = ehTipoDoMensal(peca)
+    ? null
+    : (dados?.documentos.find((r) => String(r.id) === String(id)) ?? null)
+
   const { titulo, subtitulo, completo } = cabecalhoDoRelatorio({
     tipo: peca,
     nome: nome ?? doAcervo?.arquivos.find((a) => a.tipo === peca)?.nome,

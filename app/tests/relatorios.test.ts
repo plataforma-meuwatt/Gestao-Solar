@@ -74,10 +74,17 @@ registerHooks({
 })
 
 const {
+  acervo,
   agruparPorGaveta,
   CAMPOS_LIDOS,
+  cartoesDoMensal,
+  dataDoCartao,
   detalheDaPeca,
+  detalheDoMensal,
+  ehCartaoMensal,
+  ehTipoDoMensal,
   frasePecaAusente,
+  gavetaDoItem,
   gavetaDoRelatorio,
   mesDoRelatorio,
   PECAS,
@@ -85,11 +92,16 @@ const {
   recorte,
   rotuloDaGaveta,
   rotuloDaPeca,
+  ROTULO_DO_MENSAL,
+  rotuloDoMensal,
   subtituloDaAba,
+  TIPOS_DO_MENSAL,
   urlDoArquivo,
+  urlDoRelatorioMensal,
   vazioDaLista,
 } = await import('../src/features/relatorios.ts')
 type Relatorio = import('../src/features/relatorios.ts').Relatorio
+type RelatorioMensal = import('../src/features/relatorios.ts').RelatorioMensal
 
 const fonte = (rel: string) => readFileSync(join(APP, rel), 'utf8')
 
@@ -427,6 +439,312 @@ describe('a tela vazia', () => {
 })
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * 5b. O RELATÓRIO MENSAL DE MANUTENÇÃO — a segunda família na mesma gaveta
+ *
+ * Medido em 06/09/2026 contra o BFF (usuário 2, 7 usinas): `GET /api/v1/documents`
+ * devolve `mensais` com DOIS itens, os dois de Porto Ferreira em 2026-08, executivo
+ * (id 61) antes do técnico (id 14), e `bytes` não existe no contrato. Os PDFs saem por
+ * `GET /api/v1/manutencao/relatorios-mensais/{id}/pdf` — 200, `%PDF-1.4`, 403.775 B e
+ * 263.256 B. É essa resposta que está na fixture.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/** Os dois relatórios liberados, como o BFF os entregou hoje — na ordem dele. */
+const MENSAIS: RelatorioMensal[] = [
+  {
+    id: 61,
+    usina_id: 4,
+    usina: 'Porto Ferreira',
+    competencia: '2026-08',
+    tipo: 'executivo',
+    liberado_em: '2026-09-06T16:18:46.099612',
+  },
+  {
+    id: 14,
+    usina_id: 4,
+    usina: 'Porto Ferreira',
+    competencia: '2026-08',
+    tipo: 'tecnico',
+    liberado_em: '2026-09-06T16:18:44.842708',
+  },
+]
+
+describe('a segunda família: o relatório mensal de manutenção', () => {
+  test('o defeito nomeado: agosto de manutenção cai na gaveta de AGOSTO, com o fechamento de geração', () => {
+    // A aba tem um eixo só — a competência —, e é dele que sai a resposta a "o que já tenho
+    // de agosto?". Uma segunda régua de mês para a família nova poria os dois documentos do
+    // mesmo mês em duas gavetas, e o dono rolaria a tela procurando o que já estava na mão.
+    const gavetas = agruparPorGaveta(acervo({ documentos: ACERVO, aviso: null, mensais: MENSAIS }))
+    assert.deepEqual(gavetas.map((g) => g.chave), ['2026-08', '2026-05'])
+    assert.equal(gavetas[0].rotulo, 'Agosto de 2026')
+    // Um cartão de manutenção convivendo com os DOIS fechamentos de geração de agosto.
+    assert.deepEqual(gavetas[0].itens.map((x) => x.id), [35, 36, 'manutencao-4-2026-08'])
+    assert.equal(gavetas[0].itens.filter(ehCartaoMensal).length, 1)
+  })
+
+  test('a ordem do servidor é preservada — nada é reordenado deste lado', () => {
+    // O BFF já ordena competência desc e, dentro do mês, executivo antes do técnico ("a
+    // diretoria é o destino que o próprio meuPlano declara"). Reordenar aqui daria duas
+    // respostas para a mesma pergunta: uma no portal, outra no aplicativo.
+    const [cartao] = cartoesDoMensal(MENSAIS)
+    assert.deepEqual(cartao.pecas.map((p) => p.tipo), ['executivo', 'tecnico'])
+    assert.deepEqual(cartao.pecas.map((p) => p.id), [61, 14])
+    // E os fechamentos de geração continuam na ordem em que chegaram.
+    const lista = acervo({ documentos: ACERVO, aviso: null, mensais: MENSAIS })
+    assert.deepEqual(
+      lista.filter((x) => !ehCartaoMensal(x)).map((x) => x.id),
+      [35, 36, 15, 16, 17, 18],
+    )
+  })
+
+  test('o cartão traz DUAS linhas, executivo primeiro — não um segmentado nem um chip', () => {
+    // Técnico e executivo não são modos de um documento: são dois PDFs, de dois motores,
+    // para dois leitores. Mas são o fechamento do mesmo mês da mesma usina, e dois cartões
+    // fariam o dono procurar duas vezes o que a equipe liberou uma.
+    const [cartao] = cartoesDoMensal(MENSAIS)
+    assert.equal(cartao.pecas.length, 2)
+    assert.deepEqual(cartao.pecas.map((p) => p.tipo), ['executivo', 'tecnico'])
+    assert.equal(cartao.usina, 'Porto Ferreira')
+    assert.equal(gavetaDoItem(cartao), '2026-08')
+  })
+
+  test('o defeito nomeado: as duas linhas tinham o MESMO nome — cada uma diz o seu', () => {
+    // Medido na tela pelo dono (06/09/2026): as duas linhas saíam "Relatório de manutenção"
+    // e só um rótulo miúdo as separava, ao lado de uma vizinha que diz "Relatório de
+    // Geração · técnico · 2,7 MB". Agora o nome carrega o público — as MESMAS palavras do
+    // portal, para o mesmo documento não ter dois nomes em duas telas.
+    const [cartao] = cartoesDoMensal(MENSAIS)
+    const nomes = cartao.pecas.map((p) => rotuloDoMensal(p.tipo))
+    assert.deepEqual(nomes, ['Relatório executivo', 'Relatório técnico'])
+    assert.equal(new Set(nomes).size, 2, 'duas linhas com o mesmo título')
+    assert.deepEqual(cartao.pecas.map((p) => detalheDoMensal(p)), [
+      'O resumo do mês, para a diretoria.',
+      'O laudo completo, com o cronograma, as ordens e as fichas do mês.',
+    ])
+    // Sem `tipo` (o cabeçalho da tela de leitura antes de saber qual é) fica o nome do
+    // produto, e tipo que o produto não conhece também — nunca um dos dois chutado.
+    assert.equal(rotuloDoMensal(), ROTULO_DO_MENSAL)
+    assert.equal(rotuloDoMensal('ambiental'), ROTULO_DO_MENSAL)
+  })
+
+  test('o defeito nomeado: peso que o servidor não manda não vira "0 B" nem travessão solto', () => {
+    // Medido: `RelatorioMensalOut` não declara `bytes`, embora os PDFs pesem 403.775 B e
+    // 263.255 B do outro lado. Coalescer para zero escreveria "0 B" num documento que
+    // existe — afirmaria que o PDF está vazio. E o "— " pendurado ao lado de uma vizinha
+    // que anuncia "2,7 MB" fazia a linha parecer defeituosa: a tela simplesmente não fala
+    // de tamanho nesta família enquanto o campo não existir.
+    for (const m of MENSAIS) {
+      assert.equal(detalheDoMensal(m).includes('0 B'), false)
+      assert.equal(detalheDoMensal(m).includes('—'), false)
+    }
+    // E o dia em que o BFF passar a mandar o peso, a linha se preenche sozinha.
+    assert.equal(
+      detalheDoMensal({ ...MENSAIS[0], bytes: 403775 }),
+      'O resumo do mês, para a diretoria. · 404 KB',
+    )
+  })
+
+  test('`tipo` que o produto ainda não conhece sai CRU, e não some num rótulo genérico', () => {
+    // O dia em que o meuPlano criar um terceiro documento, ele tem de aparecer na tela.
+    const terceiro = { ...MENSAIS[0], id: 99, tipo: 'ambiental' }
+    assert.equal(detalheDoMensal(terceiro), 'ambiental')
+    assert.equal(detalheDoMensal({ ...terceiro, bytes: 2000 }), 'ambiental · 2 KB')
+  })
+
+  test('o defeito nomeado: a chave do cartão não colide com o id do fechamento', () => {
+    // Os dois acervos numeram sozinhos: o relatório 14 do meuPlano e o fechamento 14 do
+    // monitoramento são documentos diferentes com o mesmo número, e caem na mesma gaveta.
+    // Chave repetida em lista do React desenha um e some com o outro, sem erro nenhum.
+    const [cartao] = cartoesDoMensal(MENSAIS)
+    assert.equal(typeof cartao.id, 'string')
+    const ids = acervo({ documentos: ACERVO, aviso: null, mensais: MENSAIS }).map((x) => String(x.id))
+    assert.equal(new Set(ids).size, ids.length, 'duas chaves iguais na mesma lista')
+    // Prova direta: um fechamento de geração com o MESMO número do relatório mensal.
+    const homonimo = rel({ id: 14, usina: 'Porto Ferreira', de: '2026-08-01' })
+    const juntos = acervo({ documentos: [homonimo], aviso: null, mensais: MENSAIS }).map((x) =>
+      String(x.id),
+    )
+    assert.equal(new Set(juntos).size, 2)
+  })
+
+  test('o defeito nomeado: um mês que SÓ a manutenção tem não é jogado no fim', () => {
+    // Setembro depois de maio é a tela dizendo que setembro é mais antigo. A ordem do
+    // servidor é preservada para o que ele ordenou; o que ele não tinha onde pôr é
+    // ENCAIXADO no lugar cronológico entre os meses que já existem.
+    const setembro: RelatorioMensal[] = [{ ...MENSAIS[0], id: 84, competencia: '2026-09' }]
+    const gavetas = agruparPorGaveta(acervo({ documentos: ACERVO, aviso: null, mensais: setembro }))
+    assert.deepEqual(gavetas.map((g) => g.chave), ['2026-09', '2026-08', '2026-05'])
+
+    // E no meio, também no lugar certo — nem no topo, nem no fim.
+    const junho: RelatorioMensal[] = [{ ...MENSAIS[0], id: 85, competencia: '2026-06' }]
+    assert.deepEqual(
+      agruparPorGaveta(acervo({ documentos: ACERVO, aviso: null, mensais: junho })).map(
+        (g) => g.chave,
+      ),
+      ['2026-08', '2026-06', '2026-05'],
+    )
+  })
+
+  test('o encaixe do mês novo não depende da ORDEM em que os cartões chegam', () => {
+    // O BFF hoje manda competência desc, mas a régua não pode depender disso: duas usinas
+    // com meses diferentes chegam pelo fan-out, e uma ordem de chegada que mudasse a tela
+    // faria o acervo "se mexer" entre duas aberturas sem nada ter mudado.
+    const nove: RelatorioMensal = { ...MENSAIS[0], id: 90, usina_id: 5, usina: 'Tiete', competencia: '2026-09' }
+    const sete: RelatorioMensal = { ...MENSAIS[0], id: 91, usina_id: 2, usina: 'Pereiras', competencia: '2026-07' }
+    const chaves = (ms: RelatorioMensal[]) =>
+      agruparPorGaveta(acervo({ documentos: ACERVO, aviso: null, mensais: ms })).map((g) => g.chave)
+    assert.deepEqual(chaves([nove, sete]), ['2026-09', '2026-08', '2026-07', '2026-05'])
+    assert.deepEqual(chaves([sete, nove]), ['2026-09', '2026-08', '2026-07', '2026-05'])
+  })
+
+  test('uma usina que só tem manutenção continua na ordem do servidor', () => {
+    // Sem nenhum fechamento de geração não há espinha nenhuma para preservar — e aí a ordem
+    // é a que o servidor deu, sem que ninguém a refaça deste lado.
+    const so: RelatorioMensal[] = [
+      { ...MENSAIS[0], id: 90, competencia: '2026-09' },
+      { ...MENSAIS[0], id: 91, competencia: '2026-08' },
+      { ...MENSAIS[0], id: 92, competencia: '2026-06' },
+    ]
+    const gavetas = agruparPorGaveta(acervo({ documentos: [], aviso: null, mensais: so }))
+    assert.deepEqual(gavetas.map((g) => g.chave), ['2026-09', '2026-08', '2026-06'])
+    assert.equal(subtituloDaAba(recorte(acervo({ documentos: [], aviso: null, mensais: so }), null, null)), '3 relatórios · 1 usina')
+  })
+
+  test('cache gravado antes desta entrega continua desenhando a aba', () => {
+    // O envelope em disco não tem versão: um JSON de formato anterior faz parse e é
+    // desenhado como está, com `mensais` valendo `undefined`. Quem está no campo não pode
+    // perder a aba inteira porque uma família nasceu.
+    const velho = { documentos: ACERVO, aviso: null }
+    assert.deepEqual(
+      acervo(velho).map((x) => x.id),
+      [35, 36, 15, 16, 17, 18],
+    )
+    assert.deepEqual(acervo(null), [])
+    assert.deepEqual(acervo({ documentos: [], aviso: null, mensais: [] }), [])
+  })
+
+  test('item sem competência ou sem tipo é DESCARTADO — não vira cartão que não abre', () => {
+    // Os três (id, competência, tipo) são a identidade do documento. Um cartão sem eles
+    // ofereceria um toque que não leva a lugar nenhum — e Regra 0 proíbe preencher o buraco.
+    const sujos: RelatorioMensal[] = [
+      { ...MENSAIS[0], competencia: '' },
+      { ...MENSAIS[1], tipo: '' },
+    ]
+    assert.deepEqual(cartoesDoMensal(sujos), [])
+  })
+
+  test('a data do cartão é a liberação mais recente, e ausência é travessão', () => {
+    // As duas peças saíram com 1,3 s de diferença — para quem lê, o mesmo instante.
+    const [cartao] = cartoesDoMensal(MENSAIS)
+    assert.equal(dataDoCartao(cartao), '2026-09-06T16:18:46.099612')
+    const semData = cartoesDoMensal(MENSAIS.map((m) => ({ ...m, liberado_em: null })))
+    assert.equal(dataDoCartao(semData[0]), null, 'sem data declarada, a tela mostra travessão')
+    // Uma peça com data e outra sem: vale a que existe, e nada é inventado para a outra.
+    const meia = cartoesDoMensal([{ ...MENSAIS[0], liberado_em: null }, MENSAIS[1]])
+    assert.equal(dataDoCartao(meia[0]), MENSAIS[1].liberado_em)
+  })
+
+  test('o recorte conta as DUAS famílias, e o filtro vale para as duas', () => {
+    // O filtro é por usina e por mês, não por sistema de origem: quem pede "Porto Ferreira
+    // em agosto" quer os dois papéis daquele mês.
+    const lista = acervo({ documentos: ACERVO, aviso: null, mensais: MENSAIS })
+    const tudo = recorte(lista, null, null)
+    assert.equal(tudo.opcoesDeUsina[0].contagem, 7, '6 fechamentos + 1 cartão de manutenção')
+    assert.equal(tudo.opcoesDeUsina.find((o) => o.valor === 'Porto Ferreira')?.contagem, 2)
+    assert.deepEqual(
+      tudo.opcoesDeGaveta.map((o) => o.contagem),
+      [7, 3, 4],
+    )
+    assert.equal(subtituloDaAba(tudo), '7 relatórios · 5 usinas')
+
+    const recortado = recorte(lista, 'Porto Ferreira', '2026-08')
+    assert.deepEqual(
+      recortado.visiveis.map((x) => String(x.id)),
+      ['35', 'manutencao-4-2026-08'],
+    )
+    assert.equal(recortado.ajuste, null)
+  })
+
+  test('as duas famílias nomeiam a usina pela MESMA fonte — senão o filtro parte a usina em duas', () => {
+    // O filtro de usina casa as duas famílias pelo NOME (é o que a lista de opções mostra).
+    // Se um lado dissesse "Porto Ferreira" e o outro "UFV Porto Ferreira", a mesma usina
+    // viraria DUAS opções, cada uma levando à metade dos documentos — e o dono concluiria
+    // que o relatório do mês sumiu. O que impede isso é os dois saírem do nome do VÍNCULO
+    // deste sistema, e não do nome que cada upstream usa.
+    const py = readFileSync(join(BFF, 'documents.py'), 'utf8')
+    assert.match(py, /usina=link\.nome/, 'o mensal deixou de usar o nome do vínculo')
+    assert.match(py, /nome_por_slug\.get\(slug\)/, 'a geração deixou de usar o nome do vínculo')
+  })
+
+  test('o defeito nomeado: com só a ponte do MENSAL caída, o título não afirma que nada foi publicado', () => {
+    // Mesmo defeito de antes, com a outra família: quando o meuPlano não responde, não se
+    // sabe se há relatório — e o título dizia que não há, com o aviso logo abaixo.
+    const v = vazioDaLista(null, 'Não deu para buscar os relatórios mensais de: Tiete')
+    assert.notEqual(v.titulo, 'Nenhum relatório publicado')
+    assert.equal(v.ponte, true)
+    assert.match(v.descricao, /relatórios mensais/)
+    // As duas pontes caídas: os dois motivos aparecem, cada um dizendo de qual família é.
+    const dois = vazioDaLista(
+      'Relatórios indisponíveis: timeout',
+      'Não deu para buscar os relatórios mensais de: Tiete',
+    )
+    assert.match(dois.descricao, /timeout/)
+    assert.match(dois.descricao, /mensais/)
+    // E sem aviso nenhum, o vazio honesto continua sendo o de antes.
+    assert.equal(vazioDaLista(null, null).titulo, 'Nenhum relatório publicado')
+  })
+
+  test('o defeito nomeado: o PDF do mensal vai para a rota do mensal, e a da geração fica intacta', () => {
+    // São dois acervos, de dois sistemas, e dois endereços. Medido: a rota da geração
+    // responde 422 a um `tipo` do mensal — o servidor é quem garante que os vocabulários
+    // não se cruzam, e é por isso que o `tipo` pode discriminar a família.
+    assert.equal(
+      urlDoRelatorioMensal(61),
+      'https://exemplo/api/v1/manutencao/relatorios-mensais/61/pdf',
+    )
+    assert.equal(urlDoArquivo(61, 'executivo'), urlDoRelatorioMensal(61))
+    assert.equal(urlDoArquivo(14, 'tecnico'), urlDoRelatorioMensal(14))
+    assert.match(urlDoArquivo(36, 'resumo'), /\/api\/v1\/documents\/36\/file\?tipo=resumo$/)
+    assert.match(urlDoArquivo(35), /\/api\/v1\/documents\/35\/file\?tipo=geracao$/)
+    // A sessão nunca vai na URL — URL entra em log.
+    for (const u of [urlDoRelatorioMensal(61), urlDoArquivo(36, 'resumo')]) {
+      assert.equal(/token|Bearer|authorization/i.test(u), false)
+    }
+  })
+
+  test('os dois vocabulários de `tipo` são disjuntos — senão o discriminador mente', () => {
+    // O dia em que alguém chamar de "tecnico" uma quarta peça de fechamento, o endereço do
+    // PDF passa a ser o do outro acervo e o dono abre o documento errado, sem erro nenhum.
+    const geracao = new Set(Object.keys(PECAS))
+    for (const t of TIPOS_DO_MENSAL) {
+      assert.equal(geracao.has(t), false, `"${t}" está nas duas famílias`)
+      assert.equal(ehTipoDoMensal(t), true)
+    }
+    for (const t of geracao) assert.equal(ehTipoDoMensal(t), false, `"${t}" caiu na família errada`)
+  })
+
+  test('CAMPOS_LIDOS cobre 100% do que a tela lê: o cartão se monta só com os campos declarados', () => {
+    // O teste de contrato acima confere que cada campo declarado existe no BFF. Este confere
+    // o outro lado: que a tela não lê nada ALÉM do declarado — senão o dia em que o servidor
+    // renomear um campo não guardado, o cartão degrada em silêncio e ninguém é avisado.
+    const declarados = CAMPOS_LIDOS.RelatorioMensalOut as readonly string[]
+    const soDeclarados = Object.fromEntries(
+      declarados.map((c) => [c, (MENSAIS[0] as unknown as Record<string, unknown>)[c]]),
+    ) as unknown as RelatorioMensal
+    const [cartao] = cartoesDoMensal([soDeclarados])
+    assert.equal(cartao.usina, 'Porto Ferreira')
+    assert.equal(cartao.competencia, '2026-08')
+    assert.equal(cartao.id, 'manutencao-4-2026-08')
+    assert.equal(dataDoCartao(cartao), MENSAIS[0].liberado_em)
+    assert.equal(rotuloDoMensal(cartao.pecas[0].tipo), 'Relatório executivo')
+    assert.equal(detalheDoMensal(cartao.pecas[0]), 'O resumo do mês, para a diretoria.')
+    assert.equal(urlDoArquivo(cartao.pecas[0].id, cartao.pecas[0].tipo), urlDoRelatorioMensal(61))
+    // `bytes` fica DE FORA de propósito: não existe no BFF hoje, e exigi-lo daria o contrato
+    // por quebrado no dia em que ele está certo.
+    assert.equal(declarados.includes('bytes'), false)
+  })
+})
+
+/* ══════════════════════════════════════════════════════════════════════════
  * 6. FONTE — o que não pode voltar a existir no código
  * ═════════════════════════════════════════════════════════════════════════ */
 
@@ -495,6 +813,38 @@ describe('a aba, o arquivo e a rota', () => {
         `${alvo} declara rótulo de peça por conta própria — a fonte é features/relatorios.ts`,
       )
     }
+  })
+
+  test('o defeito nomeado: a aba desenha o cartão de manutenção, e o toque vai para o PDF dele', () => {
+    // Um cartão que não abre nada é pior do que cartão nenhum: ele promete um documento. O
+    // destino é a MESMA rota do fechamento de geração (`/relatorio/{id}`) — quem escolhe o
+    // endereço do PDF é `urlDoArquivo`, pelo `tipo`, para não nascer uma segunda cópia do
+    // caminho do arquivo (já houve duas, com o mesmo defeito nas duas).
+    const tela = fonte('src/app/(tabs)/relatorios.tsx')
+    assert.match(tela, /ehCartaoMensal\(item\)/, 'a aba não separa as duas famílias')
+    assert.match(tela, /<CardMensal key=\{item\.id\}/, 'o cartão de manutenção não é desenhado')
+    assert.match(tela, /\/relatorio\/\$\{peca\.id\}\?tipo=/, 'o toque do mensal não leva ao PDF')
+    // A composição é do SERVIDOR: uma leitura, uma chave de cache, um arquivo em disco.
+    assert.match(tela, /acervo\(dados\)/)
+    assert.equal(/fetchWithCache/.test(tela), false, 'a aba abriu uma segunda leitura')
+  })
+
+  test('o defeito nomeado: as duas pontes falham separado, cada aviso dizendo de qual família é', () => {
+    // Foi juntar os dois motivos num campo só que obrigou o app a arrancar o prefixo
+    // "Manutenção:" com expressão regular e a mostrar a frase nas duas abas.
+    const tela = fonte('src/app/(tabs)/relatorios.tsx')
+    // O motivo do mensal precisa ser DESENHADO, não só lido: uma asserção que aceitasse
+    // qualquer menção ao campo passaria com o `<Text>` apagado, porque `vazioDaLista` o cita
+    // na mesma tela — e o dono ficaria com a lista de uma família e nenhuma palavra sobre a
+    // outra ter caído. (Provado: apagar só o render não reprovava.)
+    assert.match(tela, /<Text style=\{estilos\.aviso\}>\{dados\.aviso_mensais\}<\/Text>/)
+    assert.match(tela, /vazioDaLista\(dados\?\.aviso, dados\?\.aviso_mensais\)/)
+    // E o rótulo do documento mensal tem UMA fonte, como o das peças de geração.
+    assert.equal(
+      tela.includes("'Relatório de manutenção'"),
+      false,
+      'a aba declara o nome do documento por conta própria — a fonte é features/relatorios.ts',
+    )
   })
 
   test('a aba leva à grade do ano, e a grade não é uma sexta aba', () => {

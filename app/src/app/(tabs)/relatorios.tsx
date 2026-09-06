@@ -37,14 +37,20 @@ import { EscolhaEmLista } from '@/components/EscolhaEmLista'
 import { LinhaPdf } from '@/components/folha'
 import { Tela } from '@/components/Tela'
 import {
+  acervo,
   agruparPorGaveta,
+  dataDoCartao,
   detalheDaPeca,
+  detalheDoMensal,
+  ehCartaoMensal,
   frasePecaAusente,
   recorte,
   rotuloDaPeca,
+  rotuloDoMensal,
   subtituloDaAba,
   useRelatorios,
   vazioDaLista,
+  type CartaoMensal,
   type Relatorio,
 } from '@/features/relatorios'
 import { dataPorExtenso } from '@/lib/format'
@@ -63,9 +69,12 @@ export default function Relatorios() {
   const [usinaEscolhida, setUsina] = useState<string | null>(null)
   const [gavetaEscolhida, setGaveta] = useState<string | null>(null)
 
-  const lista = dados?.documentos ?? []
+  // As duas famílias numa lista só, com a ordem do servidor preservada. A composição é do
+  // BFF (uma leitura, uma chave de cache): pedir o mensal daqui seria sete conexões e a
+  // quebra do arquivo em disco de quem está no campo.
+  const lista = acervo(dados)
   const rec = recorte(lista, usinaEscolhida, gavetaEscolhida)
-  const vazio = vazioDaLista(dados?.aviso)
+  const vazio = vazioDaLista(dados?.aviso, dados?.aviso_mensais)
 
   return (
     <Tela
@@ -116,8 +125,13 @@ export default function Relatorios() {
             />
           ) : (
             <>
-              {/* O aviso com lista cheia é escopo parcial: uma usina respondeu, outra não. */}
+              {/* O aviso com lista cheia é escopo parcial: uma usina respondeu, outra não.
+                  São DOIS campos, um por família — nunca um só com a família na prosa, que
+                  foi o atalho que obrigou o app a arrancar prefixo com expressão regular. */}
               {dados?.aviso ? <Text style={estilos.aviso}>{dados.aviso}</Text> : null}
+              {dados?.aviso_mensais ? (
+                <Text style={estilos.aviso}>{dados.aviso_mensais}</Text>
+              ) : null}
 
               {/* Lista suspensa pesquisável com contagem, nunca uma fileira de chips (regra
                   do produto). Um filtro de uma opção só é enfeite: só aparece a partir de
@@ -152,9 +166,15 @@ export default function Relatorios() {
               {agruparPorGaveta(rec.visiveis).map((g) => (
                 <View key={g.chave}>
                   <Text style={estilos.gaveta}>{g.rotulo}</Text>
-                  {g.itens.map((r) => (
-                    <CardRelatorio key={r.id} relatorio={r} />
-                  ))}
+                  {g.itens.map((item) =>
+                    ehCartaoMensal(item) ? (
+                      // A chave do cartão é TEXTO e a do fechamento é número: o id 14 do
+                      // meuPlano e o 14 do monitoramento convivem na mesma gaveta.
+                      <CardMensal key={item.id} cartao={item} />
+                    ) : (
+                      <CardRelatorio key={item.id} relatorio={item} />
+                    ),
+                  )}
                 </View>
               ))}
             </>
@@ -195,6 +215,64 @@ function CardRelatorio({ relatorio: r }: { relatorio: Relatorio }) {
           />
         ))
       )}
+    </Card>
+  )
+}
+
+/**
+ * O relatório mensal de MANUTENÇÃO — um cartão por (usina × mês), com uma linha por peça.
+ *
+ * O título diz "Manutenção" porque o cartão vizinho, na mesma gaveta, é o fechamento de
+ * GERAÇÃO da mesma usina e do mesmo mês: sem a palavra, dois cartões parecidos respondem à
+ * mesma pergunta e o dono abre o errado. São dois sistemas, dois ciclos de publicação e
+ * dois acervos — o que eles têm em comum é a competência, e é por ela que estão juntos.
+ *
+ * **Duas linhas, nunca um segmentado nem um chip.** Técnico e executivo não são modos de um
+ * documento: são dois PDFs, de dois motores. A forma é a mesma das peças do fechamento
+ * logo acima, e a ordem — executivo primeiro — é a que o servidor manda, igual no portal.
+ *
+ * **Cada linha diz o próprio nome** ("Relatório executivo" / "Relatório técnico") e, abaixo,
+ * para quem foi escrita — as mesmas palavras do portal. Antes as duas se chamavam
+ * "Relatório de manutenção" e só um rótulo miúdo as separava: dois títulos idênticos na
+ * mesma rolagem fazem abrir o errado.
+ *
+ * A data é uma só e vem rotulada: `liberado_em`, dita "publicado". `aprovado_por`,
+ * `aprovado_em` e `apurado_em` não chegam até aqui de propósito — o primeiro é nome de
+ * funcionário da executora, e os outros dois respondem "quando os números foram
+ * calculados", que não é "de quando é este documento".
+ */
+function CardMensal({ cartao }: { cartao: CartaoMensal }) {
+  const publicado = dataDoCartao(cartao)
+
+  return (
+    <Card semPadding>
+      <View style={estilos.cabecalho}>
+        <View style={estilos.cabecalhoMiolo}>
+          <Text style={estilos.titulo}>Manutenção — {cartao.usina}</Text>
+          <Text style={estilos.sub}>relatório mensal</Text>
+        </View>
+        <View style={estilos.publicado}>
+          <Text style={tipo.legenda}>publicado</Text>
+          {/* Sem data declarada é travessão — nunca a competência fazendo as vezes dela. */}
+          <Num style={estilos.data}>{publicado ? dataPorExtenso(publicado) : '—'}</Num>
+        </View>
+      </View>
+
+      {cartao.pecas.map((peca) => (
+        <LinhaPdf
+          key={peca.id}
+          nome={rotuloDoMensal(peca.tipo)}
+          tamanho={detalheDoMensal(peca)}
+          onPress={() =>
+            router.push(
+              `/relatorio/${peca.id}?tipo=${encodeURIComponent(peca.tipo)}` +
+                `&nome=${encodeURIComponent(rotuloDoMensal(peca.tipo))}` +
+                `&usina=${encodeURIComponent(cartao.usina)}` +
+                `&competencia=${encodeURIComponent(cartao.competencia)}`,
+            )
+          }
+        />
+      ))}
     </Card>
   )
 }

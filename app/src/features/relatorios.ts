@@ -60,18 +60,112 @@ export type Relatorio = {
   arquivos: ArquivoDoRelatorio[]
 }
 
+/**
+ * Um relatório mensal de MANUTENÇÃO que a equipe já LIBEROU ao cliente.
+ *
+ * É a segunda família da aba, e vem do meuPlano — não do monitoramento. Não se mistura com
+ * `Relatorio`: são dois acervos, de dois sistemas, com dois ciclos de publicação. O que os
+ * dois têm em comum é a **competência**, e é por ela que a tela os põe na mesma gaveta.
+ *
+ * **O corte não mora aqui.** Só atravessa o que o meuPlano liberou — e o degrau que lá se
+ * chama "aprovado" *não* é liberado, é conversa interna. O aplicativo não conhece outra
+ * porta: lê `mensais` e nada mais. Reimplementar a régua deste lado criaria uma segunda
+ * resposta para "este documento pode ser mostrado?", e a errada seria a que entrega ao
+ * cliente um relatório que ninguém liberou.
+ */
+export type RelatorioMensal = {
+  /** O id **no meuPlano**. É o que `/manutencao/relatorios-mensais/{id}/pdf` aceita. */
+  id: number
+  /** O id do vínculo **neste sistema** — o mesmo de `Relatorio.plant_id`. */
+  usina_id: number
+  usina: string
+  /** `YYYY-MM`, o mês fechado. Vem PRONTO do servidor: aqui não se deriva mês de data. */
+  competencia: string
+  /** `executivo` (o resumo da diretoria) ou `tecnico` (o laudo). Cru: valor novo chega. */
+  tipo: string
+  /**
+   * Quando a equipe LIBEROU o documento — a única data que sai para o cliente. `aprovado_por`
+   * (nome de funcionário da executora), `aprovado_em` e `apurado_em` não atravessam o BFF de
+   * propósito. Nulo é ausência e vira travessão.
+   */
+  liberado_em: string | null
+  /**
+   * O peso do PDF, quando o servidor o declarar. **Medido em 06/09/2026: ele não declara** —
+   * `RelatorioMensalOut` não tem o campo, e os dois documentos reais pesam 403.775 B e
+   * 263.256 B do outro lado. Por isso o campo é opcional e NÃO entra em `CAMPOS_LIDOS`: não
+   * há contrato a guardar enquanto ele não existir. Ausente vira travessão — nunca `0`, que
+   * afirmaria arquivo vazio — e o dia em que o BFF passar a mandá-lo, a linha se preenche
+   * sozinha.
+   */
+  bytes?: number | null
+}
+
 export type RelatoriosOut = {
   /** O nome do campo é do servidor, e o contrato não muda porque a aba mudou de rótulo. */
   documentos: Relatorio[]
   aviso: string | null
+  /**
+   * Os relatórios mensais de manutenção liberados. **Opcional de propósito**: um envelope
+   * gravado em disco antes desta entrega não tem o campo, e o cache não tem versão — quem
+   * está offline continua vendo a aba, com uma família só.
+   */
+  mensais?: RelatorioMensal[]
+  /**
+   * O que falhou na família MENSAL — e só nela. `aviso` continua sendo o da geração: juntar
+   * os dois obrigaria a tela a reinterpretar prosa para saber de qual família é o motivo, que
+   * foi exatamente o atalho que fez o aplicativo arrancar o prefixo "Manutenção:" com
+   * expressão regular e mostrar a frase nas duas abas.
+   */
+  aviso_mensais?: string | null
 }
 
 export function useRelatorios(): Leitura<RelatoriosOut> {
   return fetchWithCache<RelatoriosOut>('documents')
 }
 
-/** Endereço do PDF. A sessão vai em cabeçalho, nunca na URL — que entra em log. */
+/**
+ * Os `tipo` da família MENSAL de manutenção. É por eles que `urlDoArquivo` sabe a que
+ * acervo o documento pertence.
+ *
+ * **Os dois vocabulários são disjuntos, e não por acaso nosso:** o BFF declara o `tipo` da
+ * geração como `Literal["geracao", "paradas", "resumo"]` — medido em 06/09/2026,
+ * `GET /api/v1/documents/14/file?tipo=tecnico` responde **422**. Um `tipo` do mensal não
+ * tem como significar uma peça de fechamento nem por engano, e o servidor é quem garante.
+ * O teste de fonte confere a interseção vazia contra `PECAS`, para o dia em que alguém
+ * quiser chamar de "tecnico" uma quarta peça de geração.
+ */
+export const TIPOS_DO_MENSAL = ['executivo', 'tecnico'] as const
+
+export function ehTipoDoMensal(tipo: string): boolean {
+  return (TIPOS_DO_MENSAL as readonly string[]).includes(tipo)
+}
+
+/** O nome do documento mensal — fonte única, lida também pelo cabeçalho da tela de abrir. */
+export const ROTULO_DO_MENSAL = 'Relatório de manutenção'
+
+/**
+ * Endereço do PDF do relatório mensal de manutenção.
+ *
+ * Rota própria, e não a da geração: são dois acervos, de dois sistemas. Medida em
+ * 06/09/2026 contra o BFF — 200 com `%PDF-1.4`, 403.775 B (executivo) e 263.256 B
+ * (técnico), `inline` e `private, max-age=300`. **Um GET só, bytes prontos**: não há cesta
+ * nem preparo em atos, como no pacote de fichas.
+ */
+export function urlDoRelatorioMensal(relatorioId: number): string {
+  return `${baseURL}/api/v1/manutencao/relatorios-mensais/${relatorioId}/pdf`
+}
+
+/**
+ * Endereço do PDF. A sessão vai em cabeçalho, nunca na URL — que entra em log.
+ *
+ * **Uma função para as duas famílias, e o `tipo` é o discriminador.** A alternativa seria
+ * cada tela que abre um documento escolher o endereço por conta própria — e o caminho do
+ * PDF já custou duas cópias com o mesmo defeito nas duas (ver `components/AbrirPdf`). Quem
+ * chama continua chamando igual: a tela do documento (`app/relatorio/[id].tsx`) recebe o
+ * `tipo` pela rota e não precisa saber que existem dois acervos.
+ */
 export function urlDoArquivo(relatorioId: number, tipo = 'geracao'): string {
+  if (ehTipoDoMensal(tipo)) return urlDoRelatorioMensal(relatorioId)
   return `${baseURL}/api/v1/documents/${relatorioId}/file?tipo=${encodeURIComponent(tipo)}`
 }
 
@@ -132,6 +226,139 @@ export function detalheDaPeca(arquivo: ArquivoDoRelatorio): string {
   return publico ? `${ROTULO_DO_PUBLICO[publico]} · ${tamanho}` : tamanho
 }
 
+/* ═══════════════════════════════════════════════ o cartão do relatório mensal ══ */
+
+/**
+ * Os dois relatórios de um mês são **um cartão com duas linhas** — nunca dois cartões, e
+ * nunca um segmentado.
+ *
+ * Técnico e executivo não são "modos" nem "versões" do mesmo arquivo: são dois documentos,
+ * de dois motores, com dois destinos. Mas são o fechamento **do mesmo mês da mesma usina**,
+ * e separá-los em dois cartões faria o dono procurar duas vezes o que a equipe liberou uma.
+ * A forma já existe e já está nesta tela: é a do fechamento de geração, cujas peças são
+ * linhas dentro do cartão.
+ */
+export type CartaoMensal = {
+  /**
+   * A chave do cartão — TEXTO, e por isso jamais colide com o `id` numérico de um
+   * fechamento de geração. Os dois convivem na mesma lista e na mesma gaveta, e o id do
+   * meuPlano (14) e o do monitoramento (14) são números diferentes com o mesmo valor.
+   */
+  id: string
+  usina_id: number
+  usina: string
+  /** `YYYY-MM` — é a gaveta, e é o que casa este cartão com o fechamento de geração. */
+  competencia: string
+  /** As peças na ordem que o servidor deu: executivo antes do técnico. */
+  pecas: RelatorioMensal[]
+}
+
+/**
+ * Agrupa os relatórios liberados em cartões de (usina × mês), **preservando a ordem do
+ * servidor** — a do cartão é a da primeira peça que chegou; a das peças, a da resposta.
+ *
+ * O BFF já ordena competência mais recente primeiro e, dentro do mês, executivo antes do
+ * técnico ("a diretoria é o destino que o próprio meuPlano declara para ele"). Reordenar
+ * aqui seria uma segunda régua — e duas réguas dão duas respostas para a mesma pergunta,
+ * uma no portal e outra no aplicativo.
+ */
+export function cartoesDoMensal(mensais: RelatorioMensal[]): CartaoMensal[] {
+  const saida: CartaoMensal[] = []
+  for (const m of mensais) {
+    if (!m || !m.competencia || !m.tipo) continue
+    const id = `manutencao-${m.usina_id}-${m.competencia}`
+    const cartao = saida.find((c) => c.id === id)
+    if (cartao) cartao.pecas.push(m)
+    else
+      saida.push({
+        id,
+        usina_id: m.usina_id,
+        usina: m.usina,
+        competencia: m.competencia,
+        pecas: [m],
+      })
+  }
+  return saida
+}
+
+/**
+ * A data que o cartão carimba, rotulada "publicado".
+ *
+ * É a liberação mais RECENTE entre as peças — medido, as duas de Porto Ferreira saíram com
+ * 1,3 s de diferença, que para quem lê é o mesmo instante. Nulo quando nenhuma peça declara
+ * data: travessão, nunca uma data inventada a partir da competência.
+ */
+export function dataDoCartao(c: CartaoMensal): string | null {
+  const datas = c.pecas.map((p) => p.liberado_em).filter((d): d is string => Boolean(d))
+  if (datas.length === 0) return null
+  return datas.reduce((a, b) => (a > b ? a : b))
+}
+
+/**
+ * Como cada um dos dois documentos do mês se chama — **fonte única do aplicativo**, e o
+ * mesmo nome que o portal escreve (`NOME_DO_TIPO_MENSAL`).
+ *
+ * O defeito que isto conserta foi medido na tela pelo dono (06/09/2026): as duas linhas do
+ * cartão saíam com o título IDÊNTICO ("Relatório de manutenção") e a única diferença era um
+ * rótulo miúdo na segunda linha — enquanto a linha vizinha, do fechamento de geração, dizia
+ * "Relatório de Geração · técnico · 2,7 MB". Rolando a lista, dois títulos iguais fazem
+ * procurar duas vezes o que se liberou uma vez.
+ *
+ * A versão CURTA existe para a folha do mês da grade do ano, onde o nome entra dentro de um
+ * botão ("Abrir o Executivo") e o cabeçalho da folha já disse que se trata de manutenção.
+ * São dois comprimentos do MESMO nome, num arquivo só: duas cópias dariam dois nomes.
+ */
+export const NOME_DO_MENSAL: Record<string, string> = {
+  executivo: 'Relatório executivo',
+  tecnico: 'Relatório técnico',
+}
+
+export const NOME_CURTO_DO_MENSAL: Record<string, string> = {
+  executivo: 'Executivo',
+  tecnico: 'Técnico',
+}
+
+/** Para quem cada um foi escrito — a frase que separa as duas linhas do cartão. */
+export const DESTINO_DO_MENSAL: Record<string, string> = {
+  executivo: 'O resumo do mês, para a diretoria.',
+  tecnico: 'O laudo completo, com o cronograma, as ordens e as fichas do mês.',
+}
+
+/**
+ * O nome da linha.
+ *
+ * `tipo` desconhecido cai no nome do produto ("Relatório de manutenção") em vez de sumir —
+ * e o CÓDIGO CRU continua visível na segunda linha, que é onde `detalheDoMensal` o escreve.
+ * Sem argumento devolve o nome do produto: é o que o cabeçalho da tela de leitura usa
+ * quando ainda não sabe de qual dos dois se trata.
+ */
+export function rotuloDoMensal(tipo?: string): string {
+  return (tipo ? NOME_DO_MENSAL[tipo] : undefined) ?? ROTULO_DO_MENSAL
+}
+
+/**
+ * A segunda linha da peça mensal: **para quem ela é** — e o peso, quando ele existir.
+ *
+ * Antes esta linha era `público · peso` e, como o BFF não declara `bytes` nesta família,
+ * saía "executivo · —": um travessão pendurado ao lado de uma vizinha que anuncia "2,7 MB".
+ * Agora o público está no NOME (acima) e aqui vai a frase que diz para quem o documento foi
+ * escrito — a mesma do portal, palavra por palavra.
+ *
+ * **O peso não virou travessão: ele saiu da promessa.** A tela não deixa de responder uma
+ * pergunta que o servidor responde — ele não manda o campo, e por isso ela não fala de
+ * tamanho nesta família. No dia em que `bytes` chegar, ele entra ao lado da frase sozinho.
+ * Coalescer para `0 B` seguiria proibido: afirmaria arquivo vazio.
+ *
+ * `tipo` desconhecido sai CRU (com o peso, se vier), e não engolido num rótulo genérico: o
+ * dia em que o meuPlano criar um terceiro documento, ele aparece na tela em vez de sumir.
+ */
+export function detalheDoMensal(m: RelatorioMensal): string {
+  const destino = DESTINO_DO_MENSAL[m.tipo]
+  const tamanho = m.bytes === null || m.bytes === undefined ? null : peso(m.bytes)
+  if (!destino) return tamanho ? `${m.tipo} · ${tamanho}` : m.tipo
+  return tamanho ? `${destino} · ${tamanho}` : destino
+}
+
 /* ═══════════════════════════════════════════════════════════════ o eixo do mês ══ */
 
 /**
@@ -171,20 +398,89 @@ export function rotuloDaGaveta(chave: string): string {
   return `${MESES[Number(mes) - 1] ?? chave} de ${ano}`
 }
 
-export type Gaveta = { chave: string; rotulo: string; itens: Relatorio[] }
+/* ═════════════════════════════════════════════════════ as duas famílias, uma lista ══ */
+
+/**
+ * O que o acervo mostra: um fechamento de GERAÇÃO ou um cartão de MANUTENÇÃO.
+ *
+ * União estrutural, e não um envelope `{familia, doc}`: assim `agruparPorGaveta` e
+ * `recorte` continuam recebendo `Relatorio[]` sem nenhuma cerimônia, e as duas famílias
+ * dividem uma régua só de gaveta, de filtro e de contagem. Uma segunda régua para a
+ * família nova daria duas respostas para "de que mês é isto?" na mesma tela.
+ */
+export type ItemDoAcervo = Relatorio | CartaoMensal
+
+/** Qual das duas famílias é este item. `pecas` só existe no cartão de manutenção. */
+export function ehCartaoMensal(item: ItemDoAcervo): item is CartaoMensal {
+  return 'pecas' in item
+}
+
+/**
+ * A gaveta de qualquer item do acervo.
+ *
+ * O cartão de manutenção **sempre** tem competência (o BFF descarta o que chega sem ela),
+ * então ela é a gaveta direto — sem passar pelo espelho `de.slice(0, 7)`, que é remendo de
+ * cache antigo da outra família.
+ */
+export function gavetaDoItem(item: ItemDoAcervo): string {
+  if (ehCartaoMensal(item)) return item.competencia || 'sem-data'
+  return gavetaDoRelatorio(item)
+}
+
+export type Gaveta = { chave: string; rotulo: string; itens: ItemDoAcervo[] }
 
 /**
  * Agrupa por período coberto **preservando a ordem do servidor** (publicação mais recente
  * primeiro). Reordenar aqui seria uma segunda régua de ordenação, e duas réguas dão duas
  * respostas para "qual é o mais novo".
  */
-export function agruparPorGaveta(itens: Relatorio[]): Gaveta[] {
+export function agruparPorGaveta(itens: ItemDoAcervo[]): Gaveta[] {
   const saida: Gaveta[] = []
   for (const r of itens) {
-    const chave = gavetaDoRelatorio(r)
+    const chave = gavetaDoItem(r)
     const gaveta = saida.find((g) => g.chave === chave)
     if (gaveta) gaveta.itens.push(r)
     else saida.push({ chave, rotulo: rotuloDaGaveta(chave), itens: [r] })
+  }
+  return saida
+}
+
+const MES_CHAVE = /^\d{4}-\d{2}$/
+
+/**
+ * As duas famílias numa lista só — **a ordem do servidor é preservada, nada é reordenado**.
+ *
+ * A espinha é a geração: a sequência de gavetas é a que o BFF entregou. O cartão de
+ * manutenção entra na gaveta do seu mês, depois dos fechamentos daquele mês (que é a ordem
+ * em que a tela os desenha).
+ *
+ * A única decisão nossa é o mês que **só** a manutenção tem — e ela existe porque a
+ * alternativa está errada de forma visível: jogá-lo no fim poria setembro depois de maio.
+ * Ele é ENCAIXADO entre os meses que já existem, no lugar cronológico. Não é reordenar o
+ * que o servidor ordenou; é achar lugar para o que ele não tinha onde pôr. Gaveta que não
+ * é mês (`ano:2026`, `sem-data`) não serve de âncora e não é movida.
+ */
+export function acervo(dados: RelatoriosOut | null | undefined): ItemDoAcervo[] {
+  const documentos = dados?.documentos ?? []
+  const cartoes = cartoesDoMensal(dados?.mensais ?? [])
+  if (cartoes.length === 0) return [...documentos]
+
+  const ordem: string[] = []
+  for (const d of documentos) {
+    const g = gavetaDoItem(d)
+    if (!ordem.includes(g)) ordem.push(g)
+  }
+  for (const c of cartoes) {
+    if (ordem.includes(c.competencia)) continue
+    const maisAntigo = ordem.findIndex((x) => MES_CHAVE.test(x) && x < c.competencia)
+    if (maisAntigo === -1) ordem.push(c.competencia)
+    else ordem.splice(maisAntigo, 0, c.competencia)
+  }
+
+  const saida: ItemDoAcervo[] = []
+  for (const g of ordem) {
+    saida.push(...documentos.filter((d) => gavetaDoItem(d) === g))
+    saida.push(...cartoes.filter((c) => c.competencia === g))
   }
   return saida
 }
@@ -205,7 +501,7 @@ export type Recorte = {
   gaveta: string | null
   opcoesDeUsina: OpcaoDeFiltro[]
   opcoesDeGaveta: OpcaoDeFiltro[]
-  visiveis: Relatorio[]
+  visiveis: ItemDoAcervo[]
   /**
    * O que foi largado no caminho, e por quê — para a tela DIZER, em vez de mostrar uma
    * escolha que não é a que está desenhada.
@@ -230,7 +526,7 @@ export type Recorte = {
  * vazio mudo.
  */
 export function recorte(
-  itens: Relatorio[],
+  itens: ItemDoAcervo[],
   usinaEscolhida: string | null,
   gavetaEscolhida: string | null,
 ): Recorte {
@@ -242,7 +538,7 @@ export function recorte(
   const daUsina = usina ? itens.filter((r) => r.usina === usina) : itens
 
   // A ordem dos períodos segue a do servidor (publicação mais recente primeiro).
-  const gavetasPresentes = [...new Set(daUsina.map(gavetaDoRelatorio))]
+  const gavetasPresentes = [...new Set(daUsina.map(gavetaDoItem))]
   const gaveta =
     gavetaEscolhida && gavetasPresentes.includes(gavetaEscolhida) ? gavetaEscolhida : null
 
@@ -270,7 +566,7 @@ export function recorte(
     ...gavetasPresentes.map((c) => ({
       valor: c,
       rotulo: rotuloDaGaveta(c),
-      contagem: daUsina.filter((r) => gavetaDoRelatorio(r) === c).length,
+      contagem: daUsina.filter((r) => gavetaDoItem(r) === c).length,
     })),
   ]
 
@@ -279,7 +575,7 @@ export function recorte(
     gaveta,
     opcoesDeUsina,
     opcoesDeGaveta,
-    visiveis: gaveta ? daUsina.filter((r) => gavetaDoRelatorio(r) === gaveta) : daUsina,
+    visiveis: gaveta ? daUsina.filter((r) => gavetaDoItem(r) === gaveta) : daUsina,
     ajuste,
   }
 }
@@ -300,9 +596,16 @@ export type Vazio = { titulo: string; descricao: string; ponte: boolean }
  *    aqui, porque a lista NÃO está vazia. É o caso que acontece hoje em quatro dos seis
  *    fechamentos.
  */
-export function vazioDaLista(aviso: string | null | undefined): Vazio {
-  if (aviso) {
-    return { titulo: 'Não deu para saber', descricao: aviso, ponte: true }
+export function vazioDaLista(
+  aviso: string | null | undefined,
+  avisoMensais?: string | null,
+): Vazio {
+  // As DUAS pontes contam, e cada motivo chega com a família escrita nele. Se só o mensal
+  // caiu, o título ainda não pode AFIRMAR que nada foi publicado — é o mesmo defeito de
+  // antes, com a outra família: não se sabe se há relatório, e dizer que não há é inventar.
+  const motivos = [aviso, avisoMensais].filter((x): x is string => Boolean(x))
+  if (motivos.length > 0) {
+    return { titulo: 'Não deu para saber', descricao: motivos.join(' '), ponte: true }
   }
   return {
     titulo: 'Nenhum relatório publicado',
@@ -365,5 +668,9 @@ export const CAMPOS_LIDOS = {
     'arquivos',
   ],
   ArquivoOut: ['tipo', 'nome', 'bytes'],
-  DocumentosOut: ['documentos', 'aviso'],
+  // `bytes` NÃO entra: o BFF ainda não declara peso nesta família (medido em 06/09/2026), e
+  // exigir um campo que não existe daria o contrato por quebrado no dia em que ele está
+  // certo — alguém "consertaria" apagando a checagem. A tela já trata a ausência.
+  RelatorioMensalOut: ['id', 'usina_id', 'usina', 'competencia', 'tipo', 'liberado_em'],
+  DocumentosOut: ['documentos', 'aviso', 'mensais', 'aviso_mensais'],
 } as const
