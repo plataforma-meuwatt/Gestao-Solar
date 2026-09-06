@@ -1,49 +1,53 @@
 /**
- * O que estes testes guardam é a diferença entre uma tela que respeita os três limites do
- * servidor e uma que os confunde — e confundi-los produz, sempre, um dos dois piores desfechos
- * desta tela: um muro sem porta, ou trinta e quatro segundos de espera para receber um 400.
+ * O que estes testes guardam é UMA coisa, e ela foi cobrada com todas as letras: **a tela do
+ * portal oferece o que a tela do meuWatt oferece.**
  *
- * 1. **Teto de dias por passo IMPEDE ANTES, com a conta feita e a saída nomeada.** É aritmética
- *    nossa e certa. Deixar clicar para receber a recusa depois da espera seria teatro; impedir
- *    sem dizer o número e sem nomear a alternativa seria um muro.
- * 2. **Retenção NÃO é limite do arquivo, é ausência de dado** — e por isso mora no seletor de
- *    período, colada em cada dia oferecido, com a saída que o próprio código do servidor
- *    garante (a checagem inteira está dentro de `if step != "1d"`: o total por dia não tem
- *    prazo). Sem essa frase, "o portal não tem" se lê como defeito do portal.
- * 3. **Orçamento de células é ESTIMATIVA nossa, e por isso DEIXA PEDIR.** No limiar, o
- *    benefício da dúvida é do cliente: bloquear por uma conta minha que o servidor talvez
- *    aceitasse é recusar um arquivo que existiria.
- * 4. **O `motivo` é traduzido; o `message` do meuWatt nunca é ecoado** — ele foi escrito para o
- *    operador de lá e fala em balde, snapshots e SSU. E a natureza da recusa decide a peça:
- *    espera ganha "Tentar de novo"; regra violada, não — repetir um `muito_grande` dá
- *    exatamente o mesmo resultado.
- * 5. **`series: null` não é "listei todos".** Nulo é "não mexi", e o inversor comissionado no
- *    meio do período entra sozinho no arquivo. Uma lista explícita congela o conjunto no que a
- *    tela viu. Se o corpo do POST perder essa distinção, ninguém percebe: o arquivo sai, só
- *    que sem uma coluna que deveria estar lá.
+ * O defeito que eles fecham não é um erro de código — é um erro de PRODUTO, e por isso nenhum
+ * `tsc`, `lint` ou revisão de diff o pegaria. A versão anterior desta página carregava o
+ * contrato inteiro (as quatro variáveis de inversor, os dois agrupamentos, `series[]`) e
+ * escondia tudo atrás de uma gaveta chamada "Escolher coluna por coluna", com cinco pacotes na
+ * frente. Baixar por skid — o pedido literal do dono — exigia saber que a gaveta existia,
+ * abri-la, trocar o agrupamento e marcar inversor por inversor. A capacidade estava presente e
+ * praticamente ausente, e o diff que a poda produz é *menor*, não maior: ninguém apaga uma
+ * linha e escreve "cortei uma variável do cliente" ao lado.
  *
- * E, por baixo de tudo: **a chave de série (`slot:170`) é transporte e não pode aparecer na
- * tela** — é o mesmo defeito que a `SeloClasse` já corrigiu quando a OS saía
- * "SERVICOS_ADICIONAIS" numa tela e "Serviços adicionais" na outra.
+ * Daí a régua destes testes ser NUMÉRICA, e não editorial:
+ *
+ * 1. **Os quatro cartões existem SEMPRE** — inclusive o do bloco que a usina não tem, e nesse
+ *    caso com o motivo escrito. Cartão que some leva embora a única informação que interessa a
+ *    quem está avaliando o que contratar.
+ * 2. **As 14 linhas de variável estão na tela** (4 inversor + 7 estação + 1 fronteira + 2
+ *    sistema), conferidas contra `TOTAL_DE_VARIAVEIS` — e `umidade`, que NENHUMA usina tem,
+ *    aparece desabilitada com o motivo em vez de sumir. Sumir faria o cliente concluir que o
+ *    portal não oferece, quando o fato é sobre o produto.
+ * 3. **Os 5 passos e os 2 agrupamentos de cada um dos três blocos que têm agrupamento.**
+ * 4. **Os dois horários numa grade de 5 minutos (288 posições)** — a versão anterior usava 15,
+ *    o que é uma redução silenciosa —, apagados no total por dia em vez de sumirem.
+ * 5. **O seletor de inversores abre AGRUPADO POR SKID**, e um toque no cabeçalho do skid marca
+ *    o skid inteiro: o rótulo fechado passa a NOMEÁ-LO, e é essa lista que viaja no pedido.
+ * 6. **Não sobrou gaveta nem estado "personalizado"**, e **não há chip**: a varredura é
+ *    estrutural (nenhum botão-pílula, e o número de botões do estado fechado não comporta uma
+ *    fileira de opções).
+ *
+ * E, por baixo de tudo: a chave de série (`slot:170`) é TRANSPORTE e não pode aparecer na
+ * tela; o que o cliente lê é "Inv 23" com o número de série ao lado.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { identificarCache, limparCache } from '@/lib/leitura'
-import { corpoDoPedido, nomeDoArquivo, type OpcoesDeDados, type Selecao } from '@/features/dados/api'
+import type { OpcoesDeDados } from '@/features/dados/api'
 import {
-  diasOferecidos,
-  estimativa,
-  impedimento,
-  janelaDo,
-  montarPacote,
-  motivoDoPacote,
-  passaDoOrcamento,
-  traduzirMotivo,
+  PASSOS,
+  TOTAL_DE_VARIAVEIS,
+  VARIAVEIS_DA_ESTACAO,
+  VARIAVEIS_DA_FRONTEIRA,
+  VARIAVEIS_DO_INVERSOR,
+  VARIAVEIS_DO_SISTEMA,
 } from '@/features/dados/pacotes'
 import BaixarDados from '@/features/dados/Pagina'
 
@@ -54,35 +58,56 @@ import { baixarBlob } from '@/lib/arquivo'
 
 const USINA = 4
 
-/** Porto Ferreira como ela é hoje, medida em 05/09/2026 pelo `GET /energia/dados/opcoes`. */
+/**
+ * Porto Ferreira como o `GET /energia/dados/opcoes` a devolveu em 05/09/2026: 20 inversores em
+ * **cinco** skids de quatro, cinco leitores, estação que mede só irradiação, relé com
+ * temperatura, e `umidade: false` — que é o valor fixo que o servidor manda para toda usina.
+ *
+ * Os nomes são os do cadastro (`SKID-01`…`SKID-05`), e não "Skid 1": o rótulo que a tela
+ * escreve é o que o cliente vai encontrar na coluna do arquivo, e inventar um mais bonito aqui
+ * faria o teste passar sobre uma usina que não existe.
+ */
 function opcoes(parcial: Partial<OpcoesDeDados> = {}): OpcoesDeDados {
+  const skids: [string, string[], string[]][] = [
+    ['SKID-01', ['slot:170', 'slot:150', 'slot:151', 'slot:152'], ['Inv 13', 'Inv 12', 'Inv 14', 'Inv 11']],
+    ['SKID-02', ['slot:153', 'slot:154', 'slot:155', 'slot:156'], ['Inv 23', 'Inv 22', 'Inv 24', 'Inv 21']],
+    ['SKID-03', ['slot:157', 'slot:158', 'slot:159', 'slot:160'], ['Inv 33', 'Inv 32', 'Inv 34', 'Inv 31']],
+    ['SKID-04', ['slot:161', 'slot:162', 'slot:163', 'slot:164'], ['Inv 43', 'Inv 42', 'Inv 44', 'Inv 41']],
+    ['SKID-05', ['slot:166', 'slot:167', 'slot:168', 'slot:169'], ['Inv 52', 'Inv 51', 'Inv 54', 'Inv 53']],
+  ]
+
   return {
     usina: { id: USINA, nome: 'Porto Ferreira', capacidade_kwp: 7402.5 },
-    skids: [
-      {
-        id: 1,
-        nome: 'SKID-01',
-        capacidade_kwp: 1500,
-        series: [
-          { chave: 'slot:170', rotulo: 'Inv 13', numero_serie: 'GR2579042017', capacidade_kwp: 375 },
-          { chave: 'slot:171', rotulo: 'Inv 14', numero_serie: 'GR2579042018', capacidade_kwp: 375 },
-        ],
-      },
-      {
-        id: 2,
-        nome: 'SKID-02',
-        capacidade_kwp: 1500,
-        series: [
-          { chave: 'slot:172', rotulo: 'Inv 15', numero_serie: 'GR2579042019', capacidade_kwp: 375 },
-        ],
-      },
-    ],
+    skids: skids.map(([nome, chaves, rotulos], i) => ({
+      id: 56 + i,
+      nome,
+      capacidade_kwp: 1480.5,
+      series: chaves.map((chave, j) => ({
+        chave,
+        rotulo: rotulos[j],
+        numero_serie: `GR257904${2000 + i * 10 + j}`,
+        capacidade_kwp: 375.06,
+      })),
+    })),
     estacao: {
       disponivel: true,
-      colunas: { poa: true, ghi: true, temp_modulo: false, temp_ambiente: false, vento: false },
+      colunas: {
+        poa: true,
+        ghi: true,
+        temp_modulo: false,
+        temp_ambiente: false,
+        vento: false,
+        umidade: false,
+      },
       temp_ambiente_rele: true,
     },
-    leitores: [{ id: 14, nome: 'Leitor Concessionária SKID 1' }],
+    leitores: [
+      { id: 14, nome: 'Leitor Concessionaria Porto Ferreira SKID 1' },
+      { id: 10, nome: 'Leitor Concessionaria Porto Ferreira SKID 2' },
+      { id: 11, nome: 'Leitor Concessionaria Porto Ferreira SKID 3' },
+      { id: 12, nome: 'Leitor Concessionaria Porto Ferreira SKID 4' },
+      { id: 13, nome: 'Leitor Concessionaria Porto Ferreira SKID 5' },
+    ],
     sistema: { pr: true, produtividade: true },
     retencao: { snapshots_desde: '2026-03-06', ssu_desde: '2024-09-05' },
     limites: { native: 7, '5m': 31, '15m': 92, '1h': 366, '1d': 366, max_celulas: 2_000_000 },
@@ -104,45 +129,57 @@ function montar(dados: OpcoesDeDados = opcoes()) {
   )
 }
 
-/** Uma resposta de `fetch` com corpo de planilha — o suficiente para passar do piso de 100 B. */
+/** Uma resposta de `fetch` com corpo de planilha — o bastante para passar do piso de 100 B. */
 function planilha(): Response {
   return {
     ok: true,
     status: 200,
-    headers: { get: () => 'attachment; filename="dados-porto-ferreira-2026-08.xlsx"' },
+    headers: { get: () => 'attachment; filename="dados-porto-ferreira-2026-09-5m.xlsx"' },
     blob: async () => new Blob([new Uint8Array(4096)]),
     json: async () => ({}),
   } as unknown as Response
 }
 
-/** A recusa do BFF: `motivo` no PRIMEIRO nível, ao lado de `detail`. */
-function recusa(status: number, motivo: string, message: string): Response {
-  return {
-    ok: false,
-    status,
-    headers: { get: () => null },
-    json: async () => ({ detail: 'O monitoramento recusou este pedido.', motivo, message }),
-    blob: async () => new Blob([]),
-  } as unknown as Response
-}
-
-/** Abre a lista suspensa cujo gatilho mostra `rotulo` e escolhe a opção `alvo`. */
-function escolher(rotuloAtual: string | RegExp, alvo: string | RegExp) {
-  fireEvent.click(screen.getByRole('button', { name: rotuloAtual }))
-  fireEvent.click(screen.getByRole('button', { name: alvo }))
-}
-
 async function telaPronta() {
-  await screen.findByText('O que você quer levar')
+  await screen.findByText('Começar de…')
 }
 
-describe('tela Baixar dados', () => {
+/** Abre a lista suspensa cujo gatilho diz `gatilho`. */
+function abrir(gatilho: string | RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: gatilho }))
+}
+
+/** O cartão de um bloco, pelo título dele. */
+function bloco(titulo: string): HTMLElement {
+  return screen.getByText(titulo).closest('section') as HTMLElement
+}
+
+/**
+ * Abre a lista de colunas DAQUELE bloco.
+ *
+ * Pelo cartão, e não pelo texto do gatilho: "1 de 3 colunas" e "0 de 3 colunas" convivem na
+ * mesma tela (a lista conta só o que é escolhível, e o `status` fica de fora fora do passo
+ * nativo), então mirar pelo rótulo escolheria o bloco errado no dia em que os números batessem.
+ */
+function abrirColunas(titulo: string) {
+  const campo = within(bloco(titulo)).getByText('Colunas').parentElement as HTMLElement
+  fireEvent.click(within(campo).getAllByRole('button')[0])
+}
+
+/** Os rótulos das opções da lista suspensa aberta — ela é a única `<ul>` da tela. */
+function opcoesAbertas(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll('ul > li')).map((li) =>
+    (li.textContent ?? '').trim(),
+  )
+}
+
+describe('Baixar dados — paridade com a tela do meuWatt', () => {
   beforeEach(() => {
     localStorage.clear()
     identificarCache(1)
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    // A conta de dias depende do "hoje": sem relógio fixo, o teste passaria hoje e falharia
-    // em janeiro, sem nada ter mudado.
+    // A conta de dias depende do "hoje": sem relógio fixo, o teste passaria hoje e falharia em
+    // janeiro, sem nada ter mudado.
     vi.setSystemTime(new Date(2026, 8, 5, 12, 0, 0))
   })
 
@@ -154,272 +191,355 @@ describe('tela Baixar dados', () => {
     limparCache()
   })
 
-  /* ---------------------------------------------------------------- 1. teto */
+  /* ============================================================ 1. os quatro cartões */
 
-  it('o teto de dias impede ANTES, faz a conta e nomeia a saída', async () => {
-    const buscar = vi.fn()
-    vi.stubGlobal('fetch', buscar)
-    montar()
-    await telaPronta()
-
-    // Ano corrente: 1º de janeiro a 5 de setembro de 2026 = 248 dias. O detalhe sugerido vira
-    // "um total por dia" (que aceita 366); trocar para "a cada 5 minutos" (que aceita 31) é a
-    // combinação que o servidor recusaria depois de meio minuto de espera.
-    fireEvent.click(screen.getByRole('button', { name: 'Ano' }))
-    escolher('Um total por dia', /A cada 5 minutos/)
-
-    const aviso = screen.getByText(/O período tem 248 dias/)
-    expect(aviso.textContent).toContain('"A cada 5 minutos" aceita 31')
-    // A saída NOMEADA — sem ela isto seria um muro sem porta.
-    expect(aviso.textContent).toContain('de hora em hora')
-    expect(aviso.textContent).toContain('366')
-
-    const botao = screen.getByRole('button', { name: 'Baixar planilha' })
-    expect((botao as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(botao)
-    expect(buscar).not.toHaveBeenCalled()
-
-    // E a opção proibida CONTINUA escolhível na lista: desabilitá-la esconderia o porquê.
-    fireEvent.click(screen.getByRole('button', { name: /A cada 5 minutos/ }))
-    const alternativa = screen.getByRole('button', { name: /A cada 15 minutos/ })
-    expect((alternativa as HTMLButtonElement).disabled).toBe(false)
-  })
-
-  /* ------------------------------------------------------------ 2. retenção */
-
-  it('a retenção viaja colada no dia oferecido, e a saída é o total por dia', async () => {
-    montar()
-    await telaPronta()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Personalizado' }))
-    // A lista de dias tem busca (são centenas): filtra-se pelo dia que se quer.
-    const gatilhos = screen.getAllByRole('button', { name: /05\/09\/2026|01\/09\/2026/ })
-    fireEvent.click(gatilhos[0])
-    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: '01/02/2026' } })
-
-    // O motivo está NA OPÇÃO, enquanto se escolhe — não depois de esperar meio minuto.
-    expect(screen.getByText('a leitura minuto a minuto não existe mais — só o total por dia')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: /01\/02\/2026/ }))
-
-    const aviso = await screen.findByText(/A leitura fina de inversores e estação só existe desde/)
-    expect(aviso.textContent).toContain('06/03/2026')
-    expect(aviso.textContent).toContain('um total por dia')
-    expect(aviso.textContent).toContain('não tem prazo')
-  })
-
-  /* ----------------------------------------------------------- 3. orçamento */
-
-  it('a estimativa avisa mas DEIXA PEDIR — no limiar a palavra final é do servidor', async () => {
-    const buscar = vi.fn().mockResolvedValue(planilha())
-    vi.stubGlobal('fetch', buscar)
-    // Orçamento minúsculo: qualquer pedido passa da nossa conta. O servidor é quem decide.
-    montar(opcoes({ limites: { native: 7, '5m': 31, '15m': 92, '1h': 366, '1d': 366, max_celulas: 10 } }))
-    await telaPronta()
-
-    expect(screen.getByText(/perto do que um arquivo aguenta/)).toBeTruthy()
-    const botao = screen.getByRole('button', { name: 'Baixar planilha' })
-    expect((botao as HTMLButtonElement).disabled).toBe(false)
-
-    fireEvent.click(botao)
-    await waitFor(() => expect(vi.mocked(baixarBlob)).toHaveBeenCalledTimes(1))
-    expect(buscar).toHaveBeenCalledTimes(1)
-  })
-
-  /* -------------------------------------------------------------- 4. recusa */
-
-  it('a regra violada vira aviso SEM "tentar de novo"; a espera vira aviso COM', async () => {
-    const buscar = vi
-      .fn()
-      .mockResolvedValueOnce(
-        recusa(400, 'muito_grande', 'O arquivo teria ≈ 2.400.000 células (limite 2.000.000).'),
-      )
-      .mockResolvedValueOnce(
-        recusa(429, 'muitos_pedidos', 'Rate limit exceeded: 10 per 1 minute'),
-      )
-    vi.stubGlobal('fetch', buscar)
-    montar()
-    await telaPronta()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
-    await screen.findByText(/maior do que o monitoramento monta/)
-    // A frase do operador do meuWatt não chega ao cliente: ele não sabe o que é uma célula de
-    // orçamento, e "limite 2.000.000" não lhe diz o que fazer.
-    expect(screen.queryByText(/células/)).toBeNull()
-    expect(screen.queryByText(/limite 2\.000\.000/)).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
-    await screen.findByText(/atendendo muitos pedidos agora/)
-    expect(screen.queryByText(/Rate limit/)).toBeNull()
-    // Espera é o oposto de regra violada: repetir daqui a pouco funciona.
-    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeTruthy()
-  })
-
-  it('os seis motivos do servidor, mais a espera, têm tradução — e nenhuma é a frase de lá', () => {
-    const motivos = [
-      'periodo_invalido',
-      'passo_excede_limite',
-      'fora_da_retencao',
-      'bloco_indisponivel',
-      'sem_blocos',
-      'muito_grande',
-    ]
-    for (const m of motivos) {
-      const t = traduzirMotivo(m)
-      expect(t, m).not.toBeNull()
-      expect(t!.texto.length).toBeGreaterThan(20)
-      expect(t!.espera).toBe(false)
-      expect(t!.texto).not.toMatch(/snapshot|SSU|balde|células/i)
-    }
-    expect(traduzirMotivo('muitos_pedidos')!.espera).toBe(true)
-    // Motivo que a tela não conhece cai no erro de transporte, que TEM "tentar de novo" — e
-    // não é traduzido por chute.
-    expect(traduzirMotivo('motivo_que_nasceu_ontem')).toBeNull()
-    expect(traduzirMotivo(null)).toBeNull()
-  })
-
-  /* --------------------------------------------------------------- 5. série */
-
-  it('"todos" viaja como campo AUSENTE, não como a lista de todos os inversores', async () => {
-    const buscar = vi.fn().mockResolvedValue(planilha())
-    vi.stubGlobal('fetch', buscar)
-    montar()
-    await telaPronta()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
-    await waitFor(() => expect(buscar).toHaveBeenCalledTimes(1))
-
-    const [url, init] = buscar.mock.calls[0]
-    expect(String(url)).toContain(`/api/v1/energia/dados/arquivo?usina_id=${USINA}`)
-    expect(String(url)).not.toMatch(/token|Bearer/i)
-    const corpo = JSON.parse(String((init as RequestInit).body))
-    expect(corpo.inversores.variaveis).toEqual(['geracao'])
-    // A prova: a chave nem existe. `[]` seria "nenhuma série" e o arquivo sairia sem colunas;
-    // a lista completa congelaria o conjunto e deixaria de fora o inversor que entrar depois.
-    expect('series' in corpo.inversores).toBe(false)
-    expect(corpo.estacao).toBeUndefined()
-    expect(corpo.passo).toBe('1h')
-  })
-
-  it('o corpo do pedido separa os três estados de "quais inversores"', () => {
-    const base = {
-      inicio: '2026-08-01',
-      fim: '2026-08-31',
-      hora_inicio: '00:00',
-      hora_fim: '23:59',
-      passo: '1h' as const,
-      estacao: null,
-      fronteira: null,
-      sistema: null,
-    }
-    const nulo = corpoDoPedido({
-      ...base,
-      inversores: { variaveis: ['geracao'], agrupamento: 'lista', series: null },
-    })
-    const todas = corpoDoPedido({
-      ...base,
-      inversores: {
-        variaveis: ['geracao'],
-        agrupamento: 'lista',
-        series: ['slot:170', 'slot:171', 'slot:172'],
-      },
-    })
-    const vazio = corpoDoPedido({
-      ...base,
-      inversores: { variaveis: ['geracao'], agrupamento: 'lista', series: [] },
-    })
-    expect('series' in (nulo.inversores as object)).toBe(false)
-    expect((todas.inversores as { series: string[] }).series).toHaveLength(3)
-    expect((vazio.inversores as { series: string[] }).series).toEqual([])
-    // E a lista vazia nunca chega a viajar: a tela impede, porque `[]` no upstream é um
-    // arquivo sem colunas.
-    const nada: Selecao = {
-      inversores: { variaveis: ['geracao'], agrupamento: 'lista', series: [] },
-      estacao: null,
-      fronteira: null,
-      sistema: null,
-    }
-    const j = janelaDo('2026-08-01', '2026-08-31', '00:00', '23:59', '1h', false)
-    expect(impedimento(nada, '1h', j, '2026-08-01', opcoes())!.texto).toContain(
-      'Nenhum inversor está marcado',
+  it('os quatro cartões estão na tela — e o bloco que a usina não tem diz por quê', async () => {
+    // Uma usina sem estação, sem medidor e sem PR: três dos quatro blocos são impossíveis.
+    montar(
+      opcoes({
+        estacao: { disponivel: false, colunas: {}, temp_ambiente_rele: false },
+        leitores: [],
+        sistema: { pr: false, produtividade: false },
+      }),
     )
-  })
-
-  /* ------------------------------------------------------- o que a usina não tem */
-
-  it('o pacote impossível continua na lista, desabilitado e com o motivo', async () => {
-    montar(opcoes({ leitores: [] }))
     await telaPronta()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Geração da usina' }))
-    const impossivel = screen.getByRole('button', { name: /Energia no medidor/ })
-    // A linha NÃO some: sumir faria o cliente concluir que o portal não oferece, quando o
-    // fato é sobre a usina dele. O que ela perde é o clique — e o motivo está escrito.
-    expect((impossivel as HTMLButtonElement).disabled).toBe(true)
-    expect(impossivel.textContent).toContain('esta usina não tem medidor de fronteira')
+    // (1-4) Nenhum cartão some. Cartão ausente é informação perdida sobre o que contratar.
+    expect(screen.getByText('Inversores')).toBeTruthy()
+    expect(screen.getByText('Estação solarimétrica')).toBeTruthy()
+    expect(screen.getByText('Medidor de fronteira')).toBeTruthy()
+    expect(screen.getByText('Desempenho do sistema')).toBeTruthy()
 
-    fireEvent.click(impossivel)
-    expect(screen.getAllByRole('button', { name: 'Geração da usina' }).length).toBeGreaterThan(0)
+    // (5-7) E cada ausência traz o motivo — não um cartão mudo e cinza.
+    const semMedidor = screen.getByText(/Não entra: esta usina não tem medidor de fronteira/)
+    expect(semMedidor.textContent!.length).toBeGreaterThan(20)
+    expect(screen.getByText(/Não entra: esta usina não tem estação solarimétrica/)).toBeTruthy()
+    // A cadeia inteira, e não só o último elo: é a diferença entre "o portal quebrou" e "eu
+    // sei o que teria de instalar".
+    expect(
+      screen.getByText(/Não entra: sem estação não há irradiação, e sem irradiação/),
+    ).toBeTruthy()
+
+    // (8) Bloco impossível não oferece o "Entra no arquivo": não há o que entrar. Só o dos
+    // inversores, que esta usina tem, mantém o par.
+    expect(screen.getAllByRole('button', { name: 'Entra no arquivo' })).toHaveLength(1)
   })
 
-  it('a ausência DERIVADA diz a cadeia inteira, e a estação parcial diz o que não vem', () => {
-    const semEstacao = opcoes({
-      estacao: { disponivel: false, colunas: {}, temp_ambiente_rele: false },
-      sistema: { pr: false, produtividade: false },
-    })
-    expect(motivoDoPacote('desempenho', semEstacao)).toBe(
-      'sem estação não há irradiação, e sem irradiação não se calcula PR',
-    )
-    expect(motivoDoPacote('geracao_clima', semEstacao)).toBe(
-      'esta usina não tem estação solarimétrica com dados',
-    )
-    // Porto Ferreira mede POA e GHI e mais nada: o pacote não falha, leva o que existe — e diz
-    // o que ficou de fora, senão faltaria uma coluna sem explicação.
-    const sel = montarPacote('geracao_clima', opcoes())
-    expect(sel.estacao!.variaveis).toEqual(['poa', 'ghi'])
+  /* ============================================================ 2. as 14 variáveis */
+
+  it('as 14 linhas de variável estão na tela, e a umidade aparece desabilitada', async () => {
+    const { container } = montar()
+    await telaPronta()
+
+    // (9-10) As quatro do inversor.
+    abrirColunas('Inversores')
+    const doInversor = opcoesAbertas(container)
+    expect(doInversor).toHaveLength(VARIAVEIS_DO_INVERSOR.length)
+    for (const v of VARIAVEIS_DO_INVERSOR) {
+      expect(doInversor.join(' | '), v.chave).toContain(v.rotulo)
+    }
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (11-12) As SETE da estação — não as três que esta usina mede.
+    abrirColunas('Estação solarimétrica')
+    const daEstacao = opcoesAbertas(container)
+    expect(daEstacao).toHaveLength(VARIAVEIS_DA_ESTACAO.length)
+    for (const v of VARIAVEIS_DA_ESTACAO) {
+      expect(daEstacao.join(' | '), v.chave).toContain(v.rotulo)
+    }
+
+    // (13-14) A umidade está VISÍVEL e DESABILITADA, com o motivo escrito ao lado. Nenhuma
+    // usina a tem; sumir com a linha diria que o portal é que não oferece.
+    const umidade = screen.getByRole('checkbox', { name: /Umidade do ar/ })
+    expect((umidade as HTMLButtonElement).disabled).toBe(true)
+    expect(umidade.textContent).toContain('nenhuma estação envia umidade')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (15-16) As duas do sistema.
+    abrirColunas('Desempenho do sistema')
+    const doSistema = opcoesAbertas(container)
+    expect(doSistema).toHaveLength(VARIAVEIS_DO_SISTEMA.length)
+    for (const v of VARIAVEIS_DO_SISTEMA) {
+      expect(doSistema.join(' | '), v.chave).toContain(v.rotulo)
+    }
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (17) A única da fronteira fica escrita na cara: uma lista de uma opção só seria um
+    // clique a mais para dizer a mesma coisa.
+    expect(screen.getByText(VARIAVEIS_DA_FRONTEIRA[0].rotulo)).toBeTruthy()
+
+    // (18) E a conta fecha contra a régua, que é a fonte única das linhas: se alguém apagar
+    // uma "para simplificar", este número desce e o teste reprova.
+    expect(TOTAL_DE_VARIAVEIS).toBe(14)
   })
 
-  /* --------------------------------------------------- a chave é transporte */
+  /* ============================================ 3. os 5 passos e os 3 × 2 agrupamentos */
 
-  it('a chave de série não aparece na tela, e tirar um inversor MATERIALIZA a lista', async () => {
+  it('os cinco passos e os dois agrupamentos de cada um dos três blocos', async () => {
+    const { container } = montar()
+    await telaPronta()
+
+    // (19-20) Os cinco detalhes, com o teto do servidor colado em cada um.
+    abrir('De hora em hora')
+    const passos = opcoesAbertas(container)
+    expect(passos).toHaveLength(PASSOS.length)
+    expect(passos).toHaveLength(5)
+    // (21) O teto vem do SERVIDOR, e não de uma constante nossa que envelhece calada.
+    expect(passos.join(' | ')).toContain('até 7 dias por arquivo')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (22-27) Os dois agrupamentos de cada bloco, à vista — nenhum atrás de gaveta.
+    expect(screen.getByRole('button', { name: 'Uma coluna por inversor' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Uma coluna por skid' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Uma coluna por leitor' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Só o total da usina' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Da usina inteira' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'De cada skid' })).toBeTruthy()
+  })
+
+  /* ============================================================ 4. os dois horários */
+
+  it('os dois horários têm grade de 5 minutos, e o total por dia os apaga em vez de sumir', async () => {
+    const { container } = montar()
+    await telaPronta()
+
+    // (28-29) 288 posições de cinco em cinco minutos (24 × 60 ÷ 5) — a tela anterior usava 15,
+    // e quem quer das 07:35 às 17:20 não conseguia pedir. A 289ª é `23:59`, que existe porque
+    // o horário final é inclusivo do minuto: parar em 23:55 perderia o fim do dia.
+    abrir('00:00')
+    const inicio = opcoesAbertas(container)
+    expect(inicio.filter((t) => /^\d\d:\d\d$/.test(t))).toHaveLength(288)
+    expect(inicio.join(' | ')).toContain('07:35')
+    // (30) E o fim do dia continua alcançável, com o porquê escrito.
+    expect(inicio.join(' | ')).toContain('até o fim do dia')
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (31) A mesma grade no horário final.
+    abrir('23:59')
+    expect(opcoesAbertas(container).filter((t) => /^\d\d:\d\d$/.test(t))).toHaveLength(288)
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // (32-34) No total por dia o horário não se aplica — e sai do alcance sem sair da tela:
+    // apagá-lo diz "existe, mas não agora"; removê-lo faria a pessoa procurar onde foi parar.
+    abrir('De hora em hora')
+    fireEvent.click(screen.getByRole('button', { name: /Um total por dia/ }))
+    const apagado = container.querySelector('[title="No total por dia o horário não se aplica"]')
+    expect(apagado).not.toBeNull()
+    expect(apagado!.className).toContain('opacity-40')
+    expect(apagado!.className).toContain('pointer-events-none')
+    expect(screen.getByText(/não usa horário: cada linha é o dia inteiro/)).toBeTruthy()
+  })
+
+  /* ============================================================ 5. o skid */
+
+  it('o seletor abre por skid, e um toque no cabeçalho do SKID-02 baixa o skid inteiro', async () => {
     const buscar = vi.fn().mockResolvedValue(planilha())
     vi.stubGlobal('fetch', buscar)
     const { container } = montar()
     await telaPronta()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Escolher coluna por coluna' }))
-    // O gatilho escreve a REGRA ("todos · 3 inversores"), que é diferente de uma lista de 3.
-    fireEvent.click(screen.getByRole('button', { name: /todos · 3 inversores/ }))
+    // (35) Ele abre AGRUPADO: um cabeçalho por skid, e cada um é um controle de três estados —
+    // não um título. É o gesto que faltava e que motivou o pedido do dono.
+    abrir('todos · 20 inversores')
+    const cabecalhos = screen
+      .getAllByRole('checkbox')
+      .filter((b) => /^SKID-\d\d —/.test(b.getAttribute('aria-label') ?? ''))
+    expect(cabecalhos).toHaveLength(5)
 
-    expect(screen.getByText('Inv 13')).toBeTruthy()
-    // O que a pessoa tem na mão é o número de série; a chave é transporte e não aparece.
-    expect(screen.getByText(/GR2579042017/)).toBeTruthy()
+    // (36) O nome acessível diz quantos estão marcados E o que o toque vai fazer.
+    expect(
+      screen.getByRole('checkbox', { name: /^SKID-02 —/ }).getAttribute('aria-checked'),
+    ).toBe('true')
+
+    // Limpar tudo e marcar só o SKID-02: dois toques para o que antes eram vinte.
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^SKID-02 —/ }))
+
+    // (37) O rótulo fechado NOMEIA o skid: "4 de 20" não diz o que a pessoa acabou de pedir.
+    expect(screen.getByRole('button', { name: /SKID-02 · 4 inversores/ })).toBeTruthy()
+
+    // (38-40) A chave de série é transporte e não aparece em lugar nenhum — o que se lê é o
+    // rótulo do inversor com o número de série ao lado, que é o que a pessoa tem na mão.
     expect(container.textContent).not.toContain('slot:')
-    expect(container.textContent).not.toContain('inv:')
-
-    // Desmarcar um a partir de "todos" é exatamente "todos menos este": vira lista explícita.
-    // (Na lista de múltipla escolha cada linha é uma caixa, não um botão simples.)
-    fireEvent.click(screen.getByRole('checkbox', { name: /Inv 13/ }))
-    expect(screen.getByRole('button', { name: /2 de 3 inversores/ })).toBeTruthy()
+    expect(screen.getByText('Inv 23')).toBeTruthy()
+    expect(screen.getByText(/GR2579042010/)).toBeTruthy()
 
     fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Uma coluna por skid' }))
+
+    // (41) E a frase que o arquivo exige: a coluna continua se chamando "SKID-02" mesmo
+    // somando menos inversores do que o skid tem.
+    expect(screen.getByText(/o que você desmarcar também sai da soma do skid/)).toBeTruthy()
+
     fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
     await waitFor(() => expect(buscar).toHaveBeenCalledTimes(1))
+
+    // (42-43) E é essa seleção que viaja: quatro séries, agrupadas por skid.
     const corpo = JSON.parse(String((buscar.mock.calls[0][1] as RequestInit).body))
-    expect(corpo.inversores.series).toEqual(['slot:171', 'slot:172'])
+    expect(corpo.inversores.agrupamento).toBe('skid')
+    expect(corpo.inversores.series).toEqual(['slot:153', 'slot:154', 'slot:155', 'slot:156'])
   })
 
-  /* ------------------------------------------------------------- a espera */
+  /* ============================================ 6. sem gaveta, sem "personalizado", sem chip */
 
-  it('a espera mostra tempo decorrido e nenhuma porcentagem, e cancelar aborta o pedido', async () => {
+  it('não sobrou gaveta nem estado "personalizado", e nenhuma escolha virou chip', async () => {
+    const { container } = montar()
+    await telaPronta()
+
+    // (44-46) As palavras da versão anterior não existem mais na tela. Elas nomeavam a gaveta
+    // e o estado que só servia para administrar a mentira de continuar dizendo "Geração da
+    // usina" depois que o cliente mexia.
+    expect(container.textContent).not.toMatch(/avan[çc]ado/i)
+    expect(container.textContent).not.toMatch(/personalizado/i)
+    expect(container.textContent).not.toMatch(/coluna por coluna/i)
+
+    // (47) Chip é botão-pílula: proibido em todo o portal, e é exatamente a forma que a tela
+    // do meuWatt usa. A varredura é estrutural, e não uma leitura de estilo.
+    expect(container.querySelectorAll('[class*="rounded-full"]')).toHaveLength(0)
+
+    // (48) E a contagem fecha o resto: uma fileira de chips para as 14 variáveis, os 5 passos,
+    // os 27 atalhos e os 20 inversores passaria de sessenta botões só de opção. Com tudo
+    // fechado, o que existe são os gatilhos das listas, os segmentados e os botões de ação.
+    expect(container.querySelectorAll('button').length).toBeLessThan(45)
+
+    // (49) …e mesmo assim as 20 séries continuam alcançáveis, dentro da lista suspensa.
+    abrir('todos · 20 inversores')
+    expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(20)
+  })
+
+  /* ============================================================ 7. o atalho preenche */
+
+  it('o pacote PREENCHE os blocos e volta ao lugar — atalho, não modo', async () => {
+    montar()
+    await telaPronta()
+
+    // (50) Abre com geração: os quatro blocos oferecem o par (esta usina tem todos), e só o
+    // dos inversores está ligado — a estação ainda não entra no arquivo.
+    expect(screen.getAllByRole('button', { name: 'Entra no arquivo' })).toHaveLength(4)
+    expect(within(bloco('Estação solarimétrica')).getByRole('button', { name: /0 de 3 colunas/ })).toBeTruthy()
+
+    abrir('Preencher os blocos com um começo pronto…')
+    fireEvent.click(screen.getByRole('button', { name: /Geração \+ clima/ }))
+
+    // (51) Ele preencheu os blocos À VISTA: a estação passou a entrar no arquivo (irradiação
+    // nos dois planos, que é o que esta usina mede).
+    expect(
+      within(bloco('Estação solarimétrica')).getByRole('button', { name: '2 de 3 colunas' }),
+    ).toBeTruthy()
+    // (52) …e o gatilho voltou ao lugar, em vez de virar um rótulo de modo.
+    expect(
+      screen.getByRole('button', { name: 'Preencher os blocos com um começo pronto…' }),
+    ).toBeTruthy()
+    // (53) O rastro diz de onde veio…
+    expect(screen.getByText(/Blocos preenchidos a partir de/)).toBeTruthy()
+
+    // (54) …e some assim que o cliente mexe, porque o atalho preencheu e não governa.
+    fireEvent.click(screen.getByRole('button', { name: 'Uma coluna por skid' }))
+    expect(screen.queryByText(/Blocos preenchidos a partir de/)).toBeNull()
+  })
+
+  /* ============================================================ 8. o passo se anuncia */
+
+  it('o auto-ajuste do passo ANUNCIA que ajustou, em vez de trocar em silêncio', async () => {
+    montar()
+    await telaPronta()
+
+    // "Cada leitura" aceita 7 dias. Pedir o ano corrente (248 dias) obriga a engrossar.
+    abrir('De hora em hora')
+    fireEvent.click(screen.getByRole('button', { name: /Cada leitura/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ano' }))
+
+    // (55-57) A frase diz o número, o detalhe que não coube e o que foi escolhido no lugar.
+    // Sem ela, o cliente descobre a troca ao abrir a planilha e achar uma linha por dia.
+    const aviso = screen.getByText(/Ajustei para/)
+    expect(aviso.textContent).toContain('248 dias')
+    expect(aviso.textContent).toContain('aceita 7')
+  })
+
+  /* ============================================================ 9. o rodapé e o rastro */
+
+  it('o rodapé conta o arquivo ABA POR ABA e o sucesso deixa rastro', async () => {
+    const buscar = vi.fn().mockResolvedValue(planilha())
+    vi.stubGlobal('fetch', buscar)
+    montar()
+    await telaPronta()
+
+    // (58-60) A estimativa é uma conta aproximada — daí o "≈" — e vem com a legenda que evita
+    // a leitura errada mais cara que este arquivo induz.
+    //
+    // ⛔ E ela é POR ABA. Somar as larguras dava um número que não é a largura de nada: os
+    // juízes abriram a planilha e acharam 42 colunas em 4 abas onde o rodapé prometia 37, e
+    // a aba mais larga tinha 22. Agora cada aba diz a sua, contando o `Início (BRT)`.
+    const rodape = screen.getByText(/linhas ·/)
+    expect(rodape.textContent).toContain('≈')
+    expect(rodape.textContent).toContain('vazio = sem leitura, 0 = zero medido')
+    expect(rodape.textContent).not.toContain('Paradas')
+    // O padrão da tela é a usina inteira: 20 inversores + Usina + Início = 22 (medido).
+    expect(rodape.textContent).toMatch(/Inversores\s*22 colunas/)
+
+    // (61) Marcar "Intervalos desligados" acrescenta uma ABA ao arquivo — e ela não tem
+    // número de linhas para dar, então o rodapé diz o que ela é em vez de inventar um.
+    abrirColunas('Inversores')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Intervalos desligados/ }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    const comParadas = screen.getByText(/linhas ·/).textContent ?? ''
+    expect(comParadas).toContain('Paradas (uma linha por parada no período)')
+    // E a aba de inversores engordou uma coluna por inversor, mais o total da usina.
+    expect(comParadas).toMatch(/Inversores\s*43 colunas/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
+    await waitFor(() => expect(vi.mocked(baixarBlob)).toHaveBeenCalledTimes(1))
+
+    // (62-64) O sucesso deixa rastro com o nome e o tamanho: sem ele, um download que o
+    // navegador guardou em silêncio parece um botão que não fez nada.
+    const pronto = await screen.findByText(/Pronto:/)
+    expect(pronto.textContent).toContain('dados-porto-ferreira-2026-09-5m.xlsx')
+    expect(pronto.textContent).toContain('4 KB')
+    expect(pronto.textContent).toContain('pasta de downloads')
+  })
+
+  it('erro permanente não oferece "Tentar de novo"; falha de ponte oferece', async () => {
+    // DEFEITO QUE ESTE TESTE GUARDA: o 422 do Pydantic (`passo` fora da lista, data em
+    // formato de gente, mais de 500 séries) sai CRU, sem o `motivo` do vocabulário fechado —
+    // e o botão convidava a repetir um corpo que dará o mesmo 422 para sempre. Repetir não é
+    // de graça: o balde do meuWatt é de 10/minuto para o IP inteiro do portal.
+    const recusa = (status: number): Response =>
+      ({
+        ok: false,
+        status,
+        headers: { get: () => null },
+        blob: async () => new Blob(),
+        json: async () => ({ detail: 'passo: Input should be…' }),
+      }) as unknown as Response
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(recusa(422)))
+    montar()
+    await telaPronta()
+    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
+    await screen.findByText('Não deu para carregar')
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
+
+    // E a ponte fora do ar continua com botão: aí repetir é exatamente a coisa certa.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(recusa(502)))
+    fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeTruthy(),
+    )
+  })
+
+  /* ============================================================ 10. a espera */
+
+  it('a espera não inventa porcentagem, diz que sair cancela, e cancelar CALA', async () => {
+    // A rota do meuWatt é síncrona: o cabeçalho só chega com o XLSX inteiro montado (35,6 s
+    // medidos no pior pedido que ele aceita), e não há job nem endpoint de andamento. Este
+    // `fetch` que nunca resolve é exatamente essa situação, parada no tempo.
     let abortado = false
     const buscar = vi.fn(
       (_url: string, init: RequestInit) =>
         new Promise<Response>((_resolver, rejeitar) => {
           init.signal?.addEventListener('abort', () => {
             abortado = true
-            rejeitar(Object.assign(new DOMException('abort', 'AbortError')))
+            rejeitar(new DOMException('abort', 'AbortError'))
           })
         }),
     )
@@ -429,21 +549,67 @@ describe('tela Baixar dados', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Baixar planilha' }))
     const caixa = await screen.findByRole('dialog')
-    expect(caixa.textContent).toContain('Gerando há')
-    // Nenhuma porcentagem: o servidor monta o arquivo inteiro antes de responder, e não há
-    // progresso para mostrar. Inventar um seria ficção.
-    expect(caixa.textContent).not.toMatch(/\d+\s?%/)
-    expect(caixa.textContent).toContain('Não feche esta aba')
 
+    // (65) O tempo DECORRIDO é fato; uma porcentagem seria ficção, porque não há progresso
+    // para ler — o arquivo desce de uma vez, quando fica pronto.
+    expect(caixa.textContent).toContain('Gerando há')
+    // (66) A prova de que ninguém inventou os "43 %".
+    expect(caixa.textContent).not.toMatch(/\d+\s?%/)
+    // (67) E o aviso nomeia o gesto PROVÁVEL: não é fechar a aba, é clicar no menu ali à
+    // esquerda — que mata o `fetch` do mesmo jeito, e sem isso se descobre depois.
+    expect(caixa.textContent).toContain('Sair desta tela')
+
+    // (68-70) Cancelar aborta de verdade, fecha a espera — e CALA: ninguém errou, e um aviso
+    // vermelho aqui acusaria o cliente de um problema que ele mesmo resolveu.
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
     await waitFor(() => expect(abortado).toBe(true))
-    // Cancelar não é erro: ninguém errou, e a tela não acusa nada.
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.queryByText(/Não deu para/)).toBeNull()
+    expect(screen.queryByText(/Pronto:/)).toBeNull()
     expect(vi.mocked(baixarBlob)).not.toHaveBeenCalled()
   })
 
-  /* ------------------------------------------------------------------ 404 */
+  /* ============================================================ 11. a retenção */
+
+  it('a retenção é ausência de dado e mora no período, com a saída nomeada', async () => {
+    montar()
+    await telaPronta()
+
+    // (65-66) A linha é permanente e troca com a seleção: o medidor guarda 24 meses, os
+    // inversores e a estação guardam 6. Uma frase só seria falsa metade do tempo.
+    const linha = screen.getByText(/Leitura fina de inversores e estação desde/)
+    expect(linha.textContent).toContain('06/03/2026')
+    expect(linha.textContent).toContain('só o total por dia')
+
+    // (67) E o total por dia realmente não tem prazo — o servidor põe a checagem inteira de
+    // retenção dentro de `step != '1d'`. É a saída que todas as frases nomeiam.
+    abrir('De hora em hora')
+    fireEvent.click(screen.getByRole('button', { name: /Um total por dia/ }))
+    expect(screen.getByText(/O total por dia não tem prazo/)).toBeTruthy()
+  })
+
+  /* ============================================================ 12. "Ir para…" */
+
+  it('os três atalhos e os 24 meses fechados cabem numa lista suspensa, com a retenção colada', async () => {
+    const { container } = montar()
+    await telaPronta()
+
+    // (68-69) A lista absorve o que no meuWatt são quatro controles (três botões e um
+    // `select`) — e é a única peça do vocabulário do portal que segura 27 opções sem chip.
+    abrir('Ir para…')
+    const itens = opcoesAbertas(container)
+    expect(itens).toHaveLength(27)
+    expect(itens.join(' | ')).toContain('Últimos 7 dias')
+    // (70) O motivo da retenção viaja colado no mês, enquanto se escolhe — não depois de
+    // esperar meio minuto por um 400.
+    expect(itens.join(' | ')).toContain('a leitura minuto a minuto não existe mais')
+
+    // (71) E escolher um mês fechado leva o período inteiro dele.
+    fireEvent.click(screen.getByRole('button', { name: /^Agosto de 2026/ }))
+    expect(screen.getByText(/31 dias, de/)).toBeTruthy()
+  })
+
+  /* ============================================================ 13. o 404 */
 
   it('o 404 não vira diagnóstico sobre a usina: quem escreve a frase é o servidor', async () => {
     // Este caso saiu de uma conferência no navegador, não da imaginação: o BFF que rodava na
@@ -469,39 +635,14 @@ describe('tela Baixar dados', () => {
 
     // `useLeitura` tenta de novo UMA vez antes de desistir (e o atraso é real): sem folga no
     // prazo, o que se lê aqui é o esqueleto, e não a recusa.
-    await screen.findByText('Não há dados brutos para baixar nesta usina', {}, { timeout: 5000 })
-    expect(screen.getByText('Not Found')).toBeTruthy()
-    // A afirmação que a tela NÃO pode fazer sozinha.
+    const vazio = await screen.findByText(
+      'Não há dados brutos para baixar nesta usina',
+      {},
+      { timeout: 5000 },
+    )
+    // (72) A frase é a DO SERVIDOR.
+    expect(within(vazio.parentElement!).getByText('Not Found')).toBeTruthy()
+    // (73) E a afirmação que a tela NÃO pode fazer sozinha continua não sendo feita.
     expect(screen.queryByText(/não está ligada ao monitoramento/)).toBeNull()
-  })
-
-  /* -------------------------------------------------------------- contrato */
-
-  it('a estimativa conta como o servidor conta, e o nome do arquivo vem do cabeçalho', () => {
-    const o = opcoes()
-    // Um dia inteiro a cada 15 minutos = 96 baldes; 3 inversores em lista + total = 4 colunas.
-    const j = janelaDo('2026-08-01', '2026-08-01', '00:00', '23:59', '15m', false)
-    expect(j.dias).toBe(1)
-    expect(j.baldes).toBe(96)
-    const e = estimativa(montarPacote('geracao', o), o, j)
-    expect(e.colunas).toBe(4)
-    expect(e.celulas).toBe(96 * 4)
-    expect(passaDoOrcamento(e, o.limites)).toBe(false)
-
-    expect(
-      nomeDoArquivo('attachment; filename="dados-porto-ferreira-2026-08.xlsx"', 'dados.xlsx'),
-    ).toBe('dados-porto-ferreira-2026-08.xlsx')
-    expect(nomeDoArquivo(null, 'dados.xlsx')).toBe('dados.xlsx')
-  })
-
-  it('os dias oferecidos param onde o acervo do medidor para', () => {
-    const dias = diasOferecidos('2026-09-05', { snapshots_desde: '2026-03-06', ssu_desde: '2026-09-01' })
-    expect(dias).toHaveLength(5)
-    expect(dias[0].valor).toBe('2026-09-05')
-    expect(dias[4].valor).toBe('2026-09-01')
-    // Antes da retenção fina, o motivo vai colado; depois dela, não há motivo nenhum a dar.
-    expect(dias[0].detalhe).toBeUndefined()
-    const antigos = diasOferecidos('2026-03-07', { snapshots_desde: '2026-03-06', ssu_desde: '2026-03-05' })
-    expect(antigos[antigos.length - 1].detalhe).toContain('só o total por dia')
   })
 })

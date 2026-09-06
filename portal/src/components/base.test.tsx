@@ -30,13 +30,39 @@
  *    não tem; mandá-la ao servidor dentro de uma lista explícita seria pedir o que não existe.
  * 5. **O `Combobox` de sempre não mudou** — as duas peças passaram a dividir a linha da lista,
  *    e uma escolha que não devolve valor ou não fecha o menu seria a regressão dessa fusão.
+ *
+ * **`ComboboxMultiAgrupado`.** A peça que decide se o pedido do dono foi atendido: "o diretor
+ * é doido, ele quer sim baixar por skid". A capacidade sempre atravessou o contrato inteiro —
+ * a tela, o BFF e a mw-api recebem `agrupamento: 'skid'` desde o primeiro dia —, mas escolher
+ * o skid 2 custava abrir uma lista PLANA de vinte e quatro inversores e marcar oito caixas uma
+ * a uma: tecnicamente presente, praticamente ausente. E a saída do meuWatt (faixa de caixinhas
+ * por skid) é chip com outro nome, proibido aqui. O que os testes daqui guardam, além do que a
+ * peça irmã já guarda:
+ *
+ * 6. **O gatilho fechado diz três verdades diferentes** — "todos · 24", "Skid 2 e Skid 3 · 16"
+ *    e "9 de 24". Achatá-las numa contagem só apagaria o pedido que a pessoa fez.
+ * 7. **O cabeçalho do grupo é um controle, não um título** — `role="checkbox"` de três estados,
+ *    um toque marca o skid inteiro e o seguinte limpa.
+ * 8. **Durante a busca ele age só sobre o que está à vista.** Um tri-estado que marcasse o
+ *    grupo inteiro com três linhas na tela seria escrita cega.
+ * 9. **Nenhuma pílula** — a proibição é lida do próprio arquivo, porque este defeito entra por
+ *    cópia e nenhum `tsc` tem como pegá-lo.
  */
+
+import { readFileSync } from 'node:fs'
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { Combobox, ComboboxMulti, opcao, type Opcao } from '@/components/base'
+import {
+  Combobox,
+  ComboboxMulti,
+  ComboboxMultiAgrupado,
+  opcao,
+  type GrupoDeOpcoes,
+  type Opcao,
+} from '@/components/base'
 
 afterEach(cleanup)
 
@@ -311,5 +337,252 @@ describe('ComboboxMulti', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+})
+
+/* ------------------------------------------------------------------ agrupado */
+
+/**
+ * Vinte e quatro inversores em três skids — a forma de Porto Ferreira, que é a usina em que
+ * o diretor pediu "baixar por skid".
+ *
+ * Os números de série não são enfeite: são o que a pessoa tem na mão em campo, e é por eles
+ * que ela busca. O skid 3 recebe três seriais de uma faixa (53xx) e cinco de outra (59xx) de
+ * propósito — é o que permite uma busca acertar **três** linhas dentro de um grupo de oito, e
+ * provar que o cabeçalho age só sobre o que está à vista.
+ */
+const SKIDS: GrupoDeOpcoes[] = [
+  {
+    chave: 's1',
+    rotulo: 'Skid 1',
+    detalhe: '1,5 MWp',
+    opcoes: Array.from({ length: 8 }, (_, i) => ({
+      valor: `s1-${i + 1}`,
+      rotulo: `Inv 0${i + 1}`,
+      detalhe: `NS 510${i + 1}`,
+    })),
+  },
+  {
+    chave: 's2',
+    rotulo: 'Skid 2',
+    detalhe: '1,5 MWp',
+    opcoes: Array.from({ length: 8 }, (_, i) => ({
+      valor: `s2-${i + 1}`,
+      rotulo: `Inv ${String(i + 9).padStart(2, '0')}`,
+      detalhe: `NS 520${i + 1}`,
+    })),
+  },
+  {
+    chave: 's3',
+    rotulo: 'Skid 3',
+    detalhe: '1,5 MWp',
+    opcoes: Array.from({ length: 8 }, (_, i) => ({
+      valor: `s3-${i + 1}`,
+      rotulo: `Inv ${String(i + 17).padStart(2, '0')}`,
+      detalhe: i < 3 ? `NS 530${i + 1}` : `NS 590${i + 1}`,
+    })),
+  },
+]
+
+const TODOS_DO_SKID = (n: number) => Array.from({ length: 8 }, (_, i) => `s${n}-${i + 1}`)
+
+function Agrupado({
+  grupos = SKIDS,
+  inicial,
+  onEscolher,
+}: {
+  grupos?: GrupoDeOpcoes[]
+  inicial: string[] | null
+  onEscolher?: (v: string[] | null) => void
+}) {
+  const [valor, setValor] = useState<string[] | null>(inicial)
+  return (
+    <ComboboxMultiAgrupado
+      grupos={grupos}
+      valor={valor}
+      onEscolher={(v) => {
+        setValor(v)
+        onEscolher?.(v)
+      }}
+      substantivo="inversores"
+    />
+  )
+}
+
+/** O cabeçalho de grupo tem `aria-label`; a linha do inversor, não. É o que os separa. */
+function inversoresVisiveis() {
+  return screen.getAllByRole('checkbox').filter((b) => !b.hasAttribute('aria-label'))
+}
+
+function rotulosDeInversores() {
+  return inversoresVisiveis().map((b) => (b.textContent ?? '').match(/Inv \d+/)?.[0] ?? '?')
+}
+
+function cabecalho(nome: RegExp) {
+  return screen.getByRole('checkbox', { name: nome })
+}
+
+describe('ComboboxMultiAgrupado — o gesto de marcar o skid inteiro', () => {
+  it('o gatilho fechado diz TRÊS verdades diferentes, e não uma contagem para tudo', () => {
+    // 1. "não mexi": o inversor que entrar em operação no meio do período sai no arquivo.
+    const a = render(<Agrupado inicial={null} />)
+    expect(screen.getAllByRole('button')[0].textContent).toContain('todos · 24 inversores')
+    a.unmount()
+
+    // 2. a união EXATA de dois skids se chama pelo nome — é o que a pessoa pediu e é o que
+    //    ela vai reconhecer na planilha.
+    const b = render(<Agrupado inicial={[...TODOS_DO_SKID(2), ...TODOS_DO_SKID(3)]} />)
+    expect(screen.getAllByRole('button')[0].textContent).toContain('Skid 2 e Skid 3 · 16 inversores')
+    b.unmount()
+
+    // 3. um skid pela metade derruba a forma toda: nome de skid só se escreve quando é
+    //    inteiramente verdade.
+    render(<Agrupado inicial={[...TODOS_DO_SKID(1), 's2-1']} />)
+    expect(screen.getAllByRole('button')[0].textContent).toContain('9 de 24 inversores')
+  })
+
+  it('o cabeçalho do skid pela metade é `mixed` — e os vizinhos intactos dizem `false`', () => {
+    render(<Agrupado inicial={['s2-1', 's2-2', 's2-3']} />)
+    abrir()
+
+    expect(cabecalho(/Skid 2/).getAttribute('aria-checked')).toBe('mixed')
+    expect(cabecalho(/Skid 1/).getAttribute('aria-checked')).toBe('false')
+    expect(cabecalho(/Skid 3/).getAttribute('aria-checked')).toBe('false')
+    // E o nome acessível conta a história inteira: quantos, de quantos, e o que o toque faz.
+    expect(cabecalho(/Skid 2/).getAttribute('aria-label')).toBe(
+      'Skid 2 — 3 de 8 inversores marcados. marcar Skid 2 inteiro.',
+    )
+  })
+
+  it('UM toque marca os oito inversores do skid; o segundo limpa', () => {
+    const escolheu = vi.fn()
+    render(<Agrupado inicial={[]} onEscolher={escolheu} />)
+    abrir()
+
+    fireEvent.click(cabecalho(/Skid 2/))
+    expect(escolheu).toHaveBeenLastCalledWith(TODOS_DO_SKID(2))
+    expect(screen.getAllByRole('button')[0].textContent).toContain('Skid 2 · 8 inversores')
+    expect(cabecalho(/Skid 2/).getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(cabecalho(/Skid 2/))
+    expect(escolheu).toHaveBeenLastCalledWith([])
+    expect(cabecalho(/Skid 2/).getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('a ordem congela na abertura: marcar não faz o item seguinte pular para o cursor', () => {
+    render(<Agrupado inicial={['s1-3']} />)
+    abrir()
+    expect(rotulosDeInversores().slice(0, 3)).toEqual(['Inv 03', 'Inv 01', 'Inv 02'])
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Inv 01/ }))
+    expect(rotulosDeInversores().slice(0, 3)).toEqual(['Inv 03', 'Inv 01', 'Inv 02'])
+
+    // Fechar e reabrir acomoda — aí sim, e só aí.
+    abrir()
+    abrir()
+    expect(rotulosDeInversores().slice(0, 3)).toEqual(['Inv 01', 'Inv 03', 'Inv 02'])
+  })
+
+  it('buscar pelo número de série mantém o cabeçalho do skid que tem e esconde os outros dois', () => {
+    render(<Agrupado inicial={[]} />)
+    abrir()
+
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: '5203' } })
+    expect(screen.queryByRole('checkbox', { name: /Skid 1/ })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /Skid 3/ })).toBeNull()
+    expect(cabecalho(/Skid 2/)).toBeTruthy()
+    expect(rotulosDeInversores()).toEqual(['Inv 11'])
+  })
+
+  it('durante a busca o cabeçalho DIZ e FAZ só o que está à vista — nada de escrita cega', () => {
+    const escolheu = vi.fn()
+    render(<Agrupado inicial={[]} onEscolher={escolheu} />)
+    abrir()
+
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: '530' } })
+    expect(rotulosDeInversores()).toEqual(['Inv 17', 'Inv 18', 'Inv 19'])
+    expect(screen.getByText('marcar os 3 encontrados')).toBeTruthy()
+
+    fireEvent.click(cabecalho(/Skid 3/))
+    // Três, e não os oito do skid: a pessoa vê três linhas e marca três.
+    expect(escolheu).toHaveBeenLastCalledWith(['s3-1', 's3-2', 's3-3'])
+  })
+
+  it('o rodapé "todos" devolve `null`, e não a lista dos vinte e quatro', () => {
+    const escolheu = vi.fn()
+    render(<Agrupado inicial={TODOS_DO_SKID(1)} onEscolher={escolheu} />)
+    abrir()
+
+    fireEvent.click(screen.getByRole('button', { name: 'todos' }))
+    expect(escolheu).toHaveBeenLastCalledWith(null)
+    expect(escolheu).not.toHaveBeenCalledWith(expect.arrayContaining(['s1-1']))
+    expect(screen.getAllByRole('button')[0].textContent).toContain('todos · 24 inversores')
+  })
+
+  it('desmarcar um inversor a partir de "todos" MATERIALIZA a lista dos 23', () => {
+    const escolheu = vi.fn()
+    render(<Agrupado inicial={null} onEscolher={escolheu} />)
+    abrir()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Inv 11/ }))
+    expect(escolheu).toHaveBeenLastCalledWith(expect.not.arrayContaining(['s2-3']))
+    expect((escolheu.mock.calls.at(-1)?.[0] as string[]).length).toBe(23)
+    // E o skid 2 deixou de ser inteiro, então o gatilho volta a contar.
+    expect(screen.getAllByRole('button')[0].textContent).toContain('23 de 24 inversores')
+  })
+
+  /**
+   * O inversor retirado é uma coisa que a usina não tem mais. Ele continua na lista com o
+   * motivo (senão o cliente conclui que o portal não oferece), mas não entra na conta, não
+   * entra em "todos" e o toque no cabeçalho não o arrasta para dentro de uma lista explícita
+   * — pedir ao servidor uma série que não existe é pedir um arquivo que não vem.
+   */
+  it('a opção desabilitada fica fora da conta e fora do toque do cabeçalho', () => {
+    const comRetirado: GrupoDeOpcoes[] = [
+      SKIDS[0],
+      {
+        ...SKIDS[1],
+        opcoes: [
+          ...SKIDS[1].opcoes.slice(0, 7),
+          {
+            valor: 's2-8',
+            rotulo: 'Inv 16',
+            detalhe: 'retirado — sem leitura no período',
+            desabilitada: true,
+          },
+        ],
+      },
+      SKIDS[2],
+    ]
+    const escolheu = vi.fn()
+    render(<Agrupado grupos={comRetirado} inicial={[]} onEscolher={escolheu} />)
+    expect(screen.getAllByRole('button')[0].textContent).toContain('0 de 23 inversores')
+
+    abrir()
+    expect(screen.getByText('retirado — sem leitura no período')).toBeTruthy()
+    fireEvent.click(cabecalho(/Skid 2/))
+    expect(escolheu).toHaveBeenLastCalledWith(TODOS_DO_SKID(2).slice(0, 7))
+    expect(cabecalho(/Skid 2/).getAttribute('aria-checked')).toBe('true')
+
+    // E o SEGUNDO toque limpa. Isto é o que a primeira mutação escapada ensinou: com a
+    // desabilitada dentro do alvo, "já estão todos marcados?" nunca é verdade — a lista
+    // final é filtrada e parece certa, mas o cabeçalho fica travado em marcar e nunca mais
+    // limpa. A lista de saída sozinha não pegava isso; o segundo toque pega.
+    fireEvent.click(cabecalho(/Skid 2/))
+    expect(escolheu).toHaveBeenLastCalledWith([])
+  })
+
+  /**
+   * O dono odeia chip, e a proibição não é de estilo: chip não escala, não se busca por
+   * teclado e some no celular. A garantia aqui é lida do PRÓPRIO arquivo, porque o defeito
+   * que ela guarda entra por cópia — alguém traz a faixa de caixinhas do meuWatt junto com
+   * uma classe `rounded-full`, e nenhum `tsc` tem como perceber.
+   */
+  it('nenhuma pílula no vocabulário: o arquivo não tem `rounded-full` nem `pill`', () => {
+    // Caminho a partir da raiz do portal (a pasta em que o vitest roda): sob o
+    // transformador, `import.meta.url` não é uma URL de arquivo.
+    const fonte = readFileSync('src/components/base.tsx', 'utf8')
+    expect(fonte).not.toMatch(/rounded-full/)
+    expect(fonte).not.toMatch(/\bpill\b/i)
   })
 })

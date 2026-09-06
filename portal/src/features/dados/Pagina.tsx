@@ -1,41 +1,62 @@
 /**
- * Baixar dados — os números desta usina, do jeito que a planilha do cliente lê.
+ * Baixar dados — a MESMA tela de Downloads do meuWatt, no vocabulário do portal.
  *
- * A tela do meuWatt responde *"que colunas eu quero no arquivo?"*. Essa pergunta não tem dono
- * no portal do cliente: ninguém acorda querendo `slot:12` agrupado por skid. A pergunta que
- * tem dono é *"quero os números desta usina para trabalhar na minha planilha"* — e quem a faz
- * não é o diretor, é o contador, o analista da holding ou o engenheiro contratado, usando o
- * login do cliente. Daí sai tudo o que está desenhado aqui:
+ * A versão anterior desta página não cortou o CONTRATO — `api.ts` e o BFF sempre carregaram as
+ * quatro variáveis de inversor, os dois agrupamentos e `series[]`. O que ela cortou foi a
+ * VISIBILIDADE: abria com uma lista de cinco pacotes e escondia os quatro blocos atrás de uma
+ * gaveta chamada "Escolher coluna por coluna". Para quem quer baixar POR SKID — que é o pedido
+ * literal do dono — a capacidade estava tecnicamente presente e praticamente ausente: era
+ * preciso saber que a gaveta existia, abri-la, trocar o agrupamento e marcar inversor por
+ * inversor numa lista plana, porque não havia gesto nenhum para "o skid 2 inteiro".
  *
- * **Três perguntas, com a resposta já preenchida.** O quê · de quando a quando · com que
- * detalhe. A tela abre respondível — usina do contexto, pacote padrão, mês corrente, detalhe
- * sugerido, estimativa calculada, botão vivo. Formulário que abre vazio obriga o cliente a
- * trabalhar antes de descobrir o que a tela faz.
+ * Agora os quatro blocos estão na tela, como no meuWatt, e o pacote virou o que ele sempre
+ * deveria ter sido: um **preenchedor**. "Começar de…" preenche os cartões à vista e volta ao
+ * lugar — atalho, não modo. Com isso morreram juntos a gaveta e o estado pseudo-
+ * "personalizado", que só existia para administrar a mentira de continuar dizendo "Geração da
+ * usina" quando já não era isso: a edição agora está DESENHADA, e a tela não precisa de um
+ * rótulo para confessá-la.
  *
- * **O período usa a MESMA peça do Painel e de Paradas.** Não é só familiaridade: é o que faz a
- * conversa sobre tetos quase nunca acontecer — um mês a 15 minutos dá 31 dias (teto 92) e um
- * ano por hora dá 366 (teto 366). O caminho curto praticamente nunca esbarra.
+ * **O que muda em relação ao meuWatt é o vocabulário visual, e só.** Lá a escolha é uma
+ * fileira de chips e de caixinhas; aqui chip é proibido (a regra vem do meuPlano e vale para 2
+ * e para 200 opções): tudo é `Combobox`, `ComboboxMulti`, `ComboboxMultiAgrupado` ou
+ * `Segmentado`. Nenhuma linha foi podada — as 14 variáveis, os 5 passos, os 2 agrupamentos de
+ * cada bloco que tem agrupamento e os dois horários atravessaram inteiros.
  *
- * **A gaveta "Escolher coluna por coluna" é uma lupa sobre o padrão, não um formulário
- * paralelo.** Ela mostra o que o pacote escolhido quer dizer, aberto — nada some. Ao mexer, o
- * nome do pacote vira "Personalizado", porque continuar dizendo "Geração da usina" seria
- * mentir sobre o que vai no arquivo.
+ * **Esta tela não guarda vocabulário nenhum.** As 14 linhas, os motivos de cada ausência, os
+ * agrupamentos e as contas moram em `pacotes.ts`, que se prova sem montar tela; o controle
+ * agrupado por skid mora em `components/base.tsx`, com o resto do vocabulário. Aqui fica só a
+ * montagem — que é o que uma tela deve ser.
  *
- * **Nenhuma escolha é um chip.** `Combobox`, `ComboboxMulti` ou `Segmentado`, de duas a
- * quinhentas opções. A tela do meuWatt usa chips; esta não copia isso. E o que a usina não tem
- * continua na lista, desabilitado e com o motivo — a `Opcao` do design system, por construção,
- * só deixa desabilitar quem escreve o porquê.
+ * **O que a usina não tem NÃO SOME.** Nem a linha (a `Opcao` do design system, por construção,
+ * não deixa desabilitar sem escrever o porquê — o `tsc` pega isso, e não a revisão de diff),
+ * nem o cartão: um bloco ausente vira um cartão com a contagem zerada e a frase no lugar da
+ * escolha. Cartão que some é informação perdida; cartão presente e explicado é um cliente que
+ * sabe o que teria de instalar para ter aquilo. `umidade` é o caso extremo e por isso está
+ * aqui: nenhuma estação a envia, e mesmo assim ela aparece — desabilitada, com o motivo.
  *
- * **A espera é honesta.** A rota do meuWatt é síncrona (o POST devolve o arquivo pronto; não
- * há job, id, nem endpoint de andamento), e o cabeçalho só chega quando o XLSX inteiro foi
- * montado — 34 s medidos no pior pedido. Então: barra INDETERMINADA e jamais uma porcentagem
- * (inventar "43 %" seria ficção), o tempo DECORRIDO à mostra, a razão da ausência escrita, um
- * `Modal` que segura a navegação de trás (o `fetch` morre com a página, e isso tem de ser dito
- * antes e não descoberto depois), Cancelar que aborta de verdade, e um corte declarado aos
- * 180 s com a saída nomeada.
+ * **Os três limites do servidor têm três naturezas, e três tratamentos:** teto de dias IMPEDE
+ * antes da viagem, com a conta feita e a saída nomeada; retenção é ausência de dado e por isso
+ * mora colada ao PERÍODO, na linha permanente logo abaixo dele; orçamento de células é
+ * estimativa nossa e NUNCA veta — no limiar o benefício da dúvida é do cliente.
  *
- * **A chave de série nunca aparece.** `slot:170` é transporte; o cliente lê "Inv 13", com o
- * número de série ao lado — que é o que ele tem na mão para conferir.
+ * **O auto-ajuste do passo ANUNCIA que ajustou.** Escolher "este mês" com o detalhe em "cada
+ * leitura" (que aceita 7 dias) engrossa o passo sozinho — e mudança calada é a que se descobre
+ * depois, dentro do arquivo.
+ *
+ * **A espera é governada por um fato, não por uma escolha de estilo:** a rota do meuWatt é
+ * síncrona, o cabeçalho só chega com o XLSX inteiro montado (35,6 s medidos no pior pedido que
+ * ele aceita) e não existe job nem endpoint de andamento. Daí a barra INDETERMINADA (inventar
+ * "43 %" seria ficção), o tempo DECORRIDO à mostra (fato, não previsão), o `Modal` que segura
+ * a navegação de trás — porque o gesto provável não é fechar a aba, é clicar no menu ali à
+ * esquerda — e o corte declarado aos 180 s. Cancelar é decisão legítima e CALA; o corte é
+ * decisão nossa e FALA.
+ *
+ * **O sucesso deixa rastro, e o rastro morre ao trocar de usina.** É o `fix c23b330` do
+ * meuWatt: a confirmação da usina anterior sobrevivendo à troca afirma que existe um arquivo
+ * desta que não existe.
+ *
+ * **A chave de série nunca aparece.** `slot:170` é transporte; o cliente lê "Inv 13" com o
+ * número de série ao lado, que é o que ele tem na mão para conferir.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -44,14 +65,13 @@ import { useParams } from 'react-router-dom'
 import {
   Aviso,
   Botao,
-  CabecalhoCard,
   CarregandoCartao,
   Cartao,
   Combobox,
   ComboboxMulti,
+  ComboboxMultiAgrupado,
   Erro,
   Esqueleto,
-  Gaveta,
   Modal,
   Num,
   opcao,
@@ -60,12 +80,14 @@ import {
   Segmentado,
   Tela4Estados,
   Vazio,
+  type GrupoDeOpcoes,
   type Opcao,
 } from '@/components/base'
 import { baixarBlob } from '@/lib/arquivo'
 import { dataCurta, inteiro } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
 import {
+  competenciaDe,
   daData,
   hojeIso,
   paraIso,
@@ -87,41 +109,55 @@ import {
   type VarInversor,
   type VarSistema,
 } from '@/features/dados/api'
+import { gravarForma, lerForma, type Descartado } from '@/features/dados/forma'
 import {
-  CLIMA,
-  climaDisponivel,
+  AGRUPAMENTO_DA_FRONTEIRA,
+  AGRUPAMENTO_DO_INVERSOR,
+  AGRUPAMENTO_DO_SISTEMA,
+  ajustarPasso,
+  avisoDeOrcamento,
   diasOferecidos,
   estimativa,
-  faltamNoPacote,
   impedimento,
   janelaDo,
+  linhaDeRetencao,
   montarPacote,
+  motivoDaFronteira,
+  motivoDeRetencao,
   motivoDoPacote,
+  opcoesDaEstacao,
+  opcoesDaFronteira,
   opcoesDePasso,
+  opcoesDoInversor,
+  opcoesDoSistema,
   PACOTES,
-  passaDoOrcamento,
   passoSugerido,
-  PERSONALIZADO,
-  ROTULO_DA_ESTACAO,
-  ROTULO_DO_INVERSOR,
-  ROTULO_DO_SISTEMA,
+  rodapeDaFronteira,
   soMedidor,
   traduzirMotivo,
   vazia,
+  AVISO_DA_SOMA_POR_SKID,
   type IdDePacote,
   type Recusa,
 } from '@/features/dados/pacotes'
 
-/* ================================================================== recorte */
+/* ================================================================== período */
 
 /** O quarto recorte não existe em `lib/periodo`: é o intervalo de/até desta tela. */
 type RecorteDaTela = Recorte | 'livre'
 
+/**
+ * "Escolher datas", e não "Personalizado".
+ *
+ * O nome importa: "personalizado" era como a versão anterior chamava o estado em que a seleção
+ * deixava de ter nome, e reaproveitá-lo aqui devolveria a mesma confusão com outra roupa — o
+ * cliente leria "personalizado" e procuraria o que tinha personalizado.
+ */
 const RECORTES: { valor: RecorteDaTela; rotulo: string }[] = [
   { valor: 'dia', rotulo: 'Dia' },
   { valor: 'mes', rotulo: 'Mês' },
   { valor: 'ano', rotulo: 'Ano' },
-  { valor: 'livre', rotulo: 'Personalizado' },
+  { valor: 'livre', rotulo: 'Escolher datas' },
 ]
 
 /**
@@ -154,50 +190,134 @@ function periodoDe(
   return { inicio, fim: ultimo > hoje ? hoje : ultimo }
 }
 
+/**
+ * Os atalhos de período numa lista só — os três do meuWatt mais os 24 meses fechados.
+ *
+ * O `Combobox` é a única peça do vocabulário do portal que segura 24 opções sem virar uma
+ * parede de chips, e ele absorve as duas coisas que no meuWatt são controles separados (três
+ * botões e um `<select>`). O motivo da retenção viaja colado no mês, enquanto se escolhe.
+ */
+function atalhosDePeriodo(
+  hoje: string,
+  retencao: OpcoesDeDados['retencao'],
+  apenasMedidor: boolean,
+): Opcao[] {
+  const d = daData(hoje)
+  const lista: Opcao[] = [
+    { valor: 'atalho:ontem', rotulo: 'Ontem' },
+    { valor: 'atalho:7d', rotulo: 'Últimos 7 dias' },
+    { valor: 'atalho:mes', rotulo: 'Este mês', detalhe: 'do dia 1 até hoje' },
+  ]
+  for (let i = 1; i <= 24; i += 1) {
+    const iso = paraIso(new Date(d.getFullYear(), d.getMonth() - i, 1))
+    const rotulo = rotuloDoPeriodo(iso, 'mes')
+    lista.push({
+      valor: `mes:${competenciaDe(iso)}`,
+      rotulo: `${rotulo.charAt(0).toUpperCase()}${rotulo.slice(1)}`,
+      detalhe: motivoDeRetencao(iso, retencao, apenasMedidor) ?? 'mês fechado',
+    })
+  }
+  return lista
+}
+
+/* ================================================================== horário */
+
+/**
+ * A grade de cinco minutos — a mesma do meuWatt (`<TimePicker step={300}>`).
+ *
+ * São 288 posições no dia (24 × 60 ÷ 5). A versão anterior desta tela usava quinze minutos, o
+ * que é uma redução silenciosa: quem quer a janela das 07:35 às 17:20 não conseguia pedi-la.
+ *
+ * `23:59` é a 289ª e existe à parte, com o motivo escrito: o horário final é INCLUSIVO DO
+ * MINUTO, então parar em `23:55` deixaria os últimos quatro minutos do dia fora do arquivo — e
+ * "até o fim do dia" é justamente o padrão com que a tela abre.
+ */
+const GRADE_DE_5_MIN: Opcao[] = Array.from({ length: 288 }, (_, i): Opcao => {
+  const h = String(Math.floor(i / 12)).padStart(2, '0')
+  const m = String((i % 12) * 5).padStart(2, '0')
+  return { valor: `${h}:${m}`, rotulo: `${h}:${m}` }
+})
+
+const HORARIOS: Opcao[] = [
+  ...GRADE_DE_5_MIN,
+  { valor: '23:59', rotulo: '23:59', detalhe: 'até o fim do dia' },
+]
+
+const HORA_INICIO_PADRAO = '00:00'
+const HORA_FIM_PADRAO = '23:59'
+
 /* ================================================================== pedaços */
 
-function Pergunta({
-  numero,
-  titulo,
-  detalhe,
-  children,
-}: {
-  numero: string
-  titulo: string
-  detalhe?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <div className="border-b border-borda-fraca py-4 first:pt-0 last:border-0 last:pb-0">
-      <div className="mb-2 flex items-baseline gap-2">
-        <span className="text-xs text-fraco">{numero}</span>
-        <h3 className="text-sm font-medium text-forte">{titulo}</h3>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-      {detalhe ? <p className="mt-2 text-xs text-fraco">{detalhe}</p> : null}
-    </div>
-  )
+function Rotulo({ children }: { children: ReactNode }) {
+  return <div className="mb-1.5 text-xs uppercase tracking-wide text-rotulo">{children}</div>
 }
 
 function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   return (
-    <div className="mb-4">
-      <div className="mb-1.5 text-xs uppercase tracking-wide text-rotulo">{rotulo}</div>
+    <div className="mb-3 last:mb-0">
+      <Rotulo>{rotulo}</Rotulo>
       {children}
     </div>
   )
 }
 
-/** O que esta usina não tem, dito ONDE a escolha estaria — nunca uma seção que some. */
-function NaoTem({ motivo }: { motivo: string }) {
-  return <p className="text-sm text-fraco">Não entra: {motivo}.</p>
+function EtapaDaTela({
+  numero,
+  titulo,
+  children,
+}: {
+  numero: string
+  titulo: string
+  children: ReactNode
+}) {
+  return (
+    <Cartao>
+      <div className="mb-3 flex items-baseline gap-2">
+        <span className="text-xs text-fraco">{numero}</span>
+        <h2 className="text-sm font-medium text-forte">{titulo}</h2>
+      </div>
+      {children}
+    </Cartao>
+  )
+}
+
+/**
+ * O agrupamento: `Segmentado` com o rótulo dizendo no que a coluna vira, e o detalhe da opção
+ * escolhida logo abaixo.
+ *
+ * O `Segmentado` não mostra `detalhe`, e a régua escreve um para cada opção ("cada coluna é a
+ * soma dos inversores marcados daquele skid"). Deixá-lo de fora perderia a explicação; jogá-lo
+ * num `title` esconderia-a de quem não tem mouse. Ele fica na tela, do jeito que se lê.
+ */
+function Agrupamento({
+  opcoes,
+  valor,
+  onEscolher,
+}: {
+  opcoes: Opcao[]
+  valor: string
+  onEscolher: (v: string) => void
+}) {
+  const escolhida = opcoes.find((o) => o.valor === valor)
+  return (
+    <>
+      <Segmentado
+        opcoes={opcoes.map((o) => ({ valor: o.valor, rotulo: o.rotulo }))}
+        valor={valor}
+        onEscolher={onEscolher}
+      />
+      {escolhida?.detalhe ? (
+        <p className="mt-1.5 text-xs text-fraco">{escolhida.detalhe}</p>
+      ) : null}
+    </>
+  )
 }
 
 /**
  * A barra da espera — sem porcentagem, de propósito.
  *
  * O servidor monta o arquivo inteiro antes de responder o primeiro byte: não existe progresso
- * para mostrar. Uma barra que anda sozinha diria ao cliente que sabemos quanto falta.
+ * para ler. Uma barra que anda sozinha diria ao cliente que sabemos quanto falta.
  */
 function BarraIndeterminada() {
   return (
@@ -214,410 +334,122 @@ function decorridoEmTexto(segundos: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-/** De quinze em quinze minutos: "25:70" fica impossível porque não se digita horário aqui. */
-const HORARIOS: Opcao[] = [
-  ...Array.from({ length: 96 }, (_, i): Opcao => {
-    const h = String(Math.floor(i / 4)).padStart(2, '0')
-    const m = String((i % 4) * 15).padStart(2, '0')
-    return { valor: `${h}:${m}`, rotulo: `${h}:${m}` }
-  }),
-  { valor: '23:59', rotulo: '23:59', detalhe: 'até o fim do dia' },
-]
-
-/* ================================================================== forma guardada */
-
-type FormaGuardada = {
-  pacote: string
-  passo: Passo
-  selecao: Selecao
-  horaInicio: string
-  horaFim: string
+/** `312 KB` — o tamanho do que desceu, para o cliente reconhecer o arquivo na pasta dele. */
+function tamanhoEmTexto(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${inteiro(Math.round(bytes / (1024 * 1024)))} MB`
+  return `${inteiro(Math.round(bytes / 1024))} KB`
 }
 
 /**
- * A FORMA da pergunta fica guardada por usina; o PERÍODO não.
+ * O cartão de um bloco — e ele existe MESMO quando a usina não tem o bloco.
  *
- * Quem baixa a mesma planilha todo mês não quer remontar a seleção — mas reabrir a tela já
- * apontada para agosto devolveria, calado, o arquivo do mês errado. O período recomeça sempre
- * no mês corrente, à vista.
+ * Um cartão que some leva embora a única informação que interessa a quem está avaliando o que
+ * contratar. O que a ausência muda é o miolo: no lugar da escolha entra a frase, e o "Entra no
+ * arquivo" desaparece porque não há o que entrar.
  */
-const chaveDaForma = (usinaId: number) => `dados:forma:u${usinaId}`
-
-function lerForma(usinaId: number): FormaGuardada | null {
-  try {
-    const cru = localStorage.getItem(chaveDaForma(usinaId))
-    return cru ? (JSON.parse(cru) as FormaGuardada) : null
-  } catch {
-    // Armazenamento bloqueado ou JSON estragado: a tela abre no padrão, que é sempre válido.
-    return null
-  }
-}
-
-function gravarForma(usinaId: number, forma: FormaGuardada): void {
-  try {
-    localStorage.setItem(chaveDaForma(usinaId), JSON.stringify(forma))
-  } catch {
-    // Guardar a preferência não pode derrubar o download.
-  }
-}
-
-/* ================================================================== gaveta */
-
-/**
- * "Todas" numa lista de COLUNAS quer dizer "todas as que existem" — diferente do que quer
- * dizer numa lista de inversores, onde `null` é a regra que alcança o equipamento futuro.
- * Aqui não há equipamento futuro: as variáveis são um vocabulário fechado.
- */
-function colunasEscolhidas(v: string[] | null, disponiveis: string[]): string[] {
-  return v === null ? disponiveis : v
-}
-
-function Avancado({
-  aberta,
-  aoFechar,
-  opcoes,
-  selecao,
-  aoTrocar,
-  passo,
-  horaInicio,
-  horaFim,
-  aoTrocarHoras,
+function CartaoDeBloco({
+  titulo,
+  contagem,
+  motivo,
+  ligado,
+  aoLigar,
+  children,
 }: {
-  aberta: boolean
-  aoFechar: () => void
-  opcoes: OpcoesDeDados
-  selecao: Selecao
-  aoTrocar: (s: Selecao) => void
-  passo: Passo
-  horaInicio: string
-  horaFim: string
-  aoTrocarHoras: (inicio: string, fim: string) => void
+  titulo: string
+  contagem: string
+  motivo: string | null
+  ligado: boolean
+  aoLigar: (v: boolean) => void
+  children: ReactNode
 }) {
-  const series = useMemo(
-    () => opcoes.skids.flatMap((s) => s.series.map((serie) => ({ serie, skid: s.nome }))),
-    [opcoes],
-  )
-  const clima = climaDisponivel(opcoes)
-  const temEstacao = clima.length > 0 || opcoes.estacao.temp_ambiente_rele
-  const temDesempenho = opcoes.sistema.pr || opcoes.sistema.produtividade
-
-  const VARS_INVERSOR: VarInversor[] = ['geracao', 'potencia', 'status', 'paradas']
-  const VARS_ESTACAO: VarEstacao[] = [...CLIMA, 'temp_ambiente_rele']
-  const VARS_SISTEMA: VarSistema[] = ['pr', 'produtividade']
-
-  const estacaoDisponivel = VARS_ESTACAO.filter((x) =>
-    x === 'temp_ambiente_rele' ? opcoes.estacao.temp_ambiente_rele : clima.includes(x),
-  )
-  const sistemaDisponivel = VARS_SISTEMA.filter((x) =>
-    x === 'pr' ? opcoes.sistema.pr : opcoes.sistema.produtividade,
-  )
-
   return (
-    <Gaveta titulo="Escolher coluna por coluna" aberta={aberta} aoFechar={aoFechar}>
-      <p className="mb-5 text-sm text-fraco">
-        Aqui está o que o pacote escolhido quer dizer, aberto. Coluna sem marca não entra no
-        arquivo; o que esta usina não mede aparece apagado, com o motivo.
-      </p>
-
-      <section className="mb-6">
-        <CabecalhoCard rotulo="Inversores" />
-        {series.length === 0 ? (
-          <NaoTem motivo="esta usina não tem inversores cadastrados no monitoramento" />
-        ) : (
-          <>
-            <Campo rotulo="Colunas">
-              <ComboboxMulti
-                opcoes={VARS_INVERSOR.map((v) => ({
-                  valor: v,
-                  rotulo: ROTULO_DO_INVERSOR[v],
-                  // A restrição fica escrita AO LADO da opção. Escolhê-la não é proibido: o
-                  // impedimento aparece embaixo, com a saída nomeada, porque o que está errado
-                  // pode ser o detalhe escolhido, e não a coluna.
-                  ...(v === 'status'
-                    ? { detalhe: 'só sai em "cada leitura, como o equipamento mandou"' }
-                    : v === 'paradas'
-                      ? { detalhe: 'não sai no passo "cada leitura"' }
-                      : {}),
-                }))}
-                valor={selecao.inversores ? selecao.inversores.variaveis : []}
-                substantivo="colunas"
-                rotuloTodos="todas"
-                onEscolher={(v) => {
-                  const variaveis = colunasEscolhidas(v, VARS_INVERSOR) as VarInversor[]
-                  aoTrocar({
-                    ...selecao,
-                    inversores: variaveis.length
-                      ? {
-                          variaveis,
-                          agrupamento: selecao.inversores?.agrupamento ?? 'lista',
-                          series: selecao.inversores?.series ?? null,
-                        }
-                      : null,
-                  })
-                }}
-                className="w-full max-w-sm"
-              />
-            </Campo>
-            {selecao.inversores ? (
-              <>
-                <Campo rotulo="Como agrupar">
-                  <Segmentado
-                    opcoes={[
-                      { valor: 'lista', rotulo: 'Uma coluna por inversor' },
-                      { valor: 'skid', rotulo: 'Uma coluna por skid' },
-                    ]}
-                    valor={selecao.inversores.agrupamento}
-                    onEscolher={(agrupamento) =>
-                      aoTrocar({ ...selecao, inversores: { ...selecao.inversores!, agrupamento } })
-                    }
-                  />
-                </Campo>
-                <Campo rotulo="Quais inversores">
-                  <ComboboxMulti
-                    opcoes={series.map(({ serie, skid }) => ({
-                      valor: serie.chave,
-                      rotulo: serie.rotulo,
-                      // O número de série é o que a pessoa tem na mão; a chave (`slot:170`) é
-                      // transporte e não aparece em lugar nenhum da tela.
-                      detalhe: serie.numero_serie ? `${skid} · série ${serie.numero_serie}` : skid,
-                    }))}
-                    valor={selecao.inversores.series}
-                    substantivo="inversores"
-                    rotuloTodos="todos"
-                    notaTodos="Inclui um inversor que entre em operação no meio do período."
-                    onEscolher={(v) =>
-                      aoTrocar({ ...selecao, inversores: { ...selecao.inversores!, series: v } })
-                    }
-                    className="w-full max-w-sm"
-                    larguraMenu="w-80"
-                  />
-                </Campo>
-              </>
-            ) : null}
-          </>
+    <Cartao>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium text-forte">{titulo}</h2>
+          <p className="mt-0.5 text-xs text-fraco">{motivo ? `Não entra: ${motivo}.` : contagem}</p>
+        </div>
+        {motivo ? null : (
+          <Segmentado
+            opcoes={[
+              { valor: 'nao', rotulo: 'Não entra' },
+              { valor: 'sim', rotulo: 'Entra no arquivo' },
+            ]}
+            valor={ligado ? 'sim' : 'nao'}
+            onEscolher={(v) => aoLigar(v === 'sim')}
+          />
         )}
-      </section>
-
-      <section className="mb-6">
-        <CabecalhoCard rotulo="Estação e clima" />
-        {!temEstacao ? (
-          <NaoTem motivo="esta usina não tem estação solarimétrica com dados" />
-        ) : (
-          <Campo rotulo="Colunas">
-            <ComboboxMulti
-              opcoes={VARS_ESTACAO.map((v) =>
-                opcao(
-                  { valor: v, rotulo: ROTULO_DA_ESTACAO[v] },
-                  v === 'temp_ambiente_rele'
-                    ? opcoes.estacao.temp_ambiente_rele
-                      ? null
-                      : 'esta usina não tem relé de temperatura'
-                    : clima.includes(v)
-                      ? null
-                      : 'esta estação não mede',
-                ),
-              )}
-              valor={selecao.estacao ? selecao.estacao.variaveis : []}
-              substantivo="colunas"
-              rotuloTodos="todas"
-              onEscolher={(v) => {
-                const variaveis = colunasEscolhidas(v, estacaoDisponivel) as VarEstacao[]
-                aoTrocar({ ...selecao, estacao: variaveis.length ? { variaveis } : null })
-              }}
-              className="w-full max-w-sm"
-            />
-          </Campo>
-        )}
-      </section>
-
-      <section className="mb-6">
-        <CabecalhoCard rotulo="Medidor de fronteira" />
-        {opcoes.leitores.length === 0 ? (
-          <NaoTem motivo="esta usina não tem medidor de fronteira" />
-        ) : (
-          <>
-            <Campo rotulo="A energia medida">
-              <Segmentado
-                opcoes={[
-                  { valor: 'nao', rotulo: 'Não entra' },
-                  { valor: 'sim', rotulo: 'Entra no arquivo' },
-                ]}
-                valor={selecao.fronteira ? 'sim' : 'nao'}
-                onEscolher={(v) =>
-                  aoTrocar({
-                    ...selecao,
-                    fronteira:
-                      v === 'sim'
-                        ? {
-                            variaveis: ['energia'],
-                            agrupamento: selecao.fronteira?.agrupamento ?? 'leitor',
-                          }
-                        : null,
-                  })
-                }
-              />
-            </Campo>
-            {selecao.fronteira ? (
-              <Campo rotulo="Como agrupar">
-                <Segmentado
-                  opcoes={[
-                    { valor: 'leitor', rotulo: `Um por medidor (${opcoes.leitores.length})` },
-                    { valor: 'usina', rotulo: 'Somado na usina' },
-                  ]}
-                  valor={selecao.fronteira.agrupamento}
-                  onEscolher={(agrupamento) =>
-                    aoTrocar({ ...selecao, fronteira: { variaveis: ['energia'], agrupamento } })
-                  }
-                />
-              </Campo>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      <section className="mb-6">
-        <CabecalhoCard rotulo="Desempenho" />
-        {!temDesempenho ? (
-          <NaoTem motivo="sem estação não há irradiação, e sem irradiação não se calcula PR" />
-        ) : (
-          <>
-            <Campo rotulo="Colunas">
-              <ComboboxMulti
-                opcoes={VARS_SISTEMA.map((v) =>
-                  opcao(
-                    { valor: v, rotulo: ROTULO_DO_SISTEMA[v] },
-                    v === 'pr' && !opcoes.sistema.pr
-                      ? 'sem estação não há irradiação, e sem irradiação não se calcula PR'
-                      : v === 'produtividade' && !opcoes.sistema.produtividade
-                        ? 'esta usina não publica produtividade'
-                        : null,
-                  ),
-                )}
-                valor={selecao.sistema ? selecao.sistema.variaveis : []}
-                substantivo="colunas"
-                rotuloTodos="todas"
-                onEscolher={(v) => {
-                  const variaveis = colunasEscolhidas(v, sistemaDisponivel) as VarSistema[]
-                  aoTrocar({
-                    ...selecao,
-                    sistema: variaveis.length
-                      ? { variaveis, agrupamento: selecao.sistema?.agrupamento ?? 'usina' }
-                      : null,
-                  })
-                }}
-                className="w-full max-w-sm"
-              />
-            </Campo>
-            {selecao.sistema ? (
-              <Campo rotulo="Como agrupar">
-                <Segmentado
-                  opcoes={[
-                    { valor: 'usina', rotulo: 'Usina inteira' },
-                    { valor: 'skid', rotulo: 'Por skid' },
-                  ]}
-                  valor={selecao.sistema.agrupamento}
-                  onEscolher={(agrupamento) =>
-                    aoTrocar({
-                      ...selecao,
-                      sistema: { variaveis: selecao.sistema!.variaveis, agrupamento },
-                    })
-                  }
-                />
-              </Campo>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      <section>
-        <CabecalhoCard rotulo="Horário" />
-        {passo === '1d' ? (
-          <p className="text-sm text-fraco">
-            "Um total por dia" não usa horário: cada linha é o dia inteiro.
-          </p>
-        ) : (
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wide text-rotulo">
-                do primeiro dia, a partir de
-              </div>
-              <Combobox
-                opcoes={HORARIOS}
-                valor={horaInicio}
-                onEscolher={(v) => aoTrocarHoras(v, horaFim)}
-                className="w-40"
-                larguraMenu="w-40"
-              />
-            </div>
-            <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wide text-rotulo">
-                do último dia, até
-              </div>
-              <Combobox
-                opcoes={HORARIOS}
-                valor={horaFim}
-                onEscolher={(v) => aoTrocarHoras(horaInicio, v)}
-                className="w-40"
-                larguraMenu="w-40"
-              />
-            </div>
-          </div>
-        )}
-      </section>
-    </Gaveta>
+      </div>
+      {motivo ? null : children}
+    </Cartao>
   )
+}
+
+/** As chaves que a lista permite marcar — o que "todas" quer dizer nesta usina, neste passo. */
+function escolhiveis(opcoes: Opcao[]): string[] {
+  return opcoes.filter((o) => o.desabilitada !== true).map((o) => o.valor)
 }
 
 /* ================================================================== conteúdo */
 
 function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados }) {
   const hoje = hojeIso()
-  const guardada = useMemo(() => lerForma(usinaId), [usinaId])
+  const guardada = useMemo(() => lerForma(usinaId, opcoes), [usinaId, opcoes])
 
+  /** O primeiro atalho que esta usina consegue entregar — a tela nunca abre sem nada marcado. */
   const primeiroPacote = useMemo<IdDePacote>(() => {
     const livre = PACOTES.find((p) => motivoDoPacote(p.id, opcoes) === null)
     return livre ? livre.id : 'geracao'
   }, [opcoes])
 
-  const [pacote, setPacote] = useState<string>(guardada?.pacote ?? primeiroPacote)
   const [selecao, setSelecao] = useState<Selecao>(
-    guardada?.selecao ?? montarPacote(primeiroPacote, opcoes),
+    guardada.forma ? guardada.forma.selecao : montarPacote(primeiroPacote, opcoes),
   )
+  const [descartados, setDescartados] = useState<Descartado[]>(guardada.descartados)
+  const [preenchidoDe, setPreenchidoDe] = useState<string | null>(null)
+
   const [recorte, setRecorte] = useState<RecorteDaTela>('mes')
   const [referencia, setReferencia] = useState<string>(hoje)
   const [de, setDe] = useState<string>(
     paraIso(new Date(daData(hoje).getFullYear(), daData(hoje).getMonth(), 1)),
   )
   const [ate, setAte] = useState<string>(hoje)
-  const [horaInicio, setHoraInicio] = useState<string>(guardada?.horaInicio ?? '00:00')
-  const [horaFim, setHoraFim] = useState<string>(guardada?.horaFim ?? '23:59')
-  const [avancado, setAvancado] = useState(false)
+  const [horaInicio, setHoraInicio] = useState<string>(
+    guardada.forma ? guardada.forma.horaInicio : HORA_INICIO_PADRAO,
+  )
+  const [horaFim, setHoraFim] = useState<string>(
+    guardada.forma ? guardada.forma.horaFim : HORA_FIM_PADRAO,
+  )
 
   const { inicio, fim } = periodoDe(recorte, referencia, de, ate, hoje)
   const [passo, setPasso] = useState<Passo>(
-    guardada?.passo ??
-      passoSugerido(
-        'mes',
-        janelaDo(inicio, fim, '00:00', '23:59', '1d', false).dias,
-        opcoes.limites,
-      ),
+    guardada.forma
+      ? guardada.forma.passo
+      : passoSugerido(
+          'mes',
+          janelaDo(inicio, fim, HORA_INICIO_PADRAO, HORA_FIM_PADRAO, '1d', false).dias,
+          opcoes.limites,
+        ).passo,
   )
+  const [avisoDoPasso, setAvisoDoPasso] = useState<string | null>(null)
 
-  const janela = janelaDo(inicio, fim, horaInicio, horaFim, passo, soMedidor(selecao))
-  const conta = estimativa(selecao, opcoes, janela)
+  const apenasMedidor = soMedidor(selecao)
+  const janela = janelaDo(inicio, fim, horaInicio, horaFim, passo, apenasMedidor)
+  const conta = estimativa(selecao, opcoes, janela, passo)
   const impede = impedimento(selecao, passo, janela, inicio, opcoes)
-  const grande = passaDoOrcamento(conta, opcoes.limites)
+  const orcamento = avisoDeOrcamento(conta, opcoes.limites)
 
   useEffect(() => {
-    gravarForma(usinaId, { pacote, passo, selecao, horaInicio, horaFim })
-  }, [usinaId, pacote, passo, selecao, horaInicio, horaFim])
+    gravarForma(usinaId, { passo, selecao, horaInicio, horaFim })
+  }, [usinaId, passo, selecao, horaInicio, horaFim])
 
   /* ---------------------------------------------------------------- baixar */
 
   const [baixando, setBaixando] = useState(false)
   const [decorrido, setDecorrido] = useState(0)
   const [recusa, setRecusa] = useState<Recusa | null>(null)
-  const [falha, setFalha] = useState<string | null>(null)
+  const [falha, setFalha] = useState<{ texto: string; repetivel: boolean } | null>(null)
+  const [pronto, setPronto] = useState<{ nome: string; bytes: number } | null>(null)
   const controle = useRef<AbortController | null>(null)
   const cortou = useRef(false)
 
@@ -626,6 +458,14 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
     const t = setInterval(() => setDecorrido((s) => s + 1), 1000)
     return () => clearInterval(t)
   }, [baixando])
+
+  // O `fix c23b330` do meuWatt: a confirmação da usina anterior não pode sobreviver à troca de
+  // usina — ela afirmaria que existe um arquivo DESTA que não existe.
+  useEffect(() => {
+    setPronto(null)
+    setRecusa(null)
+    setFalha(null)
+  }, [usinaId])
 
   // A aba pode ser levada a outra tela pelo menu de trás — e o `fetch` morre com a página. O
   // aborto no desmonte pelo menos solta a vaga da fila do BFF em vez de deixá-la pendurada.
@@ -640,6 +480,7 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
     if (baixando) return
     setRecusa(null)
     setFalha(null)
+    setPronto(null)
     setDecorrido(0)
     cortou.current = false
     const controlador = new AbortController()
@@ -656,22 +497,31 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
         controlador.signal,
       )
       baixarBlob(blob, nome)
+      setPronto({ nome, bytes: blob.size })
     } catch (erro) {
       if (erro instanceof Cancelado) {
-        // Desistência do cliente não é erro e não vira aviso nenhum. O corte de tempo, sim: é
-        // uma decisão NOSSA, e ele precisa saber que houve e o que fazer a respeito.
+        // Desistir é decisão legítima e não vira aviso nenhum. O CORTE, sim: é decisão nossa,
+        // e quem esperou três minutos precisa saber o que houve e o que fazer a respeito.
         if (cortou.current) {
-          setFalha(
-            'O arquivo passou de três minutos e o pedido foi cortado. Peça um período menor ' +
+          setFalha({
+            texto:
+              'O arquivo passou de três minutos e o pedido foi cortado. Peça um período menor ' +
               'ou um detalhe mais grosso — a planilha fica pronta bem mais rápido.',
-          )
+            // Sem botão: a frase acima pede para MUDAR o pedido, e um "Tentar de novo" ao lado
+            // convidaria a esperar outros três minutos pelo mesmo corte.
+            repetivel: false,
+          })
         }
       } else if (erro instanceof ErroDaExportacao) {
         const traduzida = traduzirMotivo(erro.motivo)
         if (traduzida) setRecusa(traduzida)
-        else setFalha(erro.message)
+        // ⛔ Recusa SEM motivo ainda pode ser permanente, e aí o botão mente. O caso real é o
+        // 422 do Pydantic (`passo` fora da lista, data em formato de gente, mais de 500
+        // séries): ele sai cru, sem o `motivo` do vocabulário fechado, e o mesmo corpo dará o
+        // mesmo 422 para sempre. 5xx e falha de transporte, sim, valem outra tentativa.
+        else setFalha({ texto: erro.message, repetivel: erro.status === null || erro.status >= 500 })
       } else {
-        setFalha('Não deu para baixar os dados.')
+        setFalha({ texto: 'Não deu para baixar os dados.', repetivel: true })
       }
     } finally {
       clearTimeout(corte)
@@ -680,91 +530,150 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
     }
   }
 
-  /* ---------------------------------------------------------------- render */
+  /* ---------------------------------------------------------------- edição */
 
-  const trocarPacote = (id: string) => {
+  /** Qualquer edição de bloco apaga o rastro do atalho: ele preencheu, não governa. */
+  const trocar = (s: Selecao) => {
+    setSelecao(s)
+    setPreenchidoDe(null)
+    setDescartados([])
     setRecusa(null)
-    setPacote(id)
-    setSelecao(montarPacote(id as IdDePacote, opcoes))
   }
 
-  const trocarRecorte = (r: RecorteDaTela) => {
+  const comecarDe = (id: string) => {
+    const pacote = PACOTES.find((p) => p.id === id)
+    if (!pacote) return
+    setSelecao(montarPacote(pacote.id, opcoes))
+    setPreenchidoDe(pacote.rotulo)
+    setDescartados([])
+    setRecusa(null)
+  }
+
+  const aplicarPeriodo = (r: RecorteDaTela, ref: string, novoDe: string, novoAte: string) => {
     setRecorte(r)
-    const p = periodoDe(r, referencia, de, ate, hoje)
-    setPasso(
-      passoSugerido(
-        r === 'livre' ? 'livre' : r,
-        janelaDo(p.inicio, p.fim, '00:00', '23:59', '1d', false).dias,
-        opcoes.limites,
-      ),
-    )
+    setReferencia(ref)
+    setDe(novoDe)
+    setAte(novoAte)
+    const p = periodoDe(r, ref, novoDe, novoAte, hoje)
+    const dias = janelaDo(p.inicio, p.fim, HORA_INICIO_PADRAO, HORA_FIM_PADRAO, '1d', false).dias
+    const ajuste = ajustarPasso(passo, dias, opcoes.limites)
+    setPasso(ajuste.passo)
+    setAvisoDoPasso(ajuste.aviso)
   }
 
-  const opcoesDePacote: Opcao[] = PACOTES.map((p) => {
-    const motivo = motivoDoPacote(p.id, opcoes)
-    const falta = motivo ? null : faltamNoPacote(p.id, opcoes)
-    return opcao(
-      { valor: p.id, rotulo: p.rotulo, detalhe: falta ? `${p.detalhe} · ${falta}` : p.detalhe },
-      motivo,
-    )
-  }).concat(
-    pacote === PERSONALIZADO
-      ? [
-          {
-            valor: PERSONALIZADO,
-            rotulo: 'Personalizado',
-            detalhe: 'as colunas que você escolheu na gaveta',
-          },
-        ]
-      : [],
+  const irPara = (v: string) => {
+    const d = daData(hoje)
+    if (v === 'atalho:ontem') {
+      const ontem = paraIso(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1))
+      aplicarPeriodo('livre', referencia, ontem, ontem)
+      return
+    }
+    if (v === 'atalho:7d') {
+      aplicarPeriodo(
+        'livre',
+        referencia,
+        paraIso(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 6)),
+        hoje,
+      )
+      return
+    }
+    if (v === 'atalho:mes') {
+      aplicarPeriodo('mes', hoje, de, ate)
+      return
+    }
+    const [ano, mes] = v.slice(4).split('-').map(Number)
+    aplicarPeriodo('mes', paraIso(new Date(ano, mes - 1, 1)), de, ate)
+  }
+
+  /* ---------------------------------------------------------------- blocos */
+
+  const nInversores = opcoes.skids.reduce((t, s) => t + s.series.length, 0)
+  const linhasDoInversor = opcoesDoInversor(opcoes, passo)
+  const linhasDaEstacao = opcoesDaEstacao(opcoes)
+  const linhasDaFronteira = opcoesDaFronteira(opcoes)
+  const linhasDoSistema = opcoesDoSistema(opcoes, passo)
+  const semEstacao = escolhiveis(linhasDaEstacao).length === 0
+  const semSistema = opcoes.sistema.pr === false && opcoes.sistema.produtividade === false
+
+  /**
+   * Os skids viram grupos da lista suspensa — e a capacidade já chega formatada em pt-BR.
+   *
+   * Formatar número não é trabalho do componente do vocabulário: `inteiro` devolve "—" quando
+   * o cadastro não tem a capacidade, e é isso que o cliente deve ler, não um zero.
+   */
+  const gruposDeInversores: GrupoDeOpcoes[] = useMemo(
+    () =>
+      opcoes.skids.map((s) => ({
+        chave: String(s.id ?? s.nome),
+        rotulo: s.nome,
+        detalhe: `${inteiro(s.capacidade_kwp)} kWp`,
+        opcoes: s.series.map((serie) => ({
+          valor: serie.chave,
+          rotulo: serie.rotulo,
+          // O número de série é o que a pessoa tem na mão; a chave (`slot:170`) é transporte
+          // e não aparece em lugar nenhum da tela.
+          ...(serie.numero_serie ? { detalhe: `série ${serie.numero_serie}` } : {}),
+        })),
+      })),
+    [opcoes],
   )
 
-  const diasDoSeletor = diasOferecidos(hoje, opcoes.retencao)
+  const diasDoSeletor = diasOferecidos(hoje, opcoes.retencao, apenasMedidor)
   const podeBaixar = !impede && !baixando && !vazia(selecao)
+  const ehDiario = passo === '1d'
+  const retencao = linhaDeRetencao(selecao, opcoes.retencao, passo)
 
   return (
     <>
-      <Cartao>
-        <Pergunta
-          numero="1."
-          titulo="O que você quer levar"
-          detalhe={
-            pacote === PERSONALIZADO
-              ? 'Você escolheu as colunas na mão. Abra a gaveta para conferir, ou volte a um pacote.'
-              : undefined
-          }
-        >
+      <EtapaDaTela numero="1." titulo="Começar de…">
+        <div className="flex flex-wrap items-center gap-3">
           <Combobox
-            opcoes={opcoesDePacote}
-            valor={pacote}
-            onEscolher={trocarPacote}
+            opcoes={PACOTES.map((p) =>
+              opcao(
+                { valor: p.id, rotulo: p.rotulo, detalhe: p.detalhe },
+                motivoDoPacote(p.id, opcoes),
+              ),
+            )}
+            valor={null}
+            onEscolher={comecarDe}
+            placeholder="Preencher os blocos com um começo pronto…"
             className="w-full max-w-md"
             larguraMenu="w-[26rem]"
           />
-          <Botao variante="secundario" onClick={() => setAvancado(true)}>
-            Escolher coluna por coluna
-          </Botao>
-        </Pergunta>
+          <p className="text-xs text-fraco">
+            É um atalho: preenche os quatro blocos abaixo e volta ao lugar. Tudo continua
+            editável.
+          </p>
+        </div>
+        {preenchidoDe ? (
+          <p className="mt-2 text-xs text-tom-ok">
+            Blocos preenchidos a partir de “{preenchidoDe}”. Ajuste o que quiser abaixo.
+          </p>
+        ) : null}
+        {descartados.length > 0 ? (
+          <div className="mt-3">
+            <Aviso tom="semDados">
+              O que estava guardado desta usina mudou:{' '}
+              {descartados.map((d) => d.motivo).join(' · ')}.
+            </Aviso>
+          </div>
+        ) : null}
+      </EtapaDaTela>
 
-        <Pergunta
-          numero="2."
-          titulo="De quando a quando"
-          detalhe={
-            <>
-              {janela.dias === 1 ? '1 dia' : `${inteiro(janela.dias)} dias`}, de{' '}
-              <Num>{dataCurta(inicio)}</Num> a <Num>{dataCurta(fim)}</Num>
-              {passo === '1d' ? null : ` · das ${horaInicio} às ${horaFim}`}
-            </>
-          }
-        >
-          <Segmentado opcoes={RECORTES} valor={recorte} onEscolher={trocarRecorte} />
+      <EtapaDaTela numero="2." titulo="De quando a quando">
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmentado
+            opcoes={RECORTES}
+            valor={recorte}
+            onEscolher={(r) => aplicarPeriodo(r, referencia, de, ate)}
+          />
           {recorte === 'livre' ? (
             <>
               <span className="text-xs uppercase tracking-wide text-rotulo">de</span>
               <Combobox
                 opcoes={diasDoSeletor.filter((o) => o.valor <= ate)}
                 valor={de}
-                onEscolher={setDe}
+                onEscolher={(v) => aplicarPeriodo('livre', referencia, v, ate)}
                 className="w-44"
                 larguraMenu="w-72"
               />
@@ -772,7 +681,7 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
               <Combobox
                 opcoes={diasDoSeletor.filter((o) => o.valor >= de)}
                 valor={ate}
-                onEscolher={setAte}
+                onEscolher={(v) => aplicarPeriodo('livre', referencia, de, v)}
                 className="w-44"
                 larguraMenu="w-72"
               />
@@ -780,39 +689,329 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
           ) : (
             <PassoPeriodo
               rotulo={rotuloDoPeriodo(referencia, recorte)}
-              aoVoltar={() => setReferencia(passoNoTempo(referencia, recorte, -1))}
-              aoAvancar={() => setReferencia(passoNoTempo(referencia, recorte, 1))}
+              aoVoltar={() =>
+                aplicarPeriodo(recorte, passoNoTempo(referencia, recorte, -1), de, ate)
+              }
+              aoAvancar={() =>
+                aplicarPeriodo(recorte, passoNoTempo(referencia, recorte, 1), de, ate)
+              }
               podeAvancar={!passaDeHoje(passoNoTempo(referencia, recorte, 1), recorte)}
             />
           )}
-        </Pergunta>
-
-        <Pergunta
-          numero="3."
-          titulo="Com que detalhe"
-          detalhe="Cada linha do arquivo é um instante deste tamanho."
-        >
           <Combobox
-            opcoes={opcoesDePasso(opcoes.limites)}
-            valor={passo}
-            onEscolher={(v) => setPasso(v as Passo)}
-            className="w-full max-w-md"
-            larguraMenu="w-[26rem]"
+            opcoes={atalhosDePeriodo(hoje, opcoes.retencao, apenasMedidor)}
+            valor={null}
+            onEscolher={irPara}
+            placeholder="Ir para…"
+            className="w-48"
+            larguraMenu="w-72"
           />
-        </Pergunta>
-      </Cartao>
+        </div>
+        <p className="mt-2 text-xs text-fraco">
+          {janela.dias === 1 ? '1 dia' : `${inteiro(janela.dias)} dias`}, de{' '}
+          <Num>{dataCurta(inicio)}</Num> a <Num>{dataCurta(fim)}</Num>
+          {ehDiario ? null : ` · das ${horaInicio} às ${horaFim}`}
+        </p>
+        {/* A retenção é ausência de DADO, e por isso mora aqui, no período — não no rodapé,
+            junto de coisas que falam do arquivo. A frase troca com a seleção porque os dois
+            acervos têm prazos diferentes (o medidor guarda 24 meses; o resto, 6). */}
+        <p className="mt-1 text-xs text-fraco">
+          {ehDiario
+            ? 'O total por dia não tem prazo: ele existe para todo o histórico da usina.'
+            : retencao
+              ? `${retencao} Antes disso, só o total por dia.`
+              : 'O monitoramento não informou até onde o acervo fino alcança nesta usina.'}
+        </p>
+      </EtapaDaTela>
 
-      {impede ? <Aviso>{impede.texto}</Aviso> : null}
+      <EtapaDaTela numero="3." titulo="Horário do primeiro e do último dia">
+        <div
+          className={ehDiario ? 'pointer-events-none opacity-40' : ''}
+          title={ehDiario ? 'No total por dia o horário não se aplica' : undefined}
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Rotulo>do primeiro dia, a partir de</Rotulo>
+              <Combobox
+                opcoes={HORARIOS}
+                valor={horaInicio}
+                onEscolher={setHoraInicio}
+                className="w-40"
+                larguraMenu="w-40"
+              />
+            </div>
+            <div>
+              <Rotulo>do último dia, até</Rotulo>
+              <Combobox
+                opcoes={HORARIOS}
+                valor={horaFim}
+                onEscolher={setHoraFim}
+                className="w-40"
+                larguraMenu="w-40"
+              />
+            </div>
+            {horaInicio !== HORA_INICIO_PADRAO || horaFim !== HORA_FIM_PADRAO ? (
+              // Voltar ao dia inteiro é uma AÇÃO, não uma opção a escolher — por isso `Botao`.
+              <Botao
+                variante="secundario"
+                onClick={() => {
+                  setHoraInicio(HORA_INICIO_PADRAO)
+                  setHoraFim(HORA_FIM_PADRAO)
+                }}
+              >
+                Dias inteiros
+              </Botao>
+            ) : null}
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-fraco">
+          {ehDiario
+            ? '"Um total por dia" não usa horário: cada linha é o dia inteiro.'
+            : 'Em horário de Brasília. O horário final é inclusivo do minuto: 23:59 fecha o dia.'}
+        </p>
+      </EtapaDaTela>
+
+      <EtapaDaTela numero="4." titulo="Com que detalhe">
+        <Combobox
+          opcoes={opcoesDePasso(opcoes.limites)}
+          valor={passo}
+          onEscolher={(v) => {
+            setPasso(v as Passo)
+            setAvisoDoPasso(null)
+          }}
+          className="w-full max-w-md"
+          larguraMenu="w-[26rem]"
+        />
+        <p className="mt-2 text-xs text-fraco">
+          Cada linha do arquivo é um instante deste tamanho.
+        </p>
+        {/* Ajuste automático que se anuncia: trocar o detalhe em silêncio é a mudança que só
+            se descobre ao abrir a planilha. */}
+        {avisoDoPasso ? <p className="mt-1 text-xs text-tom-alerta">{avisoDoPasso}</p> : null}
+      </EtapaDaTela>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* ---------------------------------------------------------- inversores */}
+        <CartaoDeBloco
+          titulo="Inversores"
+          contagem={`${inteiro(nInversores)} inversores em ${inteiro(opcoes.skids.length)} skids`}
+          motivo={
+            nInversores === 0 ? 'esta usina não tem inversores cadastrados no monitoramento' : null
+          }
+          ligado={!!selecao.inversores}
+          aoLigar={(v) =>
+            trocar({
+              ...selecao,
+              inversores: v ? { variaveis: ['geracao'], agrupamento: 'lista', series: null } : null,
+            })
+          }
+        >
+          <Campo rotulo="Colunas">
+            <ComboboxMulti
+              opcoes={linhasDoInversor}
+              valor={selecao.inversores ? selecao.inversores.variaveis : []}
+              substantivo="colunas"
+              rotuloTodos="todas"
+              onEscolher={(v) => {
+                const variaveis = (v === null ? escolhiveis(linhasDoInversor) : v) as VarInversor[]
+                trocar({
+                  ...selecao,
+                  inversores: variaveis.length
+                    ? {
+                        variaveis,
+                        agrupamento: selecao.inversores ? selecao.inversores.agrupamento : 'lista',
+                        series: selecao.inversores ? selecao.inversores.series : null,
+                      }
+                    : null,
+                })
+              }}
+              className="w-full max-w-sm"
+            />
+          </Campo>
+          <Campo rotulo="Como agrupar">
+            <Agrupamento
+              opcoes={AGRUPAMENTO_DO_INVERSOR}
+              valor={selecao.inversores ? selecao.inversores.agrupamento : 'lista'}
+              onEscolher={(v) =>
+                trocar({
+                  ...selecao,
+                  inversores: {
+                    variaveis: selecao.inversores ? selecao.inversores.variaveis : ['geracao'],
+                    agrupamento: v === 'skid' ? 'skid' : 'lista',
+                    series: selecao.inversores ? selecao.inversores.series : null,
+                  },
+                })
+              }
+            />
+          </Campo>
+          <Campo rotulo="Quais inversores">
+            <ComboboxMultiAgrupado
+              grupos={gruposDeInversores}
+              valor={selecao.inversores ? selecao.inversores.series : null}
+              substantivo="inversores"
+              rotuloTodos="todos"
+              notaTodos="Inclui um inversor que entre em operação no meio do período."
+              notaVazio="Sem nenhum inversor marcado não há arquivo: marque ao menos um, ou volte a “todos”."
+              larguraMenu="w-96"
+              onEscolher={(series) =>
+                trocar({
+                  ...selecao,
+                  inversores: {
+                    variaveis: selecao.inversores ? selecao.inversores.variaveis : ['geracao'],
+                    agrupamento: selecao.inversores ? selecao.inversores.agrupamento : 'lista',
+                    series,
+                  },
+                })
+              }
+              className="w-full max-w-sm"
+            />
+          </Campo>
+          {selecao.inversores && selecao.inversores.agrupamento === 'skid' ? (
+            <p className="text-xs text-fraco">{AVISO_DA_SOMA_POR_SKID}.</p>
+          ) : null}
+        </CartaoDeBloco>
+
+        {/* ---------------------------------------------------------- estação */}
+        <CartaoDeBloco
+          titulo="Estação solarimétrica"
+          contagem={
+            opcoes.estacao.disponivel
+              ? 'irradiação ao vivo; os demais sensores só onde o registrador foi importado'
+              : 'sem estação — só o relé de temperatura'
+          }
+          motivo={semEstacao ? 'esta usina não tem estação solarimétrica com dados' : null}
+          ligado={!!selecao.estacao}
+          aoLigar={(v) =>
+            trocar({
+              ...selecao,
+              estacao: v ? { variaveis: escolhiveis(linhasDaEstacao) as VarEstacao[] } : null,
+            })
+          }
+        >
+          <Campo rotulo="Colunas">
+            <ComboboxMulti
+              opcoes={linhasDaEstacao}
+              valor={selecao.estacao ? selecao.estacao.variaveis : []}
+              substantivo="colunas"
+              rotuloTodos="todas"
+              onEscolher={(v) => {
+                const variaveis = (v === null ? escolhiveis(linhasDaEstacao) : v) as VarEstacao[]
+                trocar({ ...selecao, estacao: variaveis.length ? { variaveis } : null })
+              }}
+              className="w-full max-w-sm"
+            />
+          </Campo>
+        </CartaoDeBloco>
+
+        {/* ---------------------------------------------------------- fronteira */}
+        <CartaoDeBloco
+          titulo="Medidor de fronteira"
+          contagem={`${inteiro(opcoes.leitores.length)} ${
+            opcoes.leitores.length === 1 ? 'leitor' : 'leitores'
+          } · energia por intervalo (kWh)`}
+          motivo={motivoDaFronteira(opcoes)}
+          ligado={!!selecao.fronteira}
+          aoLigar={(v) =>
+            trocar({
+              ...selecao,
+              fronteira: v ? { variaveis: ['energia'], agrupamento: 'leitor' } : null,
+            })
+          }
+        >
+          {/* A única coluna do bloco, e por isso escrita na cara — como no meuWatt, onde ela é
+              uma caixa marcada que não se desmarca. Uma lista de uma opção só seria um clique
+              a mais para dizer a mesma coisa; escondê-la faria o cartão parecer sem conteúdo. */}
+          <Campo rotulo="Colunas">
+            {linhasDaFronteira.map((l) => (
+              <p key={l.valor} className="text-sm text-corpo">
+                {l.rotulo}
+                {l.detalhe ? <span className="ml-2 text-xs text-fraco">{l.detalhe}</span> : null}
+              </p>
+            ))}
+          </Campo>
+          <Campo rotulo="Como agrupar">
+            <Agrupamento
+              opcoes={AGRUPAMENTO_DA_FRONTEIRA}
+              valor={selecao.fronteira ? selecao.fronteira.agrupamento : 'leitor'}
+              onEscolher={(v) =>
+                trocar({
+                  ...selecao,
+                  fronteira: { variaveis: ['energia'], agrupamento: v === 'usina' ? 'usina' : 'leitor' },
+                })
+              }
+            />
+          </Campo>
+          {rodapeDaFronteira(opcoes) ? (
+            <p className="text-xs text-fraco">{rodapeDaFronteira(opcoes)}</p>
+          ) : null}
+        </CartaoDeBloco>
+
+        {/* ---------------------------------------------------------- sistema */}
+        <CartaoDeBloco
+          titulo="Desempenho do sistema"
+          contagem="PR e produtividade calculadas por intervalo (razão de somas)"
+          motivo={
+            semSistema ? 'sem estação não há irradiação, e sem irradiação não se calcula PR' : null
+          }
+          ligado={!!selecao.sistema}
+          aoLigar={(v) => {
+            const variaveis = escolhiveis(linhasDoSistema) as VarSistema[]
+            trocar({
+              ...selecao,
+              sistema:
+                v && variaveis.length
+                  ? {
+                      variaveis,
+                      agrupamento: selecao.sistema ? selecao.sistema.agrupamento : 'usina',
+                    }
+                  : null,
+            })
+          }}
+        >
+          <Campo rotulo="Colunas">
+            <ComboboxMulti
+              opcoes={linhasDoSistema}
+              valor={selecao.sistema ? selecao.sistema.variaveis : []}
+              substantivo="colunas"
+              rotuloTodos="todas"
+              onEscolher={(v) => {
+                const variaveis = (v === null ? escolhiveis(linhasDoSistema) : v) as VarSistema[]
+                trocar({
+                  ...selecao,
+                  sistema: variaveis.length
+                    ? {
+                        variaveis,
+                        agrupamento: selecao.sistema ? selecao.sistema.agrupamento : 'usina',
+                      }
+                    : null,
+                })
+              }}
+              className="w-full max-w-sm"
+            />
+          </Campo>
+          <Campo rotulo="Como agrupar">
+            <Agrupamento
+              opcoes={AGRUPAMENTO_DO_SISTEMA}
+              valor={selecao.sistema ? selecao.sistema.agrupamento : 'usina'}
+              onEscolher={(v) =>
+                trocar({
+                  ...selecao,
+                  sistema: {
+                    variaveis: selecao.sistema
+                      ? selecao.sistema.variaveis
+                      : (escolhiveis(linhasDoSistema) as VarSistema[]),
+                    agrupamento: v === 'skid' ? 'skid' : 'usina',
+                  },
+                })
+              }
+            />
+          </Campo>
+        </CartaoDeBloco>
+      </div>
 
       {/* A conta é NOSSA e aproximada — por isso o "≈", e por isso ela não impede nada. No
           limiar, o benefício da dúvida é do cliente: a palavra final é do servidor. */}
-      {grande && !impede ? (
-        <Aviso>
-          Este pedido daria ≈ <Num>{inteiro(conta.celulas)}</Num> células — perto do que um
-          arquivo aguenta, e o monitoramento pode recusar. Diminua o período, escolha menos
-          detalhe, ou baixe menos inversores. Se quiser tentar assim mesmo, pode pedir.
-        </Aviso>
-      ) : null}
+      {orcamento && !impede ? <Aviso>{orcamento}</Aviso> : null}
 
       {recusa ? (
         <Aviso tom={recusa.espera ? 'semDados' : 'alerta'}>
@@ -827,44 +1026,54 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
         </Aviso>
       ) : null}
 
-      {falha ? <Erro mensagem={falha} aoTentar={() => void baixar()} /> : null}
+      {falha ? (
+        <Erro
+          mensagem={falha.texto}
+          aoTentar={falha.repetivel ? () => void baixar() : undefined}
+        />
+      ) : null}
 
-      <Cartao>
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-rotulo">O arquivo</div>
-            <div className="mt-1 text-sm text-corpo">
-              ≈ <Num className="text-forte">{inteiro(conta.linhas)}</Num> linhas ×{' '}
-              <Num className="text-forte">{inteiro(conta.colunas)}</Num> colunas
+      {/* O rodapé GRUDENTO: com quatro cartões na tela, a estimativa e o botão sairiam do campo
+          de visão justamente enquanto se mexe no que os muda. Não é um `Kpi` de propósito —
+          aquela peça é a dos fatos medidos, e isto aqui é uma conta aproximada. */}
+      <div className="sticky bottom-2 z-10 flex flex-wrap items-center justify-between gap-4 rounded-card border border-borda-forte bg-painel px-4 py-3 shadow-xl">
+        <div className="min-w-0 flex-1 text-sm">
+          {impede ? (
+            <span className="text-tom-alerta">{impede.texto}</span>
+          ) : (
+            /* Uma largura POR ABA, e não uma soma. Somar dava "37 colunas" num caderno cuja
+               aba mais larga tem 22 — número que o cliente não tem onde conferir e que o
+               Leia-me do próprio arquivo desmente linha a linha. */
+            <span className="text-fraco">
+              ≈ <Num className="text-forte">{inteiro(conta.linhas)}</Num> linhas ·{' '}
+              {conta.abas.map((aba, i) => (
+                <span key={aba.nome}>
+                  {i > 0 ? ' · ' : ''}
+                  {aba.nome}{' '}
+                  {aba.colunas === null ? (
+                    <>({aba.nota})</>
+                  ) : (
+                    <>
+                      <Num className="text-forte">{inteiro(aba.colunas)}</Num> colunas
+                      {aba.nota ? `, ${aba.nota}` : ''}
+                    </>
+                  )}
+                </span>
+              ))}{' '}
+              · vazio = sem leitura, 0 = zero medido
+            </span>
+          )}
+          {pronto ? (
+            <div className="mt-1 text-sm text-tom-ok">
+              Pronto: <Num>{pronto.nome}</Num> ({tamanhoEmTexto(pronto.bytes)}) — o navegador
+              salvou na sua pasta de downloads.
             </div>
-            <p className="mt-1 text-xs text-fraco">
-              Uma planilha (.xlsx) com uma aba "Leia-me" que explica cada coluna, a unidade e a
-              fonte.
-            </p>
-          </div>
-          <Botao onClick={() => void baixar()} desabilitado={!podeBaixar}>
-            {baixando ? 'Preparando…' : 'Baixar planilha'}
-          </Botao>
+          ) : null}
         </div>
-      </Cartao>
-
-      <Avancado
-        aberta={avancado}
-        aoFechar={() => setAvancado(false)}
-        opcoes={opcoes}
-        selecao={selecao}
-        aoTrocar={(s) => {
-          setSelecao(s)
-          setPacote(PERSONALIZADO)
-        }}
-        passo={passo}
-        horaInicio={horaInicio}
-        horaFim={horaFim}
-        aoTrocarHoras={(i, f) => {
-          setHoraInicio(i)
-          setHoraFim(f)
-        }}
-      />
+        <Botao onClick={() => void baixar()} desabilitado={!podeBaixar}>
+          {baixando ? 'Gerando…' : 'Baixar planilha'}
+        </Botao>
+      </div>
 
       <Modal titulo="Preparando a planilha" aberto={baixando} aoFechar={cancelar}>
         <BarraIndeterminada />
@@ -876,7 +1085,7 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
           porcentagem para mostrar. Um mês a cada 15 minutos costuma levar menos de um minuto.
         </p>
         <p className="mt-2 text-sm text-fraco">
-          Não feche esta aba: o download é feito por ela, e fechá-la cancela o pedido.
+          Sair desta tela ou fechar a aba cancela o pedido: o download é feito por ela.
         </p>
         <div className="mt-4">
           <Botao variante="secundario" onClick={cancelar}>

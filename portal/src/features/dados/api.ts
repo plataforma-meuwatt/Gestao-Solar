@@ -14,8 +14,21 @@
  * manda cabeçalho — a saída fácil (token na query string) é a proibida: endereço entra em log
  * de servidor, em histórico e em relatório de erro. É a mesma razão de `lib/arquivo.ts`, e
  * daqui sai um `Blob` que aquele módulo salva (`baixarBlob`). O que ele **não** faz é POST
- * com corpo, que é o método desta rota — POST por TAMANHO DA SELEÇÃO (quinhentas chaves de
- * série não cabem numa query string), nunca por efeito: nada é criado nem alterado.
+ * com corpo, que é o método desta rota.
+ *
+ * **⚠ Este POST só LÊ.** O verbo é POST por TAMANHO DA SELEÇÃO — quinhentas chaves de série
+ * não cabem numa query string, e o teto de uma URL é do proxy, não nosso —, jamais por efeito:
+ * nada é criado, alterado nem apagado dos dois lados da ponte. Vale dizê-lo por escrito porque
+ * hoje o BFF não tem mapa de rota → permissão (a autorização é identidade mais escopo de
+ * usina), então o verbo ainda não carrega significado nenhum de autorização. No dia em que
+ * carregar — auditoria por método, modo somente-leitura, política de repetição por verbo —
+ * esta rota mentiria sozinha, e este parágrafo é o único aviso que ela deixa.
+ *
+ * **A espera é governada por um fato: a rota é síncrona.** O cabeçalho só chega quando o XLSX
+ * inteiro está montado (medido: 31 a 38 s no pior pedido que o servidor aceita), e não há job,
+ * id nem endpoint de andamento para consultar. Daí não existir progresso para mostrar aqui, e
+ * daí o corte declarado deste módulo (`PRAZO_DO_ARQUIVO_MS`) ser a única coisa entre a tela e
+ * um giro sem fim.
  *
  * **O `motivo` atravessa; a frase do meuWatt não.** A recusa chega achatada
  * (`{detail, motivo}`) porque a tela precisa do código no primeiro nível para escolher entre
@@ -206,74 +219,148 @@ export function nomeDoArquivo(cabecalho: string | null, reserva: string): string
   return simples ? simples[1] : reserva
 }
 
-/** Prazo de leitura. O meuWatt monta o arquivo inteiro antes de responder — medido: 34 s no
- * pior pedido que ele aceita —, e o BFF ainda pode esperar uma vaga na fila. 180 s é o corte
- * declarado: acima disso a tela desiste com uma frase, em vez de girar para sempre. */
+/**
+ * Prazo do pedido inteiro — cabeçalho **e** corpo.
+ *
+ * O meuWatt monta o arquivo antes de responder (medido pela rota do BFF: 31 a 38 s no pior
+ * pedido que ele aceita), e o BFF ainda pode esperar uma vaga na fila dele (45 s) antes de
+ * chegar lá. 180 s é o corte declarado: acima disso a tela desiste **dizendo** que desistiu,
+ * em vez de girar para sempre.
+ */
 export const PRAZO_DO_ARQUIVO_MS = 180_000
+
+/** O motivo do corte por tempo. Não vem do servidor — a decisão é nossa, e por isso ela fala. */
+export const MOTIVO_PRAZO = 'prazo_esgotado'
 
 /**
  * Pede a planilha e devolve os bytes. Quem salva é `baixarBlob`, de `lib/arquivo.ts`.
  *
- * `sinal` vem de fora porque o cancelamento é do cliente: o botão "Cancelar" aborta este
- * `fetch`, e o BFF solta a vaga da fila junto (a pilha dele fecha quando o gerador é
- * fechado). Sem isso, desistir de um download deixaria a conexão pendurada até o prazo.
+ * **Duas desistências, e elas não podem ser o mesmo evento.** Cancelar é decisão do cliente e
+ * CALA: ninguém errou, e pintar de vermelho o que a pessoa acabou de pedir para parar é
+ * acusá-la. O corte aos 180 s é decisão NOSSA e FALA: ela ficou olhando três minutos e merece
+ * saber que houve um corte e o que fazer com isso. As duas chegam ao `fetch` como o mesmo
+ * `AbortError`, então quem aborta é quem tem de dizer por quê — daí o controlador interno:
+ * o sinal de fora só é repassado, e o timer é nosso. Misturar os dois num controlador só
+ * (que é o que a tela fazia, guardando um `cortou` à parte) faz a distinção depender de um
+ * estado da tela, e ela some na primeira refatoração de componente.
+ *
+ * `sinal` continua vindo de fora porque o cancelamento pertence a quem montou a tela: o botão
+ * "Cancelar" e o desmonte (sair pelo menu da esquerda, que é o gesto provável) abortam por ele.
+ *
+ * ⚠ **O que o aborto NÃO faz, medido hoje na rota real e não deduzido do código:** ele não
+ * devolve a vaga da fila do BFF. Duas conexões pesadas foram largadas a 2,0 s — a segunda vez
+ * fechando o soquete na unha, que é o gesto da aba fechando — e o pedido seguinte esperou os
+ * 45 s inteiros da fila e saiu `429 muitos_pedidos` (46,2 s). A vaga é tomada ANTES da espera
+ * pelo cabeçalho do meuWatt, e nessa fase o servidor não escuta a desconexão: ela só volta
+ * quando o upstream termina, uns 60 s depois. Para o cliente que cancelou não muda nada — a
+ * tela dele é devolvida no ato —, mas o PRÓXIMO cliente paga. O conserto é em
+ * `bff/app/api/v1/exportacao.py` (a vaga precisa cair junto com a conexão), fora deste
+ * módulo; aqui fica o registro para que ninguém repita a suposição de que abortar basta.
  */
 export async function baixarDados(
   usinaId: number,
   pedido: Pedido,
   sinal?: AbortSignal,
 ): Promise<{ blob: Blob; nome: string }> {
-  const token = tokenDaSessao()
-  let resposta: Response
-  try {
-    resposta = await fetch(`${baseURL}/api/v1/energia/dados/arquivo?usina_id=${usinaId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(corpoDoPedido(pedido)),
-      signal: sinal,
-    })
-  } catch (erro) {
-    if (erro instanceof DOMException && erro.name === 'AbortError') throw new Cancelado()
-    throw new ErroDaExportacao('Sem conexão com o servidor.', null, null)
-  }
+  if (sinal?.aborted) throw new Cancelado()
 
-  if (!resposta.ok) {
-    let detalhe: string | null = null
-    let motivo: string | null = null
+  const token = tokenDaSessao()
+  const interno = new AbortController()
+  const repassar = () => interno.abort()
+  sinal?.addEventListener('abort', repassar)
+  let cortouNoPrazo = false
+  const corte = setTimeout(() => {
+    cortouNoPrazo = true
+    interno.abort()
+  }, PRAZO_DO_ARQUIVO_MS)
+
+  try {
+    let resposta: Response
     try {
-      const corpo = (await resposta.json()) as { detail?: unknown; motivo?: unknown }
-      detalhe = detalheEmTexto(corpo.detail)
-      // O motivo vem no PRIMEIRO nível, e não dentro de `detail`: é o que permite à tela
-      // escolher entre erro com "Tentar de novo" e aviso sem botão.
-      motivo = typeof corpo.motivo === 'string' ? corpo.motivo : null
-    } catch {
-      // Corpo que não é JSON (página do proxy, por exemplo): fica a frase padrão.
+      resposta = await fetch(`${baseURL}/api/v1/energia/dados/arquivo?usina_id=${usinaId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(corpoDoPedido(pedido)),
+        signal: interno.signal,
+      })
+    } catch (erro) {
+      throw daDesistencia(erro, sinal, cortouNoPrazo)
     }
-    if (resposta.status === 401) {
+
+    if (!resposta.ok) {
+      let detalhe: string | null = null
+      let motivo: string | null = null
+      try {
+        const corpo = (await resposta.json()) as { detail?: unknown; motivo?: unknown }
+        detalhe = detalheEmTexto(corpo.detail)
+        // O motivo vem no PRIMEIRO nível, e não dentro de `detail`: é o que permite à tela
+        // escolher entre erro com "Tentar de novo" e aviso sem botão.
+        motivo = typeof corpo.motivo === 'string' ? corpo.motivo : null
+      } catch {
+        // Corpo que não é JSON (página do proxy, por exemplo): fica a frase padrão.
+      }
+      if (resposta.status === 401) {
+        throw new ErroDaExportacao(
+          detalhe ?? 'Sua sessão expirou. Entre de novo.',
+          null,
+          resposta.status,
+        )
+      }
       throw new ErroDaExportacao(
-        detalhe ?? 'Sua sessão expirou. Entre de novo.',
-        null,
+        detalhe ?? `Não foi possível baixar os dados (erro ${resposta.status}).`,
+        motivo,
         resposta.status,
       )
     }
-    throw new ErroDaExportacao(
-      detalhe ?? `Não foi possível baixar os dados (erro ${resposta.status}).`,
-      motivo,
-      resposta.status,
-    )
-  }
 
-  const blob = await resposta.blob()
-  // Uma planilha de verdade tem quilobytes; um corpo de poucos bytes é uma mensagem de erro
-  // que veio com status 200 por descuido de algum proxy — e viraria um XLSX que não abre.
-  if (blob.size < 100) {
-    throw new ErroDaExportacao('O servidor devolveu um arquivo vazio.', null, resposta.status)
+    // O corpo também está sob o prazo: são 2,4 MiB medidos no pior caso, e uma conexão que
+    // morre no meio da transferência deixaria a tela girando com o cabeçalho já na mão.
+    let blob: Blob
+    try {
+      blob = await resposta.blob()
+    } catch (erro) {
+      throw daDesistencia(erro, sinal, cortouNoPrazo)
+    }
+    // Uma planilha de verdade tem quilobytes; um corpo de poucos bytes é uma mensagem de erro
+    // que veio com status 200 por descuido de algum proxy — e viraria um XLSX que não abre.
+    if (blob.size < 100) {
+      throw new ErroDaExportacao('O servidor devolveu um arquivo vazio.', null, resposta.status)
+    }
+    // O nome é o que o BFF escreveu no `Content-Disposition` (exposto no CORS de propósito),
+    // e não um nome remontado aqui: remontar criaria uma segunda verdade sobre o mesmo
+    // arquivo, e a do servidor é a que descreve o conteúdo que ele de fato montou.
+    return {
+      blob,
+      nome: nomeDoArquivo(resposta.headers.get('Content-Disposition'), 'dados.xlsx'),
+    }
+  } finally {
+    clearTimeout(corte)
+    sinal?.removeEventListener('abort', repassar)
   }
-  return {
-    blob,
-    nome: nomeDoArquivo(resposta.headers.get('Content-Disposition'), 'dados.xlsx'),
+}
+
+/**
+ * De quem foi a desistência.
+ *
+ * O cliente ganha do relógio de propósito: se ele cancelou e o corte disparou no mesmo
+ * instante, o que aconteceu, para ele, foi ter cancelado — e cancelamento não vira aviso.
+ */
+function daDesistencia(erro: unknown, sinal: AbortSignal | undefined, cortou: boolean): Error {
+  const abortou = erro instanceof DOMException && erro.name === 'AbortError'
+  if (abortou) {
+    if (sinal?.aborted) return new Cancelado()
+    if (cortou) {
+      return new ErroDaExportacao(
+        'O arquivo passou de três minutos e o pedido foi cortado. Peça um período menor ou ' +
+          'um detalhe mais grosso — a planilha fica pronta bem mais rápido.',
+        MOTIVO_PRAZO,
+        null,
+      )
+    }
+    return new Cancelado()
   }
+  return new ErroDaExportacao('Sem conexão com o servidor.', null, null)
 }

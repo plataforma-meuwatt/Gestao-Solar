@@ -825,6 +825,300 @@ export function ComboboxMulti({
   )
 }
 
+/* --------------------------------------------------- multi agrupado (skids) */
+
+/**
+ * Um grupo da lista suspensa múltipla: o skid, com os inversores dele dentro.
+ *
+ * `detalhe` é o que a tela já sabe escrever e a peça não deve adivinhar — a capacidade do
+ * skid, por exemplo. Formatar número é trabalho de `lib/format`, não de um componente do
+ * vocabulário: aqui ele chega pronto e só é exibido.
+ */
+export type GrupoDeOpcoes = {
+  /** Identidade do grupo na lista do React. Nunca aparece na tela. */
+  chave: string
+  rotulo: string
+  /** Frase curta ao lado do nome — a capacidade, já formatada em pt-BR pela tela. */
+  detalhe?: string
+  opcoes: Opcao[]
+}
+
+/** "Skid 2 e Skid 3" — o gatilho diz os nomes, e não uma contagem, quando pode dizer. */
+function juntarNomes(nomes: string[]) {
+  if (nomes.length <= 1) return nomes.join('')
+  return `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`
+}
+
+/**
+ * A MESMA lista suspensa múltipla, com os itens agrupados — e com o gesto que faltava:
+ * **marcar o grupo inteiro em um toque.**
+ *
+ * Existe porque a capacidade de exportar por skid já atravessava o contrato inteiro (a tela,
+ * o BFF e a mw-api sempre souberam receber `agrupamento: 'skid'`), mas escolher o skid 2
+ * custava abrir uma lista PLANA de vinte e quatro inversores e marcar oito caixas uma a uma.
+ * A capacidade estava tecnicamente presente e praticamente ausente — e a saída que o meuWatt
+ * usa (uma faixa de caixinhas por skid) é chip com outro nome, proibido neste portal.
+ *
+ * O que muda em relação ao `ComboboxMulti`, e só isso: **o cabeçalho do grupo é um controle,
+ * não um título.** É um `role="checkbox"` de três estados — marcado, vazio, `mixed` — cujo
+ * nome acessível diz quantos estão marcados e o que o toque vai fazer. Um toque marca o skid
+ * inteiro; o seguinte limpa.
+ *
+ * As quatro regras que não podem ser achatadas, porque cada uma guarda um defeito:
+ *
+ * 1. **`null` é "não mexi", e não é a mesma coisa que marcar todos um a um.** Com
+ *    `series: null` o inversor que entra em operação no meio do período sai no arquivo
+ *    sozinho; com a lista explícita, não sai. Por isso o rodapé "todos" devolve `null` — e
+ *    não a lista dos vinte e quatro.
+ * 2. **A ordem congela na abertura, por grupo.** Com os marcados subindo ao topo em tempo
+ *    real, o item seguinte pula para debaixo do cursor e a pessoa marca o errado.
+ * 3. **A busca esconde o grupo sem acerto, mas mantém o cabeçalho do que tem** — e, enquanto
+ *    se busca, o cabeçalho age **só sobre o que está à vista**, dizendo isso na cara
+ *    ("marcar os 3 encontrados"). Um tri-estado que agisse sobre o grupo inteiro durante a
+ *    busca seria escrita cega: a pessoa vê três linhas e marca oito.
+ * 4. **Zero marcados não é estado ilegal, é impedimento** — e o impedimento é da TELA, que
+ *    sabe se a lista vazia é um filtro legítimo ou um pedido quebrado. A peça só oferece a
+ *    saída nomeada (`notaVazio`, escrita no rodapé) e o botão que a executa.
+ */
+export function ComboboxMultiAgrupado({
+  grupos,
+  valor,
+  onEscolher,
+  substantivo = 'itens',
+  rotuloTodos = 'todos',
+  notaTodos,
+  notaVazio,
+  className = '',
+  larguraMenu = 'w-96',
+}: {
+  grupos: GrupoDeOpcoes[]
+  /** `null` = "não mexi" (todos, inclusive o que aparecer depois). `[]` = nenhum. */
+  valor: string[] | null
+  onEscolher: (v: string[] | null) => void
+  /** O plural do que se escolhe: "9 de 24 **inversores**". */
+  substantivo?: string
+  /** O gênero muda com o substantivo: "todas · 7 usinas". */
+  rotuloTodos?: string
+  /** Uma frase curta dizendo o que "todos" significa nesta tela. */
+  notaTodos?: string
+  /** O que dizer quando nada está marcado — a saída nomeada, escrita pela tela. */
+  notaVazio?: string
+  className?: string
+  larguraMenu?: string
+}) {
+  const [aberto, setAberto] = useState(false)
+  const [busca, setBusca] = useState('')
+  const caixa = useFechaFora(aberto, setAberto)
+
+  // Só o que é escolhível entra na conta e em "todos": opção desabilitada é uma coisa que
+  // esta usina não tem, e ela nunca pode viajar dentro de uma lista explícita.
+  const disponiveis = useMemo(
+    () => grupos.flatMap((g) => g.opcoes.filter((o) => o.desabilitada !== true)),
+    [grupos],
+  )
+  const total = disponiveis.length
+  const marcados = useMemo(() => new Set(valor === null ? [] : valor), [valor])
+  const estaMarcada = (v: string) => valor === null || marcados.has(v)
+  const quantosMarcados =
+    valor === null ? total : disponiveis.filter((o) => marcados.has(o.valor)).length
+
+  // A foto da abertura: é ela que segura a ordem enquanto a pessoa marca (regra 2).
+  const ordemDeAbertura = useRef<Set<string>>(new Set())
+  const abrir = () => {
+    ordemDeAbertura.current = new Set(valor === null ? disponiveis.map((o) => o.valor) : valor)
+    setBusca('')
+    setAberto(true)
+  }
+
+  // `aberto` e `valor` estão nas dependências de propósito, embora a ordem não dependa deles:
+  // quem a segura é a FOTO acima, e não o memo deixar de recalcular. Sem eles aqui, a
+  // estabilidade viria de uma dependência esquecida — e a lista voltaria a dançar no dia em
+  // que alguém (ou o corretor do lint) completasse a lista.
+  const visiveis = useMemo(() => {
+    const peso = (o: Opcao) => (ordemDeAbertura.current.has(o.valor) ? 0 : 1)
+    return grupos
+      .map((g) => ({
+        grupo: g,
+        itens: [...filtrar(g.opcoes, busca)].sort((a, b) => peso(a) - peso(b)),
+      }))
+      .filter((x) => x.itens.length > 0)
+  }, [grupos, busca, aberto, valor])
+
+  const alternar = (v: string) => {
+    if (valor === null) {
+      // Materializa: "todos menos este" é uma lista, e é o que ela acabou de pedir.
+      onEscolher(disponiveis.filter((o) => o.valor !== v).map((o) => o.valor))
+      return
+    }
+    onEscolher(marcados.has(v) ? valor.filter((x) => x !== v) : [...valor, v])
+  }
+
+  /** O toque do cabeçalho age sobre `itens` — que durante a busca são só os encontrados. */
+  const alternarGrupo = (itens: Opcao[]) => {
+    const alvo = itens.filter((o) => o.desabilitada !== true)
+    if (alvo.length === 0) return
+    const todosJaMarcados = alvo.every((o) => estaMarcada(o.valor))
+    const partida = new Set(valor === null ? disponiveis.map((o) => o.valor) : valor)
+    for (const o of alvo) {
+      if (todosJaMarcados) partida.delete(o.valor)
+      else partida.add(o.valor)
+    }
+    // Devolve na ordem do catálogo, e não na de clique: a lista que viaja ao servidor não
+    // pode depender de por onde a pessoa começou.
+    onEscolher(disponiveis.map((o) => o.valor).filter((v) => partida.has(v)))
+  }
+
+  /**
+   * Os grupos inteiramente marcados. Quando a marcação é EXATAMENTE a união deles, o gatilho
+   * diz os nomes ("Skid 2 e Skid 3"), porque é isso que a pessoa pediu e é isso que ela vai
+   * reconhecer no arquivo. Um grupo pela metade derruba a forma inteira: aí a verdade é
+   * "9 de 24", e nenhum nome de skid pode ser escrito sem ser inteiramente verdade.
+   */
+  const nomesDosGruposInteiros = useMemo(() => {
+    if (valor === null) return null
+    const nomes: string[] = []
+    for (const g of grupos) {
+      const disp = g.opcoes.filter((o) => o.desabilitada !== true)
+      if (disp.length === 0) continue
+      const n = disp.filter((o) => marcados.has(o.valor)).length
+      if (n === 0) continue
+      if (n !== disp.length) return null
+      nomes.push(g.rotulo)
+    }
+    return nomes.length > 0 ? nomes : null
+  }, [grupos, valor, marcados])
+
+  const gatilho =
+    valor === null
+      ? `${rotuloTodos} · ${total} ${substantivo}`
+      : nomesDosGruposInteiros
+        ? `${juntarNomes(nomesDosGruposInteiros)} · ${quantosMarcados} ${substantivo}`
+        : `${quantosMarcados} de ${total} ${substantivo}`
+
+  const buscando = busca.trim().length > 0
+
+  return (
+    <div ref={caixa} className={`relative ${className}`}>
+      <button
+        type="button"
+        aria-expanded={aberto}
+        onClick={() => (aberto ? setAberto(false) : abrir())}
+        className="flex min-h-[38px] w-full items-center justify-between gap-2 rounded-campo border border-borda bg-superficie px-3 text-sm text-corpo hover:bg-superficie-alta"
+      >
+        <span className="truncate">{gatilho}</span>
+        <span aria-hidden className="text-fraco">
+          ▾
+        </span>
+      </button>
+
+      {aberto ? (
+        <div
+          className={`absolute z-30 mt-1 ${larguraMenu} max-w-[90vw] overflow-hidden rounded-card border border-borda-forte bg-painel shadow-xl`}
+        >
+          <input
+            autoFocus
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar…"
+            className="w-full border-b border-borda bg-transparent px-3 py-2 text-sm text-corpo outline-none placeholder:text-fraco"
+          />
+
+          <div className="max-h-80 overflow-auto">
+            {visiveis.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-fraco">Nada encontrado.</p>
+            ) : (
+              visiveis.map(({ grupo, itens }) => {
+                const alvo = itens.filter((o) => o.desabilitada !== true)
+                const nMarcados = alvo.filter((o) => estaMarcada(o.valor)).length
+                const cheio = alvo.length > 0 && nMarcados === alvo.length
+                const estado = cheio ? 'true' : nMarcados === 0 ? 'false' : 'mixed'
+                const acao = buscando
+                  ? cheio
+                    ? `limpar os ${alvo.length} encontrados`
+                    : `marcar os ${alvo.length} encontrados`
+                  : cheio
+                    ? `limpar ${grupo.rotulo}`
+                    : `marcar ${grupo.rotulo} inteiro`
+                const resumo = buscando
+                  ? `${nMarcados} de ${alvo.length} encontrados marcados`
+                  : `${nMarcados} de ${alvo.length} ${substantivo} marcados`
+
+                return (
+                  <div key={grupo.chave}>
+                    {/* Grudento: com vinte e quatro linhas roláveis, o nome do skid que se
+                        está marcando não pode sair da tela junto com a rolagem. */}
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={estado}
+                      aria-label={`${grupo.rotulo} — ${resumo}. ${acao}.`}
+                      onClick={() => alternarGrupo(itens)}
+                      className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-y border-borda bg-painel px-3 py-2 text-left text-xs hover:bg-superficie-alta"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span aria-hidden className="w-3 shrink-0 text-ambar-texto">
+                          {cheio ? '✓' : nMarcados === 0 ? '' : '–'}
+                        </span>
+                        <span className="truncate font-semibold uppercase tracking-wide text-rotulo">
+                          {grupo.rotulo}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-fraco">
+                        {buscando
+                          ? acao
+                          : `${nMarcados}/${alvo.length}${grupo.detalhe ? ` · ${grupo.detalhe}` : ''}`}
+                      </span>
+                    </button>
+
+                    <ul className="grid grid-cols-2 py-1">
+                      {itens.map((o) => (
+                        <li key={o.valor}>
+                          <LinhaDeOpcao
+                            opcao={o}
+                            marcada={estaMarcada(o.valor)}
+                            comMarca
+                            aoTocar={() => alternar(o.valor)}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          <div className="border-t border-borda px-3 py-2">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={valor === null}
+                onClick={() => onEscolher(null)}
+                className="text-sm text-ambar-texto disabled:cursor-not-allowed disabled:text-fraco"
+              >
+                {rotuloTodos}
+              </button>
+              <button
+                type="button"
+                disabled={valor !== null && valor.length === 0}
+                onClick={() => onEscolher([])}
+                className="text-sm text-fraco hover:text-corpo disabled:cursor-not-allowed"
+              >
+                Limpar
+              </button>
+            </div>
+            {valor !== null && valor.length === 0 && notaVazio ? (
+              <p className="mt-1 text-xs text-ambar-texto">{notaVazio}</p>
+            ) : notaTodos ? (
+              <p className="mt-1 text-xs text-fraco">{notaTodos}</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ período */
 
 /**
