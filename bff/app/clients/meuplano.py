@@ -373,6 +373,83 @@ class MeuPlanoClient:
         )
         return r.content
 
+    # -------------------- relatório MENSAL liberado (visão do cliente)
+    #
+    # Outro documento, outro fluxo — e a confusão com o de cima é o risco. O de cima é uma
+    # CONSULTA: período livre, recalculado a cada abertura, ninguém assinou. Este é o
+    # FECHAMENTO do mês: um mês só, congelado, liberado por alguém, com texto humano e
+    # recomendações. Não são dois cálculos — a apuração do meuPlano reusa a mesma
+    # `relatorio_manutencao.montar` que responde o agregado sob demanda —, são dois ESTADOS
+    # do mesmo documento, e é assim que as telas os nomeiam.
+    #
+    # O CORTE não é reimplementado aqui: este cliente **não conhece outra porta** senão a
+    # `visao-cliente`, onde o meuPlano só deixa passar o que foi liberado. O degrau chamado
+    # "aprovado" NÃO atravessa — um relatório aprovado e ainda não liberado pode voltar para
+    # revisão, e o cliente não pode ter visto um número que mudou. Se um dia ele aparecer na
+    # resposta, é defeito de lá, não escolha daqui.
+    #
+    # O corte de lá é de STATUS, e só. **Não é de carteira**: o token desta ponte é da
+    # organização gestora, e medido em 06/09/2026 a lista de uma usina que não é deste
+    # cliente responde 200, não 403. Quem chama tem de conferir a usina contra o escopo da
+    # pessoa — ver `_relatorio_autorizado` em `api/v1/relatorio.py`.
+
+    async def vc_relatorios_mensais(
+        self, usina_id: int, competencia: str | None = None, tipo: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Os relatórios mensais LIBERADOS da usina — metadados, sem o corpo.
+
+        Devolve a LISTA, e não o envelope `{"itens": [...]}` que chega: a forma do upstream
+        fica sabida num lugar só, como em `usinas`. O corpo (`dados`/`texto`) sai só no
+        detalhe, por decisão de lá — carregar N JSONs congelados de catorze mil caracteres
+        para desenhar uma tabela seria peso sem leitor.
+
+        Lista vazia é o estado normal e honesto, não uma falha: medido em 06/09/2026, das sete
+        usinas desta carteira só Porto Ferreira tem documento liberado (agosto/2026, técnico
+        e executivo) — nas outras seis os relatórios existem e seguem em rascunho, que é
+        conversa interna. Quem chama é que sabe qual mês pediu, e é quem tem a frase.
+        """
+        dados = await self._get(
+            f"/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorios-mensais",
+            competencia=competencia,
+            tipo=tipo,
+        )
+        if isinstance(dados, dict):
+            return dados.get("itens") or []
+        return dados or []
+
+    async def vc_relatorio_mensal(self, rid: int) -> dict[str, Any]:
+        """UM relatório liberado: o `dados` congelado, o texto aprovado e as seções.
+
+        `rid` é o id do relatório NO meuPlano. Lá, o 404 é a MESMA resposta para inexistente,
+        fora do escopo e não-liberado, de propósito: dizer "existe, mas você não pode ver" já
+        conta o que o rascunho não quer contar.
+        """
+        return await self._get(
+            f"/api/v1/meuacesso/visao-cliente/relatorios-mensais/{rid}"
+        )
+
+    async def vc_relatorio_mensal_pdf(self, rid: int) -> bytes:
+        """O PDF do relatório liberado, gerado NA HORA a partir do `dados` congelado.
+
+        `/pdf/view` e não `/pdf`: a terminação `/pdf` cai na dispensa pública do audit de
+        permissões do meuPlano, e o relatório do cliente sairia para quem não tem sessão.
+
+        O prazo folgado é medida, não precaução. Por esta porta, em 06/09/2026: o executivo
+        de Porto Ferreira/2026-08 saiu com 403.775 bytes e o técnico com 263.255, em 1,0-1,8 s
+        — os MESMOS bytes que a rota interna do meuPlano entrega, o que confirma que as duas
+        chamam os mesmos dois construtores. Mesmo assim o teto tem de ser folgado: a primeira
+        chamada de uma sessão fria estourou 180 s uma vez no mesmo dia (o serviço acordando),
+        e o que o cliente lê então é o 504 "demorou demais", não uma acusação de defeito.
+        Uma usina com ortomosaico de capa soma 0,5-2,3 MB ao arquivo — a foto entra como JPEG
+        e infla cerca de 25 % ao ser embutida. Nenhuma usina tem capa hoje.
+        """
+        r = await self._req(
+            "GET",
+            f"/api/v1/meuacesso/visao-cliente/relatorios-mensais/{rid}/pdf/view",
+            timeout=180.0,
+        )
+        return r.content
+
     # ------------------------- pacote de fichas (visão do cliente)
     #
     # O dono, sobre a inspeção de agosto de Porto Ferreira: *"de alguma forma eu preciso

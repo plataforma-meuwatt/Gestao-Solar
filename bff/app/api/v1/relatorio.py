@@ -33,15 +33,43 @@ receber um 422 achatado em 502.
 Sem nível de equipamento, de propósito: análise de equipamento é trabalho da Splendor; o
 cliente corporativo quer saber se a manutenção anda, e o PDF da tarefa fica linkado para
 quem quiser descer.
+
+## Dois documentos neste arquivo, e a diferença tem nome
+
+O de cima é a **consulta**: período livre, recalculado a cada abertura, ninguém assinou.
+Ao lado dele mora o **relatório mensal liberado** do meuPlano — o fechamento de UM mês,
+congelado, entregue por alguém, com texto humano e recomendações.
+
+Não são dois cálculos: a apuração do meuPlano reusa a MESMA `relatorio_manutencao.montar`
+que responde o agregado sob demanda, e por isso `traduzir` engole o `dados` congelado sem
+adaptação nenhuma. São dois **estados** do mesmo documento — e é isso que as telas dizem,
+cada um com o seu carimbo (`liberado_em` num, `gerado_em` no outro) e com nomes de arquivo
+diferentes, para que dois PDFs homônimos na pasta de Downloads não virem a pergunta "qual
+é o certo?".
+
+O corte de quem vê o mensal é do meuPlano e é incondicional: só atravessa o que foi
+liberado. O degrau chamado "aprovado" NÃO é liberado — ainda pode voltar para revisão.
+Este lado não reimplementa a régua; ele simplesmente não conhece outra porta.
+
+O que fica de fora do mensal, de propósito: `aprovado_por` (nome de funcionário da
+executora — entregaria o organograma interno), `aprovado_em`/`apurado_em` ("quando os
+números foram calculados" não é "de quando é este documento", e três datas na mesma linha
+fazem o leitor não saber qual responde à pergunta dele), `tempo_em_campo` (o próprio
+catálogo do meuPlano diz que horas de equipe nunca saem no documento do cliente) e o
+`texto` (medido no rid 14: a prosa contradiz o próprio `dados` do mesmo relatório — 25
+fichas contra 57, 3 pendências contra 2, OS 969 contra OS 1016. Ela continua existindo
+onde é congelada e assinada: dentro do PDF).
 """
 
 from datetime import date, datetime
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.v1.documents import ORDEM_DO_TIPO, RelatorioMensalOut, _mensal_out
 from app.api.v1.manutencao import (
     NAO_PUBLICADO,
     ContratoOut,
@@ -59,7 +87,7 @@ from app.api.v1.manutencao import (
 )
 from app.api.v1.pendencias import _data as _data_pura
 from app.api.v1.pendencias import _situacao_da_pendencia
-from app.api.v1.plants import _instante_medida
+from app.api.v1.plants import _instante_medida, usinas_do_usuario
 from app.core.datas import agora as agora_na_usina
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
@@ -424,6 +452,36 @@ def _recorte_do_cronograma(dentro: Any, fora: Any, no_contrato: int | None) -> s
     return frase
 
 
+#: A natureza que o meuPlano assume para um checklist que não declara a sua — é o default
+#: escrito lá (`getattr(c, "natureza", None) or "INSPECAO"`), e por isso é o default aqui.
+NATUREZA_PADRAO_DO_CHECKLIST = "INSPECAO"
+
+
+def _categoria_do_relatorio(r: dict[str, Any]) -> str | None:
+    """O selo da linha do cronograma — o MESMO que a aba Cronograma mostra para ela.
+
+    Duas fontes falam de uma coisa só, com vocabulários diferentes. O agregado congelado diz
+    a **espécie** (`ensaio` | `servico` | `checklist`, minúsculo); o cronograma ao vivo diz a
+    **natureza** do checklist (`INSPECAO`, `LIMPEZA`…, maiúsculo). Sem esta ponte, a MESMA
+    linha saía "Checklist" no relatório e "Inspeção" no cronograma — dois selos para uma
+    atividade, em duas telas do mesmo portal, que é a lição mais cara deste projeto.
+
+    A natureza declarada manda sempre; quando só a espécie chega (o caso do congelado), vale
+    o default do próprio meuPlano. `_categoria_da_linha` continua sendo o tradutor único: o
+    que se ajusta aqui é a ENTRADA dele, não uma segunda tabela de rótulos.
+    """
+    natureza = _texto(r.get("checklist_natureza"))
+    especie = _texto(_pega(r, "categoria", "screen_categoria"))
+    if (especie or "").strip().lower() == "checklist":
+        return _categoria_da_linha(
+            {"screen_categoria": None,
+             "checklist_natureza": natureza or NATUREZA_PADRAO_DO_CHECKLIST}
+        )[0]
+    return _categoria_da_linha(
+        {"screen_categoria": especie, "checklist_natureza": natureza}
+    )[0]
+
+
 def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | None:
     """O bloco do cronograma. `dispensas_brutas` vem à parte porque o meuPlano as põe no
     topo do agregado, não dentro do bloco — lidas de dentro, a seção sairia sempre vazia."""
@@ -440,10 +498,7 @@ def _cronograma(bruto: Any, dispensas_brutas: Any) -> CronogramaRelatorioOut | N
                 # Mesmo tradutor da aba Cronograma (fonte única): sem ele o relatório
                 # que vai à diretoria estampava 'INSPECAO' e 'ensaio' ao lado de
                 # 'Inspeção' e 'Ensaio' na outra tela do mesmo portal.
-                categoria=_categoria_da_linha(
-                    {"screen_categoria": _pega(r, "categoria", "screen_categoria"),
-                     "checklist_natureza": r.get("checklist_natureza")}
-                )[0],
+                categoria=_categoria_do_relatorio(r),
                 previstas=_contagem(r, "previstas", "previsto"),
                 executadas=_contagem(r, "executadas", "feito", "feitas"),
                 dispensadas=_contagem(r, "dispensadas", "dispensado"),
@@ -781,3 +836,195 @@ async def pdf_do_relatorio(
         raise HTTPException(502, "O PDF veio vazio. Tente de novo em instantes.")
     nome = f"Relatorio-manutencao-{link.nome}-{periodo[0]}-{periodo[1]}.pdf"
     return _pdf(conteudo, nome)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# O relatório MENSAL liberado — o fechamento do mês, congelado
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Ver a seção "Dois documentos neste arquivo" no cabeçalho do módulo. Aqui fica só a
+# mecânica: o corte é do meuPlano, a cerca de carteira é deste lado, e o card usa o MESMO
+# vocabulário da aba de Relatórios do aplicativo (`documents.RelatorioMensalOut`) — a mesma
+# coisa com dois nomes em duas telas do mesmo produto é o defeito que não se repete.
+
+
+class RelatoriosMensaisOut(BaseModel):
+    """O índice dos relatórios mensais liberados de UMA usina."""
+
+    usina: str
+    #: O id do vínculo NESTE sistema — o mesmo que as demais rotas de manutenção aceitam.
+    usina_id: int
+    #: Executivo antes de técnico dentro de cada mês, e o mês mais recente primeiro. A ordem
+    #: é a MESMA da aba de Relatórios do aplicativo (`documents.ORDEM_DO_TIPO`): uma ordem
+    #: por frente daria duas respostas para "qual eu leio primeiro?".
+    itens: list[RelatorioMensalOut] = []
+    #: Por que a lista está vazia — nunca uma tela vazia e muda, que se lê como defeito.
+    aviso: str | None = None
+
+
+class RelatorioMensalDetalheOut(RelatorioMensalOut):
+    """O card do mensal com o corpo dentro, já no vocabulário do portal.
+
+    `conteudo` é o `dados` CONGELADO passado pelo mesmo `traduzir` do relatório sob demanda —
+    nunca uma segunda tradução. O carimbo de dentro (`conteudo.gerado_em`) é o instante em
+    que os números foram apurados e faz parte do documento; o de fora (`liberado_em`) é
+    quando a equipe o entregou, e é o único que a tela mostra no card.
+    """
+
+    conteudo: RelatorioOut
+
+
+def _aviso_do_vazio(competencia: str | None, tipo: str | None) -> str:
+    """A frase que ocupa o lugar da lista vazia.
+
+    O meuPlano não distingue "não existe" de "existe e não foi liberado", e faz certo em não
+    distinguir: as duas respostas seriam a mesma janela para descobrir o que um rascunho diz.
+    Quem distingue é este lado, que sabe qual mês foi pedido — o mesmo cuidado que
+    `_usinas_com_manutencao` já toma na aba de Manutenção.
+    """
+    especie = {
+        "executivo": "O relatório executivo",
+        "tecnico": "O relatório técnico",
+    }.get((tipo or "").strip().lower(), "O fechamento")
+    mes = _mes_por_extenso(competencia) if competencia else None
+    if mes:
+        return f"{especie} de {mes} ainda não foi liberado pela equipe de manutenção."
+    return (
+        f"{especie} desta usina ainda não foi liberado pela equipe de manutenção — "
+        "assim que for, ele aparece aqui."
+    )
+
+
+async def _relatorio_autorizado(
+    db: Session, usuario: User, rid: int
+) -> tuple[Any, dict[str, Any], PlantLink]:
+    """O relatório liberado, o cliente do meuPlano e o vínculo — depois de checar o escopo.
+
+    `rid` é um inteiro pequeno vindo do cliente, exatamente como o `so_id` que já obrigou
+    `_ordem_autorizada` a existir. E aqui a cerca é ainda mais necessária: o corte do
+    upstream nesta porta é de STATUS, **não de carteira** — o token desta ponte é da
+    organização gestora e enxerga todas as usinas. Medido em 06/09/2026: pedir a lista de uma
+    usina que não é deste cliente responde 200, não 403. Sem esta função, trocar um dígito na
+    URL abriria o relatório de outro dono.
+
+    404 e nunca 403, pela razão de `_link_do_escopo`: "proibido" confirmaria que o documento
+    existe, e quem trocou o número não tem por que descobrir isso. É também a resposta que o
+    próprio meuPlano dá para inexistente, fora do escopo e não-liberado — os três iguais.
+
+    Para o PDF isto custa duas idas (o detalhe e depois o arquivo), e é barato: o detalhe lê
+    uma coluna JSON já apurada, sem recalcular nada.
+    """
+    minhas = [u for u in usinas_do_usuario(db, usuario) if u.mp_usina_id]
+    if not minhas:
+        raise HTTPException(404, "Relatório não encontrado.")
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
+    try:
+        bruto = await cliente.vc_relatorio_mensal(rid)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(404, "Relatório não encontrado.") from exc
+        raise _erro_do_upstream(exc, "Não deu para abrir o relatório mensal") from exc
+    except Exception as exc:  # noqa: BLE001 — timeout, rede
+        raise _erro_do_upstream(exc, "Não deu para abrir o relatório mensal") from exc
+    if not isinstance(bruto, dict):
+        raise HTTPException(502, "O relatório veio sem conteúdo. Tente de novo em instantes.")
+    alvo = _inteiro(bruto.get("usina_id"))
+    link = next((u for u in minhas if u.mp_usina_id == alvo), None)
+    if link is None:
+        raise HTTPException(404, "Relatório não encontrado.")
+    return cliente, bruto, link
+
+
+@router.get("/manutencao/relatorios-mensais", response_model=RelatoriosMensaisOut)
+async def relatorios_mensais(
+    usina_id: int,
+    competencia: str | None = None,
+    tipo: str | None = None,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> RelatoriosMensaisOut:
+    """Os relatórios mensais LIBERADOS desta usina — o índice, sem o corpo de cada um.
+
+    `competencia` é "YYYY-MM" e é conferida ANTES de ir ao upstream, como o período do
+    relatório sob demanda. `tipo` (`tecnico` | `executivo`) é repassado cru: um valor novo do
+    meuPlano tem de chegar à tela, não sumir num mapa deste lado.
+    """
+    link = _link_do_escopo(db, usuario, usina_id)
+    if competencia:
+        _competencia(competencia, "competencia")
+    try:
+        cliente = await integracoes.cliente_meuplano(db)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
+    try:
+        brutos = await cliente.vc_relatorios_mensais(
+            link.mp_usina_id, competencia=_texto(competencia), tipo=_texto(tipo)
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_upstream(exc, "Não deu para listar os relatórios mensais") from exc
+    achados = [_mensal_out(b, link) for b in (brutos if isinstance(brutos, list) else [])]
+    itens = [r for r in achados if r is not None]
+    # Duas ordenações estáveis em vez de uma com `reverse`: a chave inteira invertida
+    # colocaria o técnico antes do executivo dentro do mês, que é o contrário do combinado.
+    itens.sort(key=lambda r: (ORDEM_DO_TIPO.get(r.tipo, len(ORDEM_DO_TIPO)), r.id))
+    itens.sort(key=lambda r: r.competencia, reverse=True)
+    return RelatoriosMensaisOut(
+        usina=link.nome,
+        usina_id=link.id,
+        itens=itens,
+        aviso=None if itens else _aviso_do_vazio(competencia, tipo),
+    )
+
+
+@router.get("/manutencao/relatorios-mensais/{rid}", response_model=RelatorioMensalDetalheOut)
+async def relatorio_mensal(
+    rid: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> RelatorioMensalDetalheOut:
+    """Um relatório mensal liberado, aberto: os números congelados no vocabulário do portal.
+
+    O contrato sai de dentro do `dados` (o cabeçalho congelado o descreve) e não de uma
+    segunda ida: um documento congelado descrito por um contrato lido hoje seria um relatório
+    contando duas histórias.
+    """
+    _cliente, bruto, link = await _relatorio_autorizado(db, usuario, rid)
+    cartao = _mensal_out(bruto, link)
+    if cartao is None:
+        raise HTTPException(502, "O relatório veio sem identidade (id, competência ou tipo).")
+    dados = bruto.get("dados")
+    if not isinstance(dados, dict):
+        # Um liberado SEM corpo não é "cronograma não publicado" — é documento vazio, e
+        # dizer a frase errada mandaria o cliente procurar o problema no lugar errado.
+        raise HTTPException(502, "Este relatório foi liberado sem os números dentro.")
+    return RelatorioMensalDetalheOut(
+        **cartao.model_dump(),
+        conteudo=traduzir(dados, link, (cartao.competencia, cartao.competencia)),
+    )
+
+
+@router.get("/manutencao/relatorios-mensais/{rid}/pdf")
+async def pdf_do_relatorio_mensal(
+    rid: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> Response:
+    """O PDF do relatório mensal liberado — o documento que a equipe entregou.
+
+    Nome próprio, e não o do relatório sob demanda: dois arquivos homônimos na pasta de
+    Downloads do cliente é como a pergunta "qual é o certo?" começa. Chega com a sessão no
+    cabeçalho, como todo arquivo deste BFF — token nunca vai em URL.
+    """
+    cliente, bruto, link = await _relatorio_autorizado(db, usuario, rid)
+    try:
+        conteudo = await cliente.vc_relatorio_mensal_pdf(rid)
+    except Exception as exc:  # noqa: BLE001
+        raise _erro_do_upstream(exc, "Não deu para gerar o relatório mensal em PDF") from exc
+    if not conteudo:
+        raise HTTPException(502, "O PDF veio vazio. Tente de novo em instantes.")
+    tipo = _texto(bruto.get("tipo")) or "mensal"
+    competencia = _texto(bruto.get("competencia")) or ""
+    return _pdf(conteudo, f"Relatorio-mensal-{tipo}-{link.nome}-{competencia}.pdf")

@@ -24,6 +24,10 @@ Três decisões que valem ser ditas:
   motivo é que `total_generation_kwh` virou outra coisa. Onde o que interessa mora
   **dentro** de um envelope, registrar não basta — aí a rota declara `campos_exigidos` e a
   falta de um deles vira vermelho com o nome escrito.
+- **Rodada que não conferiu nada não sai verde.** Quando a forma declarada vive dentro de
+  uma lista e a lista veio vazia — estado normal em vários produtos —, a rota marcada com
+  `exige_itens` sai como *parcial*: respondeu, mas não vigiou. Verde ali seria a pior das
+  respostas, porque é a que ninguém investiga.
 """
 
 import time
@@ -78,6 +82,15 @@ class Rota:
     #: É **presença de chave**, nunca valor: a sonda vigia forma, e valor de cliente não
     #: tem por que aparecer numa tela de infraestrutura.
     campos_exigidos: tuple[str, ...] = ()
+    #: Quando a forma declarada mora DENTRO de uma lista que pode vir vazia, e a lista vazia
+    #: é resposta normal do produto, a rodada não conferiu campo nenhum — e pintar isso de
+    #: VERDE é pior que não ter a linha: dá a impressão de vigilância que não houve. Com esta
+    #: marca, a rota sai como `parcial` (nem falha, nem passou) dizendo por quê.
+    #:
+    #: O caso que a criou: `mp.vc_relatorios_mensais` é sondada na PRIMEIRA usina do produto,
+    #: e das 22 do meuPlano só uma tinha documento liberado em 06/09/2026. A linha respondia
+    #: `ok` sem ter olhado um único campo — um rename de `itens[].id` passaria para sempre.
+    exige_itens: bool = False
     #: Motivo de não exercitar. Preenchido = a rota entra na lista e sai da execução.
     sonda: bool = True
     nao_sondada_porque: str | None = None
@@ -377,6 +390,46 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Renderiza o PDF inteiro a cada chamada. A tela do portal "
                             "exercita sob demanda."),
+    # O relatório MENSAL liberado: outro documento e outro fluxo. O de cima é a consulta
+    # (período livre, recalculado); este é o FECHAMENTO do mês, congelado e liberado por
+    # alguém. O corte de lá é o STATUS — só atravessa o que foi liberado, e nem o degrau
+    # chamado "aprovado" passa —, então a LISTA VAZIA é resposta normal, não falha: medido
+    # em 06/09/2026, das sete usinas desta carteira só Porto Ferreira tem documento liberado
+    # (agosto/2026, técnico e executivo); as outras seis respondem 200 com zero itens. Por
+    # isso o valor da linha está em `campos_exigidos`: o modo de falha desta família não é
+    # sumir, é responder 200 com um campo renomeado e a aba abrir vazia sem erro nenhum.
+    Rota("mp.vc_relatorios_mensais", "GET",
+         "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/relatorios-mensais",
+         "O índice dos relatórios mensais liberados, na aba Relatórios do portal e do "
+         "aplicativo",
+         essencial=False,
+         captura={"relatorio_id": "id"}, captura_exige="liberado_em",
+         campos_exigidos=("itens[].id", "itens[].usina_id", "itens[].competencia",
+                          "itens[].tipo", "itens[].liberado_em"),
+         # e, se a usina sondada não tiver nenhum documento liberado, a linha sai AMARELA
+         # dizendo que não conferiu nada — verde ali seria vigilância de mentira.
+         exige_itens=True),
+    # As duas seguintes dependem de um id colhido acima. Enquanto nada estiver liberado,
+    # elas saem PULADAS com a razão escrita — o retrato honesto, e o mesmo desenho de
+    # `mp.vc_contratos`. `captura_exige="liberado_em"` garante que o id colhido é de um
+    # documento entregue, nunca de um item pela metade.
+    Rota("mp.vc_relatorio_mensal", "GET",
+         "/api/v1/meuacesso/visao-cliente/relatorios-mensais/{relatorio_id}",
+         "O relatório mensal aberto: os números congelados, o texto aprovado e as seções",
+         essencial=False,
+         # `texto` está na lista mesmo não atravessando para a tela: é dele que o PDF
+         # entregue ao cliente é feito, e a prosa sumindo mudaria o documento em silêncio.
+         # `dados.cronograma` é presença de CHAVE, não valor — uma usina sem cronograma
+         # consolidado manda a chave com nulo, e isso é estado normal, não forma quebrada.
+         campos_exigidos=("dados.cabecalho.usina", "dados.cronograma", "dados.pareceres",
+                          "dados.problemas", "dados.pendencias", "texto")),
+    Rota("mp.vc_relatorio_mensal_pdf", "GET",
+         "/api/v1/meuacesso/visao-cliente/relatorios-mensais/{relatorio_id}/pdf/view",
+         "O PDF do relatório mensal liberado", essencial=False,
+         sonda=False,
+         nao_sondada_porque="Renderiza o PDF inteiro a cada chamada (medido: 0,9-2,1 s, e "
+                            "0,5-2,3 MB a mais quando a usina tem ortomosaico de capa). A "
+                            "tela do portal exercita sob demanda."),
     # O pacote de fichas do portal: baixar TODOS os PDFs das tarefas de um período. O
     # inventário é leitura pura e é sondado — é ele que descobre, antes do cliente, que a
     # rota mudou de lugar. Os outros três não: PREPARAR escreve (gera PDF no meuPlano), o
@@ -564,7 +617,11 @@ def _colher(corpo: Any, campos: dict[str, str], exige: str | None = None) -> dic
     produto.
     """
     if isinstance(corpo, dict):
-        for chave in ("items", "results", "data"):
+        # `itens` entra ao lado dos três em inglês porque a visão-cliente do meuPlano fala
+        # português: sem ele, uma lista dentro de `{"itens": [...]}` fazia `_colher` tratar
+        # o ENVELOPE como se fosse o item, não achar campo nenhum e pular a rota seguinte
+        # em silêncio — um vermelho a menos, mas também uma rota a menos vigiada.
+        for chave in ("items", "results", "data", "itens"):
             if isinstance(corpo.get(chave), list):
                 return _colher(corpo[chave], campos, exige)
         item = corpo
@@ -665,6 +722,15 @@ async def _bater(
                 + ", ".join(sem_itens)
                 + " — não veio nenhum item nesse nível."
             )
+            if rota.exige_itens:
+                # NEM verde NEM vermelho: a rota respondeu, mas esta rodada não vigiou o
+                # que ela existe para vigiar. Verde aqui esconderia um rename de campo
+                # para sempre; vermelho mandaria investigar uma lista vazia que é normal.
+                base.situacao = "parcial"
+                base.detalhe += (
+                    " Esta rodada NÃO conferiu a forma desta rota — o retrato dela hoje "
+                    "não vale como vigilância."
+                )
         else:
             base.detalhe = f"Forma conferida: {len(confirmados)} campos."
 
@@ -783,6 +849,16 @@ async def varrer(db: Session, produto: Produto) -> Varredura:
         )
     else:
         detalhe = f"As {ok} rotas exercitadas responderam."
+
+    parciais = [r for r in resultados if r.situacao == "parcial"]
+    if parciais:
+        # Contadas à parte de propósito: não são falha (o produto respondeu) nem passe (a
+        # forma não foi conferida). Sem esta frase, a única pista de que a vigilância não
+        # aconteceu ficaria escondida no detalhe de uma linha.
+        detalhe += (
+            f" {len(parciais)} rota(s) responderam sem itens — a forma delas não foi "
+            "conferida nesta rodada."
+        )
 
     return Varredura(
         produto=produto.value,

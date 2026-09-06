@@ -451,3 +451,70 @@ async def test_sem_contrato_consolidado_o_cronograma_fica_pulado(db, meuplano_co
 
     r = next(r for r in v.rotas if r.chave == "mp.cronograma")
     assert r.situacao == "pulada" and "vc_container_id" in (r.detalhe or "")
+
+
+@respx.mock
+async def test_a_lista_de_relatorios_mensais_vazia_nao_sai_verde(db, meuplano_conectado):
+    """O DEFEITO: a linha que vigia o relatório mensal não vigiava nada, e dizia `ok`.
+
+    A sonda pergunta pela PRIMEIRA usina do produto, e das 22 do meuPlano só uma tinha
+    documento liberado (medido em 06/09/2026 — a primeira da lista é um resto de teste,
+    `__E2E_PACOTE_FICHAS__`). Com a lista vazia, os cinco `campos_exigidos` não são olhados:
+    um rename de `itens[].id` passaria em verde para sempre, e a aba abriria vazia sem
+    ninguém ter sido avisado. Agora a rodada diz que não conferiu.
+    """
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(
+        f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/relatorios-mensais"
+    ).respond(200, json={"itens": []})
+    respx.mock.route(host="api.meuplano.test").respond(200, json={})
+
+    v = await sonda.varrer(db, Produto.MEUPLANO)
+
+    r = next(r for r in v.rotas if r.chave == "mp.vc_relatorios_mensais")
+    assert r.situacao == "parcial", r.detalhe
+    assert "NÃO conferiu a forma" in (r.detalhe or "")
+    # nem falha (o produto respondeu 200) nem passe: fora da conta das exercitadas, e a
+    # varredura DIZ que houve rodada sem vigilância.
+    assert v.ok is True
+    assert "não foi conferida nesta rodada" in v.detalhe
+    # e o detalhe segue mandando na rota seguinte: sem id colhido, ela fica pulada.
+    seguinte = next(r for r in v.rotas if r.chave == "mp.vc_relatorio_mensal")
+    assert seguinte.situacao == "pulada"
+
+
+@respx.mock
+async def test_com_um_relatorio_liberado_a_forma_e_conferida_de_verdade(db, meuplano_conectado):
+    """E quando vem item, a linha volta a ser vigilância: os cinco campos são conferidos e o
+    id colhido é o de um documento LIBERADO (`captura_exige='liberado_em'`)."""
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(
+        f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/relatorios-mensais"
+    ).respond(
+        200,
+        json={"itens": [{"id": 61, "usina_id": 19, "competencia": "2026-08",
+                         "tipo": "executivo", "liberado_em": "2026-09-06T16:18:46"}]},
+    )
+    detalhe = respx.mock.get(
+        f"{MP_BASE}/api/v1/meuacesso/visao-cliente/relatorios-mensais/61"
+    ).respond(200, json={"dados": {"cabecalho": {"usina": "Porto Ferreira"},
+                                   "cronograma": None, "pareceres": {}, "problemas": {},
+                                   "pendencias": []}, "texto": "..."})
+    respx.mock.route(host="api.meuplano.test").respond(200, json={})
+
+    v = await sonda.varrer(db, Produto.MEUPLANO)
+
+    r = next(r for r in v.rotas if r.chave == "mp.vc_relatorios_mensais")
+    assert r.situacao == "ok" and "5 campos" in (r.detalhe or "")
+    assert detalhe.called
+    # a prova de que a linha VIGIA: renomear um campo do item pinta vermelho com o nome.
+    respx.mock.get(
+        f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/relatorios-mensais"
+    ).respond(
+        200,
+        json={"itens": [{"id": 61, "usina_id": 19, "mes": "2026-08",
+                         "tipo": "executivo", "liberado_em": "2026-09-06T16:18:46"}]},
+    )
+    v2 = await sonda.varrer(db, Produto.MEUPLANO)
+    r2 = next(r for r in v2.rotas if r.chave == "mp.vc_relatorios_mensais")
+    assert r2.situacao == "falhou" and "itens[].competencia" in (r2.detalhe or "")

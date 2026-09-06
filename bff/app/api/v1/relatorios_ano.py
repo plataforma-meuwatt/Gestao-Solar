@@ -34,14 +34,16 @@ meuPlano diz 41,9 %. A régua "até hoje" inclui o mês em curso, e ela é de l�
 
 ### Composição por DENTRO
 
-`meus_documentos` e `cronograma_da_usina` são chamados como **funções**, nunca por HTTP
-contra o próprio serviço — o padrão já estabelecido em `carteira.py`. Consequência
-deliberada: **nenhuma linha nova no catálogo da sonda**, porque nenhum método novo nasce
-em `clients/`.
+`documentos_de_geracao`, `mensais_das_usinas` e `cronograma_da_usina` são chamados como
+**funções**, nunca por HTTP contra o próprio serviço — o padrão já estabelecido em
+`carteira.py`. É `documentos_de_geracao` e não a rota `/documents` de propósito: a rota
+compõe a família mensal por conta dela, e chamá-la aqui buscaria o mesmo acervo duas vezes
+no mesmo pedido.
 
 A energia é **uma** ida ao meuWatt para a carteira inteira (`portal_relatorios` busca tudo
-de qualquer jeito); a manutenção é uma ida por usina, com semáforo — a Visão geral já
-custou 22 s por disparar ~64 chamadas de uma vez.
+de qualquer jeito); a manutenção é uma ida por usina para o cronograma **mais uma** para o
+acervo mensal, as duas dividindo o mesmo semáforo — a Visão geral já custou 22 s por
+disparar ~64 chamadas de uma vez.
 
 ### As cinco ausências da geração têm cinco nomes
 
@@ -51,11 +53,26 @@ tela desenha cada uma diferente. Medido hoje na carteira desta conta: 2 usinas c
 monitoramento. São situações diferentes que hoje chegam à tela como a mesma frase muda
 ("Sem arquivo anexado"), e o dono lê todas como "o aplicativo não baixou".
 
+### O relatório mensal de manutenção é OFERTA, nunca cor
+
+A célula do ano ganhou `manutencao.mensais`: quais relatórios mensais **liberados** existem
+naquele mês, para a folha oferecer o toque. Ele **não pinta nada**. A cor sai de
+`situacao`/`previsto`/`cumprido` — que respondem *"foi feito?"*, conformidade — e o PDF
+responde *"há papel sobre isso?"*, que é outra pergunta. Se a existência do documento
+mexesse na cor, a grade responderia duas perguntas com uma cor só; e como hoje **zero**
+relatórios estão liberados (medido em 06/09/2026 nas 22 usinas visíveis), a grade inteira
+ficaria em travessão. `test_a_marca_da_celula_nao_depende_do_documento` é o cadeado.
+
+Um relatório liberado num mês **fora do contrato** — o que acontece assim que a vigência
+vira e o `meses_estado` passa a cobrir outra janela — não pode sumir da grade. Nesse caso a
+célula ganha um bloco de manutenção que traz **só** o documento: `situacao`, `previsto` e
+`cumprido` continuam ausentes, então nenhuma conta nasce e nenhuma cor muda.
+
 ### Nada de PDF aqui
 
 Esta rota diz **onde há** documento e **que janela** o relatório de manutenção cobriria.
-Os bytes continuam saindo por `/documents/{id}/file` e por `/manutencao/relatorio/pdf`,
-onde a autorização é refeita.
+Os bytes continuam saindo por `/documents/{id}/file`, por `/manutencao/relatorio/pdf` e
+pela rota do relatório mensal, onde a autorização é refeita.
 """
 
 import asyncio
@@ -67,14 +84,23 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.v1.documents import (
+    ORDEM_DO_TIPO,
     DocumentoOut,
     DocumentosOut,
+    RelatorioMensalOut,
     # A leitura do `If-None-Match` é REUSADA, e não recopiada: o cabeçalho é uma lista e
     # pode vir com o prefixo fraco `W/`. Duas implementações da mesma comparação dariam
     # duas rotas com comportamentos de revalidação diferentes — e a que estivesse errada
     # falharia em silêncio (a tela continua certa, só a rede continua cara).
     _cliente_ja_tem,
-    meus_documentos,
+    # A GERAÇÃO sozinha: esta rota pede o acervo mensal por conta própria, com o semáforo
+    # dela. Chamar a rota inteira faria a mesma família ser buscada duas vezes no mesmo
+    # pedido — catorze idas ao meuPlano onde bastam sete.
+    documentos_de_geracao,
+    # O fan-out do mensal é FONTE ÚNICA, compartilhada com `/documents`: duas cópias
+    # poderiam divergir sobre quais relatórios existem, e a aba de Relatórios e a grade do
+    # ano dariam duas respostas para a mesma pergunta.
+    mensais_das_usinas,
 )
 from app.api.v1.manutencao import CronogramaOut, cronograma_da_usina
 from app.api.v1.plants import usinas_do_usuario
@@ -140,6 +166,21 @@ class EnergiaCelulaOut(BaseModel):
     pecas: list[PecaOut] = []
 
 
+class MensalNaCelulaOut(BaseModel):
+    """Um relatório mensal liberado, na medida da célula: o que abrir, e qual dos dois é.
+
+    Só o par que a folha precisa para oferecer o toque. O resto do cartão — a usina, a
+    competência, a data de publicação — já viaja completo em `/documents.mensais`, e
+    repeti-lo aqui daria duas cópias da mesma verdade dentro do mesmo pedido.
+    """
+
+    #: `executivo` (o resumo da diretoria) ou `tecnico` (o laudo). Cru, como veio.
+    tipo: str
+    #: O id do relatório **no meuPlano** — o mesmo `RelatorioMensalOut.id`, e o que a rota
+    #: do PDF mensal aceita. **Não** é o id do vínculo.
+    relatorio_id: int
+
+
 class ManutencaoCelulaOut(BaseModel):
     """O mês do contrato, como o meuPlano o classificou. Repassado, nunca recalculado."""
 
@@ -151,6 +192,13 @@ class ManutencaoCelulaOut(BaseModel):
     #: meuPlano não disse"; **zero é resposta** ("nada previsto neste mês").
     previsto: int | None = None
     cumprido: int | None = None
+    #: Os relatórios mensais LIBERADOS daquele mês, **executivo primeiro** — a mesma ordem
+    #: do portal, porque a diretoria é o destino declarado do executivo e duas ordens
+    #: dariam duas respostas para a mesma pergunta.
+    #:
+    #: ⚠ **Não entra na cor da célula.** Ver o cabeçalho do módulo: a marca responde "foi
+    #: feito?" e sai dos três campos acima; isto responde "há papel sobre isso?".
+    mensais: list[MensalNaCelulaOut] = []
 
 
 class CelulaOut(BaseModel):
@@ -158,9 +206,15 @@ class CelulaOut(BaseModel):
 
     mes: str  # "YYYY-MM"
     energia: EnergiaCelulaOut
-    #: Nulo quando o mês **não pertence ao contrato**. Medido: o contrato de Porto Ferreira
-    #: vai de 2026-08 a 2027-07 — de janeiro a julho de 2026 não há nada combinado, e um
-    #: bloco de zeros ali se leria como "estava previsto e não foi feito".
+    #: Nulo quando o mês **não pertence ao contrato** e não há relatório mensal liberado
+    #: nele. Medido: o contrato de Porto Ferreira vai de 2026-08 a 2027-07 — de janeiro a
+    #: julho de 2026 não há nada combinado, e um bloco de zeros ali se leria como "estava
+    #: previsto e não foi feito".
+    #:
+    #: A exceção é o mês fora do contrato que TEM documento liberado (acontece assim que a
+    #: vigência vira e o `meses_estado` passa a cobrir outra janela): aí o bloco existe
+    #: trazendo **só** `mensais`, com `situacao`/`previsto`/`cumprido` ausentes. Sem isso o
+    #: relatório que a equipe entregou sumiria da grade do ano em que ele foi entregue.
     manutencao: ManutencaoCelulaOut | None = None
 
 
@@ -248,6 +302,14 @@ class UsinaAnoOut(BaseModel):
     #: motivo de energia por usina, ele nasce como `aviso_energia` e ninguém precisa
     #: reinterpretar prosa para separá-los.
     aviso_manutencao: str | None = None
+    #: O que falhou no acervo de RELATÓRIOS MENSAIS desta usina — a terceira família, e o
+    #: campo próprio que a nota acima previu. `aviso_manutencao` fala do cronograma (a
+    #: conformidade); este fala do documento. Um relatório mensal que não veio não diz nada
+    #: sobre a manutenção ter sido feita, e vice-versa.
+    #:
+    #: Nulo é o normal, inclusive quando não há nada liberado: **ausência de documento não
+    #: é falha**, e é o estado medido hoje em toda a base.
+    aviso_mensais: str | None = None
 
 
 class RelatoriosAnoOut(BaseModel):
@@ -366,6 +428,28 @@ async def _cronograma(
             return exc
 
 
+def _mensais_por_mes(
+    relatorios: list[RelatorioMensalOut],
+) -> dict[str, list[MensalNaCelulaOut]]:
+    """Os relatórios liberados agrupados pelo mês que fecham, executivo antes do técnico.
+
+    A competência vem PRONTA do meuPlano (`YYYY-MM`) — aqui ninguém a deriva de data
+    nenhuma. Competência fora dos doze rótulos do ano simplesmente não encontra célula, e
+    isso é correto: ela pertence a outro ano da grade.
+    """
+    por_mes: dict[str, list[MensalNaCelulaOut]] = {}
+    for r in relatorios:
+        por_mes.setdefault(r.competencia, []).append(
+            MensalNaCelulaOut(tipo=r.tipo, relatorio_id=r.id)
+        )
+    for lista in por_mes.values():
+        # Ordem total: o tipo manda, o id desempata. A etiqueta da resposta é o sha256 do
+        # corpo — uma ordem instável faria o `ETag` mudar sem nada ter mudado, e a
+        # revalidação nunca daria 304 sem ninguém perceber (a tela continua certa).
+        lista.sort(key=lambda m: (ORDEM_DO_TIPO.get(m.tipo, len(ORDEM_DO_TIPO)), m.relatorio_id))
+    return por_mes
+
+
 def _linha(
     link: PlantLink,
     *,
@@ -374,6 +458,8 @@ def _linha(
     docs_por_mes: dict[str, DocumentoOut],
     doc_anual: DocumentoOut | None,
     cronograma: CronogramaOut | BaseException | None,
+    mensais: list[RelatorioMensalOut] | None,
+    falha_mensais: str | None,
     energia_indisponivel: bool,
     mes_corrente: str,
 ) -> UsinaAnoOut:
@@ -410,6 +496,28 @@ def _linha(
             if cronograma.aviso:
                 motivos.append(cronograma.aviso)
 
+    # A falha do acervo mensal ganha campo PRÓPRIO — não entra em `aviso_manutencao`. As
+    # duas coisas são de famílias diferentes: uma responde "a equipe publicou o cronograma?"
+    # (conformidade) e a outra "o documento do mês está disponível?" (papel). Juntá-las
+    # repetiria o defeito que este módulo já pagou uma vez: o aplicativo lendo "a equipe
+    # ainda não publicou o cronograma" enquanto o que faltou foi o PDF.
+    if link.mp_usina_id and mensais is None:
+        linha.aviso_mensais = (
+            falha_mensais or "Não deu para buscar os relatórios mensais desta usina."
+        )
+    mensais_por_mes = _mensais_por_mes(mensais or [])
+
+    def _manutencao(mes: str) -> ManutencaoCelulaOut | None:
+        celula = por_mes.get(mes)
+        do_mes = mensais_por_mes.get(mes)
+        if celula is None:
+            # Mês fora do contrato: só nasce bloco se houver documento liberado nele, e
+            # ainda assim SEM situação/previsto/cumprido — nenhuma conta, nenhuma cor.
+            return ManutencaoCelulaOut(mensais=do_mes) if do_mes else None
+        if do_mes:
+            celula.mensais = do_mes
+        return celula
+
     linha.meses = [
         CelulaOut(
             mes=mes,
@@ -418,8 +526,8 @@ def _linha(
                 monitorada=monitorada,
                 indisponivel=energia_indisponivel,
             ),
-            # Ausente = mês fora do contrato. Ver `CelulaOut.manutencao`.
-            manutencao=por_mes.get(mes),
+            # Ausente = mês fora do contrato e sem documento. Ver `CelulaOut.manutencao`.
+            manutencao=_manutencao(mes),
         )
         for mes in meses
     ]
@@ -502,13 +610,30 @@ async def grade_do_ano(
     # semáforo. As duas famílias em paralelo e cada uma falhando por conta própria: a
     # queda do monitoramento não pode apagar o cronograma, que é o caso que acontece
     # primeiro (medido: 4 fechamentos sem arquivo e 1 cronograma consolidado).
+    #
+    # O acervo mensal entra na MESMA rajada e divide as MESMAS vagas do cronograma: os dois
+    # batem no meuPlano, e dois semáforos de seis dariam doze conexões simultâneas ao mesmo
+    # upstream — exatamente a rajada que este semáforo existe para evitar. É uma ida a mais
+    # por usina, e a lista completa de cada usina de uma vez: o filtro `?competencia=` é
+    # opcional lá, então não são doze idas por usina para montar doze colunas.
     vagas = asyncio.Semaphore(LARGURA)
     com_manutencao = [l for l in links if l.mp_usina_id]
-    documentos, *cronogramas = await asyncio.gather(
-        meus_documentos(db=db, usuario=usuario),
+    documentos, mensais, *cronogramas = await asyncio.gather(
+        documentos_de_geracao(None, db, usuario),
+        mensais_das_usinas(db, links, vagas=vagas),
         *(_cronograma(l, db, usuario, vagas) for l in com_manutencao),
         return_exceptions=True,
     )
+
+    # `mensais_das_usinas` já apanha o que é dela e devolve aviso; o `isinstance` é o cinto
+    # contra a surpresa — sem ele, uma exceção inesperada viraria `tuple` inexistente e
+    # derrubaria a grade inteira por causa de uma família secundária.
+    if isinstance(mensais, tuple):
+        mensais_por_usina, falha_mensais = mensais
+    else:
+        mensais_por_usina, falha_mensais = {}, _falha(mensais) or None
+        if falha_mensais:
+            falha_mensais = f"Relatórios mensais indisponíveis: {falha_mensais}"
 
     energia_indisponivel = False
     docs: list[DocumentoOut] = []
@@ -523,7 +648,7 @@ async def grade_do_ano(
             # cada célula já dirá `sem_monitoramento` por conta própria; com usina ligada,
             # o aviso é falha da ponte e as células não podem afirmar que ninguém publicou.
             energia_indisponivel = any(l.mw_plant_slug for l in links)
-    else:  # pragma: no cover — só se `meus_documentos` mudar de forma
+    else:  # pragma: no cover — só se `documentos_de_geracao` mudar de forma
         saida.aviso = "O monitoramento não devolveu relatórios."
         energia_indisponivel = True
 
@@ -535,7 +660,7 @@ async def grade_do_ano(
     for d in docs:
         if d.competencia in do_ano:
             # Mais de um fechamento no mesmo mês: fica o publicado por último, que é a
-            # ordem em que `meus_documentos` já entrega a lista.
+            # ordem em que `documentos_de_geracao` já entrega a lista.
             por_usina_mes.setdefault((d.plant_id, d.competencia), d)
         elif d.ano == ano:
             anual_por_usina.setdefault(d.plant_id, d)
@@ -551,6 +676,11 @@ async def grade_do_ano(
             },
             doc_anual=anual_por_usina.get(l.id),
             cronograma=por_id.get(l.id),
+            # Ausente do mapa = a usina não respondeu. Lista vazia = respondeu e não há
+            # nada liberado, que é o estado normal de hoje. As duas coisas são diferentes
+            # e a linha diz qual é.
+            mensais=mensais_por_usina.get(l.id),
+            falha_mensais=falha_mensais,
             energia_indisponivel=energia_indisponivel,
             mes_corrente=corrente,
         )
