@@ -546,6 +546,150 @@ cobrá-lo como pendência seria errado. Quem precisa da diferença a tem por cé
 
 O cronograma anual em PDF, com a letra do estado em cada célula (`D` para dispensado).
 
+### O relatório mensal liberado — *no ar*
+
+O fechamento que a equipe de manutenção **entrega e assina** todo mês. Três rotas, medidas
+contra produção em 06/09/2026. Vêm da porta `visao-cliente` do meuPlano e de nenhuma outra.
+
+> **O corte é o STATUS, e ele tem uma armadilha com nome.** O fluxo de lá é
+> Gerado → A aprovar → **Aprovado** → Liberado p/ envio → Enviado (`rascunho`, `pronto`,
+> `aprovado`, `enviado`, `expedido`). Só os **dois últimos** atravessam. O status chamado
+> *aprovado* **não é liberado**: ainda é conversa interna, e um relatório aprovado pode
+> voltar para revisão com outro número — o cliente não pode ter visto um número que mudou.
+> **O BFF não reimplementa essa régua: ele não conhece outra porta.** Só chama
+> `visao-cliente/…`, onde o corte é incondicional; nenhum desses nomes internos aparece em
+> mapa nenhum deste lado, e se um dia vazar para a resposta é defeito do upstream, não
+> escolha nossa. Medido levando um relatório real até `aprovado`: as três portas de lá
+> responderam **404** e a lista da usina continuou com dois itens.
+
+O corte é a **única** coisa que separa um cliente do relatório de outro? Não, e é bom que
+não seja: o PAT desta ponte é da organização gestora e **enxerga as 22 usinas**. Medido —
+pedir a lista de uma usina que não é deste cliente responde **200 com lista vazia, não 403**.
+Quem recorta por carteira é este lado, em `_link_do_escopo` (na lista) e
+`_relatorio_autorizado` (no detalhe e no PDF, que recebem um **id de relatório**, não de
+usina). Sem a segunda, trocar um dígito na URL abriria o documento de outro dono.
+
+#### `GET /manutencao/relatorios-mensais?usina_id=&competencia=&tipo=`
+
+O índice, sem o corpo. `usina_id` é o id do vínculo **neste** sistema. `competencia` é
+`AAAA-MM` e é conferida antes de ir ao upstream; `tipo` (`tecnico` | `executivo`) viaja cru.
+
+```json
+{
+  "usina": "Porto Ferreira", "usina_id": 4,
+  "itens": [
+    { "id": 61, "usina_id": 4, "usina": "Porto Ferreira",
+      "competencia": "2026-08", "tipo": "executivo",
+      "liberado_em": "2026-09-06T16:18:46.099612" },
+    { "id": 14, "usina_id": 4, "usina": "Porto Ferreira",
+      "competencia": "2026-08", "tipo": "tecnico",
+      "liberado_em": "2026-09-06T16:18:44.842708" }
+  ],
+  "aviso": null
+}
+```
+
+`id` é o do relatório **no meuPlano** — é o que as duas rotas seguintes aceitam. `usina_id`
+é o **nosso**: os dois são inteiros pequenos, e trocá-los abriria a usina errada sem erro
+nenhum.
+
+**Executivo antes do técnico, sempre, nas duas frentes.** A diretoria é o destino declarado
+pelo próprio meuPlano; uma ordem por frente daria duas respostas para "qual é o principal?".
+Dentro do mês vale essa ordem; entre meses, o mais recente primeiro.
+
+**Lista vazia nasce com frase**, nunca muda: o meuPlano não distingue "não existe" de
+"existe e não foi liberado" — e faz certo, porque as duas respostas seriam a mesma janela
+para descobrir o que um rascunho diz. Quem distingue é este lado, que sabe qual mês foi
+pedido: *"O relatório técnico de agosto de 2026 ainda não foi liberado pela equipe de
+manutenção."*
+
+**O que NÃO atravessa, e por quê.** O upstream manda `aprovado_por`, `aprovado_em` e
+`apurado_em`; nenhum dos três sai daqui. `aprovado_por` é **nome de funcionário da
+executora** — publicá-lo entrega o organograma interno e cria endereço para cobrança
+pessoal. Os outros dois respondem "quando os números foram calculados", que não é "de quando
+é este documento"; três datas na mesma linha fazem o leitor não saber qual responde à
+pergunta dele. Sai **uma** data, `liberado_em`, e a tela a rotula *publicado*. Os nomes
+internos do fluxo também não chegam: para quem recebe existe um estado só — o documento
+está lá.
+
+#### `GET /manutencao/relatorios-mensais/{id}`
+
+O mesmo cartão com o corpo dentro, em `conteudo` — o `dados` **congelado** passado pelo
+**mesmo** `traduzir` do relatório sob demanda. Não é uma segunda tradução nem uma segunda
+conta: `apuracao.apurar` do meuPlano reusa `relatorio_manutencao.montar`, a mesma fonte do
+agregado sob demanda, e o tradutor engole o congelado sem adaptação.
+
+O contrato sai **de dentro** do `dados` (o cabeçalho congelado o descreve), não de uma
+segunda ida: um documento congelado descrito por um contrato lido hoje seria um relatório
+contando duas histórias. Onde o congelado não traz o campo, ele vem **nulo** e a tela mostra
+travessão (Regra 0) — nunca zero, nunca palpite.
+
+Um liberado **sem corpo** é 502 com frase própria ("liberado sem os números dentro"), e não
+a frase de cronograma não publicado: mandar o cliente procurar o problema no lugar errado é
+pior que não explicar.
+
+#### `GET /manutencao/relatorios-mensais/{id}/pdf`
+
+`application/pdf`, `Content-Disposition: inline`, `Cache-Control: private, max-age=300` — o
+documento é **congelado**, então cachear cinco minutos está certo (o upstream manda
+`no-store`, que aqui não vale). Um GET só, bytes prontos: sem cesta, sem preparo em três
+atos, sem partes numeradas. Chega com a sessão no cabeçalho — token nunca vai em URL.
+
+Medido pela porta do cliente, com o BFF no meio:
+
+| documento | bytes | tempo | páginas |
+|---|---|---|---|
+| técnico, Porto Ferreira 2026-08 | 263.256 | 2,5 s | 9 |
+| executivo, Porto Ferreira 2026-08 | 403.775 | 2,9 s | 3 |
+
+**O nome do arquivo é nosso, e isso não é detalhe.** O upstream chama o próprio arquivo de
+`Relatorio-tecnico-usina19-2026-08.pdf` — com o id do meuPlano dentro. Aqui sai
+`Relatorio-mensal-tecnico-Porto-Ferreira-2026-08.pdf`, montado por `_nome_ascii` +
+`filename*` (RFC 5987). Duas razões, as duas já pagas neste repositório: cabeçalho é latin-1
+no Starlette e uma usina como "UFV SÍTIO" estouraria o `Response` **antes do CORS**, com o
+portal acusando a internet do cliente; e o relatório sob demanda se baixa como
+`Relatorio-manutencao-{usina}-{de}-{ate}.pdf` — dois arquivos homônimos na pasta de
+Downloads é como a pergunta *"qual é o certo?"* começa.
+
+#### Os dois documentos que respondem à mesma pergunta
+
+`/manutencao/relatorio` e o mensal liberado **não são dois cálculos** — são um documento em
+dois estados, e a tela diz qual é qual:
+
+| | `/manutencao/relatorio` | relatório mensal liberado |
+|---|---|---|
+| o que é | *"como está agora"* | *"o que foi entregue no fechamento"* |
+| período | livre, até 24 meses | um mês, a competência |
+| números | recalculados a cada abertura | congelados na apuração |
+| assinatura | ninguém assinou | a equipe liberou, com data |
+| carimbo na tela | `gerado_em` + "leitura ao vivo" | `liberado_em`, rotulado *publicado* |
+
+Regra: **quando existe liberado para o mês, ele vem primeiro**, e a consulta por janela vira
+"consultar um período". Sem o carimbo nos dois, quem abrir ambos em janeiro vê números
+diferentes de agosto e não sabe que a diferença é o **tempo**, não o erro.
+
+#### Como se prova que isto funciona
+
+`python scripts/conferir_relatorio_mensal.py` — sobe um BFF local, fala com o meuPlano de
+verdade e **abre os PDFs** (páginas e capa via `pypdf`). 37 conferências, todas passando em
+06/09/2026. Ele existe porque até aquele dia o caminho feliz **nunca havia rodado**: os 26
+relatórios de agosto/2026 estavam todos em rascunho e a porta do cliente respondia
+`{"itens": []}` nas 22 usinas — os 404 que se mediam eram do corte, não de defeito.
+`--provar` alimenta as mesmas conferências com dado estragado e exige que cada uma reprove.
+
+Uma pegadinha que o script teve de aprender: **nenhum dos dois PDFs escreve a competência em
+ISO**. O técnico imprime `AGOSTO / 2026`, o executivo `ago/26 a ago/26`, e "2026-08" não
+aparece em nenhum dos dois — uma conferência que exigisse a forma ISO reprovaria dois
+documentos corretos.
+
+Duas coisas que o script mede e que não são deste lado, registradas para não virarem
+surpresa: o PDF do executivo respondeu **HTTP 502 depois de 46 s** numa passada e **200 em
+2,7 s** na seguinte, sob medições concorrentes contra o mesmo contêiner (por isso o download
+tem duas tentativas, e a perdida é impressa e contada no rodapé); e todo PDF que sai por aqui
+é **assinado pela identidade do PAT da ponte** — `_responsible_info` do meuPlano carimba o
+dono do token, seja qual for o mês e quem tenha aprovado. Quem de fato respondeu pelo
+documento é o `aprovado_por`, que este BFF recebe e **não** publica.
+
 ---
 
 ## Relatórios

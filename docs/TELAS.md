@@ -90,6 +90,7 @@ preferimos a lacuna anotada a uma tabela que parece conferida e não foi.
 | 4.1 | Relatórios — acervo | `(tabs)/relatorios` | `GET /api/v1/documents` (ETag/304) | mw-api `reports/portal`, recortado por `mw_plant_slug` |
 | 4.2 | Relatórios — o ano, mês a mês | `relatorios/ano` | `GET /api/v1/relatorios/ano?ano=` | composição no BFF: `documents` × `manutencao/cronograma` |
 | 4.3 | Leitor de PDF | `relatorio/[id]` | `GET /api/v1/documents/{id}/file?tipo=` | proxy de bytes |
+| 4.4 | Fechamento mensal de manutenção | dentro de 4.1 e 4.2 | `manutencao/relatorios-mensais?usina_id=` · `…/{id}` · `…/{id}/pdf` | meuPlano `visao-cliente/…/relatorios-mensais` — **só os liberados** |
 | — | ~~Gerar relatório~~ | — | — | **não existe**: não há fila, job nem endpoint de progresso — a folha com "etapa 2 de 3" era animação encenando trabalho que ninguém fazia |
 | 5.1 | Financeiro | `(tabs)/financeiro` | `GET /api/v1/billing` | `gs_subscription` + `gs_invoice` (BFF) |
 | 5.2 | Fatura | `fatura/[id]` | `GET /api/v1/billing/invoices/{id}` | `gs_invoice` |
@@ -233,6 +234,85 @@ portal e **abre o XLSX**. Medido em 05/09/2026 (Porto Ferreira, agosto a 15 min)
 `['Leia-me', 'Inversores']`, 2.977 linhas (2.976 instantes + cabeçalho), 22 colunas,
 184.220 bytes, 11,5 s; e 92 dias a 5 min recusado em 2,4 s com
 `motivo: passo_excede_limite`.
+
+### P.8 — Os dois relatórios de manutenção, e por que a tela diz qual é qual
+
+A aba Relatórios passou a ter **dois** documentos que respondem à mesma pergunta ("como foi
+a manutenção de agosto?"). Isso é a lição mais cara deste projeto, então está escrito:
+
+- **o relatório sob demanda** (`manutencao/relatorio`) — período livre, recalculado a cada
+  abertura, ninguém assinou. É a ferramenta de consulta, e a única resposta possível para
+  "e setembro, como vai?", porque setembro ainda não fechou;
+- **o fechamento mensal liberado** (`manutencao/relatorios-mensais`) — um mês, congelado,
+  liberado pela equipe com data. É a peça de arquivo, a que foi para a mão do cliente.
+
+**Eles não são dois cálculos.** Medido: `apuracao.apurar` do meuPlano reusa
+`relatorio_manutencao.montar`, a mesma fonte do agregado sob demanda — o `traduzir` do BFF
+engole o `dados` congelado sem adaptação e devolve os mesmos 13/13, 100 %, 56+1 pareceres e
+8 problemas. São um documento em **dois estados**, e o estado é o que a tela precisa dizer.
+
+Três regras, todas por causa disso:
+
+1. **Quando existe liberado para o mês, ele vem primeiro** e a consulta por janela vira
+   "consultar um período" — nunca dois cartões oferecendo "o relatório de agosto".
+2. **Carimbo obrigatório nos dois**: o liberado mostra `liberado_em` rotulado *publicado*; o
+   de demanda mostra `gerado_em` e a frase de que é leitura ao vivo. Sem isso, quem abrir os
+   dois em janeiro vê números diferentes de agosto e não sabe que a diferença é o **tempo**.
+3. **Nomes de arquivo distintos** — `Relatorio-mensal-{tipo}-{usina}-{AAAA-MM}.pdf` ×
+   `Relatorio-manutencao-{usina}-{de}-{ate}.pdf`. Dois arquivos homônimos na pasta de
+   Downloads é como a pergunta "qual é o certo?" começa.
+
+**Técnico e executivo são duas linhas dentro de um card**, na ordem executivo → técnico, e a
+ordem é a **mesma nas duas frentes**: a diretoria é o destino declarado pelo próprio meuPlano
+("nível gestor que tem cinco minutos"), e uma ordem por frente daria duas respostas para
+"qual é o principal?". Não são "modo" nem "versão": são dois documentos, dois PDFs, dois
+motores. Zero chip — a forma já existe na casa (as linhas de peça do acervo).
+
+**Cada linha diz o próprio nome, com as MESMAS palavras nas duas frentes**: "Relatório
+executivo — O resumo do mês, para a diretoria." e "Relatório técnico — O laudo completo, com
+o cronograma, as ordens e as fichas do mês." Na primeira entrega as duas linhas do aplicativo
+se chamavam "Relatório de manutenção" e só um rótulo miúdo as separava, ao lado de uma
+vizinha que anuncia "Relatório de Geração · técnico · 2,7 MB" — dois títulos iguais na mesma
+rolagem fazem abrir o errado. O **peso** não aparece nesta família enquanto o BFF não mandar
+`bytes`: a tela deixou de falar de tamanho aqui, em vez de pendurar um travessão.
+
+**Na folha do mês, a hierarquia está na cor também.** Quando o documento liberado está logo
+acima, "Abrir a consulta deste mês" é botão **secundário** — o texto declarava a hierarquia e
+três botões do mesmo amarelo a contradiziam. Sem documento liberado, a consulta volta a ser o
+botão principal, porque é o único caminho do mês. E a frase de rodapé tem **duas versões**:
+só cita "o relatório liberado acima" quando ele está lá (medido: na folha de setembro ela
+mandava procurar o que não existia).
+
+**O vazio nasce com frase.** Medido em 06/09/2026: até aquele dia, **zero** relatórios
+liberados nas 22 usinas — os 26 de agosto/2026 existiam e estavam todos em rascunho. A rota
+do meuPlano não distingue "não existe" de "existe e não foi liberado", e faz certo em não
+distinguir; quem distingue é o BFF, que sabe qual mês foi pedido, e devolve *"O relatório
+técnico de agosto de 2026 ainda não foi liberado pela equipe de manutenção."*
+
+**Paridade — exceção declarada.** O card do mensal e as duas linhas valem para portal **e**
+aplicativo. A grade `usina × mês` (4.2) é do **aplicativo e só dele**: o portal é escopado a
+uma usina e não tem grade — não foi construída, e não é esquecimento. A frase obsoleta que
+dizia não existir relatório executivo de manutenção também era só do aplicativo, porque só
+lá ela havia sido escrita; ela foi **reescrita, não apagada** — o executivo existe, mas
+continua não havendo modo executivo na consulta por janela livre, e apagar a frase deixaria
+o buraco sem nome.
+
+**A cor da célula do ano não depende do documento.** `marcaDaManutencao` responde "foi
+feito?" a partir de situação/previsto/cumprido — conformidade, não papel. Se a existência do
+PDF pintasse a célula, a grade responderia duas perguntas com uma cor só e hoje ficaria
+inteira em travessão. O mensal é **oferta dentro da folha aberta**, não pigmento da grade.
+
+**Prova:** `bff/scripts/conferir_relatorio_mensal.py` — 37 conferências, com os dois PDFs
+abertos de verdade (9 e 3 páginas, 263 KB e 404 KB, 2,5 s e 2,9 s) e as portas fechadas
+conferidas: id inexistente, relatório **não liberado** e relatório pedido por outra carteira
+respondem todos **404**, iguais de propósito. Ver
+[`CONTRATO_API.md`](CONTRATO_API.md#o-relatório-mensal-liberado--no-ar).
+
+**O corte tem cadeado do outro lado.** `meuPlano/backend/scripts/validate_relatorios.py`
+exercita os SEIS degraus do ciclo pela porta da visão-cliente (lista, detalhe e PDF) e exige
+404 em rascunho, "A aprovar", **"Aprovado"** e "Em revisão"; só "Liberado p/ envio" e
+"Enviado" atravessam. Provado que reprova: acrescentar `"aprovado"` a `_LIBERADOS` derruba
+três checagens (89/89 → 86/89).
 
 ### O que o portal tem e o painel não
 
