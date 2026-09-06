@@ -36,7 +36,9 @@ from fastapi import HTTPException
 
 from app.api.v1 import pacotes
 from app.api.v1.exportacao import (
+    FILA_MAX,
     MOTIVO_ESPERA,
+    VAGAS_SIMULTANEAS,
     _VAGAS,
     OpcoesOut,
     PedidoIn,
@@ -473,7 +475,7 @@ async def test_janela_que_fecha_antes_de_abrir_morre_aqui(db, dono, minha, ponte
 
 @respx.mock
 async def test_pedido_sem_bloco_nenhum_morre_aqui(db, dono, minha, ponte):
-    """DEFEITO: gastar 35,6 s do worker único do meuWatt e uma vaga do minuto para descobrir
+    """DEFEITO: gastar 37,9 s do worker único do meuWatt e uma vaga do minuto para descobrir
     que o cliente não escolheu nada.
 
     Bloco PRESENTE e vazio (`variaveis: []`) morre um degrau antes, no `min_length=1` do
@@ -752,11 +754,23 @@ async def test_o_terceiro_pedido_espera_a_vaga_em_vez_de_correr_junto(
     A prova aqui é de ORDEM, não de tempo: o terceiro não pode ter resposta enquanto os dois
     primeiros seguram as vagas, e tem de recebê-la assim que um deles termina. Cronometrar
     seria medir a máquina; isto mede a fila.
+
+    ⛔ E o NÚMERO é afirmado à parte, na primeira linha. Sem isso, a mutação que troca
+    `Semaphore(2)` por `Semaphore(99)` passa por toda a suíte: um teste que monta a própria
+    fila a partir da constante continua verde com qualquer valor — provado ao ensaiar
+    exatamente essa mutação, que a suíte inteira deixou passar.
     """
+    assert VAGAS_SIMULTANEAS == 2, (
+        "dois, e é decisão de produto: o `render.yaml` da mw-api fixa `workers=1` e o balde "
+        "de 10/minuto é do IP inteiro do portal. Subir este número é subir o risco de um "
+        "cliente queimar a cota de todos."
+    )
     respx.mock.post(f"{BASE}/plants/porto-ferreira/exports/raw").respond(200, content=XLSX)
     # Semáforo NOVO, criado no laço deste teste — um `asyncio.Semaphore` só se amarra a um
     # laço quando alguém precisa ESPERAR nele, que é exatamente o que se provoca aqui.
-    monkeypatch.setattr("app.api.v1.exportacao._VAGAS", asyncio.Semaphore(2))
+    monkeypatch.setattr(
+        "app.api.v1.exportacao._VAGAS", asyncio.Semaphore(VAGAS_SIMULTANEAS)
+    )
     # Curto para o teste falhar depressa se a vaga nunca voltar, em vez de pendurar 45 s.
     monkeypatch.setattr("app.api.v1.exportacao._ESPERA_MAX_SEG", 2.0)
 
@@ -813,3 +827,102 @@ async def test_fila_cheia_responde_espere_em_vez_de_pendurar_o_cliente(
     assert resposta.status_code == 429
     assert MOTIVO_ESPERA in resposta.body.decode()
     assert resposta.headers["retry-after"] == "60"
+
+
+@respx.mock
+async def test_fila_cheia_recusa_na_hora_em_vez_de_prender_o_cliente_pelo_teto(
+    db, dono, minha, ponte, pedido, monkeypatch
+):
+    """DEFEITO QUE ESTE TESTE GUARDA: a fila ilimitada, que fazia o cliente PAGAR pela recusa.
+
+    Antes de `FILA_MAX` a fila não tinha teto de gente, só de tempo — e o de tempo era o
+    problema: com as duas vagas ocupadas, quem chegava esperava `_ESPERA_MAX_SEG` inteiros
+    para receber um NÃO. Os juízes mediram 48,0 s de espera para um 429, num arquivo que
+    sozinho leva 5,4 s: quase um terço dos 180 s que a tela concede ao pedido, gastos para
+    ouvir "tente em um minuto". Agora a mesma frase sai na hora, e o minuto está inteiro.
+
+    A prova é de TEMPO porque é o tempo que era o defeito: a recusa tem de sair sem esperar
+    nada, com o teto de espera do módulo ainda valendo o valor de produção.
+    """
+    assert FILA_MAX == 2, (
+        "dois esperando: recusar quem chegaria à vaga em dois segundos (o pedido pequeno "
+        "leva 1,5 a 2,1 s medidos) trocaria um defeito por outro."
+    )
+    respx.mock.post(f"{BASE}/plants/porto-ferreira/exports/raw").respond(200, content=XLSX)
+    # Semáforo NOVO no laço deste teste, como nos vizinhos: só se amarra a um laço quando
+    # alguém precisa esperar nele, e é o que se provoca aqui.
+    ocupado = asyncio.Semaphore(VAGAS_SIMULTANEAS)
+    monkeypatch.setattr("app.api.v1.exportacao._VAGAS", ocupado)
+    for _ in range(VAGAS_SIMULTANEAS):
+        await ocupado.acquire()
+    # A fila já cheia de gente que chegou antes.
+    monkeypatch.setattr("app.api.v1.exportacao._esperando", FILA_MAX)
+
+    inicio = asyncio.get_running_loop().time()
+    resposta = await arquivo_de_dados(pedido=pedido, usina_id=minha.id, db=db, usuario=dono)
+    demorou = asyncio.get_running_loop().time() - inicio
+
+    assert resposta.status_code == 429
+    assert MOTIVO_ESPERA in resposta.body.decode()
+    assert demorou < 1.0, (
+        f"esperou {demorou:.1f}s para dizer 'espere' — a recusa da fila cheia é imediata"
+    )
+
+
+@respx.mock
+async def test_a_espera_cobre_duas_geracoes_pesadas_em_serie(db, dono, minha, ponte, pedido):
+    """O teto de espera é um NÚMERO MEDIDO, e o número antigo estava errado.
+
+    45 s vinham de contar UMA geração à frente na fila. Quem espera tem duas — as duas vagas —,
+    e a mw-api roda com `workers=1`: medido em 05/09/2026 na rota real, dois pedidos pesados
+    disparados juntos terminaram em **57,5 s e 58,0 s**, contra 31,2 s do mesmo pedido sozinho.
+    Com 45 s, o terceiro cliente era recusado 13 s antes de a vaga voltar.
+
+    E o teto de cima é o do cliente: a tela desiste aos 180 s, então fila + geração têm de
+    caber nisso. Este teste guarda os dois lados, porque afrouxar um estraga o outro.
+    """
+    from app.api.v1.exportacao import _ESPERA_MAX_SEG
+
+    assert _ESPERA_MAX_SEG >= 58.0, (
+        "menor que as duas gerações pesadas medidas (58,0 s): o cliente esperaria para levar "
+        "um 429 numa vaga que estava quase voltando"
+    )
+    assert _ESPERA_MAX_SEG + 41.2 <= 180.0, (
+        "fila + a geração mais lenta já medida (41,2 s) passariam dos 180 s da tela: a vaga "
+        "voltaria para quem já desistiu"
+    )
+
+
+@respx.mock
+async def test_a_conexao_de_banco_sai_antes_da_fila(db, dono, minha, ponte, pedido, monkeypatch):
+    """DEFEITO QUE ESTE TESTE GUARDA — e não é desta rota: é do PORTAL INTEIRO.
+
+    O `Depends(get_db)` devolve a sessão ao pool quando a resposta termina, e aqui a resposta
+    termina depois de até 75 s de fila mais ~40 s de geração. Com o pool de 15 (5 + 10) e o
+    pooler do Supabase em *session mode* com o mesmo teto, quinze cliques em "Baixar planilha"
+    esgotavam TODAS as conexões — e o painel, as ordens e as pendências, que não têm nada com
+    exportação, caíam junto. Medido com `pg_stat_activity` durante seis exportações: seis
+    sessões `idle in transaction`, quatro delas apenas ESPERANDO na fila.
+
+    A prova é de ORDEM: quando o pedido chega ao semáforo, a sessão já tem de estar fechada.
+    """
+    respx.mock.post(f"{BASE}/plants/porto-ferreira/exports/raw").respond(200, content=XLSX)
+    # `in_transaction()` é o observável portátil de "esta sessão está segurando conexão":
+    # o SELECT de `_usina_no_escopo` abre a transação sozinho (autobegin) e `close()` a
+    # encerra, devolvendo a conexão ao pool. Provado nas duas direções: sem o `db.close()`
+    # da rota este mesmo espião registra `[True]`.
+    presa_na_fila: list[bool] = []
+    original = _VAGAS.acquire
+
+    async def espiar():
+        presa_na_fila.append(db.in_transaction())
+        return await original()
+
+    monkeypatch.setattr(_VAGAS, "acquire", espiar)
+    resposta = await arquivo_de_dados(pedido=pedido, usina_id=minha.id, db=db, usuario=dono)
+    await _juntar(resposta)
+
+    assert presa_na_fila == [False], (
+        "a sessão do banco ainda segurava conexão quando o pedido entrou na fila — é assim "
+        "que uma tela de exportação derruba o portal inteiro"
+    )

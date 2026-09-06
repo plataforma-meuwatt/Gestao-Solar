@@ -219,11 +219,20 @@ class Memoria:
     Amostra em thread, a cada 20 ms, porque o pico dura o tempo de um pedaço: medir só antes
     e depois não veria nada. Sem `psutil`, e no modo `--url` (o worker é de outra máquina),
     devolve `None` e quem chamou diz isso em voz alta em vez de inventar.
+
+    ⚠ **Mede a ÁRVORE, não o pid que nasceu aqui** — e isto custou uma medição errada antes
+    de estar escrito. No Windows, o `python.exe` do venv é um redirecionador: `python -m
+    uvicorn` cria um processo de 4 MiB que só re-executa o interpretador de base num FILHO,
+    e é o filho (104 MiB, medido) que serve. Observando só o pai, a conferência imprimia
+    "+0 KiB = 0% do arquivo" — um número que parece a prova perfeita do fluxo e não mede
+    nada. Somar a árvore está certo nos dois mundos: sem redirecionador não há filhos e a
+    soma é o próprio worker.
     """
 
     def __init__(self, pid: int | None) -> None:
-        self.proc: Any = None
+        self.alvos: list[Any] = []
         self.motivo: str | None = None
+        self.descricao: str = ""
         if pid is None:
             self.motivo = "o BFF é remoto (--url): o worker não está nesta máquina"
             return
@@ -233,17 +242,29 @@ class Memoria:
             self.motivo = "sem `psutil` (pip install psutil)"
             return
         try:
-            self.proc = psutil.Process(pid)
+            pai = psutil.Process(pid)
+            # Os filhos são resolvidos UMA vez, aqui, e não a cada amostra: quem chama já
+            # esperou o `/health` responder, então a árvore está formada — e reenumerar a
+            # cada 20 ms custaria mais que a medida vale.
+            self.alvos = [pai, *pai.children(recursive=True)]
+            self.descricao = " + ".join(
+                f"{p.pid} ({p.memory_info().rss / 1024 / 1024:.0f} MiB)" for p in self.alvos
+            )
         except Exception as exc:  # noqa: BLE001
             self.motivo = f"não deu para observar o pid {pid}: {exc}"
 
     def rss(self) -> int | None:
-        if self.proc is None:
+        if not self.alvos:
             return None
-        try:
-            return int(self.proc.memory_info().rss)
-        except Exception:  # noqa: BLE001
-            return None
+        total = 0
+        vivos = 0
+        for p in self.alvos:
+            try:
+                total += int(p.memory_info().rss)
+                vivos += 1
+            except Exception:  # noqa: BLE001
+                continue  # um filho pode morrer no meio; a soma segue com os que restam
+        return total if vivos else None
 
     def observar(self) -> "_Observacao":
         return _Observacao(self)
@@ -283,29 +304,51 @@ class _Observacao:
 # ── As rotas ────────────────────────────────────────────────────────────────────────
 
 
-def achar_rotas(url: str) -> tuple[str | None, str | None]:
-    """Descobre no `/openapi.json` quais são, de fato, as rotas da exportação.
+#: Onde as rotas ficam. É a resposta de recuo quando não há `/openapi.json` para perguntar —
+#: e por isso mesmo cada uma é SONDADA antes de ser usada, nunca suposta.
+ROTA_OPCOES = "/api/v1/energia/dados/opcoes"
+ROTA_ARQUIVO = "/api/v1/energia/dados/arquivo"
+
+
+def achar_rotas(url: str) -> tuple[str | None, str | None, str]:
+    """Descobre quais são, de fato, as rotas da exportação — e diz COMO descobriu.
 
     Existe porque o modo de falhar mais provável deste script não é o arquivo vir errado —
-    é a rota ter outro nome. Um 404 cru diria "não achei" e mandaria procurar no lugar
-    errado; aqui a conferência consegue dizer *"a rota da exportação não está montada"*, que
-    é uma frase acionável. É também a única pista honesta quando se roda contra produção: em
-    05/09/2026 o `/openapi.json` de lá respondia 404, e é assim que se descobre que o build
-    no ar é anterior a estas rotas — em vez de acusar a feature de estar quebrada.
+    é a rota ter outro nome. Um 404 cru diria "não achei" e mandaria procurar no lugar errado.
+
+    ⚠ **Sem `/openapi.json` ≠ sem rota**, e este script já confundiu as duas. `main.py` põe
+    `openapi_url=None if settings.producao`, então em produção o catálogo simplesmente não
+    existe — e a conferência parava anunciando "a rota não está montada" sobre uma rota que
+    estava no ar (medido em 05/09/2026: o mesmo caminho respondia 401 sem credencial e 200
+    com ela). Diagnóstico errado é pior que nenhum: manda consertar o que não está quebrado.
+    Por isso, sem catálogo, o recuo é SONDAR os caminhos conhecidos — 404 é ausência,
+    qualquer outra coisa (401 inclusive) é presença.
     """
     try:
         doc = httpx.get(f"{url}/openapi.json", timeout=20.0).json()
+        opcoes = arquivo = None
+        for caminho, verbos in doc.get("paths", {}).items():
+            if "dados" not in caminho and "export" not in caminho:
+                continue
+            if "get" in verbos and opcoes is None and ("opcoes" in caminho or "options" in caminho):
+                opcoes = caminho
+            if "post" in verbos and arquivo is None and ("arquivo" in caminho or "raw" in caminho):
+                arquivo = caminho
+        if opcoes and arquivo:
+            return opcoes, arquivo, "pelo /openapi.json"
     except (httpx.HTTPError, ValueError):
-        return None, None
-    opcoes = arquivo = None
-    for caminho, verbos in doc.get("paths", {}).items():
-        if "dados" not in caminho and "export" not in caminho:
-            continue
-        if "get" in verbos and opcoes is None and ("opcoes" in caminho or "options" in caminho):
-            opcoes = caminho
-        if "post" in verbos and arquivo is None and ("arquivo" in caminho or "raw" in caminho):
-            arquivo = caminho
-    return opcoes, arquivo
+        pass
+
+    # Recuo: pergunta aos caminhos conhecidos, SEM credencial. Um 404 é a única resposta que
+    # significa "não existe"; 401 significa "existe e está protegida", que é o esperado.
+    achados: list[str | None] = []
+    for caminho in (ROTA_OPCOES, ROTA_ARQUIVO):
+        try:
+            r = httpx.request("GET", f"{url}{caminho}", timeout=20.0)
+            achados.append(None if r.status_code == 404 else caminho)
+        except httpx.HTTPError:
+            achados.append(None)
+    return achados[0], achados[1], "por sondagem (sem /openapi.json — é assim em produção)"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -357,6 +400,15 @@ class Aba:
     #: Soma dos valores numéricos de cada coluna, por rótulo do cabeçalho. É o que permite
     #: provar que a seleção parcial MUDOU A SOMA sem baixar um terceiro arquivo.
     somas: dict[str, float] = field(default_factory=dict)
+    #: Quantas células VAZIAS cada coluna tem. É o outro lado da REGRA 0 dentro do arquivo:
+    #: uma coluna que nunca fica vazia é suspeita de ter coalescido a ausência em zero.
+    vazias: dict[str, int] = field(default_factory=dict)
+
+    def coluna(self, contem: str) -> list[str]:
+        """Os rótulos de cabeçalho que contêm este texto. A busca é por texto porque o
+        cabeçalho é montado pelo upstream (`f"{g.label} · {labels[vc]}"`) e a posição muda
+        com o número de inversores e de variáveis pedidas."""
+        return [str(c) for c in self.cabecalho if contem in str(c)]
 
     @property
     def colunas(self) -> int:
@@ -399,6 +451,7 @@ def abrir_planilha(conteudo: bytes) -> Planilha:
             cab: tuple[Any, ...] = ()
             linha2: tuple[Any, ...] | None = None
             somas: dict[str, float] = {}
+            vazias: dict[str, int] = {}
             n = 0
             for i, linha in enumerate(ws.iter_rows(values_only=True)):
                 n += 1
@@ -407,14 +460,22 @@ def abrir_planilha(conteudo: bytes) -> Planilha:
                     continue
                 if i == 1:
                     linha2 = linha
-                for j, v in enumerate(linha):
-                    # `bool` sai fora antes: em Python `True` soma como 1.0 sem reclamar, e
-                    # uma coluna de status booleano viraria energia.
-                    if j >= len(cab) or isinstance(v, bool) or not isinstance(v, (int, float)):
+                # Percorre pelo CABEÇALHO e não pela linha: em modo `read_only` o openpyxl
+                # devolve a linha já aparada nas células vazias do fim, então iterar a linha
+                # perderia justamente as ausências — que é o que esta contagem existe para
+                # medir. (Uma linha curta derrubou este script com IndexError antes disto.)
+                for j, rotulo in enumerate(cab):
+                    rot = str(rotulo)
+                    v = linha[j] if j < len(linha) else None
+                    if v is None:
+                        vazias[rot] = vazias.get(rot, 0) + 1
                         continue
-                    rot = str(cab[j])
+                    # `bool` sai fora: em Python `True` soma como 1.0 sem reclamar, e uma
+                    # coluna de status booleano viraria energia.
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        continue
                     somas[rot] = somas.get(rot, 0.0) + float(v)
-            abas[nome] = Aba(nome, n, cab, linha2, somas)
+            abas[nome] = Aba(nome, n, cab, linha2, somas, vazias)
         return Planilha(abas)
     finally:
         wb.close()
@@ -446,6 +507,49 @@ def conferir_transporte(
         f"[{rotulo}] o tamanho prometido bate com o corpo recebido (ou não é prometido)",
         prometido is None or int(prometido) == len(conteudo),
         f"content-length={prometido} · recebidos {len(conteudo)}",
+    )
+
+
+def conferir_fluxo(rotulo: str, tamanho: int, pico_acima_da_base: int | None, cf: Confere) -> None:
+    """O fluxo é fluxo, e não um buffer com outro nome — medido, não afirmado.
+
+    A diferença é aritmética e não estilística. `Response(content=await r.aread())` deixa o
+    corpo inteiro residente no processo enquanto o cliente baixa, e o Starlette faz ainda uma
+    segunda cópia ao montar a resposta: o pico sobe ≥ 100% do arquivo. `StreamingResponse`
+    sobre `httpx.stream` sobe o tamanho dos pedaços em trânsito — centenas de KiB, medidos
+    entre 26% e 35% num arquivo de 2 MiB, com o ruído do alocador dentro dessa faixa.
+
+    O teto de 60% fica no meio dessa distância de propósito: longe do ruído medido e longe
+    do que um buffer produziria. E só vale para arquivo de 1 MiB ou mais — abaixo disso o
+    pico é indistinguível do custo de montar a resposta, e uma conferência que oscila é uma
+    conferência que se aprende a ignorar.
+    """
+    if pico_acima_da_base is None:
+        print(f"  [{rotulo}] (pulado) o fluxo não pôde ser medido nesta execução")
+        return
+    if tamanho < 1024 * 1024:
+        print(f"  [{rotulo}] (pulado) arquivo de {mib(tamanho)}: pequeno demais para separar fluxo de ruído")
+        return
+    # ⛔ Zero não é a nota máxima — é a nota de quem não fez a prova. Mover quase 2 MiB por
+    # um processo sem que o RSS suba um único KiB não acontece; o que acontece é observar o
+    # processo ERRADO, e foi o que este script fez até 05/09/2026 (o redirecionador de 4 MiB
+    # do venv do Windows, imóvel enquanto o filho trabalhava). Sem esta guarda, a medição
+    # quebrada passaria pelo teto de 60% com folga e seria lida como a prova perfeita do
+    # fluxo — o pior resultado possível para uma conferência.
+    if pico_acima_da_base < 4 * 1024:
+        cf(
+            f"[{rotulo}] a memória foi MESMO observada (o pico saiu do lugar)",
+            False,
+            f"o pico subiu {pico_acima_da_base / 1024:.0f} KiB movendo {mib(tamanho)} — isso não é "
+            "fluxo perfeito, é medida do processo errado",
+        )
+        return
+    fracao = pico_acima_da_base / tamanho
+    cf(
+        f"[{rotulo}] os bytes ATRAVESSAM, não ficam na memória do worker",
+        fracao < 0.60,
+        f"o pico subiu {pico_acima_da_base / 1024:.0f} KiB para um arquivo de {mib(tamanho)} "
+        f"({fracao:.0%}); um buffer subiria 100% ou mais",
     )
 
 
@@ -498,15 +602,41 @@ def conferir_pesado(p: Planilha, baldes: int, n_inversores: int, cf: Confere) ->
     )
     usina = [c for c in inv.cabecalho if str(c).startswith("Usina · ")]
     cf("os totais da usina fecham a aba", len(usina) == 3, f"{len(usina)}: {[str(c) for c in usina]}")
-    # REGRA 0 dentro do arquivo: num passo sub-diário a linha 2 é meia-noite, e à
-    # meia-noite o inversor não gera. As células vêm VAZIAS, não zero — quem somar a
-    # coluna no Excel não vai contar madrugada como produção medida. Um dia em que isso
-    # virar 0.0 é uma regressão silenciosa que só um olho treinado pegaria.
-    celulas = (inv.linha2 or ())[1:]
+
+    # ── REGRA 0 dentro do arquivo ──────────────────────────────────────────────────
+    #
+    # ⚠ Não é "a linha da meia-noite vem toda vazia". Foi o que este script conferia até
+    # 05/09/2026, e a planilha real reprovou com 21 células preenchidas — todas
+    # `Potência média (kW) = 0`. Investigado antes de mexer no teste: o zero de potência é
+    # **medido**. O inversor continua comunicando à noite e reporta 0 W; `fetch_inverters`
+    # faz `AVG(active_power_w)` do balde e só escreve a célula `if r.w_avg is not None and
+    # r.n`. A energia, essa sim, vem vazia — o odômetro não anda e a subconsulta `en`
+    # (que filtra `gen > 0`) não produz linha.
+    #
+    # Ou seja: as duas colunas dizem coisas diferentes com a mesma aparência de "nada", e a
+    # conferência tem de saber a diferença. Ela ficou em duas partes:
+    linha2 = inv.linha2 or ()
+    energia = inv.coluna("· Energia (kWh)")
+    idx_energia = [j for j, c in enumerate(inv.cabecalho) if str(c) in set(energia)]
+    cheias = [str(inv.cabecalho[j]) for j in idx_energia if j < len(linha2) and linha2[j] is not None]
     cf(
-        "à meia-noite a ausência vem vazia, nunca zero",
-        all(v is None for v in celulas) or not celulas,
-        f"{sum(1 for v in celulas if v is not None)} célula(s) preenchidas na linha 2 de {len(celulas)}",
+        "à meia-noite não há ENERGIA medida, e a célula vem vazia (não zero)",
+        not cheias,
+        f"{len(cheias)} de {len(idx_energia)} colunas de energia preenchidas na linha 2"
+        + (f": {cheias[:4]}" if cheias else ""),
+    )
+    # A segunda parte é a que guarda o defeito de verdade, e vale para o arquivo inteiro:
+    # se a ausência tivesse sido coalescida em zero, a coluna de potência NUNCA ficaria
+    # vazia — e a soma da coluna no Excel passaria a contar como "0 kW medido" cada balde
+    # em que o inversor simplesmente não falou. Medido em 03/09: 1.138 vazias, 1.743 zeros
+    # e 2.879 positivos num único dia; as três existem, e é isso que se exige aqui.
+    potencia = inv.coluna("· Potência")
+    com_vazio = [c for c in potencia if inv.vazias.get(c, 0) > 0]
+    cf(
+        "'não falou' e 'falou zero' continuam distinguíveis na coluna de potência",
+        len(com_vazio) > 0,
+        f"{len(com_vazio)} de {len(potencia)} colunas de potência têm ao menos uma célula vazia "
+        f"(se nenhuma tivesse, a ausência teria virado zero)",
     )
     for aba in ("Paradas", "Estação", "Fronteira", "Sistema"):
         a = p.abas.get(aba)
@@ -668,6 +798,7 @@ def relatar(rotulo: str, b: Baixado, mem: Memoria) -> None:
             f"  [{rotulo}] memória ........ base {mib(b.rss_base)} → pico {mib(b.rss_pico)} "
             f"(+{d / 1024:.0f} KiB = {pct:.0f}% do arquivo)"
         )
+        print(f"  [{rotulo}]                 árvore observada: {mem.descricao}")
     else:
         print(f"  [{rotulo}] memória ........ não medida: {mem.motivo}")
 
@@ -910,25 +1041,44 @@ def provar_que_reprova() -> int:
         )
     )
 
-    # 3. A meia-noite preenchida com zero: a regressão silenciosa da REGRA 0 dentro do
-    #    arquivo. O Excel somaria madrugada como produção medida.
+    # 3. e 4. Os dois lados da REGRA 0 dentro do arquivo, isolados um do outro — porque um
+    #    teste que só falha quando as duas coisas quebram juntas não diz qual quebrou.
     cab_cheio = (
         ["Início (BRT)"]
         + [f"Inv {i} · {v}" for i in range(1, 21) for v in ("Energia (kWh)", "Potência média (kW)", "Min. desligado")]
         + ["Usina · Energia (kWh)", "Usina · Potência média (kW)", "Usina · Min. desligado (soma dos inversores)"]
     )
-    seis = {
-        "Leia-me": (["campo", "valor"], [["x", i] for i in range(12)]),
-        "Inversores": (cab_cheio, [["2026-08-05 00:00"] + [0.0] * (len(cab_cheio) - 1)]),
-        "Paradas": (["Início (BRT)"], []),
-        "Estação": (["Início (BRT)"], []),
-        "Fronteira": (["Início (BRT)"], []),
-        "Sistema": (["Início (BRT)"], []),
-    }
+
+    def _seis(linhas: list[list[Any]]) -> dict[str, tuple[list[Any], list[list[Any]]]]:
+        return {
+            "Leia-me": (["campo", "valor"], [["x", i] for i in range(12)]),
+            "Inversores": (cab_cheio, linhas),
+            "Paradas": (["Início (BRT)"], []),
+            "Estação": (["Início (BRT)"], []),
+            "Fronteira": (["Início (BRT)"], []),
+            "Sistema": (["Início (BRT)"], []),
+        }
+
+    # 3. A energia da meia-noite deixa de vir vazia e vem zero: quem somar a coluna no
+    #    Excel passa a contar madrugada como produção medida.
+    zerada = ["2026-08-05 00:00"] + [0.0 if "Energia" in c else None for c in cab_cheio[1:]]
     mutacoes.append(
         (
-            "a meia-noite passa a vir com zero em vez de vazia",
-            lambda cf: conferir_pesado(_planilha_falsa(seis), baldes=1, n_inversores=20, cf=cf),
+            "a ENERGIA da meia-noite passa a vir zero em vez de vazia",
+            lambda cf: conferir_pesado(_planilha_falsa(_seis([zerada])), baldes=1, n_inversores=20, cf=cf),
+        )
+    )
+
+    # 4. A ausência de comunicação é coalescida em zero na potência: a coluna nunca fica
+    #    vazia, e "o inversor não falou" some dentro de "o inversor reportou 0 kW".
+    def _linha(rot: str, pot: float) -> list[Any]:
+        return [rot] + [pot if "Potência" in c else None for c in cab_cheio[1:]]
+
+    coalescida = [_linha("2026-08-05 00:00", 0.0), _linha("2026-08-05 00:05", 0.0), _linha("2026-08-05 00:10", 7.5)]
+    mutacoes.append(
+        (
+            "a POTÊNCIA coalesce a ausência em zero (a coluna nunca fica vazia)",
+            lambda cf: conferir_pesado(_planilha_falsa(_seis(coalescida)), baldes=3, n_inversores=20, cf=cf),
         )
     )
 
@@ -947,7 +1097,25 @@ def provar_que_reprova() -> int:
         )
     )
 
-    # 5. Os dois 404 deixam de ser indistinguíveis: a rota vira um oráculo de ids.
+    # 5. O `StreamingResponse` vira `Response(content=…)`: o corpo inteiro passa a ficar
+    #    residente, e dez clientes simultâneos param de caber no contêiner.
+    mutacoes.append(
+        (
+            "o fluxo vira buffer e o arquivo inteiro fica na memória do worker",
+            lambda cf: conferir_fluxo("buffer", 2_068_560, 2_068_560 * 2, cf),
+        )
+    )
+
+    # 6. A medição observa o processo errado e devolve "+0 KiB": não é fluxo perfeito, é
+    #    prova não feita — e sem esta guarda ela passaria pelo teto de 60% com folga.
+    mutacoes.append(
+        (
+            "a medição de memória observa o processo errado e devolve zero",
+            lambda cf: conferir_fluxo("pid errado", 2_068_560, 0, cf),
+        )
+    )
+
+    # 7. Os dois 404 deixam de ser indistinguíveis: a rota vira um oráculo de ids.
     mutacoes.append(
         (
             "usina alheia e usina inexistente passam a responder frases diferentes",
@@ -959,7 +1127,7 @@ def provar_que_reprova() -> int:
         )
     )
 
-    # 6. Os dois arquivos passam a somar igual: sinal de que a seleção não mudou nada.
+    # 8. Os dois arquivos passam a somar igual: sinal de que a seleção não mudou nada.
     mutacoes.append(
         (
             "os dois arquivos passam a somar a mesma energia",
@@ -1081,15 +1249,16 @@ def main() -> int:
         else:
             url, proc = subir_bff()
 
-        opcoes, arquivo = achar_rotas(url)
+        opcoes, arquivo, como = achar_rotas(url)
         if not (opcoes and arquivo):
             raise Falhou(
-                "a rota da exportação não está montada neste BFF — o `/openapi.json` não tem "
-                f"GET de opções nem POST de arquivo sob /dados (achei opcoes={opcoes!r}, "
-                f"arquivo={arquivo!r}). Não há o que conferir: a tela não teria de onde ler. "
-                "Contra produção, é assim que se descobre que o build no ar é anterior a estas rotas."
+                "a rota da exportação não está montada neste BFF: nem o `/openapi.json` a "
+                f"anuncia, nem os caminhos conhecidos respondem (achei opcoes={opcoes!r}, "
+                f"arquivo={arquivo!r} — 404 nos dois). Não há o que conferir: a tela não teria "
+                "de onde ler. Contra produção, é assim que se descobre que o build no ar é "
+                "anterior a estas rotas."
             )
-        print(f"  rotas: GET {opcoes} · POST {arquivo}")
+        print(f"  rotas: GET {opcoes} · POST {arquivo}   ({como})")
 
         tokens = {
             args.usuario: token_do_gestor(args.usuario),
@@ -1163,6 +1332,9 @@ def main() -> int:
             secao("4. O transporte  ·  os cabeçalhos que o navegador vai ler")
             conferir_transporte("pesado", pesado.conteudo, pesado.cabecalhos, pesado.total, cf)
             conferir_transporte("por skid", porskid.conteudo, porskid.cabecalhos, porskid.total, cf)
+            for rot, b in (("pesado", pesado), ("por skid", porskid)):
+                delta = None if b.rss_base is None or b.rss_pico is None else b.rss_pico - b.rss_base
+                conferir_fluxo(rot, len(b.conteudo), delta, cf)
 
             secao("5. As planilhas, abertas")
             pl_pesado = abrir_planilha(pesado.conteudo)

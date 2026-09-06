@@ -1,7 +1,7 @@
 """O cliente da exportação de dados brutos do meuWatt — a aba "Baixar dados".
 
 A rota do meuWatt é síncrona e cara: ela gera o XLSX inteiro ANTES de responder, e o
-cabeçalho só chega aos 35,6 s no pedido mais pesado que ela mesma permite (medido em Porto
+cabeçalho só chega aos 37,9 s no pedido mais pesado que ela mesma permite (medido em Porto
 Ferreira, 20 inversores, produção). Isso põe três armadilhas no caminho deste cliente, e
 cada teste aqui guarda uma delas:
 
@@ -89,12 +89,12 @@ def cliente() -> MeuWattClient:
 
 
 @respx.mock
-async def test_o_prazo_de_leitura_cobre_os_35_segundos_medidos(cliente):
+async def test_o_prazo_de_leitura_cobre_os_38_segundos_medidos(cliente):
     """DEFEITO QUE ESTE TESTE GUARDA: a exportação sair pelo teto padrão do cliente (30 s)
     e estourar `ReadTimeout` no pedido mais pesado que o próprio meuWatt aceita.
 
-    Medido em produção, no MESMO pedido (5 min × 31 d, todos os blocos) e em três
-    ocasiões: 35,6 s, 34,3 s e 27,2 s até o CABEÇALHO, porque a geração inteira precede a
+    Medido em produção, no MESMO pedido (5 min × 31 d, todos os blocos) e em quatro
+    ocasiões: 37,9 s, 36,9 s, 34,3 s e 27,2 s até o CABEÇALHO, porque a geração precede a
     resposta. Trinta segundos reprovam a maior delas, e a dispersão mostra que a margem
     contra o padrão não é só apertada: é instável — na medição de 05/09/2026 ela já não
     existe. O teto tem de ser explícito e folgado — e o de CONECTAR tem de continuar curto,
@@ -106,14 +106,14 @@ async def test_o_prazo_de_leitura_cobre_os_35_segundos_medidos(cliente):
         pass
 
     prazo = rota.calls.last.request.extensions["timeout"]
-    assert prazo["read"] >= 35.6, "o pior caso MEDIDO tem de caber, com folga"
+    assert prazo["read"] >= 37.9, "o pior caso MEDIDO tem de caber, com folga"
     assert prazo["connect"] <= 10.0, "destino fora do ar falha depressa"
 
 
 @respx.mock
 async def test_as_opcoes_tem_prazo_proprio_e_curto(cliente):
     """DEFEITO: as opções herdarem o prazo da exportação. Elas são o lado BARATO do par
-    (1,2 s medidos contra 35,6 s), e é com elas que a tela abre — esperar dois minutos por
+    (1,2 s medidos contra 37,9 s), e é com elas que a tela abre — esperar dois minutos por
     uma fonte que já provou responder em segundos é deixar a tela pendurada à toa."""
     rota = respx.mock.get(OPCOES).respond(200, json={"skids": [], "limites": {"5m": 31}})
 

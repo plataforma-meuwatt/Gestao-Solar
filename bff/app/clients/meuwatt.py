@@ -466,8 +466,8 @@ class MeuWattClient:
         É o que permite a tela dizer *"esta usina não tem estação solarimétrica"* em vez de
         oferecer o bloco e devolver um 400 depois de meio minuto de espera. Barata: 1,2 s a
         2,1 s medidos em Porto Ferreira (a maior do escopo, 20 inversores, 05/09/2026),
-        contra os 35,6 s da geração do arquivo — daí o teto de 20 s aqui, curto o bastante
-        para a tela não ficar pendurada numa fonte que já provou responder rápido.
+        contra os 35,6 a 37,9 s da geração do arquivo — daí o teto de 20 s aqui, curto o
+        bastante para a tela não ficar pendurada numa fonte que já provou responder rápido.
 
         E ela **não** entra no balde de 10/minuto: o `@limiter.limit` da mw-api está só no
         POST — provado, com três `options` seguidas depois do balde esgotado respondendo
@@ -492,9 +492,9 @@ class MeuWattClient:
         XLSX inteiro antes de responder (`to_thread(write_xlsx)` → `FileResponse` de um
         temporário, com `Content-Length` e sem `chunked`): medido no pior caso que ela
         aceita (5 min × 31 d, todos os blocos de Porto Ferreira), o CABEÇALHO chega aos
-        35,6 s, e o corpo — 2.511.408 B (2,40 MiB) em 212 pedaços — transfere em 1,4 s
-        depois dele. Fluxo aqui serve para não SEGURAR os bytes, não para o cliente vê-los
-        mais cedo.
+        35,6 s, 36,9 s, 37,5 s e 37,9 s em quatro corridas, e o corpo — 2,40 MiB — transfere
+        em 0,5 s a 1,6 s depois dele. Fluxo aqui serve para não SEGURAR os bytes, não para o
+        cliente vê-los mais cedo.
 
         ⚠ O pedido que se temia — 366 dias em passo de 1 h com todos os blocos — **não
         existe**: a retenção dos snapshots é de 183 dias e a mw-api o recusa em 2,2 s com
@@ -504,9 +504,9 @@ class MeuWattClient:
         Daí o prazo de LEITURA de 120 s, explícito. O cliente é construído sem `timeout` em
         `integracoes.cliente_meuwatt` e cai nos 30 s da assinatura — que REPROVAM o pior
         pedido permitido: pelo caminho normal esta exportação estouraria `ReadTimeout`
-        antes de o servidor terminar. E as medições do MESMO pedido (35,6 s, 34,3 s,
-        27,2 s) mostram que a margem contra 30 s não é só apertada, é instável — na última
-        ela já não existe. O precedente já estava no arquivo (`arquivo_relatorio` passa
+        antes de o servidor terminar. E as medições do MESMO pedido (37,9 / 37,5 / 36,9 /
+        35,6 / 34,3 / 27,2 s) mostram que a margem contra 30 s não é só apertada, é instável —
+        nas quatro mais recentes ela já não existe. O precedente já estava no arquivo (`arquivo_relatorio` passa
         60 s explícito); 120 s é a folga para usina maior ou Timescale fria. **Conectar
         continua curto (5 s)**: destino fora do ar tem de falhar depressa, não em dois
         minutos.

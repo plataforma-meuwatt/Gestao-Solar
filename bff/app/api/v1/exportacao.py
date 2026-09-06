@@ -15,15 +15,28 @@ exatamente o que `pacotes.py` recusou por escrito, e o desenho aqui é o dele:
 cabeçalhos e falhar cedo, com a frase do meuWatt) e fechada DENTRO do gerador — sem isso,
 o cliente que desiste no meio deixa a conexão pendurada até o prazo de leitura.
 
-Medido na rota REAL desta vez, e não contra a mw-api direto: o pior pedido que a mw-api
-aceita (31 d × 5 min, todos os blocos) desceu 2.511.408 B (2,40 MiB) em 212 pedaços, e o
-RSS do trabalhador subiu **368 KiB no pico — 15% do tamanho do arquivo**. Bufferizado, a
-subida seria os 2,40 MiB inteiros, mais uma segunda cópia no corpo do Starlette.
+Medido na rota REAL, e não contra a mw-api direto: o pior pedido que a mw-api aceita (31 d ×
+5 min, todos os blocos de Porto Ferreira) desceu 2,40 MiB (2.512.051 B), e o RSS do
+trabalhador subiu entre **160 e 228 KiB no pico — 6,5% a 9,3% do tamanho do arquivo**, em
+quatro corridas. Bufferizado, a subida seria os 2,40 MiB inteiros, mais uma segunda cópia no
+corpo do Starlette. (O nº de pedaços muda a cada vez — 150, 157, 224, 228 —, e por isso não
+vira número neste texto.)
+
+⚠ Quem for remedir: **aqueça o processo antes**. Na PRIMEIRA descida depois de subir o
+uvicorn o RSS sobe ~10 MiB — que não é o arquivo, é o processo abrindo caminho (pools do
+httpx, sessão do SQLAlchemy, os módulos que só carregam no primeiro pedido). Medir a
+primeira e concluir "está bufferizando" é a leitura errada mais fácil de fazer aqui.
 
 ⛔ Streaming aqui **não** serve para o cliente ver o arquivo mais cedo: medido, o cabeçalho
-do meuWatt só chega em 35,6 s no pior pedido, porque a mw-api gera o XLSX inteiro
-(`to_thread(write_xlsx)`) antes de responder, e o corpo transfere em 1,4 s. Serve para não
-segurar os bytes.
+do meuWatt só chega entre 35,6 s e 37,9 s no pior pedido, porque a mw-api gera o XLSX
+inteiro (`to_thread(write_xlsx)`) antes de responder, e o corpo transfere em 0,5 s a 1,6 s.
+Serve para não segurar os bytes.
+
+✅ **O edge do Railway não corta esses 37 s** — era o item que faltava medir, e só dava para
+medi-lo depois do deploy. Feito em 05/09/2026, pelo domínio público: cabeçalho em 36,9 s e o
+arquivo inteiro (2.512.156 B, as seis abas) em 37,8 s. Nada no caminho é mais impaciente que
+o nosso próprio orçamento (45 s de fila + 120 s de leitura ≈ 165 s, contra os 180 s que o
+portal aguarda).
 
 **O pedido impossível morre AQUI, antes de queimar uma vaga do balde de todo mundo.** O
 limite da mw-api é por IP (adiante), e — medido — **recusa também consome vaga**: dez
@@ -38,11 +51,11 @@ dois números respondendo à mesma pergunta.
 **As duas URLs vivem no CLIENTE, não aqui.** `MeuWattClient.export_options` e
 `export_raw` montam os caminhos e carregam o prazo — que é explícito porque o padrão
 REPROVA: o cliente é construído sem `timeout` em `integracoes.cliente_meuwatt` e cai nos
-30 s da assinatura, contra 35,6 s medidos no pedido mais pesado que a mw-api aceita (e
-28,1 s / 34,3 s em medições anteriores do MESMO pedido — a margem contra 30 s não é só
-apertada, é instável, e na medição desta leva ela já não existe). Este router decide
-**quem** pode pedir, **como**
-a recusa é traduzida e **quantos** pedidos correm ao mesmo tempo — e nada mais. Caminho de
+30 s da assinatura, contra 35,6 a 37,9 s medidos no pedido mais pesado que a mw-api aceita
+(e 27,2 s / 28,1 s / 34,3 s no MESMO pedido em medições anteriores — a margem contra 30 s
+não é só apertada, é instável, e nas quatro medições desta leva ela já não existe). Este
+router decide **quem** pode pedir, **como** a recusa é traduzida e **quantos** pedidos
+correm ao mesmo tempo — e nada mais. Caminho de
 upstream mora em `clients/`, que é onde `tests/test_sonda.py` procura para exigir a linha no
 catálogo da sonda: rota nova que nascesse aqui seria um ponto cego.
 
@@ -53,11 +66,18 @@ Medido nesta leva: o 11º POST do minuto respondeu 429, **sem `Retry-After`** e 
 `{"error": …}` — que `detalhe_do_upstream` não alcança, porque ele lê `detail`/`message`/
 `erro`. Daí as três medidas deste arquivo: `_impossivel` (o pedido sem futuro nem chega
 lá), `_VAGAS` (dois de cada vez, porque o `render.yaml` de lá fixa `workers=1` e as
-consultas correm na sessão do pedido) e o 429 traduzido como ESPERA, nunca como erro. A
-fila tem teto (`_ESPERA_MAX_SEG`): espera infinita
-transforma uma vaga vazada num processo que atende dois downloads e nunca mais nenhum, sem
+consultas correm na sessão do pedido) e o 429 traduzido como ESPERA, nunca como erro. A fila
+tem DOIS tetos: `_ESPERA_MAX_SEG` (espera infinita transforma uma vaga vazada num processo que
+atende dois downloads e nunca mais nenhum, sem
 erro em lugar algum — foi o que aconteceu ao ensaiar a mutação que não devolvia a vaga, e a
-suíte não falhou: ela parou.
+suíte não falhou: ela parou) e `FILA_MAX` (quem chega com a fila cheia leva a recusa na hora,
+em vez de esperar 75 s para ouvir a mesma frase).
+
+**A conexão de banco sai antes da fila.** Este é o caminho mais longo do BFF — até 75 s de
+fila mais ~40 s de geração — e era o único que segurava uma sessão do SQLAlchemy o tempo todo,
+por causa do `Depends(get_db)`. Com pool de 15 e o pooler do Supabase em *session mode*,
+quinze exportações simultâneas derrubavam TODAS as rotas do portal, não só esta. Ver o
+docstring de `arquivo_de_dados`.
 
 ⚠ **Achado para reportar ao meuWatt, e que este arquivo NÃO usa:** como o balde é por
 endereço remoto e a mw-api confia no `X-Forwarded-For`, forjar esse cabeçalho zera o
@@ -123,12 +143,37 @@ MONITORAMENTO = "monitoramento"
 #:
 #: A vaga é segurada da abertura do fluxo até o último pedaço sair (entra na `AsyncExitStack`),
 #: o que na prática é quase o mesmo que segurá-la até o cabeçalho: medido, o corpo transfere
-#: em 1,4 s depois de 35,6 s de geração.
+#: em 1,6 s depois de 35,6 a 37,9 s de geração.
 #:
 #: ⚠ E a fila NÃO é a defesa contra o balde: uma recusa atravessa em milissegundos, devolve a
 #: vaga na hora e mesmo assim gastou um dos dez pedidos do minuto. Quem cuida disso é
 #: `_impossivel`, antes daqui.
-_VAGAS = asyncio.Semaphore(2)
+#:
+#: O NÚMERO tem nome próprio para poder ser afirmado num teste. Construir o semáforo com um
+#: literal deixava a decisão sem guarda: trocar o 2 por 99 passava por toda a suíte, porque um
+#: teste de fila montado a partir da própria constante continua verde com qualquer valor.
+VAGAS_SIMULTANEAS = 2
+_VAGAS = asyncio.Semaphore(VAGAS_SIMULTANEAS)
+
+#: Quantos pedidos podem estar ESPERANDO na fila ao mesmo tempo. O que passar disso leva o
+#: "espere e tente de novo" **na hora**, em vez de esperar para levar a mesma frase.
+#:
+#: A fila era ilimitada, e isso tem custo medido: com as duas vagas ocupadas, o terceiro
+#: cliente esperava `_ESPERA_MAX_SEG` inteiros para receber um NÃO — queimando 45 dos 180 s
+#: que a tela concede ao pedido dele, num arquivo que sozinho levaria 5 s. Uma recusa imediata
+#: é estritamente melhor que a mesma recusa 45 s depois: a frase é a mesma ("tente em um
+#: minuto") e o cliente ainda tem o minuto inteiro para tentar.
+#:
+#: DOIS, e não zero: esperar vale a pena quando a fila anda. A maioria dos pedidos reais é
+#: pequena (1,5 a 2,1 s medidos em Porto Ferreira num dia a 1 h), e recusar quem chegaria à
+#: vaga em dois segundos seria trocar um defeito por outro.
+FILA_MAX = 2
+
+#: Quantos estão esperando AGORA. Contador simples e não uma estrutura de fila porque o
+#: `asyncio.Semaphore` já é a fila (FIFO, garantido pelo próprio asyncio) — o que falta a ele
+#: é saber quantos são, e é só isso que esta variável guarda. Um processo, um laço de eventos:
+#: `+= 1` e `-= 1` entre dois `await` não têm corrida.
+_esperando = 0
 
 #: Quanto tempo um pedido espera NA FILA antes de desistir e pedir para tentar de novo.
 #:
@@ -138,12 +183,24 @@ _VAGAS = asyncio.Semaphore(2)
 #: aqui ao ensaiar a mutação que não devolvia a vaga na recusa: a suíte não falhou, ela
 #: PAROU.
 #:
-#: A conta: a geração mais pesada que a mw-api aceita levou 35,6 s de cabeçalho + 1,4 s de
-#: corpo (medição desta leva; antes 28,1 s e 34,3 s), então 45 s cobrem uma geração inteira à
-#: frente na fila. Somados aos 120 s de leitura, o pior caso responde em ~165 s — dentro dos
-#: 180 s que o cliente espera. Estourou, sai a MESMA frase do 429 do upstream, porque é a
-#: mesma coisa: espere e tente de novo.
-_ESPERA_MAX_SEG = 45.0
+#: ⚠ **A conta estava errada, e o defeito era real: 45 s.** Ela media UMA geração à frente na
+#: fila (35,6 a 37,9 s), e quem espera na fila tem DUAS pela frente — as duas vagas. E as duas
+#: não correm juntas: o `render.yaml` da mw-api fixa `workers=1`. Medido em 05/09/2026 contra a
+#: rota real, dois pedidos pesados (31 d × 5 min, todos os blocos de Porto Ferreira) disparados
+#: ao mesmo tempo terminaram em **57,5 s e 58,0 s**, contra **31,2 s do mesmo pedido sozinho** —
+#: eles se enfileiram lá dentro. Com 45 s, o terceiro cliente esperava 45 s para levar um NÃO
+#: numa vaga que voltaria aos 58 s: o pior dos dois mundos, e foi exatamente o que os juízes
+#: mediram (48,0 s de espera para um 429, num arquivo que sozinho leva 5,4 s).
+#:
+#: **75 s** cobrem as duas gerações medidas (58,0 s) com 17 s de folga para uma usina maior ou
+#: Timescale fria. E o teto de cima continua sendo o do cliente: 75 s de fila + 41,2 s da
+#: geração mais lenta já medida nesta leva = 116 s, dentro dos 180 s que a tela espera. Este
+#: número **não pode** passar de ~139 s, ou a fila devolveria a vaga depois de a tela já ter
+#: desistido.
+#:
+#: E a espera tem outro teto além do tempo: `FILA_MAX`. Quem chega com a fila cheia leva a
+#: recusa **na hora** — esperar 75 s para ouvir "tente de novo" é pior que ouvi-lo agora.
+_ESPERA_MAX_SEG = 75.0
 
 #: O molde de um slug de usina no meuWatt (`porto-ferreira`,
 #: `ufv-ouro-fino-eldorado-energia`). Confere-se o valor do NOSSO banco antes de interpolá-lo
@@ -479,8 +536,23 @@ async def _cliente(db: Session) -> MeuWattClient:
 
 async def _soltar_vaga() -> None:
     """Devolve a vaga da fila. Entra na `AsyncExitStack` junto com o fluxo, e é por isso que
-    ela volta em TODOS os caminhos: sucesso, recusa, falha de ponte e cliente que desistiu no
-    meio do download."""
+    ela volta em TODOS os caminhos de saída DESTE processo: sucesso, recusa, falha de ponte e
+    cliente que desistiu no meio do download.
+
+    ⚠ **O que ela NÃO faz, e o docstring antigo dava a entender que fazia:** a vaga não volta
+    quando o cliente fecha a aba durante a GERAÇÃO. Medido: dois soquetes fechados na unha aos
+    2,0 s e o pedido seguinte ainda esperou ~46 s. O motivo é que a espera está dentro de
+    `export_raw`, e Starlette não cancela o manipulador enquanto ele aguarda o upstream — só o
+    envio do corpo percebe o soquete morto.
+
+    E isso é **correto**, não um defeito a consertar aqui: fechar a nossa aba não faz a mw-api
+    parar de gerar (ela monta o XLSX inteiro num `to_thread` e só então responde). Soltar a
+    vaga cedo deixaria um terceiro pedido pilhar um servidor de um worker só que ainda está
+    ocupado com o arquivo abandonado — a vaga mede o trabalho DE LÁ, não a atenção de quem
+    pediu. O que o cliente abandonado não pode causar é o próximo esperar em vão: disso cuidam
+    `FILA_MAX` (recusa na hora quando a fila está cheia) e `_ESPERA_MAX_SEG` (75 s, medidos
+    contra os 58 s de duas gerações pesadas em série).
+    """
     _VAGAS.release()
 
 
@@ -767,6 +839,16 @@ async def arquivo_de_dados(
     O XLSX não é remontado. Ele nasce no meuWatt, que é quem tem as séries e a aba "Leia-me"
     com unidades, fontes e avisos — e é essa aba que permite a tela ser curta. Aqui os bytes
     só atravessam.
+
+    ⛔ **A conexão de banco é solta ANTES da fila**, e isso não é economia: é a diferença entre
+    esta rota engasgar e o portal INTEIRO cair. O `Depends(get_db)` só devolveria a sessão ao
+    pool quando o último byte saísse — ou seja, depois de até 75 s de fila mais ~40 s de
+    geração —, e enquanto isso ela fica `idle in transaction`. O pool é de 15 (5 + 10) e o
+    pooler do Supabase é *session mode*, com o mesmo teto: **quinze cliques em "Baixar
+    planilha" esgotavam TODAS as conexões e derrubavam junto o painel, as ordens e as
+    pendências**, que não têm nada com exportação. Depois desta linha nada mais precisa do
+    banco: `link` já foi lido, o slug e o nome do arquivo estão em variáveis, e o cliente do
+    meuWatt carrega a credencial dele.
     """
     link = _usina_no_escopo(db, usuario, usina_id)
     slug = _slug_do_upstream(link)
@@ -778,19 +860,34 @@ async def arquivo_de_dados(
     if impossivel is not None:
         return impossivel
     cliente = await _cliente(db)
+    # O nome sai do `link` AQUI, com a sessão ainda viva: `close()` desanexa a instância, e
+    # tocar num atributo de objeto desanexado depois disso é o defeito clássico deste conserto.
+    nome = _nome_do_arquivo(link, pedido)
+    db.close()  # o `finally` de `get_db` fecha de novo, e fechar duas vezes é no-op
 
     # A pilha tem de sobreviver a esta função: ela só fecha quando o último pedaço sair. Por
     # isso é aberta aqui — para ler os cabeçalhos e falhar cedo, com a recusa do meuWatt na
-    # mão — e fechada dentro do gerador. A VAGA entra na mesma pilha: solta junto, inclusive
-    # quando o cliente desiste no meio.
+    # mão — e fechada dentro do gerador. A VAGA entra na mesma pilha: solta junto no fim do
+    # fluxo, na recusa e na falha de ponte (ver `_soltar_vaga`, que também diz o que ela NÃO
+    # cobre).
     pilha = AsyncExitStack()
     try:
+        global _esperando
+        if _esperando >= FILA_MAX:
+            # A fila já está cheia. Recusar AGORA, e não daqui a 75 s com a mesma frase: quem
+            # pediu ainda tem os 180 s da tela inteiros para tentar de novo.
+            return _espere()
+        _esperando += 1
         try:
             await asyncio.wait_for(_VAGAS.acquire(), _ESPERA_MAX_SEG)
         except TimeoutError:
-            # A fila deste processo está cheia. Não é defeito e não é o balde do meuWatt —
-            # mas para quem pediu é a mesma coisa, e a frase é a mesma.
+            # Esperou o teto e a vaga não veio. Não é defeito e não é o balde do meuWatt — mas
+            # para quem pediu é a mesma coisa, e a frase é a mesma.
             return _espere()
+        finally:
+            # No `finally` porque o timeout também sai daqui: sem isso, cada espera estourada
+            # deixaria a fila um degrau mais cheia até que ninguém mais conseguisse entrar.
+            _esperando -= 1
         pilha.push_async_callback(_soltar_vaga)
         resposta = await pilha.enter_async_context(
             cliente.export_raw(slug, pedido.para_o_upstream())
@@ -808,7 +905,6 @@ async def arquivo_de_dados(
         await pilha.aclose()
         raise _erro_do_upstream(exc, "Não deu para baixar os dados", MONITORAMENTO) from exc
 
-    nome = _nome_do_arquivo(link, pedido)
     cabecalhos = {
         # `attachment`: o destino de uma planilha é a pasta de downloads, não um
         # visualizador. Dois nomes — o ASCII para qualquer cliente, o `filename*` em UTF-8

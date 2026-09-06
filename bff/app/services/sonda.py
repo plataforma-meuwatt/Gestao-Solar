@@ -157,8 +157,8 @@ MEUWATT: list[Rota] = [
     # (inversores, colunas da estação, leitores da fronteira, PR, retenção e tetos), e é
     # o que permite a tela desabilitar o impossível com o motivo escrito em vez de
     # oferecer e devolver 400 depois da espera. Secundária: é uma aba a menos, não uma
-    # ponte quebrada — e ela é o LADO BARATO do par (1,2 s medidos contra os 35,6 s da
-    # geração do arquivo).
+    # ponte quebrada — e ela é o LADO BARATO do par (1,2 s medidos contra os 35,6 a 37,9 s
+    # da geração do arquivo).
     #
     # ⚠ Com FORMA exigida, e não só "respondeu 200". O modo de falha desta família não é
     # sumir: é responder 200 com um campo renomeado, e a tela abrir sem inversor nenhum
@@ -182,7 +182,7 @@ MEUWATT: list[Rota] = [
                             "por culpa da sonda, que é exatamente o falso alarme que ela "
                             "existe para não produzir. E cada sondagem queimaria uma das "
                             "10 vagas por minuto do limite (que é por IP: todo o portal "
-                            "sai pelo mesmo endereço) e até 35,6 s do worker único do "
+                            "sai pelo mesmo endereço) e até 37,9 s do worker único do "
                             "meuWatt. A tela exercita sob demanda, com a seleção real."),
     Rota("mw.users", "GET", "/admin/users",
          "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
