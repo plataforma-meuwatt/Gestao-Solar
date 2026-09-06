@@ -1,7 +1,21 @@
 /**
- * O relatório de manutenção do período — o documento que o cliente leva à diretoria.
+ * **Consultar um período** — o relatório de manutenção montado AGORA, para a janela que o
+ * cliente escolher.
  *
- * A pergunta é uma só: **neste período, o contrato foi cumprido?** Tudo o que está aqui
+ * Este bloco DEIXOU de ser o documento de apresentação do cliente — o nome passou para o
+ * relatório mensal LIBERADO (`RelatorioMensal`), que a equipe apurou, conferiu, aprovou e
+ * entregou. Aqui não há fechamento nem assinatura: há uma leitura ao vivo do histórico do
+ * ativo, e é ela que responde à pergunta que o outro não pode responder — "e este mês, como
+ * vai?", quando o mês ainda não fechou.
+ *
+ * **Os dois não são dois cálculos.** Saem da MESMA apuração no meuPlano (`apuracao.apurar`
+ * reusa `relatorio_manutencao.montar`); o que os separa é o TEMPO — um congelou no
+ * fechamento, este relê o ativo a cada abertura. Por isso este imprime o `gerado_em` na cara
+ * do leitor, e o outro imprime "publicado em": sem os dois carimbos, quem abrisse ambos em
+ * janeiro veria números diferentes de agosto sem ter como saber por quê.
+ *
+ * A pergunta que ele responde continua sendo uma só: **neste período, o contrato foi
+ * cumprido?** Tudo o que está aqui
  * responde a ela — o cronograma cumprido, as OSs encerradas, o parecer das fichas, os
  * problemas que elas acharam, o que foi dispensado e com que motivo, e as pendências que o
  * cliente cobrou.
@@ -51,6 +65,7 @@ import {
   competencia,
   competenciaCurta,
   dataCurta,
+  dataHora,
   duracao,
   inteiro,
   porcento,
@@ -317,9 +332,10 @@ export function RelatorioManutencao({ usinaId }: { usinaId: number }) {
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-forte">Relatório de manutenção</h2>
+          <h2 className="text-lg font-semibold text-forte">Consultar um período</h2>
           <p className="text-sm text-fraco">
-            O que a equipe executou no período, contra o que o contrato previa.
+            O que a equipe executou, contra o que o contrato previa — na janela que você
+            escolher. É montado na hora, a partir do histórico do ativo.
           </p>
         </div>
         <Botao
@@ -417,6 +433,15 @@ function Conteudo({
             valor={`${competencia(dados.periodo.de)} a ${competencia(dados.periodo.ate)}`}
           />
         </div>
+        {/* O CARIMBO. Sem ele, este relatório e o mensal liberado do mesmo mês seriam dois
+            documentos sem data de leitura, e a divergência que o tempo produz (uma OS
+            encerrada depois do fechamento entra aqui e não lá) se leria como erro de um dos
+            dois. A frase também diz onde mora o documento assinado — a resposta à pergunta
+            "qual é o certo?" não pode depender de o cliente rolar a página. */}
+        <p className="mt-4 text-xs text-fraco">
+          Leitura ao vivo do histórico do ativo, montada em {dataHora(dados.gerado_em)}. O
+          documento fechado e assinado de cada mês fica em “Relatórios do mês”, acima.
+        </p>
       </Cartao>
 
       {/* Aviso do servidor que não é sobre o cronograma (quando é, ele explica o Vazio). */}

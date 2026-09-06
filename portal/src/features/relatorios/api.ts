@@ -226,6 +226,84 @@ export type RelatorioOut = {
   aviso: string | null
 }
 
+/* -------------------------------------------------- relatório mensal liberado */
+
+/**
+ * Um relatório mensal de manutenção **já liberado ao cliente** — o fechamento do mês.
+ *
+ * Não se confunde com o `RelatorioOut` acima, e a diferença é de ESTADO, não de cálculo: os
+ * dois saem da mesma apuração no meuPlano (`apuracao.apurar` reusa
+ * `relatorio_manutencao.montar`), mas este foi congelado, aprovado e entregue, enquanto
+ * aquele é lido ao vivo a cada abertura. Por isso a tela os separa e carimba os dois — quem
+ * abrir os dois em janeiro verá números diferentes de agosto, e precisa saber que a
+ * diferença é o TEMPO, não erro.
+ *
+ * O corte de quem enxerga o quê é INTEIRO do meuPlano: só o que a equipe liberou chega aqui.
+ * O portal não conhece outra porta, e por isso não reimplementa régua nenhuma — um relatório
+ * aprovado e ainda não liberado pode voltar para revisão, e o cliente não pode ter visto um
+ * número que mudou.
+ */
+export type RelatorioMensal = {
+  /** O id do relatório **no meuPlano** — é o que a rota de PDF do BFF aceita. */
+  id: number
+  /** O id do vínculo NESTE sistema, o mesmo que as rotas de manutenção aceitam. */
+  usina_id: number
+  usina: string
+  /** `YYYY-MM`, o mês que o documento fecha. Vem pronto do servidor. */
+  competencia: string
+  /**
+   * `executivo` ou `tecnico`, CRU. Um terceiro tipo que o meuPlano venha a criar tem de
+   * aparecer na tela com o código dele, nunca sumir num mapa daqui.
+   */
+  tipo: string
+  /**
+   * Quando a equipe PUBLICOU o documento — a única data que o cliente lê. `aprovado_em`,
+   * `apurado_em` e `aprovado_por` não atravessam o BFF de propósito: o último é nome de
+   * funcionário da executora, e os outros dois respondem "quando os números foram
+   * calculados", que não é "de quando é este documento". Nulo é travessão, nunca uma data
+   * chutada.
+   */
+  liberado_em: string | null
+}
+
+export type RelatoriosMensaisOut = {
+  usina: string
+  usina_id: number
+  /** Mês mais recente primeiro; dentro do mês, executivo antes de técnico. Ordem do BFF. */
+  itens: RelatorioMensal[]
+  /**
+   * Por que a lista está vazia — escrita pelo SERVIDOR, que sabe qual mês foi pedido. O
+   * meuPlano não distingue "não existe" de "existe e não foi liberado" (e faz certo em não
+   * distinguir: as duas respostas seriam a mesma janela para ler o que um rascunho diz),
+   * então esta frase é o que separa um vazio explicado de uma tela muda, que se lê como
+   * defeito.
+   */
+  aviso: string | null
+}
+
+/**
+ * `executivo` → "Relatório executivo". Tipo desconhecido sai com o código do servidor.
+ *
+ * Não se escreve "modo" nem "versão" em lugar nenhum: são dois documentos, dois PDFs e dois
+ * motores no meuPlano — chamá-los de duas faces da mesma coisa seria a tela afirmando algo
+ * que o sistema não faz.
+ *
+ * **A ORDEM (executivo antes de técnico) é do SERVIDOR e o portal a preserva**, nunca a
+ * refaz: ela é a mesma no aplicativo (`documents.ORDEM_DO_TIPO`), e reordenar aqui criaria
+ * uma segunda régua para "qual eu leio primeiro?" — que é como duas telas do mesmo produto
+ * passam a dar duas respostas.
+ */
+export const NOME_DO_TIPO_MENSAL: Record<string, string> = {
+  executivo: 'Relatório executivo',
+  tecnico: 'Relatório técnico',
+}
+
+/** Para quem cada um dos dois foi escrito. */
+export const DETALHE_DO_TIPO_MENSAL: Record<string, string> = {
+  executivo: 'O resumo do mês, para a diretoria.',
+  tecnico: 'O laudo completo, com o cronograma, as ordens e as fichas do mês.',
+}
+
 /* ------------------------------------------------------------------ documentos */
 
 export type ArquivoDoDocumento = {
@@ -411,6 +489,47 @@ export function caminhoPdfDoRelatorio(
 
 export function nomeDoPdfDoRelatorio(usina: string, de: string, ate: string): string {
   return `Relatorio-manutencao-${usina}-${de}-${ate}.pdf`.replace(/[\\/\s]+/g, '-')
+}
+
+/**
+ * O índice dos mensais liberados desta usina. `competencia` nula = todos os meses.
+ *
+ * A competência entra na CHAVE porque ela também é o nome no cache: sem isso, escolher um
+ * mês devolveria a lista do mês anterior até a rede responder — e o vazio de um seria lido
+ * como o vazio do outro, que é justamente a confusão que o `aviso` do BFF existe para
+ * desfazer.
+ */
+export function chaveRelatoriosMensais(usinaId: number, competencia: string | null): string {
+  const partes = [`usina_id=${usinaId}`]
+  if (competencia !== null) partes.push(`competencia=${encodeURIComponent(competencia)}`)
+  return `manutencao/relatorios-mensais?${partes.join('&')}`
+}
+
+/**
+ * O PDF de UM relatório liberado. Só o id: o documento está congelado no servidor, e
+ * mandar período ou contrato daqui sugeriria que a tela pode recortá-lo — não pode.
+ */
+export function caminhoPdfDoRelatorioMensal(relatorioId: number): string {
+  return `/api/v1/manutencao/relatorios-mensais/${relatorioId}/pdf`
+}
+
+/**
+ * `Relatorio-mensal-executivo-UFV-Porto-Ferreira-2026-08.pdf`.
+ *
+ * Nome DIFERENTE do relatório sob demanda (`Relatorio-manutencao-…`) de propósito: dois
+ * arquivos homônimos na pasta de Downloads do cliente é como a pergunta "qual é o certo?"
+ * começa. O tipo entra no nome pelo mesmo motivo — o executivo e o técnico do mesmo mês
+ * chegam juntos, e um sobrescreveria o outro.
+ *
+ * Quem baixa aqui é `fetch` + Blob (a sessão vai em cabeçalho), então o nome do arquivo é o
+ * que ESTA função escreve, e não o `Content-Disposition` do BFF.
+ */
+export function nomeDoPdfDoRelatorioMensal(
+  usina: string,
+  tipo: string,
+  competencia: string,
+): string {
+  return `Relatorio-mensal-${tipo}-${usina}-${competencia}.pdf`.replace(/[\\/\s]+/g, '-')
 }
 
 export function chaveDocumentos(usinaId: number): string {

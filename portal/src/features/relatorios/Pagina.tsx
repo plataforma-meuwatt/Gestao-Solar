@@ -17,11 +17,19 @@
  * botão que falta vira uma frase dizendo que aquela peça não foi publicada. E a lista vazia
  * também não é falha — aqui só aparece o fechamento que a equipe ENVIOU ao cliente.
  *
- * **Manutenção — dois blocos, leituras independentes.** O relatório do período
- * (`RelatorioManutencao`, lido do próprio ativo no meuPlano) e o pacote de fichas
- * (`PacoteDeFichas`). Cada um com os seus quatro estados: juntá-los numa leitura só faria a
- * falha de um apagar o outro, e é o caso que acontece primeiro (contrato novo, fichas já
- * geradas).
+ * **Manutenção — três blocos, leituras independentes.** O relatório mensal LIBERADO
+ * (`RelatorioMensal`), a consulta por período (`RelatorioManutencao`, lida ao vivo do
+ * próprio ativo no meuPlano) e o pacote de fichas (`PacoteDeFichas`). Cada um com os seus
+ * quatro estados: juntá-los numa leitura só faria a falha de um apagar o outro, e é o caso
+ * que acontece primeiro (contrato novo, fichas já geradas).
+ *
+ * **E a ordem dos dois primeiros é a resposta à pergunta do título.** "O que eu levo para a
+ * diretoria?" se responde com o documento que a equipe aprovou e ENTREGOU — o mensal, que
+ * por isso vem primeiro. A consulta por período continua indispensável (é a única resposta
+ * possível para "e este mês, como vai?", que ainda não fechou), mas é a segunda melhor: ela
+ * é montada na hora e ninguém a assinou. Os dois saem da mesma apuração no meuPlano, então
+ * não são dois cálculos; podem divergir com o TEMPO, e é por isso que cada um carrega o seu
+ * carimbo — "publicado em" num, "montado agora" no outro.
  *
  * **Energia — e a ponte para a planilha.** Muita gente vem procurar aqui os números brutos
  * para trabalhar no Excel, e é o instinto certo: é nesta tela que se buscam arquivos. Mas
@@ -74,6 +82,7 @@ import {
 } from '@/features/relatorios/api'
 import { PacoteDeFichas } from '@/features/relatorios/PacoteDeFichas'
 import { RelatorioManutencao, useBaixarPdf } from '@/features/relatorios/RelatorioManutencao'
+import { RelatorioMensal } from '@/features/relatorios/RelatorioMensal'
 import { SECOES, paraDaSecao } from '@/shell/menu'
 
 const TITULO = 'Relatórios'
@@ -125,6 +134,8 @@ export default function Relatorios() {
         </div>
       ) : (
         <div className="space-y-10">
+          {/* O documento entregue vem antes da consulta ao vivo — ver o cabeçalho. */}
+          <RelatorioMensal usinaId={usinaId} />
           <RelatorioManutencao usinaId={usinaId} />
           <PacoteDeFichas usinaId={usinaId} />
         </div>

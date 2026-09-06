@@ -9,6 +9,22 @@
  *    Peça ausente aparece NOMEADA, com a frase; escondê-la deixaria o cliente sem saber se
  *    ela não existe ou se a tela esqueceu de mostrá-la.
  *
+ * **Manutenção · relatório mensal liberado:**
+ * 7. **"Nenhum relatório" dito como se fosse defeito.** A lista vem vazia hoje na maioria
+ *    das usinas porque o fechamento existe e ainda NÃO foi liberado pela equipe — razão de
+ *    produto, não de rede. A frase é a do servidor, que sabe qual mês foi pedido.
+ * 8. **Um documento inventado.** Um mês pode ter só o executivo publicado. A tela mostra o
+ *    que existe; ela não desenha a linha do técnico "vazia" nem some com o mês.
+ * 9. **Três datas na mesma linha.** Só `liberado_em` sai para o cliente. `aprovado_por` é
+ *    nome de funcionário da executora, e `aprovado_em`/`apurado_em` respondem "quando os
+ *    números foram calculados", que não é "de quando é este documento".
+ * 10. **Escolher documento por chip.** O dono odeia chip: o mês se escolhe numa lista
+ *    suspensa, e o tipo do documento nem é uma escolha — são duas linhas do cartão.
+ * 11. **Dois documentos com o mesmo nome.** O mensal e a consulta por período respondem à
+ *    mesma pergunta em tempos diferentes. O primeiro é quem se leva à diretoria (e vem
+ *    primeiro na tela); o segundo carimba o instante em que foi montado. Sem isso, quem
+ *    abrisse os dois em janeiro veria números diferentes de agosto sem saber por quê.
+ *
  * **Manutenção:**
  * 3. **"0 % cumprido" onde nada estava previsto.** `pct_cumprido` nulo é "—". O primeiro
  *    acusaria um contrato que não pedia nada no período — e é o número que vai à diretoria.
@@ -26,7 +42,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -39,8 +55,14 @@ import type {
   Ordem,
   PreparoDeFichas,
   RelatorioOut,
+  RelatoriosMensaisOut,
 } from '@/features/relatorios/api'
 import Relatorios from '@/features/relatorios/Pagina'
+// O PRÓPRIO texto do arquivo vizinho, lido pelo empacotador (`?raw`) e não pelo sistema de
+// arquivos: um caminho montado com `process.cwd()` quebraria ao rodar o teste de outra
+// pasta, e `import.meta.url` aqui não é `file:`. É assim que uma afirmação escrita no
+// cabeçalho de um módulo vira uma coisa que a máquina confere.
+import fonteDoRelatorioDoPeriodo from '@/features/relatorios/RelatorioManutencao.tsx?raw'
 
 // O download de arquivo não passa pelo axios (a sessão vai em cabeçalho, via `fetch`), então
 // é o módulo inteiro que se troca. `baixarArquivo` fica espionável para provar que o pacote
@@ -109,6 +131,35 @@ const ORDEM: Ordem = {
       preenchimento: 100,
     },
   ],
+}
+
+/**
+ * Dois documentos publicados no mesmo mês, na ordem que o BFF entrega: executivo antes do
+ * técnico. Os `liberado_em` são DIFERENTES de propósito — os dois PDFs saem por atos
+ * distintos no meuPlano, e uma data só para ambos afirmaria algo que ninguém disse.
+ */
+const MENSAIS: RelatoriosMensaisOut = {
+  usina: 'UFV Porto Ferreira',
+  usina_id: 7,
+  itens: [
+    {
+      id: 61,
+      usina_id: 7,
+      usina: 'UFV Porto Ferreira',
+      competencia: '2026-08',
+      tipo: 'executivo',
+      liberado_em: '2026-09-05T16:18:00-03:00',
+    },
+    {
+      id: 14,
+      usina_id: 7,
+      usina: 'UFV Porto Ferreira',
+      competencia: '2026-08',
+      tipo: 'tecnico',
+      liberado_em: '2026-09-06T09:40:00-03:00',
+    },
+  ],
+  aviso: null,
 }
 
 function relatorio(parcial: Partial<RelatorioOut> = {}): RelatorioOut {
@@ -241,10 +292,12 @@ function servidor(opcoes: {
   docs?: DocumentosOut
   fichas?: InventarioDeFichas | ((url: string) => InventarioDeFichas)
   preparo?: PreparoDeFichas
+  mensais?: RelatoriosMensaisOut | ((url: string) => RelatoriosMensaisOut)
 }) {
   const rel = opcoes.rel ?? relatorio()
   const docs = opcoes.docs ?? DOCUMENTOS
   const fichas = opcoes.fichas ?? inventario()
+  const mensais = opcoes.mensais ?? MENSAIS
   const responder = (url: string) => {
     if (url.includes('/manutencao/fichas/preparo/')) {
       return Promise.resolve({ data: opcoes.preparo ?? PREPARO_PRONTO })
@@ -253,6 +306,12 @@ function servidor(opcoes: {
       return Promise.resolve({ data: typeof fichas === 'function' ? fichas(url) : fichas })
     }
     if (url.includes('/manutencao/contratos')) return Promise.resolve({ data: CONTRATOS })
+    // ANTES do relatório do período, e não depois: `/manutencao/relatorios-mensais` contém
+    // `/manutencao/relatorio` como pedaço, e na ordem inversa o índice do mensal receberia
+    // o corpo do relatório sob demanda — a tela ficaria verde com a leitura errada.
+    if (url.includes('/manutencao/relatorios-mensais')) {
+      return Promise.resolve({ data: typeof mensais === 'function' ? mensais(url) : mensais })
+    }
     if (url.includes('/manutencao/relatorio')) return Promise.resolve({ data: rel })
     if (url.includes('/documents')) return Promise.resolve({ data: docs })
     throw new Error(`caminho inesperado: ${url}`)
@@ -271,6 +330,19 @@ function montar(aba: 'energia' | 'manutencao' = 'energia') {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+}
+
+/**
+ * O cartão do mês, a partir do rótulo da competência.
+ *
+ * As buscas precisam ser ESCOPADAS: a aba de Manutenção tem três blocos, e dois deles têm
+ * um botão "Baixar PDF". Perguntar à tela inteira contaria o botão do vizinho e o teste
+ * passaria (ou falharia) por um motivo que não é o dele.
+ */
+function cartaoDoMes(rotulo: HTMLElement): HTMLElement {
+  const cartao = rotulo.closest('section')
+  if (cartao === null) throw new Error('o rótulo do mês não está dentro de um cartão')
+  return cartao as HTMLElement
 }
 
 /** O caminho de cada leitura de inventário que a tela pediu. */
@@ -367,8 +439,153 @@ describe('Relatórios · Energia', () => {
     await screen.findByText('Fechamento de agosto')
     fireEvent.click(screen.getByRole('button', { name: 'Manutenção' }))
 
-    expect(await screen.findByText('Relatório de manutenção')).toBeTruthy()
+    expect(await screen.findByText('Consultar um período')).toBeTruthy()
+    expect(screen.getByText('Relatórios do mês')).toBeTruthy()
     expect(screen.getByText('Fichas do período')).toBeTruthy()
+  })
+})
+
+/* ---------------------------------------------- manutenção · relatório mensal */
+
+describe('Relatórios · Manutenção · relatório mensal liberado', () => {
+  it('o documento ENTREGUE vem antes da consulta ao vivo, e cede o nome que era dele', async () => {
+    servidor({})
+    montar('manutencao')
+
+    const mensal = await screen.findByText('Relatórios do mês')
+    const demanda = screen.getByText('Consultar um período')
+    // Ordem no DOM: quem responde "o que eu levo para a diretoria?" é o documento que a
+    // equipe assinou. `compareDocumentPosition` devolve FOLLOWING quando o segundo vem
+    // depois do primeiro.
+    expect(mensal.compareDocumentPosition(demanda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // O nome antigo não pode sobreviver em nenhum dos dois: dois blocos chamados "Relatório
+    // de manutenção" na mesma tela é a pergunta "qual é o certo?" nascendo.
+    expect(screen.queryByText('Relatório de manutenção')).toBeNull()
+  })
+
+  it('o mês publicado traz DUAS linhas — executivo primeiro, técnico depois', async () => {
+    servidor({})
+    montar('manutencao')
+
+    const cartao = cartaoDoMes(await screen.findByText('Agosto de 2026'))
+    const nomes = within(cartao)
+      .getAllByRole('heading', { level: 4 })
+      .map((h) => h.textContent)
+    // Exatamente dois, nesta ordem. A ordem é a do SERVIDOR e a tela a preserva — reordenar
+    // aqui criaria uma segunda régua para "qual eu leio primeiro?".
+    expect(nomes).toEqual(['Relatório executivo', 'Relatório técnico'])
+    expect(within(cartao).getAllByRole('button', { name: 'Baixar PDF' }).length).toBe(2)
+  })
+
+  it('mês com só um documento publicado mostra UMA linha — não inventa a que falta', async () => {
+    servidor({
+      mensais: { ...MENSAIS, itens: [MENSAIS.itens[0]] },
+    })
+    montar('manutencao')
+
+    const cartao = cartaoDoMes(await screen.findByText('Agosto de 2026'))
+    expect(within(cartao).getByText('Relatório executivo')).toBeTruthy()
+    expect(within(cartao).queryByText('Relatório técnico')).toBeNull()
+    expect(within(cartao).getAllByRole('button', { name: 'Baixar PDF' }).length).toBe(1)
+    // E o mês continua na tela: escondê-lo faria "publicado pela metade" parecer "não
+    // publicado", que são coisas diferentes.
+    expect(screen.getByText('Agosto de 2026')).toBeTruthy()
+  })
+
+  it('lista vazia repete a FRASE do servidor — nada foi liberado ainda, e isso não é erro', async () => {
+    const aviso = 'O fechamento de agosto de 2026 ainda não foi liberado pela equipe de manutenção.'
+    servidor({ mensais: { ...MENSAIS, itens: [], aviso } })
+    montar('manutencao')
+
+    expect(await screen.findByText('Nenhum relatório publicado')).toBeTruthy()
+    expect(screen.getByText(aviso)).toBeTruthy()
+    // O cartão de erro tem esta frase fixa; ela não pode aparecer num vazio legítimo.
+    expect(screen.queryByText('Não deu para carregar')).toBeNull()
+  })
+
+  it('a única data do cartão é `liberado_em`: quem aprovou e quando não saem para o cliente', async () => {
+    servidor({})
+    const { container } = montar('manutencao')
+
+    const cartao = cartaoDoMes(await screen.findByText('Agosto de 2026'))
+    const texto = cartao.textContent ?? ''
+    // As duas datas de publicação, uma por documento — elas são do DOCUMENTO, e os dois
+    // PDFs saem por atos distintos no meuPlano.
+    expect(texto).toContain('publicado em 5 de setembro de 2026')
+    expect(texto).toContain('publicado em 6 de setembro de 2026')
+    // Nenhuma outra data, e nenhum nome de funcionário da executora.
+    expect(texto).not.toMatch(/aprovado|apurado/i)
+    expect(container.textContent ?? '').not.toContain('Liberado p/ envio')
+  })
+
+  it('nada de chip: o mês é lista suspensa e o tipo do documento não é botão de escolha', async () => {
+    servidor({})
+    const { container } = montar('manutencao')
+
+    await screen.findByText('Agosto de 2026')
+    // O nome do documento é texto, nunca gatilho de seleção — se virar `<button>` numa
+    // fileira, viraram chips.
+    for (const nome of ['Relatório executivo', 'Relatório técnico']) {
+      expect(screen.getByText(nome).closest('button')).toBeNull()
+    }
+    // E o mês se escolhe numa lista suspensa pesquisável, cujo gatilho mostra a escolha.
+    expect(screen.getByRole('button', { name: /Todos os meses publicados/ })).toBeTruthy()
+    // Nenhum PDF é link comum: a sessão vai em cabeçalho, e endereço com token entra em log.
+    const links = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
+    expect(links.some((h) => (h ?? '').includes('/api/'))).toBe(false)
+  })
+
+  it('escolher um mês troca a leitura — e o vazio daquele mês fala daquele mês', async () => {
+    const get = servidor({
+      mensais: (url) =>
+        url.includes('competencia=2026-07')
+          ? {
+              ...MENSAIS,
+              itens: [],
+              aviso: 'O fechamento de julho de 2026 ainda não foi liberado pela equipe.',
+            }
+          : MENSAIS,
+    })
+    montar('manutencao')
+
+    await screen.findByText('Agosto de 2026')
+    fireEvent.click(screen.getByRole('button', { name: /Todos os meses publicados/ }))
+    fireEvent.click(screen.getByText('Julho de 2026'))
+
+    expect(
+      await screen.findByText('O fechamento de julho de 2026 ainda não foi liberado pela equipe.'),
+    ).toBeTruthy()
+    const pedidos = get.mock.calls
+      .map((c) => String(c[0]))
+      .filter((c) => c.includes('/manutencao/relatorios-mensais'))
+    expect(pedidos.some((c) => c.includes('competencia=2026-07'))).toBe(true)
+    // A usina da URL, sempre: o BFF resolve o vínculo por ela, e é a cerca de carteira.
+    expect(pedidos.every((c) => c.includes('usina_id=7'))).toBe(true)
+  })
+
+  it('a aba Energia não paga pela leitura do mensal — só a aba aberta é montada', async () => {
+    const get = servidor({})
+    montar()
+
+    await screen.findByText('Fechamento de agosto')
+    const caminhos = get.mock.calls.map((c) => String(c[0]))
+    expect(caminhos.some((c) => c.includes('/manutencao/relatorios-mensais'))).toBe(false)
+  })
+
+  it('a consulta por período carimba QUANDO foi montada e aponta o documento assinado', async () => {
+    servidor({})
+    montar('manutencao')
+
+    // O carimbo separa os dois documentos no tempo: sem ele, quem abrisse ambos em janeiro
+    // veria números diferentes de agosto sem ter como saber que a diferença é o tempo.
+    const carimbo = await screen.findByText(/Leitura ao vivo do histórico do ativo, montada em/)
+    // E aponta, no mesmo parágrafo, onde mora o documento assinado: a resposta a "qual é o
+    // certo?" não pode depender de o cliente rolar a página até achar o outro bloco.
+    expect(carimbo.textContent ?? '').toContain('Relatórios do mês')
+
+    // E a frase que MENTIA sobre quem leva o documento à diretoria saiu do arquivo: ela
+    // agora é do mensal liberado, que é o que a equipe assina e entrega.
+    expect(fonteDoRelatorioDoPeriodo).not.toContain('leva à diretoria')
   })
 })
 
