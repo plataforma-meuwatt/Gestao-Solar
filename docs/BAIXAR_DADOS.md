@@ -345,9 +345,19 @@ mais de 30 s não tinha sido medido**, porque as rotas não estavam deployadas.
 sem responder e entregou o arquivo inteiro.** O `Content-Length` bateu com o corpo recebido, o que
 descarta recodificação no caminho.
 
-**O que continua aberto, com precisão:** sabe-se que **≥ 33 s passa**; o teto exato do edge não
-foi encontrado, porque não há como pedir mais tempo sem uma usina maior que Porto Ferreira. Uma
-usina que produza um pedido de 60 s ou mais é território não medido.
+**Refeito em 05/09 depois do deploy desta leva, com os DOIS membros do platô** (os juízes
+apontaram, com razão, que só um deles tinha sido medido em produção):
+
+| pedido, pela rota publicada | cabeçalho | total | bytes |
+|---|---|---|---|
+| 31 d × 5 min, 4 blocos | 31,4 s | 32,3 s | 2 054 396 |
+| **92 d × 15 min, 4 blocos** | 30,0 s | 30,7 s | 1 714 708 |
+
+**O que continua aberto, com precisão:** sabe-se que **≥ 33 s passa** e que os dois piores
+pedidos que este cliente consegue montar atravessam inteiros. O teto exato do edge não foi
+encontrado, porque não há como pedir mais tempo sem uma usina maior que Porto Ferreira — e a
+faixa medida do MESMO pedido (29,7 a 41,2 s) diz que uma usina só um pouco maior chega perto de
+território não medido.
 
 > ⚠ **Sem `/openapi.json` ≠ sem rota.** `main.py` põe `openapi_url=None if settings.producao`, e a
 > primeira versão do script concluiu daí que "a rota não está montada" — sobre uma rota que estava
