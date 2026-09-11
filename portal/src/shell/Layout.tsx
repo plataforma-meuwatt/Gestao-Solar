@@ -44,6 +44,7 @@ import {
   secoesDaFamilia,
 } from '@/shell/menu'
 import { SeletorUsina, type UsinasOut } from '@/shell/SeletorUsina'
+import { AbrirProduto } from '@/shell/AbrirProduto'
 import { useAuth } from '@/store/auth'
 import { useUsina } from '@/store/usina'
 
@@ -297,6 +298,8 @@ export function Layout() {
           <div className="ml-1 min-w-0 flex-1">
             <SeletorUsina atual={atual} />
           </div>
+
+          <AbrirProduto />
 
           <NavLink
             to="/conta"

@@ -20,6 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.plants import usinas_do_usuario
+from app.core.config import get_settings
+from app.core.tokens_produto import NOME
 from app.core.db import get_db
 from app.core.security import (
     conferir_senha,
@@ -28,6 +30,7 @@ from app.core.security import (
     usuario_atual,
 )
 from app.models.integracao import Produto
+from app.services import integracoes
 from app.models.user import User, UserPlantAccess, VinculoProduto
 
 router = APIRouter(prefix="/api/v1/auth", tags=["app · autenticação"])
@@ -202,6 +205,51 @@ class AssercaoOut(BaseModel):
     #: Só para a tela do produto poder dizer "entrando como Fulano" antes de trocar a
     #: asserção por sessão. Não substitui nada: quem decide o que a pessoa vê é o produto.
     nome: str
+
+
+#: O SITE de cada produto — não a API. É para lá que o navegador do cliente vai.
+def _enderecos_web() -> dict[Produto, str]:
+    s = get_settings()
+    return {Produto.MEUWATT: s.meuwatt_web_url, Produto.MEUPLANO: s.meuplano_web_url}
+
+
+class DestinoOut(BaseModel):
+    """Para onde mandar o navegador para a pessoa cair logada do outro lado."""
+
+    url: str
+    nome: str
+
+
+@router.post("/produtos/{produto}/entrar", response_model=DestinoOut)
+def entrar_no_produto(
+    produto: Produto, db: Session = Depends(get_db), usuario: User = Depends(usuario_atual)
+) -> DestinoOut:
+    """O cliente já está logado AQUI e quer abrir o produto sem digitar nada de novo.
+
+    Diferente de `/assercao`: lá a pessoa apresenta apelido e senha (é a tela de login do
+    produto chamando de fora); aqui ela já provou quem é nesta sessão, e o que falta é
+    carregar essa prova para o outro lado.
+
+    A asserção viaja no **fragmento** da URL (`#assercao=`), nunca na query. O fragmento
+    não é enviado ao servidor: não entra em log de acesso, não vaza pelo `Referer` e não
+    fica no histórico do proxy. Ela vale dois minutos e uma vez só — mas dois minutos num
+    log são dois minutos a mais do que o necessário.
+
+    Quem recusa alguém não vinculado é o PRODUTO, não esta rota. Antecipar a recusa aqui
+    obrigaria o Gestão Solar a manter uma cópia de um estado que é de lá, e ela erraria
+    justamente no dia em que alguém vinculasse a conta e o botão continuasse dizendo não.
+    """
+    from app.services import login_externo
+
+    try:
+        assercao = login_externo.assinar(usuario, produto)
+    except login_externo.SemChave as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+    integracao = integracoes.obter(db, produto)
+    base = (integracao.base_url if integracao else "") or ""
+    destino = _enderecos_web().get(produto) or base
+    return DestinoOut(url=f"{destino.rstrip('/')}/#assercao={assercao}", nome=NOME[produto])
 
 
 @router.post("/produtos/{produto}/assercao", response_model=AssercaoOut)
