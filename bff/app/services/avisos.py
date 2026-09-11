@@ -23,10 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.plants import usinas_do_usuario
+from app.models.integracao import Produto
 from app.models.permissao import Dispositivo
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes, permissoes
+from app.services import permissoes, vinculos
 
 CATEGORIA = "notificacao"
 SUBCATEGORIA = "usina_parada"
@@ -86,11 +87,33 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
     if not alvos:
         return []
 
-    cliente = await integracoes.cliente_meuwatt(db)
+    # Cada usina é lida com o token de ALGUÉM que tem acesso a ela — e uma vez só.
+    #
+    # Não existe mais credencial de serviço: quem lê o meuWatt é sempre uma pessoa. Mas a
+    # propriedade que esta função protege continua valendo, e é a razão de ela existir
+    # assim: a leitura de uma usina é a MESMA para todo mundo que a enxerga, então repeti-la
+    # por pessoa multiplicaria a carga no meuWatt pelo número de clientes sem trazer um dado
+    # novo. Basta um leitor por usina, e ele tem de ser alguém que legitimamente a vê.
+    #
+    # Usina cujos donos ainda não conectaram o meuWatt fica de fora, sem aviso. É o certo:
+    # não temos como saber o estado dela, e calar é melhor do que inventar.
+    leitor_da_usina: dict[int, int] = {}
+    for pessoa in pessoas:
+        if vinculos.obter(db, pessoa.id, Produto.MEUWATT) is None:
+            continue
+        for u in escopos.get(pessoa.id, []):
+            leitor_da_usina.setdefault(u.id, pessoa.id)
+
+    clientes: dict[int, Any] = {}
     estado: dict[int, list[dict[str, Any]]] = {}
     for link in alvos.values():
+        dono = leitor_da_usina.get(link.id)
+        if dono is None:
+            continue
         try:
-            resposta = await cliente.monitoramento_atual(link.mw_plant_slug)
+            if dono not in clientes:
+                clientes[dono] = vinculos.cliente_meuwatt(db, dono)
+            resposta = await clientes[dono].monitoramento_atual(link.mw_plant_slug)
         except Exception:  # noqa: BLE001
             # Usina fora do ar não gera aviso e não derruba as outras. Silêncio aqui é
             # correto: "não consegui ler" não é "parou".

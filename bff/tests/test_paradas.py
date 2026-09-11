@@ -115,10 +115,10 @@ def minha(db, dono, usinas):
 
 
 def _usar(monkeypatch, cliente: ClienteFalso) -> ClienteFalso:
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.paradas.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.paradas.vinculos.cliente_meuwatt", _cliente)
     return cliente
 
 
@@ -325,10 +325,10 @@ def test_as_duas_fontes_fora_da_total_nulo_com_aviso_e_200(http, cabecalho, minh
 
 
 def test_ponte_nao_configurada_e_aviso_e_nao_500(http, cabecalho, minha, monkeypatch):
-    async def _sem_ponte(_db):
+    def _sem_ponte(_db, _cliente_id=None):
         raise RuntimeError("A ponte com o meuWatt não está configurada.")
 
-    monkeypatch.setattr("app.api.v1.paradas.integracoes.cliente_meuwatt", _sem_ponte)
+    monkeypatch.setattr("app.api.v1.paradas.vinculos.cliente_meuwatt", _sem_ponte)
 
     r = http.get(f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho)
 

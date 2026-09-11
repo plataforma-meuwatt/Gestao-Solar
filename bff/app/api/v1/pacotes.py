@@ -74,6 +74,7 @@ from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
 from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · manutenção"])
 
@@ -405,9 +406,9 @@ def _detalhe(exc: httpx.HTTPStatusError) -> str | None:
     return integracoes.detalhe_do_upstream(exc.response)
 
 
-async def _cliente(db: Session) -> Any:
+async def _cliente(db: Session, usuario: User) -> Any:
     try:
-        return await integracoes.cliente_meuplano(db)
+        return vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
 
@@ -441,7 +442,7 @@ async def inventario_de_fichas(
     filtros = _filtros(classificacao, situacao, os_id, busca)
 
     saida = InventarioOut(usina=link.nome, usina_id=link.id, de=inicio, ate=fim)
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
 
     try:
         bruto = await cliente.vc_fichas(
@@ -506,7 +507,7 @@ async def preparar_fichas(
     inicio, fim = periodo_pedido(de, ate)
     filtros = _filtros(classificacao, situacao, os_id, busca)
 
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
     try:
         bruto = await cliente.vc_fichas_preparar(
             link.mp_usina_id, inicio, fim, container_id=contrato_id, **filtros
@@ -556,7 +557,7 @@ async def andamento_do_preparo(
     do preparo devolveria o andamento (e os ids de tarefa) do pacote de outro cliente.
     """
     link = _link_do_escopo(db, usuario, usina_id)
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
 
     try:
         bruto = await cliente.vc_fichas_preparo(link.mp_usina_id, preparo_id)
@@ -647,7 +648,7 @@ async def pacote_de_fichas(
     link = _link_do_escopo(db, usuario, usina_id)
     inicio, fim = periodo_pedido(de, ate)
     filtros = _filtros(classificacao, situacao, os_id, busca)
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
 
     # O contexto do fluxo tem de sobreviver a esta função: ele só fecha quando o último
     # pedaço sair. Daí a pilha ser aberta aqui (para ler os cabeçalhos e falhar cedo, com

@@ -248,14 +248,14 @@ def cenario(monkeypatch, dono):
     portal = PortalFalso()
     plano = MeuPlanoFalso()
 
-    async def _mw(_db):
+    def _mw(_db, _cliente_id=None):
         return portal
 
-    async def _mp(_db):
+    def _mp(_db, _cliente_id=None):
         return plano
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _mw)
-    monkeypatch.setattr("app.api.v1.manutencao.integracoes.cliente_meuplano", _mp)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _mw)
+    monkeypatch.setattr("app.api.v1.manutencao.vinculos.cliente_meuplano", _mp)
     monkeypatch.setattr(relatorios_ano, "hoje_na_usina", lambda: HOJE)
     return portal, plano
 
@@ -459,10 +459,10 @@ async def test_ponte_do_monitoramento_fora_nao_vira_ninguem_publicou(db, dono, m
     portal = PortalFalso(quebrado=True)
     plano = MeuPlanoFalso()
     monkeypatch.setattr(
-        "app.api.v1.documents.integracoes.cliente_meuwatt", lambda _db: _pronto(portal)
+        "app.api.v1.documents.vinculos.cliente_meuwatt", lambda _db, _cid=None: portal
     )
     monkeypatch.setattr(
-        "app.api.v1.manutencao.integracoes.cliente_meuplano", lambda _db: _pronto(plano)
+        "app.api.v1.manutencao.vinculos.cliente_meuplano", lambda _db, _cid=None: plano
     )
     monkeypatch.setattr(relatorios_ano, "hoje_na_usina", lambda: HOJE)
 
@@ -474,8 +474,10 @@ async def test_ponte_do_monitoramento_fora_nao_vira_ninguem_publicou(db, dono, m
     assert _usina(saida, "Porto Ferreira").previsto_ate_hoje == 31
 
 
-async def _pronto(valor):
-    """`cliente_meuwatt`/`cliente_meuplano` são corrotinas; isto as imita numa linha."""
+def _pronto(valor):
+    """Mantida porque outros pontos do arquivo a usam. `cliente_meuwatt`/`cliente_meuplano`
+    deixaram de ser corrotinas quando a leitura passou a usar o token do próprio cliente:
+    não há mais login a fazer, então construir o cliente é síncrono."""
     return valor
 
 
@@ -553,10 +555,10 @@ async def test_uma_usina_derrubada_nao_leva_as_outras(db, dono, monkeypatch):
     portal = PortalFalso()
     plano = MeuPlanoFalso(derruba=2)  # Pereiras
     monkeypatch.setattr(
-        "app.api.v1.documents.integracoes.cliente_meuwatt", lambda _db: _pronto(portal)
+        "app.api.v1.documents.vinculos.cliente_meuwatt", lambda _db, _cid=None: portal
     )
     monkeypatch.setattr(
-        "app.api.v1.manutencao.integracoes.cliente_meuplano", lambda _db: _pronto(plano)
+        "app.api.v1.manutencao.vinculos.cliente_meuplano", lambda _db, _cid=None: plano
     )
     monkeypatch.setattr(relatorios_ano, "hoje_na_usina", lambda: HOJE)
 

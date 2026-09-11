@@ -121,10 +121,10 @@ def cenario(db, dono, usinas, monkeypatch):
 
     caixa = {"cliente": ClienteFalso()}
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return caixa["cliente"]
 
-    monkeypatch.setattr(plants.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(plants.vinculos, "cliente_meuwatt", _cliente)
     monkeypatch.setattr(plants, "hoje_na_usina", lambda: HOJE)
 
     http = TestClient(_aplicacao(db))

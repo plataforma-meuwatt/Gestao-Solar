@@ -7,6 +7,7 @@
  * comando destrava.
  */
 
+import { Conexoes } from '@/features/conexoes/Conexoes'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { UserPlus } from 'lucide-react'
 import { useState } from 'react'
@@ -35,7 +36,7 @@ export function Equipe() {
   return (
     <Pagina
       titulo="Equipe"
-      apoio="Quem abre o painel. Atendimento cuida de clientes e diagnóstico; administrador também mexe nas conexões e na equipe."
+      apoio="Quem abre o painel. Atendimento cuida de clientes e diagnóstico; administrador também mexe no acesso aos produtos e na equipe."
       acao={
         <button onClick={() => setNovo(true)} className="btn-primario">
           <UserPlus size={16} />
@@ -56,6 +57,8 @@ export function Equipe() {
           />
         ))}
       </Cartao>
+
+      <Conexoes embutido />
 
       {novo ? <ModalNovoMembro aoFechar={() => setNovo(false)} /> : null}
     </Pagina>

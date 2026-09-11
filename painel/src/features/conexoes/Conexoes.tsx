@@ -65,17 +65,28 @@ function quando(iso: string | null): string {
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
-export function Conexoes() {
+const APOIO =
+  'A única leitura que ainda não é feita pelo token de um cliente: o catálogo de usinas ' +
+  'dos dois produtos, em Usinas. Ele precisa enxergar até a usina que nenhum cliente tem ' +
+  'ainda, que é justamente o ponto de partida para conceder. Os dados de cada pessoa são ' +
+  'lidos com o token dela, na ficha dela, em Clientes.'
+
+/**
+ * `embutido` desenha só o conteúdo, sem o cabeçalho de página.
+ *
+ * É assim que ele aparece dentro de Equipe. A rota própria saiu do menu porque ela
+ * disputava atenção com "Clientes" e era lida como se fosse a conexão de alguém — quem
+ * abria via sempre os mesmos dois cartões, independentemente do cliente escolhido. Aqui
+ * embaixo das pessoas, ao lado de quem administra o painel, ela diz o que é.
+ */
+export function Conexoes({ embutido = false }: { embutido?: boolean } = {}) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['integracoes'],
     queryFn: listarIntegracoes,
   })
 
-  return (
-    <Pagina
-      titulo="Acesso aos produtos"
-      apoio="O endereço de cada produto e a credencial administrativa do painel, usada para montar o catálogo de usinas dos dois lados em Usinas. Os dados de cada cliente NÃO passam por aqui: são lidos com o token dele, na ficha dele, em Clientes."
-    >
+  const conteudo = (
+    <>
       {error ? <Erro className="mb-4">{mensagemDeErro(error)}</Erro> : null}
       {isLoading ? <Carregando /> : null}
 
@@ -84,6 +95,22 @@ export function Conexoes() {
           <CartaoConexao key={i.produto} integracao={i} />
         ))}
       </div>
+    </>
+  )
+
+  if (embutido) {
+    return (
+      <section className="mt-8">
+        <h2 className="text-base font-semibold text-forte">Acesso do painel aos produtos</h2>
+        <p className="text-sm text-rotulo mt-1 mb-4 max-w-3xl">{APOIO}</p>
+        {conteudo}
+      </section>
+    )
+  }
+
+  return (
+    <Pagina titulo="Acesso aos produtos" apoio={APOIO}>
+      {conteudo}
     </Pagina>
   )
 }

@@ -279,15 +279,15 @@ def dono(db, carteira):
 
 
 def _montar(monkeypatch, plano, meuwatt=None):
-    async def _mw(_db):
+    def _mw(_db, _cliente_id=None):
         return meuwatt or MeuWattFalso()
 
-    async def _mp(_db):
+    def _mp(_db, _cliente_id=None):
         return plano
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _mw)
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuplano", _mp)
-    monkeypatch.setattr("app.api.v1.manutencao.integracoes.cliente_meuplano", _mp)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _mw)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuplano", _mp)
+    monkeypatch.setattr("app.api.v1.manutencao.vinculos.cliente_meuplano", _mp)
     monkeypatch.setattr(relatorios_ano, "hoje_na_usina", lambda: HOJE)
     return plano
 
@@ -348,7 +348,7 @@ async def test_usina_que_nao_respondeu_nao_e_usina_sem_documento(db, dono, monke
     _montar(monkeypatch, MeuPlanoFalso(derruba=2))
     from app.api.v1.plants import usinas_do_usuario
 
-    por_usina, aviso = await mensais_das_usinas(db, usinas_do_usuario(db, dono))
+    por_usina, aviso = await mensais_das_usinas(db, usinas_do_usuario(db, dono), dono)
 
     ids = {l.nome: l.id for l in usinas_do_usuario(db, dono)}
     assert ids["Pereiras"] not in por_usina, "usina que caiu não pode virar 'sem documento'"

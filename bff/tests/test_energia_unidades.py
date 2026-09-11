@@ -137,10 +137,10 @@ def cenario(db, dono, usinas, monkeypatch):
 
     caixa = {"cliente": ClienteFalso(range_=_range())}
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return caixa["cliente"]
 
-    monkeypatch.setattr(energia.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(energia.vinculos, "cliente_meuwatt", _cliente)
     monkeypatch.setattr(energia, "hoje_na_usina", lambda: HOJE)
 
     http = TestClient(_aplicacao(db))

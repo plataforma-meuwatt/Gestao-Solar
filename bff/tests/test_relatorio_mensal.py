@@ -202,10 +202,10 @@ def cenario(db, dono, usinas, monkeypatch):
     _conceder(db, dono, minha)
     cliente = ClienteFalso()
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.relatorio.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.relatorio.vinculos.cliente_meuplano", _cliente)
     monkeypatch.setattr(mod, "hoje_na_usina", lambda: date(2026, 9, 6))
     return cliente
 
@@ -432,10 +432,10 @@ async def test_pdf_vazio_e_502_com_frase(db, dono, usinas, monkeypatch):
     _conceder(db, dono, minha)
     cliente = ClienteFalso(pdf=b"")
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.relatorio.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.relatorio.vinculos.cliente_meuplano", _cliente)
     with pytest.raises(HTTPException) as e:
         await pdf_do_relatorio_mensal(14, db, dono)
     assert e.value.status_code == 502 and "vazio" in e.value.detail
@@ -452,10 +452,10 @@ async def test_liberado_sem_corpo_nao_vira_frase_de_cronograma(db, dono, usinas,
     sem_corpo = {**_card(14, 1, "tecnico"), "dados": None, "texto": None, "secoes": None}
     cliente = ClienteFalso(detalhes={14: sem_corpo})
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.relatorio.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.relatorio.vinculos.cliente_meuplano", _cliente)
     with pytest.raises(HTTPException) as e:
         await relatorio_mensal(14, db, dono)
     assert e.value.status_code == 502 and "sem os números" in e.value.detail
@@ -494,10 +494,10 @@ async def test_upstream_fora_do_ar_nao_vira_500(db, dono, usinas, monkeypatch):
     _conceder(db, dono, minha)
     cliente = ClienteFalso(erro=httpx.ConnectError("sem rota para o host"))
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.relatorio.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.relatorio.vinculos.cliente_meuplano", _cliente)
     with pytest.raises(HTTPException) as e:
         await relatorios_mensais(minha.id, None, None, db, dono)
     assert e.value.status_code == 502

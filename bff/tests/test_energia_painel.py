@@ -262,10 +262,10 @@ def cenario(db, dono, usinas, monkeypatch):
 
     caixa = {"cliente": ClienteFalso()}
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return caixa["cliente"]
 
-    monkeypatch.setattr(energia.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(energia.vinculos, "cliente_meuwatt", _cliente)
     monkeypatch.setattr(energia, "hoje_na_usina", lambda: HOJE)
     # `_referencia_pedida` mora em `plants` e recusa data futura pelo relógio DELE — sem
     # este congelamento o teste passaria a depender do dia em que roda.
@@ -1202,10 +1202,10 @@ def cenario_com_desempenho(db, dono, usinas, monkeypatch):
 
     caixa = {"cliente": ClienteFalso()}
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return caixa["cliente"]
 
-    monkeypatch.setattr(energia.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(energia.vinculos, "cliente_meuwatt", _cliente)
     monkeypatch.setattr(energia, "hoje_na_usina", lambda: HOJE)
     monkeypatch.setattr(plants, "hoje_na_usina", lambda: HOJE)
 

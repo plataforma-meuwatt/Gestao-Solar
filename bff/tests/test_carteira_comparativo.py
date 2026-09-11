@@ -267,14 +267,14 @@ def cenario(db, dono, usinas, monkeypatch):
     meuwatt = MeuWattFalso()
     meuplano = MeuPlanoFalso()
 
-    async def _mw(_db):
+    def _mw(_db, _cliente_id=None):
         return meuwatt
 
-    async def _mp(_db):
+    def _mp(_db, _cliente_id=None):
         return meuplano
 
-    monkeypatch.setattr("app.services.integracoes.cliente_meuwatt", _mw)
-    monkeypatch.setattr("app.services.integracoes.cliente_meuplano", _mp)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuwatt", _mw)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", _mp)
     monkeypatch.setattr("app.api.v1.plants._dados_meuwatt", _agora_falso)
     # `hoje` é lido em três módulos por caminhos diferentes; travá-lo em 31/08/2026 é o que
     # deixa a janela de agosto ser um mês FECHADO (sem o `min(fim, hoje)` cortar o mês).

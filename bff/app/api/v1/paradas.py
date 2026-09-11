@@ -47,7 +47,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · paradas"])
 
@@ -316,7 +316,7 @@ async def paradas_da_usina(
         )
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida

@@ -84,7 +84,7 @@ from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
 from app.services import carteira as regua
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1/carteira", tags=["portal · carteira"])
 
@@ -533,7 +533,7 @@ def _janela_de(comum: regua.JanelaComum, inicio: date, fim: date, meses: list[st
 
 async def _bloco_energia(
     links: list[PlantLink], inicio: date, fim: date, meses: list[str], db: Session,
-    truncada: bool,
+    truncada: bool, usuario: User,
 ) -> tuple[BlocoEnergiaOut, JanelaOut]:
     """`(bloco, janela efetivamente comparada)`. UMA ida ao `range` por usina."""
     bloco = BlocoEnergiaOut()
@@ -555,7 +555,7 @@ async def _bloco_energia(
         return bloco, janela_cheia
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001 — a ponte fora não derruba o outro bloco
         linhas.extend(
             UsinaEnergiaOut(id=l.id, nome=l.nome, cidade=l.cidade, uf=l.uf,
@@ -908,7 +908,7 @@ async def comparativo(
     # Os dois blocos em paralelo: um deles fora do ar não segura o outro na tela.
     tarefas: list[Any] = []
     if "energia" in pedidos:
-        tarefas.append(_bloco_energia(links, inicio, fim, meses, db, truncada))
+        tarefas.append(_bloco_energia(links, inicio, fim, meses, db, truncada, usuario))
     if "manutencao" in pedidos:
         tarefas.append(_bloco_manutencao(links, set(meses), db, usuario))
     resultados = list(await asyncio.gather(*tarefas))

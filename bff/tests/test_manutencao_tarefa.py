@@ -91,10 +91,10 @@ def cenario(db, dono, usinas, monkeypatch):
     }
     cliente = ClienteFalso(ordem, tarefas)
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.manutencao.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.manutencao.vinculos.cliente_meuplano", _cliente)
     return cliente
 
 

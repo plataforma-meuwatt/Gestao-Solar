@@ -66,7 +66,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · pendências"])
 
@@ -510,7 +510,7 @@ async def listar_pendencias(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
@@ -581,15 +581,16 @@ async def _pendencia_autorizada(
     abrir a pendência de outro dono trocando um dígito na URL. E, mesmo dentro do escopo,
     uma pendência não compartilhável responde 404 — a segunda cerca.
     """
-    usinas_task = asyncio.create_task(_usinas_com_manutencao(db, usuario))
-    cliente_task = asyncio.create_task(integracoes.cliente_meuplano(db))
-    com_manutencao, aviso = await usinas_task
+    # Sem task para montar o cliente: com o token do próprio usuário a construção é
+    # SÍNCRONA (não há login a fazer). A paralelização existia porque a ponte por conta de
+    # serviço fazia login na primeira chamada, e adiantá-la salvou a ficha de vinte
+    # inversores de estourar o prazo do aplicativo (04/09/2026). Esse custo não existe mais.
+    com_manutencao, aviso = await _usinas_com_manutencao(db, usuario)
     if not com_manutencao:
-        cliente_task.cancel()
         raise HTTPException(404, aviso or "Sem usina com manutenção.")
 
     try:
-        cliente = await cliente_task
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
 

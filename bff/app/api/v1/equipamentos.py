@@ -28,7 +28,7 @@ from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · equipamentos"])
 
@@ -434,7 +434,7 @@ async def detalhe_do_equipamento(
         )
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         agora_resp, diario, intraday = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
             cliente.geracao_diaria(link.mw_plant_slug, hoje_na_usina()),
@@ -655,7 +655,7 @@ async def equipamentos_da_usina(
         )
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         agora_resp, diario = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
             cliente.geracao_diaria(link.mw_plant_slug, hoje_na_usina()),
@@ -844,7 +844,7 @@ async def comparativo_da_usina(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         agora_resp, relatorio = await asyncio.gather(
             cliente.monitoramento_atual(link.mw_plant_slug),
             cliente.geracao_periodo(link.mw_plant_slug, inicio, fim),
@@ -1028,7 +1028,7 @@ async def curva_do_rele_de_temperatura(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         bruto = await cliente.intraday_temperatura(link.mw_plant_slug, alvo)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Monitoramento indisponível: {exc}"
@@ -1114,7 +1114,7 @@ async def maximas_do_rele_de_temperatura(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         # Em paralelo: 31 dias em série seriam 31 latências somadas.
         respostas = await asyncio.gather(
             *[
@@ -1195,7 +1195,7 @@ async def curva_do_rele_de_protecao(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         bruto = await cliente.intraday_rele(link.mw_plant_slug, alvo)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Monitoramento indisponível: {exc}"
@@ -1271,7 +1271,7 @@ async def historico_de_flags(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Identificador de relé inválido.")
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         bruto = await cliente.eventos_de_trip(link.mw_plant_slug, int(cru), max(1, min(limite, 200)))
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Monitoramento indisponível: {exc}"
@@ -1330,7 +1330,7 @@ async def curva_das_strings(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         # O serial é o que identifica o inversor na série intraday; o app carrega o
         # `slot-N`. A tradução exige o estado de agora, então as duas vão juntas.
         agora_resp, bruto = await asyncio.gather(

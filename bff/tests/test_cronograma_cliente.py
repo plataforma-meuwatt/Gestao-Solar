@@ -130,10 +130,10 @@ def cenario(db, dono, usinas, monkeypatch):
         consolidados={10: {**MATRIZ, "version": 1}, 20: MATRIZ},
     )
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.manutencao.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.manutencao.vinculos.cliente_meuplano", _cliente)
     return cliente
 
 
@@ -243,10 +243,10 @@ async def test_usina_sem_contrato_avisa_sem_derrubar(db, dono, usinas, monkeypat
     _conceder(db, dono, porto)
     cliente = ClienteFalso(contratos_por_usina={}, consolidados={})
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.manutencao.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.manutencao.vinculos.cliente_meuplano", _cliente)
     saida = await cronograma_da_usina(porto.id, None, db, dono)
     assert saida.contrato_id is None and saida.linhas == []
     assert "não tem contrato" in (saida.aviso or "")

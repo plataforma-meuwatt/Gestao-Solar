@@ -341,10 +341,10 @@ def cenario(db, dono, usinas, monkeypatch):
 
     caixa = {"cliente": ClienteFalso()}
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return caixa["cliente"]
 
-    monkeypatch.setattr(energia.integracoes, "cliente_meuwatt", _cliente)
+    monkeypatch.setattr(energia.vinculos, "cliente_meuwatt", _cliente)
     monkeypatch.setattr(energia, "hoje_na_usina", lambda: HOJE)
     monkeypatch.setattr(energia, "agora_na_usina", lambda: AGORA)
     # `_referencia_pedida` mora em `plants` e recusa data futura pelo relógio DELE.
@@ -912,7 +912,7 @@ def test_sem_ponte_com_o_monitoramento_a_aba_abre_vazia_e_diz_o_motivo(cenario):
     async def _sem_ponte(_db):
         raise RuntimeError("credencial de serviço do meuWatt recusada")
 
-    energia.integracoes.cliente_meuwatt = _sem_ponte
+    energia.vinculos.cliente_meuwatt = _sem_ponte
     c = _fechamento(http, usina)
 
     assert c["potencial_kwh"] is None and c["causas"] == []

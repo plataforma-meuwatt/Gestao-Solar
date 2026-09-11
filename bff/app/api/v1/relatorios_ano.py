@@ -620,7 +620,7 @@ async def grade_do_ano(
     com_manutencao = [l for l in links if l.mp_usina_id]
     documentos, mensais, *cronogramas = await asyncio.gather(
         documentos_de_geracao(None, db, usuario),
-        mensais_das_usinas(db, links, vagas=vagas),
+        mensais_das_usinas(db, links, usuario, vagas=vagas),
         *(_cronograma(l, db, usuario, vagas) for l in com_manutencao),
         return_exceptions=True,
     )

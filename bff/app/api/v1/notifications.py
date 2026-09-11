@@ -32,7 +32,7 @@ from app.core.security import usuario_atual
 from app.models.billing import SituacaoFatura
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · notificações"])
 
@@ -218,7 +218,7 @@ async def minhas_notificacoes(
     com_mw = [l for l in links if l.mw_plant_slug]
     if com_mw:
         try:
-            mw = await integracoes.cliente_meuwatt(db)
+            mw = vinculos.cliente_meuwatt(db, usuario.id)
             for r in await asyncio.gather(
                 *(_alertas_da_usina(mw, l) for l in com_mw), return_exceptions=True
             ):
@@ -232,7 +232,7 @@ async def minhas_notificacoes(
     com_mp = [l for l in links if l.mp_usina_id]
     if com_mp:
         try:
-            mp = await integracoes.cliente_meuplano(db)
+            mp = vinculos.cliente_meuplano(db, usuario.id)
             for r in await asyncio.gather(
                 *(_ordens_da_usina(mp, l) for l in com_mp), return_exceptions=True
             ):

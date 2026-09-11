@@ -25,10 +25,23 @@ responde. Daí saem duas coisas de uma vez:
 
 ## O que continua sendo de serviço
 
-O endereço de cada produto e a credencial administrativa seguem em `gs_integracoes`, e
-seguem necessários: a tela de conciliação de usinas lista o catálogo INTEIRO dos dois
-produtos, que é uma pergunta de administrador e não de cliente nenhum. O que saiu de lá
-foi a leitura dos dados de cada pessoa.
+UMA coisa só: o **catálogo de usinas** (`painel.carregar_conciliacao`). Ela lista tudo o
+que existe nos dois produtos — inclusive usina que nenhum cliente tem ainda, que é
+justamente o ponto de partida para conceder. Nenhum token de cliente enxerga isso, por
+definição, então a credencial administrativa continua em `gs_integracoes`, junto do
+endereço de cada produto.
+
+Tudo o mais migrou. Inclusive o que não era óbvio:
+
+* **as 41 leituras do aplicativo** — energia, equipamentos, paradas, manutenção,
+  relatórios, documentos, carteira, notificações, pendências, pacotes, exportação. A
+  autorização sempre foi local (a concessão de usina vive aqui); o que mudou é que a
+  LEITURA deixou de ser por procuração;
+* **o diagnóstico do cliente**, que lia com a credencial da equipe e por isso respondia
+  "o que EU vejo" a uma pergunta que é "o que ELE vê" — dois resultados que só divergem
+  quando há problema, ou seja, exatamente quando a tela é aberta;
+* **os avisos de parada**, que continuam lendo cada usina uma única vez, mas agora pelo
+  token de alguém que tem acesso a ela (ver `services/avisos.py`).
 
 ## Ordem das operações
 
@@ -40,6 +53,7 @@ Gravar primeiro e testar depois deixaria o gestor com as duas coisas quebradas.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -95,9 +109,28 @@ def listar(db: Session, cliente_id: int) -> dict[Produto, VinculoProduto | None]
 # ── ler como o cliente ──────────────────────────────────────────────────────
 
 
-class SemConexao(RuntimeError):
-    """O cliente não tem token para este produto. A mensagem é para a equipe, que é quem
-    lê o erro no painel, e aponta o lugar do conserto."""
+class SemConexao(HTTPException):
+    """O cliente não tem token para este produto.
+
+    `HTTPException` e não um erro qualquer porque este é o estado normal de um cliente
+    recém-cadastrado, e ele atravessa TODAS as telas do aplicativo — que agora leem com o
+    token da pessoa. Como `RuntimeError` ele chegaria ao app como 500, indistinguível de
+    defeito, e a equipe iria procurar bug onde só falta um passo do cadastro.
+
+    **424 Failed Dependency**, que é literalmente o caso: o pedido está correto e o que
+    falta é uma dependência dele. Não é 401 (quem pede está autenticado aqui), não é 403
+    (não é falta de permissão) e não é 404 (o recurso existe, só não há como alcançá-lo).
+
+    `__str__` devolve a mensagem crua: o `HTTPException` do FastAPI imprime
+    `"424: ..."`, e quem já fazia `str(exc)` para montar a frase da tela passaria a
+    mostrar o número do status no meio do texto.
+    """
+
+    def __init__(self, mensagem: str) -> None:
+        super().__init__(status_code=424, detail=mensagem)
+
+    def __str__(self) -> str:
+        return str(self.detail)
 
 
 def token_do_cliente(db: Session, cliente_id: int, produto: Produto) -> str:

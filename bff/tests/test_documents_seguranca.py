@@ -134,10 +134,10 @@ def dono_com_duas_usinas(db, usinas, monkeypatch):
         db.add(UserPlantAccess(user_id=u.id, plant_link_id=usina.id))
     db.commit()
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return _PortalFalso()
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _cliente)
     return u
 
 
@@ -209,10 +209,10 @@ def com_download(monkeypatch):
     def _instalar(erro: int | None = None) -> _DownloadFalso:
         falso = _DownloadFalso(erro)
 
-        async def _cliente(_db):
+        def _cliente(_db, _cliente_id=None):
             return falso
 
-        monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+        monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _cliente)
         return falso
 
     return _instalar

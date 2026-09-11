@@ -30,7 +30,7 @@ from app.core.security import usuario_atual
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import User, UserPlantAccess
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · usinas"])
 
@@ -519,7 +519,7 @@ async def listar_usinas(
     com_mw = [l for l in links if l.mw_plant_slug]
     if com_mw:
         try:
-            cliente = await integracoes.cliente_meuwatt(db)
+            cliente = vinculos.cliente_meuwatt(db, usuario.id)
             resultados = await asyncio.gather(
                 *(_dados_meuwatt(cliente, l, hoje_na_usina()) for l in com_mw),
                 return_exceptions=True,
@@ -655,7 +655,7 @@ async def detalhe_usina(
     equipamentos: dict[str, Any] = {}
     if link.mw_plant_slug:
         try:
-            cliente = await integracoes.cliente_meuwatt(db)
+            cliente = vinculos.cliente_meuwatt(db, usuario.id)
             # Os inversores já vêm de `_dados_meuwatt`, do mesmo `monitoring/current`.
             # Só os alertas exigem uma rota a mais.
             dados, alertas = await asyncio.gather(
@@ -710,7 +710,7 @@ async def detalhe_usina(
 
     if link.mp_usina_id:
         try:
-            mp = await integracoes.cliente_meuplano(db)
+            mp = vinculos.cliente_meuplano(db, usuario.id)
             ordens = await mp.ordens_servico(link.mp_usina_id)
 
             # `len(ordens)` contava CANCELADA e CONCLUÍDA como "em aberto" — a mesma
@@ -956,7 +956,7 @@ async def geracao_da_usina(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         relatorio = await cliente.geracao_periodo(link.mw_plant_slug, inicio, fim)
     except Exception as exc:  # noqa: BLE001
         # Sem inventar número: total fica `None` e o app mostra "sem dados".
@@ -1125,7 +1125,7 @@ async def curva_do_dia(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         intraday = await cliente.intraday(link.mw_plant_slug, referencia)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Monitoramento indisponível: {exc}"
@@ -1627,7 +1627,7 @@ async def desempenho_da_usina(
     fim = min(fim, hoje)
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_meuwatt(exc, "Não deu para ler o desempenho") from exc
 
@@ -1731,7 +1731,7 @@ async def historico_da_usina(
     inicio_leitura = _primeiro_dia(_deslocar_mes(primeiro_mes, -12))
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_meuwatt(exc, "Não deu para ler o histórico") from exc
 

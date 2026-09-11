@@ -199,10 +199,10 @@ def cenario(db, dono, usinas, monkeypatch):
     _conceder(db, dono, minha)
     cliente = ClienteFalso()
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.relatorio.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.relatorio.vinculos.cliente_meuplano", _cliente)
     # Hoje fixo: os testes de período não podem virar a meia-noite de setembro.
     monkeypatch.setattr(mod, "hoje_na_usina", lambda: date(2026, 9, 4))
     return cliente

@@ -94,7 +94,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · manutenção"])
 
@@ -773,7 +773,7 @@ async def _preparar(
     link = _link_do_escopo(db, usuario, usina_id)
     periodo = periodo_pedido(de, ate)
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
     try:
@@ -918,7 +918,7 @@ async def _relatorio_autorizado(
     if not minhas:
         raise HTTPException(404, "Relatório não encontrado.")
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
     try:
@@ -956,7 +956,7 @@ async def relatorios_mensais(
     if competencia:
         _competencia(competencia, "competencia")
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
     try:

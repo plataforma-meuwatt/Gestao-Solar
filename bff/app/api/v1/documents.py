@@ -50,7 +50,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · documentos"])
 
@@ -326,6 +326,7 @@ async def _mensais_de_uma(
 async def mensais_das_usinas(
     db: Session,
     links: list[PlantLink],
+    usuario: User,
     *,
     vagas: asyncio.Semaphore | None = None,
 ) -> tuple[dict[int, list[RelatorioMensalOut]], str | None]:
@@ -348,7 +349,7 @@ async def mensais_das_usinas(
         return {}, None
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         return {}, f"Relatórios mensais indisponíveis: {exc}"
 
@@ -394,7 +395,9 @@ def _links_do_recorte(db: Session, usuario: User, usina_id: int | None) -> list[
     return [alvo]
 
 
-async def _geracao(db: Session, links: list[PlantLink], *, filtrada: bool) -> DocumentosOut:
+async def _geracao(
+    db: Session, links: list[PlantLink], usuario: User, *, filtrada: bool
+) -> DocumentosOut:
     """Só a família da GERAÇÃO, do jeito que sempre foi. Nada aqui mudou nesta leva.
 
     `filtrada` diz se veio `?usina_id=` — e não se `links` tem um item só. Uma carteira com
@@ -415,7 +418,7 @@ async def _geracao(db: Session, links: list[PlantLink], *, filtrada: bool) -> Do
         )
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         portal = await cliente.portal_relatorios()
     except Exception as exc:  # noqa: BLE001
         return DocumentosOut(aviso=f"Relatórios indisponíveis: {exc}")
@@ -476,7 +479,7 @@ async def documentos_de_geracao(
     que já está na resposta do meuWatt.
     """
     links = _links_do_recorte(db, usuario, usina_id)
-    return await _geracao(db, links, filtrada=usina_id is not None)
+    return await _geracao(db, links, usuario, filtrada=usina_id is not None)
 
 
 @router.get("/documents", response_model=DocumentosOut)
@@ -552,8 +555,8 @@ async def meus_documentos(
     # aviso em vez de exceção — o 404 de escopo, que é a única exceção legítima daqui, já
     # subiu em `_links_do_recorte`, antes de qualquer ida à rede.
     geracao, (mensais_por_usina, aviso_mensais) = await asyncio.gather(
-        _geracao(db, links, filtrada=usina_id is not None),
-        mensais_das_usinas(db, links),
+        _geracao(db, links, usuario, filtrada=usina_id is not None),
+        mensais_das_usinas(db, links, usuario),
     )
     geracao.mensais = ordenar_mensais(
         [r for lista in mensais_por_usina.values() for r in lista]
@@ -599,7 +602,7 @@ async def arquivo_do_documento(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Documento não encontrado.")
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         conteudo = await cliente.arquivo_relatorio(documento_id, tipo)
     except httpx.HTTPStatusError as exc:
         # Recusa por PUBLICAÇÃO não é falha de rede, e o cliente precisa ler a diferença.

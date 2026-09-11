@@ -12,6 +12,8 @@ propósito: um diagnóstico que olhasse outro contrato diria "ok" para uma tela 
 
 import pytest
 
+from app.models.user import Perfil, User
+
 from app.api.v1.painel_clientes import _diagnostico_manutencao
 
 
@@ -27,17 +29,31 @@ class ClienteFalso:
 
 
 def _fantasia(monkeypatch, cliente):
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.painel_clientes.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.painel_clientes.vinculos.cliente_meuplano", _cliente)
+
+
+@pytest.fixture
+def cliente(db):
+    """O dono de quem o diagnóstico fala.
+
+    Passou a ser necessário quando o diagnóstico deixou de ler com a credencial da equipe:
+    ele responde "o que ESTE cliente vê", e antes respondia "o que EU vejo" — duas coisas
+    que só divergem quando há problema, ou seja, exatamente quando a tela é aberta.
+    """
+    c = User(apelido="dono", email="dono@usina.com.br", nome="Dono", perfil=Perfil.CLIENTE)
+    db.add(c)
+    db.commit()
+    return c
 
 
 def _por_usina(bloco):
     return {i["usina"]: i for i in bloco.itens}
 
 
-async def test_contrato_sem_consolidacao_e_alerta(db, usinas, monkeypatch):
+async def test_contrato_sem_consolidacao_e_alerta(db, cliente, usinas, monkeypatch):
     porto, ribeirao = usinas
     _fantasia(monkeypatch, ClienteFalso({
         1: [{"id": 20, "numero": 200, "title": "O&M 2026", "vigente": True,
@@ -46,7 +62,7 @@ async def test_contrato_sem_consolidacao_e_alerta(db, usinas, monkeypatch):
              "versao_consolidada": None}],
     }))
 
-    bloco = await _diagnostico_manutencao(db, [porto, ribeirao])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto, ribeirao])
 
     itens = _por_usina(bloco)
     assert itens["Porto Ferreira"]["tom"] == "ok"
@@ -58,11 +74,11 @@ async def test_contrato_sem_consolidacao_e_alerta(db, usinas, monkeypatch):
     assert "1 de 2" in bloco.detalhe
 
 
-async def test_usina_sem_contrato_e_parado(db, usinas, monkeypatch):
+async def test_usina_sem_contrato_e_parado(db, cliente, usinas, monkeypatch):
     porto, _ = usinas
     _fantasia(monkeypatch, ClienteFalso({}))
 
-    bloco = await _diagnostico_manutencao(db, [porto])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto])
 
     item = _por_usina(bloco)["Porto Ferreira"]
     assert item["tom"] == "parado" and item["situacao"] == "sem contrato de manutenção"
@@ -70,20 +86,20 @@ async def test_usina_sem_contrato_e_parado(db, usinas, monkeypatch):
     assert not bloco.ok
 
 
-async def test_tudo_publicado_e_ok(db, usinas, monkeypatch):
+async def test_tudo_publicado_e_ok(db, cliente, usinas, monkeypatch):
     porto, _ = usinas
     _fantasia(monkeypatch, ClienteFalso({
         1: [{"id": 20, "numero": 200, "title": None, "vigente": True, "versao_consolidada": 1}],
     }))
 
-    bloco = await _diagnostico_manutencao(db, [porto])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto])
 
     assert bloco.ok
     item = _por_usina(bloco)["Porto Ferreira"]
     assert item["tom"] == "ok" and item["contrato"] == "nº 200"
 
 
-async def test_o_padrao_do_diagnostico_e_o_padrao_do_portal(db, usinas, monkeypatch):
+async def test_o_padrao_do_diagnostico_e_o_padrao_do_portal(db, cliente, usinas, monkeypatch):
     """Dois contratos, só o encerrado consolidado: o portal abre o encerrado (é o único com
     matriz) — e o diagnóstico tem de olhar para ESSE, não para o vigente em rascunho."""
     porto, _ = usinas
@@ -96,20 +112,20 @@ async def test_o_padrao_do_diagnostico_e_o_padrao_do_portal(db, usinas, monkeypa
         ],
     }))
 
-    bloco = await _diagnostico_manutencao(db, [porto])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto])
 
     item = _por_usina(bloco)["Porto Ferreira"]
     assert item["contrato"] == "O&M 2025" and item["tom"] == "ok"
     assert item["contratos"] == 2
 
 
-async def test_uma_usina_fora_do_ar_nao_apaga_as_outras(db, usinas, monkeypatch):
+async def test_uma_usina_fora_do_ar_nao_apaga_as_outras(db, cliente, usinas, monkeypatch):
     porto, ribeirao = usinas
     _fantasia(monkeypatch, ClienteFalso({
         1: [{"id": 20, "title": "O&M 2026", "vigente": True, "versao_consolidada": 2}],
     }, quebrada=2))
 
-    bloco = await _diagnostico_manutencao(db, [porto, ribeirao])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto, ribeirao])
 
     itens = _por_usina(bloco)
     assert itens["Porto Ferreira"]["tom"] == "ok"
@@ -117,12 +133,12 @@ async def test_uma_usina_fora_do_ar_nao_apaga_as_outras(db, usinas, monkeypatch)
     assert not bloco.ok
 
 
-async def test_sem_usina_no_meuplano_o_bloco_explica(db, usinas, monkeypatch):
+async def test_sem_usina_no_meuplano_o_bloco_explica(db, cliente, usinas, monkeypatch):
     porto, _ = usinas
     porto.mp_usina_id = None
     _fantasia(monkeypatch, ClienteFalso({}))
 
-    bloco = await _diagnostico_manutencao(db, [porto])
+    bloco = await _diagnostico_manutencao(db, cliente, [porto])
 
     assert not bloco.ok and bloco.itens == []
     assert "meuPlano" in bloco.detalhe

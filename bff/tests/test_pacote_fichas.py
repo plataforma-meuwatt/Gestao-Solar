@@ -88,10 +88,10 @@ def ponte(monkeypatch):
     """
     cliente = MeuPlanoClient(base_url=BASE, token="mp_pat_teste")
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.pacotes.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.pacotes.vinculos.cliente_meuplano", _cliente)
     return cliente
 
 
@@ -742,10 +742,10 @@ async def test_indice_em_formato_desconhecido_nao_vira_tela_vazia(db, dono, minh
 
 async def test_sem_ponte_configurada_a_tela_sabe_o_que_falta(db, dono, minha, monkeypatch):
     """503 e a frase do que falta — não um 500 genérico que manda investigar o servidor."""
-    async def _sem_ponte(_db):
+    def _sem_ponte(_db, _cliente_id=None):
         raise RuntimeError("A ponte com o meuPlano não está configurada.")
 
-    monkeypatch.setattr("app.api.v1.pacotes.integracoes.cliente_meuplano", _sem_ponte)
+    monkeypatch.setattr("app.api.v1.pacotes.vinculos.cliente_meuplano", _sem_ponte)
 
     with pytest.raises(HTTPException) as e:
         await inventario_de_fichas(usina_id=minha.id, de="2026-08", ate="2026-08",

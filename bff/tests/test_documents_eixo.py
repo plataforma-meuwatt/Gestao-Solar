@@ -113,10 +113,10 @@ def dono(db, usinas, monkeypatch):
         db.add(UserPlantAccess(user_id=u.id, plant_link_id=usina.id))
     db.commit()
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return _PortalFalso()
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _cliente)
     return u
 
 
@@ -301,10 +301,10 @@ def test_etiqueta_muda_quando_o_acervo_muda(http, monkeypatch):
             corpo["reports"][0]["files"][0]["size_bytes"] = 999  # o peso mudou lá em cima
             return corpo
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return _PortalComMaisUm()
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _cliente)
 
     depois = http.get("/api/v1/documents", headers={"If-None-Match": antiga})
 
@@ -367,10 +367,10 @@ def test_o_aviso_tambem_revalida(http, db, usinas, monkeypatch):
     """"O monitoramento continua fora do ar" também é uma resposta, e também não precisa
     de corpo novo. Sem isto, justamente o caso degradado seria o mais caro em rede."""
 
-    async def _quebrado(_db):
+    def _quebrado(_db, _cliente_id=None):
         raise RuntimeError("timeout")
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _quebrado)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _quebrado)
 
     primeira = http.get("/api/v1/documents")
     assert primeira.status_code == 200
@@ -415,10 +415,10 @@ async def test_o_download_continua_refazendo_a_autorizacao(db, dono, monkeypatch
         async def arquivo_relatorio(self, report_id, kind):
             raise AssertionError("não devia ter ido ao upstream")
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return _SemDownload()
 
-    monkeypatch.setattr("app.api.v1.documents.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.documents.vinculos.cliente_meuwatt", _cliente)
 
     # O 9 é do outro cliente: 404 sem tocar o meuWatt.
     with pytest.raises(HTTPException) as e:

@@ -11,7 +11,6 @@
  */
 
 import {
-  Cable,
   LogOut,
   Route,
   Stethoscope,
@@ -35,31 +34,24 @@ type ItemMenu = {
 }
 
 /**
- * O menu em dois blocos, e a divisão não é estética.
+ * O menu, e a ausência que importa: **não há mais item de Conexões**.
  *
- * Em cima, o trabalho: o **cliente é a raiz** e tudo que é dele mora dentro da ficha dele
- * — as contas nos produtos, as usinas, as permissões, o diagnóstico. Foi o que estava
- * errado antes: "Conexões" ficava no mesmo nível de "Clientes" e parecia ser a conexão de
- * alguém, quando quem via aquela tela via sempre os mesmos dois cartões, independentemente
- * do cliente aberto.
+ * Ele existia no mesmo nível de "Clientes" e era lido como se fosse a conexão de alguém —
+ * mas quem abria via sempre os mesmos dois cartões, independentemente do cliente
+ * escolhido. A conexão é do usuário: a de cada cliente mora dentro da ficha dele, e a
+ * credencial com que o painel monta o catálogo de usinas mora dentro de Equipe, ao lado
+ * de quem administra.
  *
- * Embaixo, o sistema: a credencial administrativa com que o painel monta o catálogo de
- * usinas dos dois produtos, e a sonda que confere as rotas. Não pertencem a cliente
- * nenhum, e é por isso que continuam existindo — separadas, e nomeadas pelo que são.
+ * Sobra em "Sistema" só a sonda de rotas, que é diagnóstico do sistema e de mais nada.
  */
 const MENU: ItemMenu[] = [
   { para: '/clientes', rotulo: 'Clientes', icone: Users },
   { para: '/usinas', rotulo: 'Usinas', icone: Sun },
   { para: '/diagnostico', rotulo: 'Diagnóstico', icone: Stethoscope },
-  {
-    para: '/conexoes',
-    rotulo: 'Acesso aos produtos',
-    icone: Cable,
-    soAdministrador: true,
-    grupo: 'Sistema',
-  },
-  { para: '/rotas', rotulo: 'Rotas', icone: Route, soAdministrador: true },
   { para: '/equipe', rotulo: 'Equipe', icone: UsersRound, soAdministrador: true },
+  // Sonda das rotas dos produtos: diagnóstico do SISTEMA, não de cliente nenhum. O acesso
+  // aos produtos saiu daqui e foi para dentro de Equipe — ver `features/conexoes`.
+  { para: '/rotas', rotulo: 'Rotas', icone: Route, soAdministrador: true, grupo: 'Sistema' },
 ]
 
 class LimiteDeErro extends React.Component<

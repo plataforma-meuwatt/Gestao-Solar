@@ -117,10 +117,10 @@ class ClienteFalso:
 
 
 def _instala(monkeypatch, cliente):
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.pendencias.integracoes.cliente_meuplano", _cliente)
+    monkeypatch.setattr("app.api.v1.pendencias.vinculos.cliente_meuplano", _cliente)
     return cliente
 
 

@@ -124,7 +124,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · energia"])
 
@@ -517,7 +517,7 @@ def _data(valor: Any) -> date | None:
         return None
 
 
-async def _cliente(db: Session) -> MeuWattClient:
+async def _cliente(db: Session, usuario: User) -> MeuWattClient:
     """O cliente do meuWatt, ou a frase que diz que a ponte não está de pé.
 
     A montagem das duas URLs de exportação vive em `clients/meuwatt.py` (`export_options` e
@@ -527,7 +527,7 @@ async def _cliente(db: Session) -> MeuWattClient:
     traduzida e QUANTOS pedidos correm ao mesmo tempo.
     """
     try:
-        return await integracoes.cliente_meuwatt(db)
+        return vinculos.cliente_meuwatt(db, usuario.id)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -739,7 +739,7 @@ async def opcoes_de_exportacao(
     """
     link = _usina_no_escopo(db, usuario, usina_id)
     slug = _slug_do_upstream(link)
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
 
     try:
         bruto = await cliente.export_options(slug)
@@ -859,7 +859,7 @@ async def arquivo_de_dados(
     impossivel = _impossivel(pedido)
     if impossivel is not None:
         return impossivel
-    cliente = await _cliente(db)
+    cliente = await _cliente(db, usuario)
     # O nome sai do `link` AQUI, com a sessão ainda viva: `close()` desanexa a instância, e
     # tocar num atributo de objeto desanexado depois disso é o defeito clássico deste conserto.
     nome = _nome_do_arquivo(link, pedido)

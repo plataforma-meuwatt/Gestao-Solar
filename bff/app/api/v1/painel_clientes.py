@@ -23,8 +23,7 @@ from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
 from app.services import clientes as svc
-from app.services import integracoes
-from app.services import vinculos as vinculos_svc
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel · clientes"])
 
@@ -329,8 +328,8 @@ async def conectar_produto(
     detalhe viraria "Erro 400" em qualquer camada de tratamento genérico pelo caminho.
     """
     cliente = _cliente(db, cliente_id)
-    r = await vinculos_svc.conectar(db, cliente, produto, body.token, por=gestor)
-    vinculo = vinculos_svc.obter(db, cliente.id, produto)
+    r = await vinculos.conectar(db, cliente, produto, body.token, por=gestor)
+    vinculo = vinculos.obter(db, cliente.id, produto)
     return ConexaoOut(
         ok=r.ok,
         detalhe=r.detalhe,
@@ -354,8 +353,8 @@ async def testar_conexao(
     reclamando que o aplicativo abriu vazio.
     """
     cliente = _cliente(db, cliente_id)
-    r = await vinculos_svc.testar(db, cliente, produto)
-    vinculo = vinculos_svc.obter(db, cliente.id, produto)
+    r = await vinculos.testar(db, cliente, produto)
+    vinculo = vinculos.obter(db, cliente.id, produto)
     return ConexaoOut(
         ok=r.ok,
         detalhe=r.detalhe,
@@ -377,7 +376,7 @@ def desvincular_produto(
     revoga nada, só para de usar. Quem precisa cortar o acesso de verdade revoga na conta
     de origem, que é justamente a vantagem de o token ser da pessoa.
     """
-    vinculos_svc.desconectar(db, _cliente(db, cliente_id), produto)
+    vinculos.desconectar(db, _cliente(db, cliente_id), produto)
 
 
 # ------------------------------------------------------------------ usinas
@@ -460,9 +459,9 @@ async def diagnostico(
         .order_by(PlantLink.nome)
     ).all()
 
-    mw = await _diagnostico_meuwatt(db, usinas)
-    mp = await _diagnostico_meuplano(db, usinas)
-    contrato = await _diagnostico_manutencao(db, usinas)
+    mw = await _diagnostico_meuwatt(db, cliente, usinas)
+    mp = await _diagnostico_meuplano(db, cliente, usinas)
+    contrato = await _diagnostico_manutencao(db, cliente, usinas)
 
     return DiagnosticoOut(
         cliente=cliente.nome,
@@ -483,13 +482,13 @@ async def diagnostico(
     )
 
 
-async def _diagnostico_meuwatt(db: Session, usinas: list[PlantLink]) -> BlocoDiagnostico:
+async def _diagnostico_meuwatt(db: Session, cliente_gs: User, usinas: list[PlantLink]) -> BlocoDiagnostico:
     alvos = [u for u in usinas if u.mw_plant_slug]
     if not alvos:
         return BlocoDiagnostico(ok=False, detalhe="Nenhuma usina deste cliente existe no meuWatt.")
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, cliente_gs.id)
     except Exception as exc:  # noqa: BLE001
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 
@@ -518,7 +517,7 @@ async def _diagnostico_meuwatt(db: Session, usinas: list[PlantLink]) -> BlocoDia
     )
 
 
-async def _diagnostico_meuplano(db: Session, usinas: list[PlantLink]) -> BlocoDiagnostico:
+async def _diagnostico_meuplano(db: Session, cliente_gs: User, usinas: list[PlantLink]) -> BlocoDiagnostico:
     alvos = [u for u in usinas if u.mp_usina_id]
     if not alvos:
         return BlocoDiagnostico(
@@ -526,7 +525,7 @@ async def _diagnostico_meuplano(db: Session, usinas: list[PlantLink]) -> BlocoDi
         )
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, cliente_gs.id)
     except Exception as exc:  # noqa: BLE001
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 
@@ -553,7 +552,7 @@ async def _diagnostico_meuplano(db: Session, usinas: list[PlantLink]) -> BlocoDi
     )
 
 
-async def _diagnostico_manutencao(db: Session, usinas: list[PlantLink]) -> BlocoDiagnostico:
+async def _diagnostico_manutencao(db: Session, cliente_gs: User, usinas: list[PlantLink]) -> BlocoDiagnostico:
     """Por usina: tem contrato? O contrato tem cronograma CONSOLIDADO?
 
     A aba Cronograma do portal do cliente só mostra a versão consolidada. Um contrato que
@@ -575,7 +574,7 @@ async def _diagnostico_manutencao(db: Session, usinas: list[PlantLink]) -> Bloco
         )
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, cliente_gs.id)
     except Exception as exc:  # noqa: BLE001
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 

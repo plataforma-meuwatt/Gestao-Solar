@@ -54,7 +54,7 @@ from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1/energia", tags=["app · energia"])
 
@@ -574,7 +574,7 @@ async def dia_da_usina(
     saida = DiaOut(dia=referencia.isoformat())
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
         diario, intraday, atual = await asyncio.gather(
             cliente.geracao_diaria(link.mw_plant_slug, referencia),
             cliente.intraday(link.mw_plant_slug, referencia),
@@ -913,7 +913,7 @@ async def unidades_da_usina(
 
     vazio = UnidadesOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         vazio.aviso = f"Monitoramento indisponível: {exc}"
         return vazio
@@ -2124,7 +2124,7 @@ async def painel_de_geracao(
     em_curso = inicio <= hoje <= fim
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001 — sem ponte a tela ainda abre, vazia e honesta
         return _painel_sem_dados(
             recorte, alvo, inicio, fim, em_curso, f"Monitoramento indisponível: {exc}"
@@ -3452,7 +3452,7 @@ async def relatorio_do_mes(
     em_curso = inicio <= hoje <= fim
 
     try:
-        cliente = await integracoes.cliente_meuwatt(db)
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
     except Exception as exc:  # noqa: BLE001 — sem ponte a aba ainda abre, vazia e honesta
         return _fechamento_sem_dados(
             alvo, inicio, fim, em_curso, f"Monitoramento indisponível: {exc}"

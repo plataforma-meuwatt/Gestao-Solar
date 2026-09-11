@@ -36,7 +36,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import integracoes
+from app.services import vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · manutenção"])
 
@@ -210,7 +210,7 @@ async def manutencao_atendida(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
@@ -901,7 +901,7 @@ async def listar_ordens(
         return saida
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Manutenção indisponível: {exc}"
         return saida
@@ -959,15 +959,16 @@ async def _ordem_autorizada(
     # uma para começar a outra somava segundos numa cadeia que já tem quatro idas ao
     # upstream — e foi o bastante para a ficha de vinte inversores estourar o prazo do
     # aplicativo (04/09/2026). Nada é DEVOLVIDO antes da checagem de escopo, logo abaixo.
-    usinas_task = asyncio.create_task(_usinas_com_manutencao(db, usuario))
-    cliente_task = asyncio.create_task(integracoes.cliente_meuplano(db))
-    com_manutencao, aviso = await usinas_task
+    # Sem task para montar o cliente: com o token do próprio usuário a construção é
+    # SÍNCRONA (não há login a fazer). A paralelização existia porque a ponte por conta de
+    # serviço fazia login na primeira chamada, e adiantá-la salvou a ficha de vinte
+    # inversores de estourar o prazo do aplicativo (04/09/2026). Esse custo não existe mais.
+    com_manutencao, aviso = await _usinas_com_manutencao(db, usuario)
     if not com_manutencao:
-        cliente_task.cancel()
         raise HTTPException(404, aviso or "Sem usina com manutenção.")
 
     try:
-        cliente = await cliente_task
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Manutenção indisponível: {exc}") from exc
 
@@ -1411,7 +1412,7 @@ async def tarefas_da_celula(
     if link.mp_usina_id is None:
         raise HTTPException(404, "Esta usina não tem manutenção contratada.")
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
         brutas = await cliente.tarefas_do_item_no_mes(plan_item_id, mes)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para ler as tarefas deste mês") from exc
@@ -1504,7 +1505,7 @@ async def listar_contratos(
     link = _link_do_escopo(db, usuario, usina_id)
     saida = ContratosOut(usina=link.nome, usina_id=link.id)
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
         saida.contratos = await _contratos_da_usina(cliente, link)
     except Exception as exc:  # noqa: BLE001
         raise _erro_do_upstream(exc, "Não deu para ler os contratos desta usina") from exc
@@ -1527,7 +1528,7 @@ async def pdf_do_cronograma(
     """
     link = _link_do_escopo(db, usuario, usina_id)
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
         contrato, aviso = await _resolver_contrato(cliente, link, contrato_id)
     except HTTPException:
         raise
@@ -1614,7 +1615,7 @@ async def cronograma_da_usina(
     saida = CronogramaOut(usina=link.nome, usina_id=link.id)
 
     try:
-        cliente = await integracoes.cliente_meuplano(db)
+        cliente = vinculos.cliente_meuplano(db, usuario.id)
         contrato, aviso = await _resolver_contrato(cliente, link, contrato_id)
     except HTTPException:
         raise

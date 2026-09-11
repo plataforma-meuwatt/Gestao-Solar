@@ -132,10 +132,10 @@ def ponte(monkeypatch):
     """
     cliente = MeuWattClient(base_url=BASE, token="mw_pat_teste")
 
-    async def _cliente(_db):
+    def _cliente(_db, _cliente_id=None):
         return cliente
 
-    monkeypatch.setattr("app.api.v1.exportacao.integracoes.cliente_meuwatt", _cliente)
+    monkeypatch.setattr("app.api.v1.exportacao.vinculos.cliente_meuwatt", _cliente)
     return cliente
 
 
