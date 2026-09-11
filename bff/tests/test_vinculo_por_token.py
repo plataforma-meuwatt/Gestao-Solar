@@ -276,3 +276,85 @@ class TestTestarEDesconectar:
     def test_ler_sem_token_diz_o_que_fazer(self, db, cliente):
         with pytest.raises(vinculos.SemConexao, match="cole o token"):
             vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT)
+
+
+class TestChaveDeAssinatura:
+    """A chave privada vinda do ambiente, no formato em que ela é colada de verdade.
+
+    O Railway e o Render guardam texto multilinha com `\n` LITERAL, e é assim que a
+    chave sai da ferramenta de geração. Os dois produtos já normalizavam isso ao ler a
+    pública; o lado que ASSINA não normalizava, e a assimetria não aparecia em teste
+    nenhum — só apareceria na primeira tentativa real de login, como
+    `InvalidByte(0, 92)`, o código do caractere de barra invertida, uma frase que não diz a ninguém que
+    o problema é o formato da variável.
+    """
+
+    def test_assina_com_a_chave_em_uma_linha_so(self, monkeypatch):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from jose import jwt
+
+        from app.core.config import get_settings
+        from app.models.integracao import Produto
+
+        par = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = par.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        publica = par.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+
+        # Uma linha só, com \n literal — exatamente o que o painel do Railway devolve.
+        monkeypatch.setattr(get_settings(), "gs_sso_private_key", pem.replace("\n", "\n"))
+
+        class _Conta:
+            id = 7
+            email = "janderson@eninsa.com.br"
+            nome = "Janderson"
+
+        assercao = login_externo.assinar(_Conta(), Produto.MEUWATT)
+
+        # Verificada com a pública, como o produto faria: se a assinatura não fechar, a
+        # chave usada não era a chave.
+        claims = jwt.decode(assercao, publica, algorithms=["RS256"], audience="meuwatt", issuer="gestao-solar")
+        assert claims["sub"] == "7"
+        assert claims["aud"] == "meuwatt"
+
+    def test_a_assercao_do_meuwatt_nao_serve_no_meuplano(self, monkeypatch):
+        # A audiência separada é o que impede um produto de reapresentar no outro a
+        # asserção que recebeu e entrar lá como a pessoa.
+        from app.core.config import get_settings
+        from app.models.integracao import Produto
+        from jose import jwt
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        par = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = par.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        monkeypatch.setattr(get_settings(), "gs_sso_private_key", pem)
+
+        class _Conta:
+            id = 7
+            email = "j@e.com.br"
+            nome = "Janderson"
+
+        publica = par.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+        mw = login_externo.assinar(_Conta(), Produto.MEUWATT)
+        mp = login_externo.assinar(_Conta(), Produto.MEUPLANO)
+
+        assert jwt.decode(mw, publica, algorithms=["RS256"], audience="meuwatt")["aud"] == "meuwatt"
+        assert jwt.decode(mp, publica, algorithms=["RS256"], audience="meuplano")["aud"] == "meuplano"
+        with pytest.raises(Exception):
+            jwt.decode(mw, publica, algorithms=["RS256"], audience="meuplano")

@@ -87,6 +87,23 @@ class SemChave(RuntimeError):
     """A instalação não tem chave de assinatura. É configuração ausente, não erro."""
 
 
+def _privada() -> str:
+    """A chave em PEM de verdade, com quebras de linha.
+
+    A chave viaja por variável de ambiente, onde quebra de linha é um transtorno: o
+    Railway e o Render guardam texto multilinha com `\\n` literal, que é como ela sai da
+    ferramenta de geração e como ela é colada no painel. Em PEM cru isso é lixo — a
+    biblioteca recusa com `InvalidByte(0, 92)`, o código do caractere `\\`, uma frase que
+    não diz a ninguém que o problema é o formato da variável.
+
+    Os dois produtos já faziam esta normalização ao LER a chave pública
+    (`mw-api/src/auth/external.py`, `meuPlano/.../external_identity.py`). O lado que
+    ASSINA não fazia, e a assimetria só apareceria na primeira tentativa real de login —
+    com a chave certa configurada e um erro falando de bytes.
+    """
+    return (get_settings().gs_sso_private_key or "").replace("\\n", "\n")
+
+
 def assinar(usuario: User, produto: Produto) -> str:
     """A asserção que prova, para aquele produto, quem é esta conta do Gestão Solar."""
     s = get_settings()
@@ -109,7 +126,7 @@ def assinar(usuario: User, produto: Produto) -> str:
             "email": usuario.email,
             "name": usuario.nome,
         },
-        s.gs_sso_private_key,
+        _privada(),
         algorithm="RS256",
     )
 
