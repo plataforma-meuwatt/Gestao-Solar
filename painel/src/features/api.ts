@@ -291,8 +291,16 @@ export const definirPermissoes = (clienteId: number, permissoes: string[]) =>
 
 /* ------------------------------------------------------------- conciliação */
 
-export const carregarConciliacao = () =>
-  api.get<Conciliacao>('/conciliacao').then((r) => r.data)
+/**
+ * As usinas DAQUELE CLIENTE nos dois produtos, para casar uma com a outra.
+ *
+ * `clienteId` é obrigatório, e é a regra do sistema: usina é sempre de um cliente. Não há
+ * mais "inventário completo" — ele existia porque a leitura era feita com uma credencial
+ * de serviço, e mostrava o escopo de um administrador, que não é o de ninguém a quem a
+ * lista diga respeito.
+ */
+export const carregarConciliacao = (clienteId: number) =>
+  api.get<Conciliacao>('/conciliacao', { params: { cliente_id: clienteId } }).then((r) => r.data)
 
 /**
  * Grava o estado desejado de uma usina — casar, descasar e ligar/desligar no app são a

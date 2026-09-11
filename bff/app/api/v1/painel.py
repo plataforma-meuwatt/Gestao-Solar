@@ -24,7 +24,7 @@ from app.core.security import (
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import conciliacao, integracoes, sonda
+from app.services import conciliacao, integracoes, sonda, vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
 
@@ -477,28 +477,44 @@ def _linha_out(linha: conciliacao.Linha) -> LinhaConciliacao:
 
 @router.get("/conciliacao", response_model=ConciliacaoOut)
 async def carregar_conciliacao(
-    db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(gestor_atual),
 ) -> ConciliacaoOut:
-    """O inventário completo: o que já está no app, e o que existe nos produtos e não está.
+    """As usinas DAQUELE CLIENTE nos dois produtos, para casar uma com a outra.
 
-    Inclui as usinas que existem **só no meuPlano** — manutenção sem monitoramento é um
-    caso normal, e a versão anterior desta rota as omitia por percorrer apenas o meuWatt.
+    `cliente_id` é obrigatório, e essa é a regra do sistema inteiro: **usina é sempre de
+    um cliente**. Esta rota não tem mais um "inventário completo" para oferecer — e não
+    é perda, é a mesma verdade dita direito. Antes ela lia com uma credencial de serviço e
+    mostrava tudo o que aquela conta enxergava, que é o escopo de um administrador, não o
+    de ninguém a quem a lista dissesse respeito. Conciliar fora de um cliente é casar
+    usinas que não se sabe de quem são.
+
+    Ler com o token do próprio cliente ainda tem uma vantagem que a credencial de serviço
+    nunca teve: as duas listas vêm pela MESMA regra que cada produto aplica no site dele.
+    A usina que ele vê por pertencer a uma organização aparece aqui, e era exatamente o
+    que a rota administrativa antiga não sabia responder.
+
+    Inclui as que existem **só no meuPlano** — manutenção sem monitoramento é normal.
     """
+    cliente = db.get(User, cliente_id)
+    if cliente is None or cliente.perfil is not Perfil.CLIENTE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cliente não encontrado")
+
     usinas_mw: list[dict[str, Any]] = []
     usinas_mp: list[dict[str, Any]] = []
     avisos: list[str] = []
 
+    # Cada lado cai sozinho: com um produto não conectado, ainda dá para conferir o outro.
     try:
-        cliente_mw = await integracoes.cliente_meuwatt(db)
-        usinas_mw = await cliente_mw.usinas()
+        usinas_mw = await vinculos.cliente_meuwatt(db, cliente.id).usinas()
     except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo com uma ponte fora
-        avisos.append(f"meuWatt indisponível: {exc}")
+        avisos.append(f"meuWatt: {exc}")
 
     try:
-        cliente_mp = await integracoes.cliente_meuplano(db)
-        usinas_mp = await cliente_mp.usinas()
+        usinas_mp = await vinculos.cliente_meuplano(db, cliente.id).usinas()
     except Exception as exc:  # noqa: BLE001
-        avisos.append(f"meuPlano indisponível: {exc}")
+        avisos.append(f"meuPlano: {exc}")
 
     links = list(db.scalars(select(PlantLink)).all())
     linhas = conciliacao.montar(usinas_mw, usinas_mp, links)

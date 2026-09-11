@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react'
 
 import { Aviso, Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
 import {
+  listarClientes,
   carregarConciliacao,
   salvarUsina,
   type Conciliacao,
@@ -57,17 +58,24 @@ const GRUPOS: {
 export function Usinas() {
   const qc = useQueryClient()
   const [erro, setErro] = useState('')
+  // Nenhuma usina aparece antes de haver um cliente. É a regra do sistema: usina é de
+  // alguém. Uma lista aberta aqui era o escopo da credencial de serviço — o que UM
+  // administrador enxerga —, e casar usinas sem saber de quem elas são é casar às cegas.
+  const [clienteId, setClienteId] = useState<number | ''>('')
+
+  const { data: clientes } = useQuery({ queryKey: ['clientes'], queryFn: listarClientes })
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['conciliacao'],
-    queryFn: carregarConciliacao,
+    queryKey: ['conciliacao', clienteId],
+    queryFn: () => carregarConciliacao(clienteId as number),
+    enabled: clienteId !== '',
   })
 
   const salvar = useMutation({
     mutationFn: (dados: Parameters<typeof salvarUsina>[0]) => salvarUsina(dados),
     onSuccess: () => {
       setErro('')
-      qc.invalidateQueries({ queryKey: ['conciliacao'] })
+      qc.invalidateQueries({ queryKey: ['conciliacao', clienteId] })
       // A lista de usinas do cliente vem da mesma origem: sem isto, uma usina recém-ligada
       // não apareceria para conceder até alguém recarregar a página.
       qc.invalidateQueries({ queryKey: ['usinas'] })
@@ -76,7 +84,7 @@ export function Usinas() {
       setErro(mensagemDeErro(e))
       // Recarrega para os controles voltarem ao valor real do servidor, e não ficarem
       // mostrando uma escolha que não foi gravada.
-      qc.invalidateQueries({ queryKey: ['conciliacao'] })
+      qc.invalidateQueries({ queryKey: ['conciliacao', clienteId] })
     },
   })
 
@@ -92,8 +100,39 @@ export function Usinas() {
   return (
     <Pagina
       titulo="Usinas"
-      apoio="Tudo que existe nas duas plataformas. Case as que são a mesma usina e escolha quais entram no aplicativo."
+      apoio="As usinas de um cliente nos dois produtos. Case as que são a mesma e escolha quais entram no aplicativo dele."
     >
+      <div className="mb-5 flex items-end gap-3 flex-wrap">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold text-rotulo">Cliente</span>
+          <select
+            value={clienteId}
+            onChange={(e) => setClienteId(e.target.value ? Number(e.target.value) : '')}
+            className="h-11 min-w-72 rounded-campo bg-superficie border border-borda px-3 text-sm text-forte"
+          >
+            <option value="">— escolha um cliente —</option>
+            {(clientes ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nome}
+                {c.empresa ? ` · ${c.empresa}` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        {clienteId !== '' ? (
+          <p className="text-xs text-fraco pb-3 max-w-md">
+            Lido com os tokens deste cliente — o que ele enxerga de verdade em cada produto,
+            pela regra de lá.
+          </p>
+        ) : null}
+      </div>
+
+      {clienteId === '' ? (
+        <Vazio
+          titulo="Escolha um cliente"
+          descricao="As usinas são sempre de alguém. Escolha o cliente para ver o que ele enxerga no meuWatt e no meuPlano, e casar as duas listas."
+        />
+      ) : null}
       {error ? <Erro className="mb-4">{mensagemDeErro(error)}</Erro> : null}
       {erro ? <Erro className="mb-4">{erro}</Erro> : null}
       {data?.aviso ? (
