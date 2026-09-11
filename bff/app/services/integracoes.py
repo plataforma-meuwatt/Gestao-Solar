@@ -201,9 +201,14 @@ def detalhe_do_upstream(resposta: httpx.Response) -> str | None:
     return None
 
 
-def _traduzir(exc: Exception, produto: Produto) -> ResultadoTeste:
+def traduzir_falha(exc: Exception, produto: Produto) -> ResultadoTeste:
     """Transforma a falha em uma frase acionável. Cada ramo aponta para uma correção
-    diferente, que é a razão de existirem separados."""
+    diferente, que é a razão de existirem separados.
+
+    Pública porque o vínculo por cliente (`services/vinculos.py`) conecta contra os mesmos
+    dois produtos e erra pelos mesmos motivos. Uma segunda cópia divergiria no primeiro
+    dia em que alguém melhorasse uma das frases.
+    """
     nome = NOME[produto]
 
     if isinstance(exc, httpx.ConnectError):
@@ -251,7 +256,7 @@ async def _exercitar(produto: Produto, base_url: str, token: str) -> ResultadoTe
         perfil = await cliente.quem_sou_eu()
         usinas = await cliente.usinas()
     except Exception as exc:  # noqa: BLE001 — o painel precisa mostrar qualquer falha
-        return _traduzir(exc, produto)
+        return traduzir_falha(exc, produto)
 
     dono_nome, dono_email = _nome_e_email(perfil)
     quantidade = len(usinas or [])
@@ -504,7 +509,7 @@ async def _testar_por_senha(integracao: Integracao, produto: Produto) -> Resulta
             return ResultadoTeste(False, f"Credencial recusada pelo {NOME[produto]}.")
         usinas = await cliente.usinas(token=dados["access_token"])
     except Exception as exc:  # noqa: BLE001 — o painel precisa mostrar qualquer falha
-        return _traduzir(exc, produto)
+        return traduzir_falha(exc, produto)
 
     quantidade = len(usinas or [])
     if quantidade == 0:

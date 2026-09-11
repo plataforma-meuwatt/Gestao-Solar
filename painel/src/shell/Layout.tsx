@@ -30,13 +30,34 @@ type ItemMenu = {
   rotulo: string
   icone: LucideIcon
   soAdministrador?: boolean
+  /** Abre um bloco novo acima deste item, com este título. */
+  grupo?: string
 }
 
+/**
+ * O menu em dois blocos, e a divisão não é estética.
+ *
+ * Em cima, o trabalho: o **cliente é a raiz** e tudo que é dele mora dentro da ficha dele
+ * — as contas nos produtos, as usinas, as permissões, o diagnóstico. Foi o que estava
+ * errado antes: "Conexões" ficava no mesmo nível de "Clientes" e parecia ser a conexão de
+ * alguém, quando quem via aquela tela via sempre os mesmos dois cartões, independentemente
+ * do cliente aberto.
+ *
+ * Embaixo, o sistema: a credencial administrativa com que o painel monta o catálogo de
+ * usinas dos dois produtos, e a sonda que confere as rotas. Não pertencem a cliente
+ * nenhum, e é por isso que continuam existindo — separadas, e nomeadas pelo que são.
+ */
 const MENU: ItemMenu[] = [
   { para: '/clientes', rotulo: 'Clientes', icone: Users },
   { para: '/usinas', rotulo: 'Usinas', icone: Sun },
   { para: '/diagnostico', rotulo: 'Diagnóstico', icone: Stethoscope },
-  { para: '/conexoes', rotulo: 'Conexões', icone: Cable, soAdministrador: true },
+  {
+    para: '/conexoes',
+    rotulo: 'Acesso aos produtos',
+    icone: Cable,
+    soAdministrador: true,
+    grupo: 'Sistema',
+  },
   { para: '/rotas', rotulo: 'Rotas', icone: Route, soAdministrador: true },
   { para: '/equipe', rotulo: 'Equipe', icone: UsersRound, soAdministrador: true },
 ]
@@ -97,8 +118,13 @@ export function Layout() {
         </div>
 
         <ul className="px-2.5 flex flex-col gap-0.5">
-          {itens.map(({ para, rotulo, icone: Icone }) => (
+          {itens.map(({ para, rotulo, icone: Icone, grupo }) => (
             <li key={para}>
+              {grupo ? (
+                <p className="px-3 pt-4 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-fraco/60">
+                  {grupo}
+                </p>
+              ) : null}
               <NavLink
                 to={para}
                 className={({ isActive }) =>

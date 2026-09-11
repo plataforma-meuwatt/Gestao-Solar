@@ -73,8 +73,8 @@ export function Conexoes() {
 
   return (
     <Pagina
-      titulo="Conexões"
-      apoio="O token que o Gestão Solar usa para ler cada produto. Ele vale o que a conta de quem o gerou vale — precisa enxergar as usinas dos clientes, e o teste confere isso e diz quantas encontrou."
+      titulo="Acesso aos produtos"
+      apoio="O endereço de cada produto e a credencial administrativa do painel, usada para montar o catálogo de usinas dos dois lados em Usinas. Os dados de cada cliente NÃO passam por aqui: são lidos com o token dele, na ficha dele, em Clientes."
     >
       {error ? <Erro className="mb-4">{mensagemDeErro(error)}</Erro> : null}
       {isLoading ? <Carregando /> : null}

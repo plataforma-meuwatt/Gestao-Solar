@@ -8,12 +8,11 @@ sair daqui:
 2. **Uma usina tem um dono só.** Vincular a um segundo cliente é recusado com o nome de
    quem já a tem, porque o erro comum é cadastrar duas vezes o mesmo cliente com e-mails
    diferentes, e o sintoma seria dado de usina aparecendo para quem não deveria.
-3. **O painel não cria conta nos produtos.** Ele vincula a conta que já existe lá.
+3. **O painel não cria conta nos produtos.** Ele CONECTA a conta que já existe lá, pelo
+   token que o próprio cliente gerou — ver `services/vinculos.py`.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,16 +20,14 @@ from sqlalchemy.orm import Session
 from app.core.apelido import ApelidoInvalido
 from app.core.apelido import normalizar as normalizar_apelido
 from app.core.security import gerar_hash_senha, gerar_senha_provisoria
-from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import (
     Perfil,
     SenhaProvisoria,
     User,
     UserPlantAccess,
-    VinculoProduto,
 )
-from app.services import integracoes
+from app.services import vinculos
 
 
 class RegraDeNegocio(Exception):
@@ -119,77 +116,6 @@ def situacao_acesso(db: Session, cliente: User) -> str:
     return "entregue"
 
 
-# ------------------------------------------------------------------ vínculos
-
-
-async def procurar_usuario(db: Session, produto: Produto, email: str) -> dict[str, Any] | None:
-    """Acha a conta daquele e-mail no produto.
-
-    O meuPlano tem busca por e-mail; o meuWatt não tem — lá é preciso listar e filtrar
-    aqui. Por isso a assimetria: não é escolha de projeto, é o que cada API oferece.
-    """
-    email = email.strip().lower()
-
-    if produto is Produto.MEUPLANO:
-        cliente = await integracoes.cliente_meuplano(db)
-        achado = await cliente.procurar_usuario_por_email(email)
-        if not achado:
-            return None
-        return {
-            "id": str(achado.get("id")),
-            "email": achado.get("email"),
-            "nome": achado.get("name") or achado.get("nome"),
-        }
-
-    cliente_mw = await integracoes.cliente_meuwatt(db)
-    for u in await cliente_mw.usuarios():
-        if (u.get("email") or "").strip().lower() == email:
-            return {"id": str(u.get("id")), "email": u.get("email"), "nome": u.get("name")}
-    return None
-
-
-def vincular(
-    db: Session,
-    cliente: User,
-    produto: Produto,
-    *,
-    usuario_remoto_id: str,
-    email: str | None,
-    nome: str | None,
-    por: User,
-) -> VinculoProduto:
-    vinculo = db.scalar(
-        select(VinculoProduto).where(
-            VinculoProduto.gs_user_id == cliente.id,
-            VinculoProduto.produto == produto.value,
-        )
-    )
-    if vinculo is None:
-        vinculo = VinculoProduto(gs_user_id=cliente.id, produto=produto.value)
-        db.add(vinculo)
-
-    vinculo.usuario_remoto_id = usuario_remoto_id
-    vinculo.usuario_remoto_email = email
-    vinculo.usuario_remoto_nome = nome
-    vinculo.vinculado_por = por.id
-    vinculo.vinculado_em = datetime.now(UTC)
-    db.commit()
-    db.refresh(vinculo)
-    return vinculo
-
-
-def desvincular(db: Session, cliente: User, produto: Produto) -> None:
-    vinculo = db.scalar(
-        select(VinculoProduto).where(
-            VinculoProduto.gs_user_id == cliente.id,
-            VinculoProduto.produto == produto.value,
-        )
-    )
-    if vinculo is not None:
-        db.delete(vinculo)
-        db.commit()
-
-
 # -------------------------------------------------------------------- usinas
 
 
@@ -207,30 +133,41 @@ async def usinas_sugeridas(db: Session, cliente: User) -> list[UsinaSugerida]:
 
     Sugestão, não decisão: o gestor confirma. E cada usina vem marcada com quem já é dono,
     para o conflito aparecer antes de tentar salvar.
-    """
-    vinculos = {
-        v.produto: v
-        for v in db.scalars(
-            select(VinculoProduto).where(VinculoProduto.gs_user_id == cliente.id)
-        ).all()
-    }
 
+    ## A pergunta mudou
+
+    Antes: *"quais usinas o usuário 45 tem?"*, feita com a credencial de serviço, por
+    rotas administrativas. A resposta era o conjunto das concessões EXPLÍCITAS — e a
+    documentação de `MeuWattClient.plantas_do_usuario` já admitia o buraco: *"não cobre
+    quem vê plantas por ser funcionário de uma empresa de O&M"*. Quem enxerga usina pela
+    regra da organização caía fora, e o painel dizia "nenhuma plataforma indicou usinas
+    para este cliente" sobre alguém que enxerga sete. Foi o que aconteceu com o Janderson,
+    da Eninsa, na UFV Porto Ferreira.
+
+    Agora: o BFF chama cada produto **com o token do próprio cliente**, e pergunta "o que
+    você vê?". Quem responde é a mesma regra que o produto aplica no site dele — a de
+    organização inclusive. Não há mais tradução para errar.
+
+    Um produto sem token conectado simplesmente não contribui com sugestão. É o estado
+    certo: não sabemos o que ele vê lá, e chutar seria pior do que dizer que não sabemos.
+    """
     slugs_mw: set[str] = set()
     ids_mp: set[int] = set()
 
-    if Produto.MEUWATT.value in vinculos:
-        try:
-            mw = await integracoes.cliente_meuwatt(db)
-            slugs_mw = set(await mw.plantas_do_usuario(vinculos[Produto.MEUWATT.value].usuario_remoto_id))
-        except Exception:  # noqa: BLE001 — a tela abre mesmo com uma ponte fora
-            slugs_mw = set()
+    # As duas leituras são independentes e cada uma cai sozinha: com uma ponte fora, a
+    # tela ainda abre com a sugestão da outra. A alternativa — falhar as duas — deixaria o
+    # gestor sem conseguir conceder usina nenhuma por causa de um produto indisponível.
+    try:
+        mw = vinculos.cliente_meuwatt(db, cliente.id)
+        slugs_mw = {str(u.get("slug")) for u in (await mw.usinas()) if u.get("slug")}
+    except Exception:  # noqa: BLE001 — inclui "este cliente não conectou o meuWatt"
+        slugs_mw = set()
 
-    if Produto.MEUPLANO.value in vinculos:
-        try:
-            mp = await integracoes.cliente_meuplano(db)
-            ids_mp = set(await mp.usinas_do_usuario(vinculos[Produto.MEUPLANO.value].usuario_remoto_id))
-        except Exception:  # noqa: BLE001
-            ids_mp = set()
+    try:
+        mp = vinculos.cliente_meuplano(db, cliente.id)
+        ids_mp = {int(u["id"]) for u in (await mp.usinas()) if u.get("id") is not None}
+    except Exception:  # noqa: BLE001
+        ids_mp = set()
 
     concedidas = {
         a.plant_link_id

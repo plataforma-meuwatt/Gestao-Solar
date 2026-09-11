@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     # clientes). Sem ela o painel não consegue gravar integração nenhuma.
     gs_encryption_key: str = ""
 
+    # Chave PRIVADA (RS256, PEM) com que o Gestão Solar assina quem ele diz que é.
+    #
+    # Os produtos guardam só a pública. Três consequências que pagam o incômodo de gerar
+    # um par de chaves: um vazamento da configuração do meuWatt não permite forjar login
+    # de ninguém, não há segredo compartilhado para alguém colar no repositório errado, e
+    # a verificação é local — o login lá não fica dependendo desta API estar no ar.
+    #
+    # Vazia, o Gestão Solar continua conectando e lendo os produtos normalmente; o que não
+    # acontece é habilitar o "Entrar com Gestão Solar", e o painel diz isso em vez de
+    # falhar calado.
+    gs_sso_private_key: str = ""
+
+    #: Quem esta instalação afirma ser, dentro da asserção. Os produtos conferem contra o
+    #: que têm configurado: divergir aqui é login recusado, não aceito em silêncio.
+    gs_sso_issuer: str = "gestao-solar"
+
     # A sessão do painel do gestor é curta de propósito: é a tela que guarda as
     # credenciais de serviço dos dois upstreams.
     gs_painel_sessao_horas: int = 8
@@ -46,7 +62,10 @@ class Settings(BaseSettings):
     # ela seja editável e testável na hora.
     meuwatt_api_url: str = "https://api.meuwatt.com.br"
     meuwatt_web_url: str = "https://app.meuwatt.com.br"
-    meuplano_api_url: str = "https://api.meuplano.com.br"
+    # `api.meuplano.com.br` não resolve — o domínio nunca foi apontado. O host real é o do
+    # Railway, e deixar o padrão errado fazia a primeira conexão falhar com "não foi
+    # possível alcançar o endereço" antes mesmo de o gestor ter chance de suspeitar da URL.
+    meuplano_api_url: str = "https://meuplano.up.railway.app"
 
     environment: str = "development"
 

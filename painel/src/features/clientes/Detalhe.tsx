@@ -1,9 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, KeyRound, Link2Off, Pencil, Power, Stethoscope } from 'lucide-react'
+import {
+  ArrowLeft,
+  Check,
+  KeyRound,
+  Link2,
+  Link2Off,
+  Pencil,
+  Power,
+  RefreshCw,
+  Stethoscope,
+} from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import {
+  Aviso,
   Campo,
   Cartao,
   Carregando,
@@ -15,6 +26,7 @@ import {
   type Tom,
 } from '@/components/base'
 import {
+  conectarProduto,
   definirPermissoes,
   definirUsinas,
   desvincular,
@@ -22,9 +34,12 @@ import {
   obterCliente,
   permissoesDoCliente,
   regenerarSenha,
+  testarConexao,
   type ClienteDetalhe as TipoCliente,
   type Produto,
+  type ResultadoConexao,
   type SituacaoAcesso,
+  type Vinculo,
 } from '@/features/api'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
 import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
@@ -36,7 +51,14 @@ const ACESSO: Record<SituacaoAcesso, { tom: Tom; rotulo: string }> = {
   usado: { tom: 'ok', rotulo: 'Em uso' },
 }
 
-const NOME_PRODUTO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
+/** A ordem em que os dois produtos aparecem na ficha. Fixa: a posição de cada um é
+ *  memória muscular de quem abre dez fichas por dia. */
+const PRODUTOS: Produto[] = ['meuwatt', 'meuplano']
+
+const ROTULO_PRODUTO: Record<Produto, { nome: string; oQueTraz: string }> = {
+  meuwatt: { nome: 'meuWatt', oQueTraz: 'geração, inversores e relatórios' },
+  meuplano: { nome: 'meuPlano', oQueTraz: 'cronograma, ordens de serviço e assistente' },
+}
 
 export function DetalheCliente() {
   const { id } = useParams<{ id: string }>()
@@ -154,36 +176,22 @@ export function DetalheCliente() {
           </div>
         </Cartao>
 
-        <Cartao titulo="Plataformas vinculadas">
-          {cliente.vinculos.length === 0 ? (
-            <Vazio
-              titulo="Nenhuma plataforma vinculada"
-              descricao="Sem vínculo, o aplicativo abre vazio para este cliente."
+        <Cartao titulo="Contas nas plataformas">
+          {/* Um bloco por PRODUTO, não por vínculo existente. É o que faltava: a lista
+              antiga só desenhava o que já estava conectado, e conectar um produto depois
+              do cadastro não tinha porta nenhuma — o cliente ficava preso com o que
+              tivesse sido vinculado no dia em que nasceu. */}
+          {PRODUTOS.map((produto, i) => (
+            <BlocoProduto
+              key={produto}
+              produto={produto}
+              clienteId={cliente.id}
+              vinculo={cliente.vinculos.find((v) => v.produto === produto) ?? null}
+              primeiro={i === 0}
+              aoMudar={recarregar}
+              aoDesconectar={() => removerVinculo.mutate(produto)}
             />
-          ) : (
-            cliente.vinculos.map((v, i) => (
-              <div
-                key={v.produto}
-                className={`flex items-center gap-3 px-5 py-4 ${i ? 'border-t border-borda' : ''}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-forte">{NOME_PRODUTO[v.produto]}</p>
-                  <p className="mono text-xs text-fraco truncate">
-                    {v.nome ? `${v.nome} · ` : ''}
-                    {v.email ?? `id ${v.usuario_remoto_id}`}
-                  </p>
-                </div>
-                <button
-                  onClick={() => removerVinculo.mutate(v.produto)}
-                  className="btn-fantasma"
-                  title="Desvincular esta conta"
-                >
-                  <Link2Off size={13} />
-                  Desvincular
-                </button>
-              </div>
-            ))
-          )}
+          ))}
         </Cartao>
 
         <Cartao
@@ -221,11 +229,20 @@ export function DetalheCliente() {
                     </p>
                   ) : null}
                 </div>
+                {/* Estes selos falam da USINA, não do cliente: dizem em quais produtos
+                    ela está casada na conciliação. Escritos antes só como "meuWatt" e
+                    "meuPlano", ficavam a três centímetros do cartão de contas do cliente
+                    e eram lidos como se fossem dele — a ficha parecia se contradizer,
+                    anunciando "nenhuma plataforma vinculada" em cima de sete linhas
+                    cheias de selos verdes. O verbo resolve: a usina É monitorada, ELA
+                    tem manutenção. */}
                 <div className="flex gap-1.5">
-                  {u.tem_meuwatt ? <Selo tom="ok">meuWatt</Selo> : null}
-                  {u.tem_meuplano ? <Selo tom="ok">meuPlano</Selo> : null}
+                  {u.tem_meuwatt ? <Selo tom="ok">monitorada</Selo> : null}
+                  {u.tem_meuplano ? <Selo tom="ok">com manutenção</Selo> : null}
                   {!u.tem_meuwatt || !u.tem_meuplano ? (
-                    <Selo tom="alerta">só um lado</Selo>
+                    <Selo tom="alerta">
+                      {u.tem_meuwatt ? 'sem manutenção' : 'sem monitoramento'}
+                    </Selo>
                   ) : null}
                 </div>
               </div>
@@ -261,6 +278,193 @@ export function DetalheCliente() {
         />
       ) : null}
     </Pagina>
+  )
+}
+
+/**
+ * A conta do cliente num produto: o que está conectado, e como conectar.
+ *
+ * A tela inteira gira em torno de UM campo — o token que o cliente gerou no produto.
+ * Não há campo de e-mail nem de id, e isso é deliberado: quem diz de quem é a conta é o
+ * produto, ao receber o token. Deixar o gestor digitar essa parte reabriria o engano que
+ * o desenho fechou — uma anotação podendo discordar da credencial gravada.
+ *
+ * Os dois estados que a tela separa, porque pedem correções diferentes:
+ *
+ * - **conectado** — o Gestão Solar lê o produto como ele, e o app mostra os dados dele;
+ * - **login via Gestão Solar** — o produto aceita que ele entre lá com a senha daqui.
+ *
+ * O segundo depende do primeiro e pode falhar sozinho (chave de assinatura ausente,
+ * produto sem a rota ainda). Quando falha, a conexão continua valendo e o aviso diz o quê.
+ */
+function BlocoProduto({
+  produto,
+  clienteId,
+  vinculo,
+  primeiro,
+  aoMudar,
+  aoDesconectar,
+}: {
+  produto: Produto
+  clienteId: number
+  vinculo: Vinculo | null
+  primeiro: boolean
+  aoMudar: () => void
+  aoDesconectar: () => void
+}) {
+  const [colando, setColando] = useState(false)
+  const [token, setToken] = useState('')
+  const [resultado, setResultado] = useState<ResultadoConexao | null>(null)
+
+  const conectar = useMutation({
+    mutationFn: () => conectarProduto(clienteId, produto, token.trim()),
+    onSuccess: (r) => {
+      setResultado(r)
+      if (r.ok) {
+        // O token some da tela assim que serve. Ele não volta por GET nenhum, e deixá-lo
+        // no campo só cria a chance de alguém achar que precisa guardá-lo em algum lugar.
+        setToken('')
+        setColando(false)
+        aoMudar()
+      }
+    },
+    onError: (e) => setResultado({ ok: false, detalhe: mensagemDeErro(e), vinculo: null, login_externo: false, aviso_login: null }),
+  })
+
+  const testar = useMutation({
+    mutationFn: () => testarConexao(clienteId, produto),
+    onSuccess: (r) => {
+      setResultado(r)
+      aoMudar()
+    },
+    onError: (e) => setResultado({ ok: false, detalhe: mensagemDeErro(e), vinculo: null, login_externo: false, aviso_login: null }),
+  })
+
+  const { nome, oQueTraz } = ROTULO_PRODUTO[produto]
+  const conectado = Boolean(vinculo?.token_prefixo)
+
+  return (
+    <div className={`px-5 py-4 ${primeiro ? '' : 'border-t border-borda'}`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-forte">{nome}</p>
+            {conectado ? (
+              <Selo tom={vinculo!.estado === 'falhou' ? 'parado' : 'ok'}>
+                {vinculo!.estado === 'falhou' ? 'com problema' : 'conectado'}
+              </Selo>
+            ) : (
+              <Selo tom="sem-dados">não conectado</Selo>
+            )}
+            {conectado && vinculo!.login_externo ? (
+              <Selo tom="ok">login via Gestão Solar</Selo>
+            ) : null}
+          </div>
+
+          {conectado ? (
+            <>
+              <p className="mono text-xs text-fraco truncate mt-0.5">
+                {vinculo!.nome ? `${vinculo!.nome} · ` : ''}
+                {vinculo!.email ?? `id ${vinculo!.usuario_remoto_id}`}
+              </p>
+              <p className="mono text-xs text-fraco/70 mt-0.5">
+                {vinculo!.token_prefixo}…
+                {vinculo!.usinas_visiveis != null
+                  ? ` · ${vinculo!.usinas_visiveis} usina(s) visíveis`
+                  : ''}
+              </p>
+              {/* O login é a metade que pode faltar com a conexão inteira de pé. Dizer
+                  isso aqui evita a pergunta "conectei, por que ele não entra?". */}
+              {!vinculo!.login_externo ? (
+                <p className="text-xs text-alerta mt-1">
+                  Ele ainda não entra no {nome} com a senha do Gestão Solar.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs text-fraco mt-0.5">
+              Cole o token que ele gerou no {nome}. É de lá que vêm {oQueTraz}.
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-1.5 shrink-0">
+          {conectado ? (
+            <>
+              <button
+                onClick={() => testar.mutate()}
+                className="btn-fantasma"
+                disabled={testar.isPending}
+                title="Conferir se o token ainda é aceito"
+              >
+                <RefreshCw size={13} />
+                {testar.isPending ? 'Testando…' : 'Testar'}
+              </button>
+              <button onClick={() => setColando((v) => !v)} className="btn-fantasma">
+                <KeyRound size={13} />
+                Trocar
+              </button>
+              <button onClick={aoDesconectar} className="btn-fantasma" title="Apagar o vínculo e o token">
+                <Link2Off size={13} />
+                Desconectar
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setColando((v) => !v)} className="btn-secundario">
+              <Link2 size={14} />
+              Conectar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {colando ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            setResultado(null)
+            conectar.mutate()
+          }}
+          className="mt-3 flex gap-2 items-end"
+        >
+          <div className="flex-1">
+            <Campo
+              rotulo={`Token do ${nome}`}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={produto === 'meuwatt' ? 'mw_pat_…' : 'mp_pat_…'}
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              nota={`Ele gera esse valor na própria conta do ${nome} e te envia. Aparece uma vez lá.`}
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn-primario"
+            disabled={conectar.isPending || !token.trim()}
+          >
+            {conectar.isPending ? 'Conectando…' : 'Conectar'}
+          </button>
+        </form>
+      ) : null}
+
+      {resultado ? (
+        <div className="mt-3 space-y-2">
+          {resultado.ok ? (
+            <div className="rounded-campo border border-ok/30 bg-ok/10 p-3 flex items-start gap-2">
+              <Check size={15} className="text-ok shrink-0 mt-0.5" />
+              <p className="text-xs text-corpo">{resultado.detalhe}</p>
+            </div>
+          ) : (
+            <Erro>{resultado.detalhe}</Erro>
+          )}
+          {/* A conexão deu certo e o login não: dois desfechos, duas frases. Juntá-los
+              faria o gestor achar que nada funcionou. */}
+          {resultado.aviso_login ? <Aviso>{resultado.aviso_login}</Aviso> : null}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

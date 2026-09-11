@@ -171,3 +171,74 @@ def trocar_senha(
     usuario.senha_hash = gerar_hash_senha(body.senha_nova)
     usuario.trocar_senha = False
     db.commit()
+
+
+# ─────────────────────── entrar nos produtos com esta conta ───────────────────
+#
+# O caminho de "Entrar com Gestão Solar", visto do lado de cá.
+#
+# O produto (meuWatt/meuPlano) NUNCA vê a senha do Gestão Solar: a tela de login dele
+# manda apelido e senha PARA CÁ, recebe de volta uma asserção assinada e válida por dois
+# minutos, e é ela que apresenta ao próprio backend. Três consequências que valem a
+# ida-e-volta extra:
+#
+# * a senha daqui é conferida aqui, por quem tem o hash;
+# * o produto só precisa da chave PÚBLICA — não há segredo para combinar entre três
+#   repositórios que sobem separados;
+# * revogar o acesso de alguém é desativar a conta aqui, e vale para os dois produtos no
+#   mesmo instante.
+#
+# A asserção não é uma sessão: ela só serve para o produto reconhecer a pessoa e emitir a
+# sessão DELE. Quem não estiver vinculado lá é recusado lá — ver `services/vinculos.py`.
+
+
+class AssercaoIn(BaseModel):
+    apelido: str
+    senha: str
+
+
+class AssercaoOut(BaseModel):
+    assertion: str
+    #: Só para a tela do produto poder dizer "entrando como Fulano" antes de trocar a
+    #: asserção por sessão. Não substitui nada: quem decide o que a pessoa vê é o produto.
+    nome: str
+
+
+@router.post("/produtos/{produto}/assercao", response_model=AssercaoOut)
+def assercao_para_produto(
+    produto: Produto, body: AssercaoIn, db: Session = Depends(get_db)
+) -> AssercaoOut:
+    """Confere a senha do Gestão Solar e assina quem é esta conta, para aquele produto.
+
+    A asserção é emitida para UM produto (`aud`): a do meuWatt não vale no meuPlano. Sem
+    essa separação, um produto comprometido poderia reapresentar no outro a asserção que
+    recebeu e entrar lá como a pessoa.
+
+    Emite mesmo que a conta ainda não esteja conectada àquele produto. É deliberado: quem
+    sabe se existe vínculo é o produto, e antecipar a recusa aqui obrigaria este endpoint
+    a manter uma cópia de um estado que é de lá.
+    """
+    from app.services import login_externo
+
+    usuario = db.scalar(
+        select(User).where(User.apelido == (body.apelido or "").strip().lower())
+    )
+    # Mesma mensagem única do /login: quem tenta adivinhar não aprende qual dos três
+    # motivos aconteceu.
+    if (
+        usuario is None
+        or not usuario.ativo
+        or not conferir_senha(body.senha, usuario.senha_hash)
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+
+    try:
+        assercao = login_externo.assinar(usuario, produto)
+    except login_externo.SemChave as exc:
+        # 503 e não 500: não é defeito, é uma instalação sem a chave configurada, e a
+        # frase diz qual variável falta.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+    usuario.ultimo_login = datetime.now(UTC)
+    db.commit()
+    return AssercaoOut(assertion=assercao, nome=usuario.nome)

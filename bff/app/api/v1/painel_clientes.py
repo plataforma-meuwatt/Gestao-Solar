@@ -7,7 +7,7 @@ chega certo dos dois lados.
 A senha provisória aparece **uma vez**, na resposta que a gera. Nenhum GET aqui a devolve.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
@@ -24,6 +24,7 @@ from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
 from app.services import clientes as svc
 from app.services import integracoes
+from app.services import vinculos as vinculos_svc
 
 router = APIRouter(prefix="/api/painel", tags=["painel · clientes"])
 
@@ -39,11 +40,44 @@ def _cliente(db: Session, cliente_id: int) -> User:
 
 
 class VinculoOut(BaseModel):
+    """A conta do cliente num produto, e o estado da conexão com ela.
+
+    `nome` e `email` não são o que o gestor digitou: são o que o produto respondeu quando
+    o token foi apresentado. É isso que torna um token colado na ficha da pessoa errada
+    visível na hora, em vez de meses depois como usina faltando na tela de alguém.
+    """
+
     produto: str
     usuario_remoto_id: str
     email: str | None = None
     nome: str | None = None
     vinculado_em: datetime
+
+    #: `mw_pat_a1b2` — identifica o token na lista do produto, para revogar o certo.
+    token_prefixo: str | None = None
+    token_gravado_em: datetime | None = None
+    #: `nunca` | `ok` | `falhou`, do último teste.
+    estado: str = "nunca"
+    detalhe: str | None = None
+    usinas_visiveis: int | None = None
+    #: O produto aceita "Entrar com Gestão Solar" para esta conta.
+    login_externo: bool = False
+
+
+def _vinculo_out(v: VinculoProduto) -> VinculoOut:
+    return VinculoOut(
+        produto=v.produto,
+        usuario_remoto_id=v.usuario_remoto_id,
+        email=v.usuario_remoto_email,
+        nome=v.usuario_remoto_nome,
+        vinculado_em=v.vinculado_em,
+        token_prefixo=v.token_prefixo,
+        token_gravado_em=v.token_gravado_em,
+        estado=v.estado,
+        detalhe=v.detalhe,
+        usinas_visiveis=v.usinas_visiveis,
+        login_externo=v.login_externo,
+    )
 
 
 class ClienteResumo(BaseModel):
@@ -199,16 +233,7 @@ def detalhe_cliente(
         acesso=svc.situacao_acesso(db, cliente),
         trocar_senha=cliente.trocar_senha,
         ultimo_login=cliente.ultimo_login,
-        vinculos=[
-            VinculoOut(
-                produto=v.produto,
-                usuario_remoto_id=v.usuario_remoto_id,
-                email=v.usuario_remoto_email,
-                nome=v.usuario_remoto_nome,
-                vinculado_em=v.vinculado_em,
-            )
-            for v in cliente.vinculos
-        ],
+        vinculos=[_vinculo_out(v) for v in cliente.vinculos],
         usinas=[
             UsinaDoCliente(
                 plant_link_id=u.id,
@@ -261,58 +286,81 @@ def editar_cliente(
 # ---------------------------------------------------------------- vínculos
 
 
-class UsuarioRemotoOut(BaseModel):
-    id: str
-    email: str | None = None
-    nome: str | None = None
+class ConectarIn(BaseModel):
+    """O token que o cliente gerou no produto. Só isso.
+
+    Não há campo de e-mail nem de id: qual conta é, quem responde é o produto ao receber o
+    token. Deixar o gestor informar isso reabriria o engano que este desenho fechou — uma
+    anotação digitada podendo discordar do token efetivamente gravado.
+    """
+
+    token: str = Field(min_length=1, max_length=200)
 
 
-@router.get("/produtos/{produto}/usuarios", response_model=UsuarioRemotoOut | None)
-async def procurar_usuario(
-    produto: Produto,
-    email: str,
-    db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
-) -> UsuarioRemotoOut | None:
-    """Acha a conta daquele e-mail no produto. `null` quer dizer que não existe lá — o
-    gestor segue sem vincular, e a aba correspondente fica vazia no app."""
-    try:
-        achado = await svc.procurar_usuario(db, produto, email)
-    except Exception as exc:  # noqa: BLE001 — o motivo real ajuda o gestor
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    return UsuarioRemotoOut(**achado) if achado else None
+class ConexaoOut(BaseModel):
+    """O desfecho da tentativa, com o vínculo resultante quando houve um."""
+
+    ok: bool
+    detalhe: str
+    vinculo: VinculoOut | None = None
+    #: O produto passou a aceitar "Entrar com Gestão Solar" para esta conta.
+    login_externo: bool = False
+    #: Por que o login NÃO foi habilitado, quando a conexão em si deu certo. Separado de
+    #: `detalhe` porque são duas coisas: ler os dados dele e deixá-lo entrar lá.
+    aviso_login: str | None = None
 
 
-class VincularIn(BaseModel):
-    usuario_remoto_id: str
-    email: str | None = None
-    nome: str | None = None
-
-
-@router.put("/clientes/{cliente_id}/vinculos/{produto}", response_model=VinculoOut)
-def vincular_produto(
+@router.put("/clientes/{cliente_id}/conexoes/{produto}", response_model=ConexaoOut)
+async def conectar_produto(
     cliente_id: int,
     produto: Produto,
-    body: VincularIn,
+    body: ConectarIn,
     db: Session = Depends(get_db),
     gestor: User = Depends(gestor_atual),
-) -> VinculoOut:
+) -> ConexaoOut:
+    """Conecta a conta deste cliente no produto com o token dele.
+
+    Um gesto, duas consequências: o Gestão Solar passa a LER o produto como ele — e com
+    isso a enxergar exatamente as usinas que ele enxergaria lá, pela regra de lá — e o
+    produto passa a aceitar que ele ENTRE com a senha daqui.
+
+    Responde 200 mesmo quando o token é recusado, com `ok: false` e o motivo. O erro é do
+    valor colado, não da requisição, e a tela precisa mostrar a frase inteira — um 400 com
+    detalhe viraria "Erro 400" em qualquer camada de tratamento genérico pelo caminho.
+    """
     cliente = _cliente(db, cliente_id)
-    v = svc.vincular(
-        db,
-        cliente,
-        produto,
-        usuario_remoto_id=body.usuario_remoto_id,
-        email=body.email,
-        nome=body.nome,
-        por=gestor,
+    r = await vinculos_svc.conectar(db, cliente, produto, body.token, por=gestor)
+    vinculo = vinculos_svc.obter(db, cliente.id, produto)
+    return ConexaoOut(
+        ok=r.ok,
+        detalhe=r.detalhe,
+        vinculo=_vinculo_out(vinculo) if (r.ok and vinculo is not None) else None,
+        login_externo=r.login_externo,
+        aviso_login=r.aviso_login,
     )
-    return VinculoOut(
-        produto=v.produto,
-        usuario_remoto_id=v.usuario_remoto_id,
-        email=v.usuario_remoto_email,
-        nome=v.usuario_remoto_nome,
-        vinculado_em=v.vinculado_em,
+
+
+@router.post("/clientes/{cliente_id}/conexoes/{produto}/testar", response_model=ConexaoOut)
+async def testar_conexao(
+    cliente_id: int,
+    produto: Produto,
+    db: Session = Depends(get_db),
+    _: User = Depends(gestor_atual),
+) -> ConexaoOut:
+    """Reexercita o token já gravado.
+
+    Existe porque um token que funcionava pode parar sozinho — revogado do outro lado,
+    conta desativada, usina tirada da pessoa. Sem isto, a equipe só descobre pelo cliente
+    reclamando que o aplicativo abriu vazio.
+    """
+    cliente = _cliente(db, cliente_id)
+    r = await vinculos_svc.testar(db, cliente, produto)
+    vinculo = vinculos_svc.obter(db, cliente.id, produto)
+    return ConexaoOut(
+        ok=r.ok,
+        detalhe=r.detalhe,
+        vinculo=_vinculo_out(vinculo) if vinculo is not None else None,
+        login_externo=r.login_externo,
     )
 
 
@@ -323,7 +371,13 @@ def desvincular_produto(
     db: Session = Depends(get_db),
     _: User = Depends(gestor_atual),
 ) -> None:
-    svc.desvincular(db, _cliente(db, cliente_id), produto)
+    """Apaga o vínculo e o token junto.
+
+    O token continua valendo do lado do produto até ser revogado LÁ — desconectar aqui não
+    revoga nada, só para de usar. Quem precisa cortar o acesso de verdade revoga na conta
+    de origem, que é justamente a vantagem de o token ser da pessoa.
+    """
+    vinculos_svc.desconectar(db, _cliente(db, cliente_id), produto)
 
 
 # ------------------------------------------------------------------ usinas

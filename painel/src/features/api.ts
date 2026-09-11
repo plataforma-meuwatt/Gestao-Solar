@@ -24,12 +24,35 @@ export type ClienteResumo = {
   acesso: SituacaoAcesso
 }
 
+/**
+ * A conta do cliente num produto, e o estado da conexão com ela.
+ *
+ * `nome` e `email` não foram digitados por ninguém: são o que o produto respondeu quando
+ * o token foi apresentado. É por isso que um token colado na ficha da pessoa errada
+ * aparece na hora — a tela mostra o nome de quem o token realmente é.
+ */
 export type Vinculo = {
   produto: Produto
   usuario_remoto_id: string
   email: string | null
   nome: string | null
   vinculado_em: string
+  token_prefixo: string | null
+  token_gravado_em: string | null
+  estado: 'nunca' | 'ok' | 'falhou'
+  detalhe: string | null
+  usinas_visiveis: number | null
+  /** O produto aceita "Entrar com Gestão Solar" para esta conta. */
+  login_externo: boolean
+}
+
+export type ResultadoConexao = {
+  ok: boolean
+  detalhe: string
+  vinculo: Vinculo | null
+  login_externo: boolean
+  /** Por que o login NÃO foi habilitado, quando a conexão em si deu certo. */
+  aviso_login: string | null
 }
 
 export type UsinaDoCliente = {
@@ -63,7 +86,6 @@ export type UsinaSugerida = {
   dono_atual: string | null
 }
 
-export type UsuarioRemoto = { id: string; email: string | null; nome: string | null }
 
 export type Integracao = {
   produto: Produto
@@ -208,17 +230,29 @@ export const regenerarSenha = (id: number) =>
 
 /* --------------------------------------------------------------- vínculos */
 
-export const procurarUsuario = (produto: Produto, email: string) =>
+/**
+ * Conecta a conta do cliente no produto com o token DELE.
+ *
+ * Um gesto, duas consequências: o Gestão Solar passa a ler o produto como ele — e a
+ * enxergar as usinas que ele enxergaria lá, pela regra de lá — e o produto passa a
+ * aceitar que ele entre com a senha daqui.
+ *
+ * Responde 200 mesmo quando o token é recusado, com `ok: false` e o motivo: o erro é do
+ * valor colado, e a tela precisa da frase inteira, não de um "Erro 400".
+ */
+export const conectarProduto = (clienteId: number, produto: Produto, token: string) =>
   api
-    .get<UsuarioRemoto | null>(`/produtos/${produto}/usuarios`, { params: { email } })
+    .put<ResultadoConexao>(`/clientes/${clienteId}/conexoes/${produto}`, { token })
     .then((r) => r.data)
 
-export const vincular = (
-  clienteId: number,
-  produto: Produto,
-  dados: { usuario_remoto_id: string; email?: string | null; nome?: string | null },
-) => api.put<Vinculo>(`/clientes/${clienteId}/vinculos/${produto}`, dados).then((r) => r.data)
+/** Reexercita o token já gravado — um token que funcionava pode ter sido revogado lá. */
+export const testarConexao = (clienteId: number, produto: Produto) =>
+  api
+    .post<ResultadoConexao>(`/clientes/${clienteId}/conexoes/${produto}/testar`)
+    .then((r) => r.data)
 
+/** Apaga o vínculo e o token. NÃO revoga nada do lado do produto — quem precisa cortar o
+ *  acesso de verdade revoga na conta de origem. */
 export const desvincular = (clienteId: number, produto: Produto) =>
   api.delete(`/clientes/${clienteId}/vinculos/${produto}`)
 

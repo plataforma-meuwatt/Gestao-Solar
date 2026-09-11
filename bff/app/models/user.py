@@ -21,6 +21,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -109,11 +110,28 @@ class User(Base):
 
 
 class VinculoProduto(Base):
-    """Qual conta deste cliente em cada produto.
+    """A conta deste cliente em cada produto — e o token com que se lê por ela.
 
     Guarda o e-mail e o nome de lá junto do id: o painel precisa mostrar *quem* foi
     vinculado sem ir buscar no upstream a cada carregamento de tela, e o registro
     continua legível mesmo se a conta sumir de lá.
+
+    O token é o que faz desta linha um vínculo PROVADO em vez de digitado. O gestor não
+    afirma mais "este cliente é aquela conta": ele apresenta o token da pessoa, o produto
+    responde de quem ele é, e o `usuario_remoto_id` vem dessa resposta. Um engano de
+    digitação deixou de ser possível — o que resta é colar o token de outra pessoa, e aí
+    o nome que aparece na tela é o dela.
+
+    Da mesma linha saem duas consequências que vale a pena distinguir:
+
+    * **ler** — o BFF chama os produtos com este token, como o cliente, e recebe
+      exatamente o escopo que ele teria lá. É o que substitui as rotas administrativas de
+      "quais usinas o usuário N vê", que só conheciam concessões explícitas e por isso
+      mentiam sobre quem enxerga usina pela regra da organização.
+    * **entrar** — o produto grava que esta conta do Gestão Solar é aquele usuário dele e
+      passa a aceitar "Entrar com Gestão Solar". `login_externo_em` marca quando isso foi
+      confirmado; fica nulo quando o token serve para ler mas o registro da identidade
+      ainda não aconteceu — o produto estava fora do ar, por exemplo.
     """
 
     __tablename__ = "gs_vinculos_produto"
@@ -129,6 +147,29 @@ class VinculoProduto(Base):
     usuario_remoto_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     usuario_remoto_nome: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # ── o token do próprio cliente ──────────────────────────────────────────────
+    #: Cifrado (Fernet). Entra, some, e nunca volta pela tela — nem para quem o colou.
+    #: Quem precisar dele de novo gera outro no produto.
+    token_cifrado: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `mw_pat_a1b2`, em claro. É por ele que se reconhece, na lista de tokens do produto,
+    #: qual é este — sem isso, revogar o token certo vira tentativa e erro.
+    token_prefixo: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    token_gravado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # ── resultado do último teste ───────────────────────────────────────────────
+    #: `nunca` | `ok` | `falhou`. Guardado para a ficha do cliente abrir já dizendo o
+    #: estado, sem bater nos dois upstreams a cada carregamento.
+    estado: Mapped[str] = mapped_column(String(20), default="nunca", server_default="nunca")
+    detalhe: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usinas_visiveis: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    #: Quando o produto confirmou que aceita o login desta conta do Gestão Solar.
+    login_externo_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     vinculado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -137,6 +178,16 @@ class VinculoProduto(Base):
     )
 
     usuario: Mapped["User"] = relationship(back_populates="vinculos", foreign_keys=[gs_user_id])
+
+    @property
+    def conectado(self) -> bool:
+        """Tem token gravado — o BFF consegue ler os produtos como este cliente."""
+        return bool(self.token_cifrado)
+
+    @property
+    def login_externo(self) -> bool:
+        """O produto aceita "Entrar com Gestão Solar" para esta conta."""
+        return self.login_externo_em is not None
 
 
 class SenhaProvisoria(Base):

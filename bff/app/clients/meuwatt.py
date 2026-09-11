@@ -62,6 +62,22 @@ class MeuWattClient:
         pessoa errada, e o escopo de usinas vem calado junto."""
         return await self._get("/auth/me", token=token)
 
+    async def identidade(self, token: str | None = None) -> dict[str, Any]:
+        """Quem é o dono do token, em campos que o Gestão Solar entende: `id`, `nome`,
+        `email`.
+
+        Existe para o vínculo por token não precisar conhecer o formato de cada produto.
+        Aqui sai barato — `/auth/me` já responde as três coisas —, mas o gêmeo do meuPlano
+        precisa de duas chamadas para montar o mesmo, e quem chama não deve ter de saber
+        disso.
+        """
+        perfil = await self.quem_sou_eu(token=token)
+        return {
+            "id": str(perfil.get("id") or ""),
+            "nome": perfil.get("name") or None,
+            "email": perfil.get("email") or None,
+        }
+
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
         """Valida a credencial do usuário. Devolve o payload do login ou None se recusada.
 

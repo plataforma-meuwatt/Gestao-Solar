@@ -10,18 +10,17 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Check, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Aviso, Campo, Cartao, Erro, Pagina, Passos } from '@/components/base'
 import {
+  conectarProduto,
   criarCliente,
   definirUsinas,
-  procurarUsuario,
-  vincular,
   type Produto,
-  type UsuarioRemoto,
+  type ResultadoConexao,
 } from '@/features/api'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
 import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
@@ -160,7 +159,6 @@ export function NovoCliente() {
         <PassoVinculo
           produto="meuwatt"
           clienteId={clienteId}
-          email={email}
           aoConcluir={() => setPasso(2)}
           aoVoltar={() => setPasso(0)}
         />
@@ -170,7 +168,6 @@ export function NovoCliente() {
         <PassoVinculo
           produto="meuplano"
           clienteId={clienteId}
-          email={email}
           aoConcluir={() => setPasso(3)}
           aoVoltar={() => setPasso(1)}
         />
@@ -206,92 +203,84 @@ const ROTULO: Record<Produto, { nome: string; oQueTraz: string }> = {
 function PassoVinculo({
   produto,
   clienteId,
-  email,
   aoConcluir,
   aoVoltar,
 }: {
   produto: Produto
   clienteId: number
-  email: string
   aoConcluir: () => void
   aoVoltar: () => void
 }) {
-  const [busca, setBusca] = useState(email)
-  const [achado, setAchado] = useState<UsuarioRemoto | null | undefined>(undefined)
-  const [erro, setErro] = useState('')
+  const [token, setToken] = useState('')
+  const [resultado, setResultado] = useState<ResultadoConexao | null>(null)
 
-  const procurar = useMutation({
-    mutationFn: () => procurarUsuario(produto, busca.trim()),
+  const conectar = useMutation({
+    mutationFn: () => conectarProduto(clienteId, produto, token.trim()),
     onSuccess: (r) => {
-      setAchado(r)
-      setErro('')
+      setResultado(r)
+      // Só avança sozinho quando deu certo. Uma recusa tem de ficar na tela: o gestor
+      // precisa ler o motivo e colar de novo, e passar adiante esconderia isso.
+      if (r.ok) setToken('')
     },
-    onError: (e) => {
-      setErro(mensagemDeErro(e))
-      setAchado(undefined)
-    },
-  })
-
-  const salvar = useMutation({
-    mutationFn: () =>
-      vincular(clienteId, produto, {
-        usuario_remoto_id: achado!.id,
-        email: achado!.email,
-        nome: achado!.nome,
+    onError: (e) =>
+      setResultado({
+        ok: false,
+        detalhe: mensagemDeErro(e),
+        vinculo: null,
+        login_externo: false,
+        aviso_login: null,
       }),
-    onSuccess: aoConcluir,
-    onError: (e) => setErro(mensagemDeErro(e)),
   })
 
   const { nome, oQueTraz } = ROTULO[produto]
+  const conectado = resultado?.ok === true
 
   return (
     <Cartao className="p-5 max-w-2xl">
       <h2 className="text-lg font-semibold text-forte">Conta no {nome}</h2>
       <p className="text-sm text-rotulo mt-1">
-        Qual conta deste cliente no {nome}? É dela que vêm {oQueTraz}.
+        Cole o token que este cliente gerou na conta dele do {nome}. É de lá que vêm{' '}
+        {oQueTraz} — e é o mesmo gesto que faz o {nome} aceitar que ele entre com a senha do
+        Gestão Solar.
       </p>
 
-      {erro ? <Erro className="mt-4">{erro}</Erro> : null}
-
-      <div className="flex gap-2 items-end mt-4">
-        <div className="flex-1">
-          <Campo
-            rotulo={`E-mail no ${nome}`}
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && procurar.mutate()}
-          />
-        </div>
-        <button
-          onClick={() => procurar.mutate()}
-          className="btn-secundario"
-          disabled={procurar.isPending || !busca.trim()}
-        >
-          <Search size={15} />
-          {procurar.isPending ? 'Procurando…' : 'Procurar'}
-        </button>
+      <div className="mt-4">
+        <Campo
+          rotulo={`Token do ${nome}`}
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && token.trim() && conectar.mutate()}
+          placeholder={produto === 'meuwatt' ? 'mw_pat_…' : 'mp_pat_…'}
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={conectado}
+          nota={`Ele gera esse valor dentro do ${nome} e te envia. Aparece uma vez lá.`}
+        />
       </div>
 
-      {achado === null ? (
+      {resultado && !resultado.ok ? (
         <div className="mt-4">
-          <Aviso>
-            Nenhuma conta com este e-mail no {nome}. Você pode seguir sem vincular — a aba
-            correspondente ficará vazia no aplicativo até que a conta exista e seja vinculada
-            aqui.
-          </Aviso>
+          <Erro>{resultado.detalhe}</Erro>
         </div>
       ) : null}
 
-      {achado ? (
-        <div className="mt-4 rounded-campo border border-ok/30 bg-ok/10 p-4 flex items-center gap-3">
-          <Check size={18} className="text-ok shrink-0" />
+      {conectado ? (
+        <div className="mt-4 rounded-campo border border-ok/30 bg-ok/10 p-4 flex items-start gap-3">
+          <Check size={18} className="text-ok shrink-0 mt-0.5" />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-forte">{achado.nome || 'Conta encontrada'}</p>
-            <p className="mono text-xs text-rotulo truncate">
-              {achado.email} · id {achado.id}
+            <p className="text-sm font-semibold text-forte">
+              {resultado!.vinculo?.nome || 'Conta conectada'}
             </p>
+            <p className="mono text-xs text-rotulo truncate">{resultado!.detalhe}</p>
           </div>
+        </div>
+      ) : null}
+
+      {/* O login pode não ter sido habilitado com a conexão inteira de pé. São duas
+          coisas, e juntá-las numa frase só faria parecer que nada funcionou. */}
+      {resultado?.aviso_login ? (
+        <div className="mt-3">
+          <Aviso>{resultado.aviso_login}</Aviso>
         </div>
       ) : null}
 
@@ -300,16 +289,30 @@ function PassoVinculo({
           <ArrowLeft size={15} />
           Voltar
         </button>
-        {achado ? (
-          <button onClick={() => salvar.mutate()} className="btn-primario" disabled={salvar.isPending}>
-            {salvar.isPending ? 'Vinculando…' : 'Vincular e continuar'}
+        {conectado ? (
+          <button onClick={aoConcluir} className="btn-primario">
+            Continuar
             <ArrowRight size={15} />
           </button>
         ) : (
-          <button onClick={aoConcluir} className="btn-secundario">
-            Pular este produto
-            <ArrowRight size={15} />
-          </button>
+          <>
+            <button
+              onClick={() => {
+                setResultado(null)
+                conectar.mutate()
+              }}
+              className="btn-primario"
+              disabled={conectar.isPending || !token.trim()}
+            >
+              {conectar.isPending ? 'Conectando…' : 'Conectar'}
+            </button>
+            {/* Pular continua existindo: quem contratou só um produto conecta só um, e
+                o outro fica disponível na ficha do cliente a qualquer momento. */}
+            <button onClick={aoConcluir} className="btn-fantasma h-11 px-4 text-sm">
+              Pular este produto
+              <ArrowRight size={15} />
+            </button>
+          </>
         )}
       </div>
     </Cartao>

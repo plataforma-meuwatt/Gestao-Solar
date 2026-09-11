@@ -66,6 +66,25 @@ class MeuPlanoClient:
         """
         return await self._get("/api/v1/meuacesso/auth/me/profile", token=token)
 
+    async def identidade(self, token: str | None = None) -> dict[str, Any]:
+        """Quem é o dono do token: `id`, `nome`, `email` — o mesmo contrato do gêmeo no
+        meuWatt.
+
+        Duas chamadas porque o meuPlano parte a identidade em duas rotas e nenhuma das
+        duas responde tudo: `/auth/me` tem o `user_id` e não tem o nome; `/me/profile`
+        tem o nome e não tem o id. O vínculo precisa do id (é ele que fica gravado e é por
+        ele que o produto reconhece a pessoa depois) e da tela precisa do nome (é ele que
+        denuncia o token da pessoa errada). Juntar aqui evita que cada chamador descubra
+        essa divisão por conta própria.
+        """
+        eu = await self._get("/api/v1/meuacesso/auth/me", token=token)
+        perfil = await self.quem_sou_eu(token=token)
+        return {
+            "id": str(eu.get("user_id") or ""),
+            "nome": perfil.get("name") or None,
+            "email": perfil.get("email") or eu.get("email") or None,
+        }
+
     async def autenticar(self, email: str, senha: str) -> dict[str, Any] | None:
         c = sessao(self.base_url, self._timeout, follow_redirects=True)
         r = await c.post(
