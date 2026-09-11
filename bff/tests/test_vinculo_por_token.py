@@ -17,6 +17,8 @@ tem um teste porque cada uma já falhou na vida real ou falharia em silêncio:
 E, como em `test_conexao_por_token.py`, que o valor do token não fique em claro no banco.
 """
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 from cryptography.fernet import Fernet
@@ -358,3 +360,51 @@ class TestChaveDeAssinatura:
         assert jwt.decode(mp, publica, algorithms=["RS256"], audience="meuplano")["aud"] == "meuplano"
         with pytest.raises(Exception):
             jwt.decode(mw, publica, algorithms=["RS256"], audience="meuplano")
+
+
+class TestTestarRetentaOLogin:
+    """Configurar a chave DEPOIS de conectar é a ordem normal das coisas.
+
+    Sem retentar aqui, quem conectou antes de a chave existir ficava com o login
+    desabilitado para sempre: `conectar` era o único lugar que tentava, e ninguém recola
+    um token que está funcionando. O conserto não podia depender de a pessoa adivinhar
+    que precisa desconectar e conectar de novo.
+    """
+
+    async def test_habilita_o_login_que_faltou(self, db, cliente, administrador, monkeypatch):
+        _responde(monkeypatch)
+        await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)
+        assert vinculos.obter(db, cliente.id, Produto.MEUWATT).login_externo is False
+
+        # Agora a chave existe e o produto aceita.
+        async def _agora_vai(db_, *, cliente, produto, base_url, token):
+            v = vinculos.obter(db_, cliente.id, produto)
+            v.login_externo_em = datetime.now(UTC)
+            db_.commit()
+            return None
+
+        monkeypatch.setattr(login_externo, "habilitar", _agora_vai)
+        r = await vinculos.testar(db, cliente, Produto.MEUWATT)
+
+        assert r.ok and r.login_externo is True
+        assert r.aviso_login is None
+
+    async def test_nao_retenta_o_que_ja_esta_de_pe(self, db, cliente, administrador, monkeypatch):
+        _responde(monkeypatch)
+        await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)
+        v = vinculos.obter(db, cliente.id, Produto.MEUWATT)
+        v.login_externo_em = datetime.now(UTC)
+        db.commit()
+
+        chamou = []
+
+        async def _conta(db_, **kw):
+            chamou.append(1)
+            return None
+
+        monkeypatch.setattr(login_externo, "habilitar", _conta)
+        r = await vinculos.testar(db, cliente, Produto.MEUWATT)
+
+        assert r.login_externo is True
+        # Retentar um login que já está de pé é uma chamada de rede inútil por clique.
+        assert chamou == []

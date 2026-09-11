@@ -302,6 +302,25 @@ async def testar(db: Session, cliente: User, produto: Produto) -> ResultadoConex
         vinculo.usuario_remoto_nome = resultado.nome
         vinculo.usuario_remoto_email = resultado.email
     db.commit()
+
+    # Testar TAMBÉM retenta habilitar o login, quando ele ainda não está de pé.
+    #
+    # Sem isto, a conexão feita antes de a chave de assinatura existir ficava com o login
+    # desabilitado PARA SEMPRE: `conectar` é o único lugar que tentava, e ninguém recola
+    # um token que está funcionando. A pessoa configurava a chave depois — que é a ordem
+    # normal das coisas — e nada acontecia, sem nenhum caminho na tela para consertar
+    # além de desconectar e conectar de novo.
+    #
+    # Só quando falta, e só quando o token acabou de ser aprovado: retentar um login que
+    # já está de pé é uma chamada inútil por clique.
+    if resultado.ok and not vinculo.login_externo:
+        from app.services import login_externo  # noqa: PLC0415 — circular no topo
+
+        resultado.aviso_login = await login_externo.habilitar(
+            db, cliente=cliente, produto=produto, base_url=endereco, token=token
+        )
+        db.refresh(vinculo)
+
     resultado.login_externo = vinculo.login_externo
     return resultado
 
