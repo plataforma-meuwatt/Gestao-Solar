@@ -354,33 +354,58 @@ que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
 apontar). O endereço que o código declarava (`appgestao.up.railway.app`) nunca existiu — o
 domínio real que o Railway gerou é `appgestao-production-15cb.up.railway.app`.
 
-⛔ **O PORTAL NÃO TEM COMO SER PUBLICADO DESTA MÁQUINA.** Conferido em 12/09/2026: o token
-do `.env.txt` é de projeto, e o projeto que ele abre — *Gestao Solar*
-(`ae0386b7-5b51-44fe-bb74-d41ac885903a`) — tem **dois serviços, e nenhum deles é o portal**:
+⚠ **O serviço `appgestao` não está ligado ao GitHub**, então **não há deploy automático no
+push**: cada mudança do portal exige um `railway up` à mão. Quem tiver acesso de conta deve
+conectar o repositório e apagar este aviso. Enquanto isso, **um push que mexe só em `portal/`
+não muda nada em produção** — e a armadilha não dá erro: o site continua no ar, com o código
+antigo. Pior, o BFF SOBE no push (é o único serviço ligado ao GitHub), então numa mudança que
+atravessa os dois o servidor anda e a tela não.
 
-```
-- Gestao-Solar        ● Online · https://gestao-solar-production.up.railway.app   (o BFF)
-- gs-teste-permissao  ○ Offline
-```
+**Publicar o portal, em 12/09/2026 — três armadilhas, nesta ordem:**
 
-O `appgestao` (portal) e o `gestaosolar` (painel) vivem em **outro projeto**, e com um token
-de projeto não há como alcançá-los nem descobri-los: `railway list` e `railway whoami`
-respondem `Unauthorized`, que é o comportamento normal deste tipo de token e não um defeito.
+1. **NÃO exporte `RAILWAY_TOKEN`.** A máquina já tem login de conta
+   (`railway whoami` → `Paulo Renan Marquezini`), e é ele que enxerga os quatro serviços do
+   projeto. O token do `.env.txt` é de escopo menor: com ele exportado, `railway status`
+   mostra só `Gestao-Solar` e `gs-teste-permissao` — o `front` (painel) e o `appgestao`
+   (portal) **somem da lista**, e `railway list`/`railway whoami` respondem `Unauthorized`.
+   Isso parece "o portal está em outro projeto" e não está: está no mesmo, escondido pelo
+   escopo do token.
 
-Então a receita que estava escrita aqui — `cd portal && railway up --service appgestao
---detach` — **não funciona com a credencial que existe na máquina**. Publicar o portal exige
-um token de CONTA, ou alguém logado no Railway com acesso ao outro projeto.
+2. **O `railway up` novo (CLI 5.45.7) sobe o REPOSITÓRIO INTEIRO, não a pasta atual.** Era
+   assim que o portal ia ao ar (`cd portal && railway up`), e deixou de funcionar: o contexto
+   passa a ter a raiz no topo, o `Dockerfile` do portal não está lá, o builder cai no
+   **Railpack** e o deploy morre em ~25 s com `railpack prepare exited with an error` — o log
+   mostra o builder listando `bff/`, `painel/`, `docs/`… O `Root Directory` do serviço não
+   salva: ele vale para build vindo do GitHub, não para upload do CLI, em que o arquivo
+   enviado É o contexto. Passar a pasta como argumento também não resolve
+   (`railway up portal` → `prefix not found`).
 
-Duas consequências, e as duas são armadilhas silenciosas:
+   O que funciona: **montar o contexto fora do repositório** e subir de lá —
 
-- **um push que mexe só em `portal/` não muda nada em produção** — o site continua no ar,
-  com o código antigo, e nada acusa;
-- **o BFF, esse sim, sobe no push** (é o serviço deste projeto). Numa mudança que atravessa
-  os dois, o servidor anda e a tela não — o inverso da ordem segura. Como o BFF só ganha
-  campo novo e nunca tira, isso não quebra o portal antigo; mas a tela nova fica esperando
-  um deploy que ninguém deu.
+   ```bash
+   CTX=/tmp/ctx-portal && rm -rf $CTX && mkdir -p $CTX
+   cd "/c/Dev/Gestao Solar/portal"
+   tar --exclude=node_modules --exclude=dist -cf - . | (cd $CTX && tar -xf -)
+   cd $CTX && railway up --project ae0386b7-5b51-44fe-bb74-d41ac885903a        --service appgestao --environment production --detach
+   ```
 
-Quem tiver acesso de conta deve ligar o `appgestao` ao GitHub e apagar este aviso.
+   Fora de um repositório git, o CLI sobe a pasta e o `Dockerfile` volta a ficar na raiz do
+   contexto — que é o que o cabeçalho do `portal/Dockerfile` sempre disse que ele precisa.
+
+3. **Confirme por ARQUIVO NOVO, nunca por status.** O SPA devolve 200 em qualquer caminho, e
+   o deploy falho deixa a versão antiga no ar respondendo tudo. A prova é um arquivo que só
+   existe na versão nova, conferido pelo tipo e pelo tamanho, com um caminho inexistente ao
+   lado como controle:
+
+   ```bash
+   P=https://appgestao-production-15cb.up.railway.app
+   curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}
+' $P/favicon.svg
+   #   200 image/svg+xml 1966   ← o arquivo
+   curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}
+' $P/marca/nao-existe.svg
+   #   200 text/html 1602       ← o controle: 200 aqui é só o index.html
+   ```
 
 **Como provar o portal AO VIVO, sem a senha do dono.** Uma tela do portal só responde com
 sessão: sem ela toda rota devolve 401, e o SPA devolve 200 em qualquer caminho — o que faz um
