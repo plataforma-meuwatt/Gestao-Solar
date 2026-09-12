@@ -354,12 +354,33 @@ que nunca foi apontado, e apontá-lo é trabalho pendente no DNS.
 apontar). O endereço que o código declarava (`appgestao.up.railway.app`) nunca existiu — o
 domínio real que o Railway gerou é `appgestao-production-15cb.up.railway.app`.
 
-⚠ **O serviço `appgestao` não está ligado ao GitHub.** O token do `.env.txt` é de projeto e
-não tem permissão para `service source connect`, então **não há deploy automático no push**:
-cada mudança do portal exige `cd portal && railway up --service appgestao --detach`. Quem
-tiver acesso de conta ao Railway deve conectar o repositório e apagar este aviso. Enquanto
-isso, **um push que mexe só em `portal/` não muda nada em produção** — é a armadilha desta
-frente, e ela não dá erro: o site continua no ar, com o código antigo.
+⛔ **O PORTAL NÃO TEM COMO SER PUBLICADO DESTA MÁQUINA.** Conferido em 12/09/2026: o token
+do `.env.txt` é de projeto, e o projeto que ele abre — *Gestao Solar*
+(`ae0386b7-5b51-44fe-bb74-d41ac885903a`) — tem **dois serviços, e nenhum deles é o portal**:
+
+```
+- Gestao-Solar        ● Online · https://gestao-solar-production.up.railway.app   (o BFF)
+- gs-teste-permissao  ○ Offline
+```
+
+O `appgestao` (portal) e o `gestaosolar` (painel) vivem em **outro projeto**, e com um token
+de projeto não há como alcançá-los nem descobri-los: `railway list` e `railway whoami`
+respondem `Unauthorized`, que é o comportamento normal deste tipo de token e não um defeito.
+
+Então a receita que estava escrita aqui — `cd portal && railway up --service appgestao
+--detach` — **não funciona com a credencial que existe na máquina**. Publicar o portal exige
+um token de CONTA, ou alguém logado no Railway com acesso ao outro projeto.
+
+Duas consequências, e as duas são armadilhas silenciosas:
+
+- **um push que mexe só em `portal/` não muda nada em produção** — o site continua no ar,
+  com o código antigo, e nada acusa;
+- **o BFF, esse sim, sobe no push** (é o serviço deste projeto). Numa mudança que atravessa
+  os dois, o servidor anda e a tela não — o inverso da ordem segura. Como o BFF só ganha
+  campo novo e nunca tira, isso não quebra o portal antigo; mas a tela nova fica esperando
+  um deploy que ninguém deu.
+
+Quem tiver acesso de conta deve ligar o `appgestao` ao GitHub e apagar este aviso.
 
 **Como provar o portal AO VIVO, sem a senha do dono.** Uma tela do portal só responde com
 sessão: sem ela toda rota devolve 401, e o SPA devolve 200 em qualquer caminho — o que faz um
