@@ -266,7 +266,7 @@ export default function CompararManutencao() {
                           tom={faltam ? 'alerta' : 'ok'}
                         />
                         {faltam ? (
-                          <p className="mt-5 max-w-[560px] text-[13.5px] leading-relaxed text-corpo">
+                          <p className="mt-5 max-w-[560px] text-[calc(13.5px_+_var(--passo-tipo))] leading-relaxed text-corpo">
                             Sem cronograma publicado não há previsto, e sem previsto não existe
                             atraso a cobrar. É por isso que as usinas sem contrato consolidado
                             aparecem abaixo com <span className="mono text-forte">—</span> e não
@@ -274,7 +274,7 @@ export default function CompararManutencao() {
                             tudo em dia".
                           </p>
                         ) : (
-                          <p className="mt-5 max-w-[560px] text-[13.5px] leading-relaxed text-corpo">
+                          <p className="mt-5 max-w-[560px] text-[calc(13.5px_+_var(--passo-tipo))] leading-relaxed text-corpo">
                             Todos os contratos da carteira têm cronograma consolidado — os
                             números abaixo falam da carteira inteira.
                           </p>
@@ -321,7 +321,7 @@ export default function CompararManutencao() {
                     {/* O cumprimento continua na tela, mas como LINHA, não como um dos quatro
                         números grandes: sozinho ele é o percentual que já discordou entre duas
                         telas, e o que o torna legível é o denominador ao lado. */}
-                    <p className="mt-6 border-t border-borda-fraca pt-4 text-[12.5px] text-fraco">
+                    <p className="mt-6 border-t border-borda-fraca pt-4 text-[calc(12.5px_+_var(--passo-tipo))] text-fraco">
                       Cumprimento do previsto:{' '}
                       <Num className="text-forte">{porcento(totais.cumprimento_pct, 1)}</Num>
                       {' — '}

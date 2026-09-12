@@ -126,7 +126,7 @@ function Marca({ celula }: { celula: Celula }) {
         ✕
         <span
           aria-hidden
-          className={`absolute -right-1.5 -top-1.5 rounded-chip bg-fundo px-1 text-[9px] leading-[1.2] ${c.texto}`}
+          className={`absolute -right-1.5 -top-1.5 rounded-chip bg-fundo px-1 text-[calc(9px_+_var(--passo-tipo))] leading-[1.2] ${c.texto}`}
         >
           D
         </span>

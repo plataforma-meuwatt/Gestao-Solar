@@ -120,7 +120,7 @@ export function LockupGS({
           Gestão Solar
         </span>
         {descritor ? (
-          <span className="mono mt-1 block text-[10.5px] uppercase tracking-[0.14em] text-rotulo">
+          <span className="mono mt-1 block text-[calc(10.5px_+_var(--passo-tipo))] uppercase tracking-[0.14em] text-rotulo">
             {descritor}
           </span>
         ) : null}

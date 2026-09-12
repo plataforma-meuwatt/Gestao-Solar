@@ -93,7 +93,7 @@ export function Pagina({
           <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.025em] text-forte">
             {titulo}
           </h1>
-          {subtitulo ? <div className="mt-1 text-[14.5px] text-fraco">{subtitulo}</div> : null}
+          {subtitulo ? <div className="mt-1 text-[calc(14.5px_+_var(--passo-tipo))] text-fraco">{subtitulo}</div> : null}
           </div>
         </div>
         {acoes ? <div className="flex flex-wrap items-center gap-2">{acoes}</div> : null}
@@ -156,7 +156,7 @@ export function CabecalhoCard({
         <h2 className="rotulo-secao">{rotulo}</h2>
         {pergunta ? <p className="mt-1 text-sm text-fraco">{pergunta}</p> : null}
       </div>
-      {direita ? <div className="shrink-0 text-[12.5px] text-fraco">{direita}</div> : null}
+      {direita ? <div className="shrink-0 text-[calc(12.5px_+_var(--passo-tipo))] text-fraco">{direita}</div> : null}
     </div>
   )
 }
@@ -195,8 +195,8 @@ export function Kpi({
     veredito
       ? 'text-[64px] leading-[0.9] tracking-[-0.03em]'
       : tamanho === 'grande'
-        ? 'text-[26px]'
-        : 'text-[22px]'
+        ? 'text-[calc(26px_+_var(--passo-tipo))]'
+        : 'text-[calc(22px_+_var(--passo-tipo))]'
   // A unidade do veredito é grande também (34px contra 64): a "%" de um percentual não é
   // legenda, é parte do número — em 14px ela vira um asterisco pendurado.
   const corpoUnidade = veredito ? 'text-[34px] leading-none' : 'text-sm'
@@ -210,7 +210,7 @@ export function Kpi({
         ) : null}
       </div>
       {detalhe ? (
-        <div className={`mt-1.5 text-fraco ${veredito ? 'text-[13px]' : 'text-[12.5px]'}`}>
+        <div className={`mt-1.5 text-fraco ${veredito ? 'text-[calc(13px_+_var(--passo-tipo))]' : 'text-[calc(12.5px_+_var(--passo-tipo))]'}`}>
           {detalhe}
         </div>
       ) : null}
@@ -259,18 +259,18 @@ export function Regua({
         )}
       </div>
       <div className="relative mt-1.5 h-4">
-        <span className="mono absolute left-0 text-[11px] text-fraco">{inicio}</span>
+        <span className="mono absolute left-0 text-[calc(11px_+_var(--passo-tipo))] text-fraco">{inicio}</span>
         {meio && largura !== null ? (
           // Preso entre 8% e 92% para a marca não escapar da caixa nos extremos: numa usina a
           // 4% do alvo, centrar o rótulo no fim do preenchimento o jogaria para fora.
           <span
-            className="mono absolute -translate-x-1/2 whitespace-nowrap text-[11px] text-ambar-texto"
+            className="mono absolute -translate-x-1/2 whitespace-nowrap text-[calc(11px_+_var(--passo-tipo))] text-ambar-texto"
             style={{ left: `${Math.max(8, Math.min(92, largura))}%` }}
           >
             {meio}
           </span>
         ) : null}
-        <span className="mono absolute right-0 text-[11px] text-corpo">{fim}</span>
+        <span className="mono absolute right-0 text-[calc(11px_+_var(--passo-tipo))] text-corpo">{fim}</span>
       </div>
     </div>
   )
@@ -283,7 +283,7 @@ export function Selo({ tom: valor, children }: { tom: Tom | string; children: Re
   const c = classesDoTom(valor)
   return (
     <span
-      className={`inline-flex h-6 items-center whitespace-nowrap rounded-chip border px-2.5 text-[12px] font-medium ${c.texto} ${c.borda} ${c.fundo}`}
+      className={`inline-flex h-6 items-center whitespace-nowrap rounded-chip border px-2.5 text-[calc(12px_+_var(--passo-tipo))] font-medium ${c.texto} ${c.borda} ${c.fundo}`}
     >
       {children}
     </span>
@@ -499,7 +499,7 @@ export function FaixaAtencao({
     <>
       {typeof contagem === 'number' ? (
         <span
-          className={`mono flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] text-[17px] font-semibold ${c.realce} ${c.texto}`}
+          className={`mono flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] text-[calc(17px_+_var(--passo-tipo))] font-semibold ${c.realce} ${c.texto}`}
         >
           {inteiro(contagem)}
         </span>
@@ -507,15 +507,15 @@ export function FaixaAtencao({
         <span className={`mt-1 h-2 w-2 shrink-0 rounded-chip ${c.fundo} border ${c.borda}`} />
       )}
       <span className="min-w-0 flex-1">
-        <span className="block text-[14.5px] font-semibold text-forte">{titulo}</span>
-        {detalhe ? <span className="mt-0.5 block text-[13px] text-corpo">{detalhe}</span> : null}
+        <span className="block text-[calc(14.5px_+_var(--passo-tipo))] font-semibold text-forte">{titulo}</span>
+        {detalhe ? <span className="mt-0.5 block text-[calc(13px_+_var(--passo-tipo))] text-corpo">{detalhe}</span> : null}
       </span>
       {aoAbrir ? (
         acao ? (
           // Um rótulo, e não um `<button>`: a faixa INTEIRA já é o botão, e um botão dentro
           // de outro é HTML inválido — além de dar dois alvos de clique para uma ação só.
           <span
-            className={`shrink-0 rounded-[9px] border px-3.5 py-1.5 text-[13px] font-medium text-forte ${c.borda}`}
+            className={`shrink-0 rounded-[9px] border px-3.5 py-1.5 text-[calc(13px_+_var(--passo-tipo))] font-medium text-forte ${c.borda}`}
           >
             {acao}
           </span>
@@ -1472,7 +1472,7 @@ function TabelaRolavel<T>({
         a célula, e ela se limita com `max-w` (ver a coluna "Pendência").
       */}
       {/* 14,5px na célula: o `text-sm` (14) do aplicativo é a medida de quem lê na mão. */}
-      <table className="w-full min-w-max border-collapse text-[14.5px]">
+      <table className="w-full min-w-max border-collapse text-[calc(14.5px_+_var(--passo-tipo))]">
         {/* A largura declarada vale como pedido, não como ordem: o `min-w-max` da tabela
             continua mandando quando o conteúdo não cabe. É o que impede a coluna de nome de
             reservar a largura do aviso inteiro e empurrar os números para fora. */}
@@ -1820,7 +1820,7 @@ export function GraficoBarras({
             className="flex flex-1 cursor-default flex-col items-center justify-end gap-2"
           >
             <span
-              className={`mono text-[11.5px] ${
+              className={`mono text-[calc(11.5px_+_var(--passo-tipo))] ${
                 p.valor === null ? 'text-fraco' : 'text-ambar-texto'
               }`}
             >
@@ -1858,7 +1858,7 @@ export function GraficoBarras({
           <div
             key={`r-${p.rotulo}-${i}`}
             title={p.rotulo}
-            className={`flex-1 truncate text-center text-[11px] ${
+            className={`flex-1 truncate text-center text-[calc(11px_+_var(--passo-tipo))] ${
               marcado === i ? 'text-corpo' : 'text-fraco'
             }`}
           >
@@ -1927,7 +1927,7 @@ export function GraficoLinha({ pontos, altura = 220 }: { pontos: PontoCurva[]; a
       <div className="flex gap-2">
         <div className="flex w-12 flex-col justify-between text-right" style={{ height: altura }}>
           {[...marcas].reverse().map((f) => (
-            <Num key={`kw-${f}`} className="text-[10px] text-fraco">
+            <Num key={`kw-${f}`} className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">
               {numero(kwMax * f, kwMax >= 100 ? 0 : 1)}
             </Num>
           ))}
@@ -1964,7 +1964,7 @@ export function GraficoLinha({ pontos, altura = 220 }: { pontos: PontoCurva[]; a
         {temPoa ? (
           <div className="flex w-12 flex-col justify-between" style={{ height: altura }}>
             {[...marcas].reverse().map((f) => (
-              <Num key={`poa-${f}`} className="text-[10px] text-fraco">
+              <Num key={`poa-${f}`} className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">
                 {numero(poaMax * f, 0)}
               </Num>
             ))}
@@ -1972,12 +1972,12 @@ export function GraficoLinha({ pontos, altura = 220 }: { pontos: PontoCurva[]; a
         ) : null}
       </div>
 
-      <div className="mt-2 flex justify-between text-[10px] text-fraco">
+      <div className="mt-2 flex justify-between text-[calc(10px_+_var(--passo-tipo))] text-fraco">
         <span>{pontos[0].hora}</span>
         <span>{pontos[pontos.length - 1].hora}</span>
       </div>
 
-      <div className="mt-1 flex gap-4 text-[11px] text-fraco">
+      <div className="mt-1 flex gap-4 text-[calc(11px_+_var(--passo-tipo))] text-fraco">
         <span>— potência (kW, esquerda)</span>
         {temPoa ? <span>- - irradiação POA (W/m², direita)</span> : null}
       </div>
@@ -2083,13 +2083,13 @@ export function GraficoHistorico({
 
       <div className="mt-2 flex gap-1">
         {meses.map((m, i) => (
-          <div key={`r-${m.mes}`} className="flex-1 text-center text-[10px] text-fraco">
+          <div key={`r-${m.mes}`} className="flex-1 text-center text-[calc(10px_+_var(--passo-tipo))] text-fraco">
             {i % passoRotulo === 0 ? m.rotulo : ''}
           </div>
         ))}
       </div>
 
-      <div className="mt-1 flex flex-wrap gap-4 text-[11px] text-fraco">
+      <div className="mt-1 flex flex-wrap gap-4 text-[calc(11px_+_var(--passo-tipo))] text-fraco">
         <span>▮ medido</span>
         <span>- - esperado do projeto</span>
         <span>· · · mesmo mês do ano anterior</span>

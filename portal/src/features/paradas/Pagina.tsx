@@ -115,7 +115,7 @@ function Numeros({
           </div>
           {/* As duas ausências ditas por extenso. Nulo com paradas na lista não é "zero
               minuto": é o BFF recusando somar pela metade porque alguma veio sem o dado. */}
-          <div className="mt-4 space-y-1 text-[13px] text-fraco">
+          <div className="mt-4 space-y-1 text-[calc(13px_+_var(--passo-tipo))] text-fraco">
             {dados.tempo_parado_min === null && !semParada ? (
               <p>O tempo somado não aparece porque alguma parada do período veio sem duração.</p>
             ) : null}

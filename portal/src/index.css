@@ -46,6 +46,29 @@
   font-display: swap;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   O PASSO DA TIPOGRAFIA — o único número que muda a letra do portal inteiro.
+
+   O portal é lido num MONITOR, por alguém sentado a 70 cm; a escala que ele
+   herdou é a do aplicativo, lido na mão a 30 cm. Dois pixels de diferença não
+   se percebem numa captura de tela e se percebem o dia inteiro em cima de uma
+   tabela de dezessete usinas.
+
+   TODO tamanho de texto do portal sai daqui: a escala nomeada do Tailwind
+   (`text-xs`, `text-sm`, `text-base`, `text-lg`) é declarada no
+   `tailwind.config.js` como `calc(<base> + var(--passo-tipo))`, e os tamanhos
+   avulsos das telas usam o mesmo `calc`. Subir, descer ou zerar é mexer NESTA
+   linha — não há uma segunda a caçar.
+
+   Os tamanhos de DISPLAY ficam de fora de propósito: o veredito de 64px, o
+   título de página de 32px e o número do arquivo de 34px já são grandes, e
+   crescer junto só achataria a distância entre eles e o texto que eles
+   comandam.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --passo-tipo: 2px;
+}
+
 @layer base {
   html,
   body,
@@ -92,7 +115,7 @@
     @apply block text-xs font-medium text-rotulo mb-1.5;
   }
   .btn {
-    @apply h-11 px-4 rounded-campo font-semibold text-[14.5px] inline-flex items-center
+    @apply h-11 px-4 rounded-campo font-semibold text-[calc(14.5px_+_var(--passo-tipo))] inline-flex items-center
            justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed
            transition-colors;
   }
@@ -117,7 +140,7 @@
      contra-formas e o rótulo vira uma barra cinza. `.mono` traz o `tabular-nums` junto, que
      aqui não custa nada e serve aos rótulos que carregam número ("ÚLTIMOS 12 MESES"). */
   .rotulo-secao {
-    @apply font-mono text-[10.5px] font-medium tracking-[0.12em] uppercase text-rotulo;
+    @apply font-mono text-[calc(10.5px_+_var(--passo-tipo))] font-medium tracking-[0.12em] uppercase text-rotulo;
     font-variant-numeric: tabular-nums;
   }
   /* Esqueleto: a forma do que vai aparecer, pulsando. É o 1º dos 4 estados. */

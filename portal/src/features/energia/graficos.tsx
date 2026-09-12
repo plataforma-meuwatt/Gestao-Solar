@@ -117,7 +117,7 @@ function passoDeRotulo(quantidade: number, cabem = 12): number {
 
 export function Legenda({ itens }: { itens: { marca: ReactNode; texto: string }[] }) {
   return (
-    <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-fraco">
+    <div className="mt-2 flex flex-wrap gap-4 text-[calc(11px_+_var(--passo-tipo))] text-fraco">
       {itens.map((i) => (
         <span key={i.texto} className="inline-flex items-center gap-1.5">
           {i.marca}
@@ -240,7 +240,7 @@ export function BarrasDoPeriodo({
 
       <div className="mt-2 flex gap-1">
         {pontos.map((p, i) => (
-          <div key={`r-${p.chave}`} className="flex-1 text-center text-[10px] text-fraco">
+          <div key={`r-${p.chave}`} className="flex-1 text-center text-[calc(10px_+_var(--passo-tipo))] text-fraco">
             {i % passo === 0 ? p.rotulo : ''}
           </div>
         ))}
@@ -343,7 +343,7 @@ export function BarrasPr({
 
       <div className="mt-2 flex gap-1">
         {pontos.map((p, i) => (
-          <div key={`r-${p.chave}`} className="flex-1 text-center text-[10px] text-fraco">
+          <div key={`r-${p.chave}`} className="flex-1 text-center text-[calc(10px_+_var(--passo-tipo))] text-fraco">
             {i % passo === 0 ? p.rotulo : ''}
           </div>
         ))}
@@ -358,7 +358,7 @@ export function BarrasPr({
         ]}
       />
       {descartados > 0 ? (
-        <p className="mt-1 text-[11px] text-tom-alerta">
+        <p className="mt-1 text-[calc(11px_+_var(--passo-tipo))] text-tom-alerta">
           {descartados === 1
             ? 'Um dia teve a leitura de PR descartada pelo monitoramento e ficou sem barra.'
             : `${descartados} dias tiveram a leitura de PR descartada pelo monitoramento e ficaram sem barra.`}
@@ -618,7 +618,7 @@ export function GraficoMeteo({
       <div className="flex gap-2">
         <div className="flex w-12 flex-col justify-between text-right" style={{ height: altura }}>
           {[1, 0.75, 0.5, 0.25, 0].map((f) => (
-            <Num key={`i-${f}`} className="text-[10px] text-fraco">
+            <Num key={`i-${f}`} className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">
               {numero(irradiacaoMax * f, 1)}
             </Num>
           ))}
@@ -692,7 +692,7 @@ export function GraficoMeteo({
         {temTemperatura ? (
           <div className="flex w-10 flex-col justify-between" style={{ height: altura }}>
             {[1, 0.75, 0.5, 0.25, 0].map((f) => (
-              <Num key={`t-${f}`} className="text-[10px] text-fraco">
+              <Num key={`t-${f}`} className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">
                 {numero(tempMax * f, 0)}
               </Num>
             ))}
@@ -702,7 +702,7 @@ export function GraficoMeteo({
 
       <div className="mt-2 flex gap-0" style={{ paddingLeft: 56 }}>
         {pontos.map((p, i) => (
-          <div key={`r-${p.chave}`} className="flex-1 text-center text-[10px] text-fraco">
+          <div key={`r-${p.chave}`} className="flex-1 text-center text-[calc(10px_+_var(--passo-tipo))] text-fraco">
             {i % passo === 0 ? p.rotulo : ''}
           </div>
         ))}
@@ -849,7 +849,7 @@ export function Arco({ pct, rotulo }: { pct: number | null; rotulo: string }) {
         )}
       </svg>
       <Num className="-mt-3 text-sm font-semibold text-forte">{porcento(pct)}</Num>
-      <span className="mt-0.5 max-w-[7rem] truncate text-center text-[11px] text-fraco" title={rotulo}>
+      <span className="mt-0.5 max-w-[7rem] truncate text-center text-[calc(11px_+_var(--passo-tipo))] text-fraco" title={rotulo}>
         {rotulo}
       </span>
     </div>

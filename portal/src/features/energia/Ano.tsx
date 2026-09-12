@@ -348,7 +348,7 @@ export function AbaAno({ painel }: { painel: Painel }) {
                     <>
                       <Num>{porcento(m.disponibilidade_real_pct, 2)}</Num>
                       {m.disponibilidade_origem === 'rollup_do_ano' ? (
-                        <span className="block text-[11px] font-normal text-fraco">
+                        <span className="block text-[calc(11px_+_var(--passo-tipo))] font-normal text-fraco">
                           do resumo do ano
                         </span>
                       ) : null}

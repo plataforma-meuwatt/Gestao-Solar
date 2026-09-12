@@ -99,7 +99,12 @@ export const SECOES: ItemDeSecao[] = [
   { fim: '/energia/dados', rotulo: 'Baixar dados', icone: Download, familia: 'geracao' },
   {
     fim: '/comparar/manutencao',
-    rotulo: 'Manutenção das usinas',
+    // Só 'Manutenção', como o irmão só diz 'Geração': o cabeçalho 'Comparar usinas' logo
+    // acima já supre o resto, e 'Manutenção das usinas' embaixo dele lia 'comparar usinas
+    // manutenção das usinas'. Com a letra do portal a 16,5 px o rótulo longo ainda
+    // truncava num trilho de 252 px — e rótulo cortado no menu é o pior lugar para
+    // economizar pixel: é exatamente onde se lê para decidir para onde ir.
+    rotulo: 'Manutenção',
     icone: Scale,
     familia: 'manutencao',
     carteira: true,

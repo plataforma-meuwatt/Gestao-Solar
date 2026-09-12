@@ -203,7 +203,7 @@ export default function Ordem() {
 function Dado({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] uppercase tracking-wide text-rotulo">{rotulo}</dt>
+      <dt className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">{rotulo}</dt>
       <dd className="mt-0.5 truncate text-sm text-corpo">{children}</dd>
     </div>
   )
@@ -292,7 +292,7 @@ function Tarefas({
         <div className="space-y-5">
           {agrupar(o.itens).map(([secao, itens]) => (
             <section key={secao}>
-              <h3 className="mb-1 text-[11px] uppercase tracking-wide text-rotulo">{secao}</h3>
+              <h3 className="mb-1 text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">{secao}</h3>
               <ul>
                 {itens.map((t, i) => (
                   <li key={t.id ?? `${secao}-${i}`}>
@@ -345,7 +345,7 @@ function ItemTarefa({
       {/* O ✓ vem do servidor (`feita`), não de comparar textos de status aqui. */}
       <span
         aria-hidden
-        className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border text-[11px] leading-none ${
+        className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border text-[calc(11px_+_var(--passo-tipo))] leading-none ${
           t.feita ? 'border-tom-ok bg-tom-ok text-fundo' : 'border-borda-forte'
         }`}
       >

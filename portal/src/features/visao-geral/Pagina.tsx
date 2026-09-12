@@ -126,7 +126,7 @@ function CelulaManutencao({ pronta, usina }: { pronta: boolean; usina: UsinaResu
   const os = usina?.manutencao?.os_em_andamento
   const pendencias = usina?.pendencias_abertas
   return (
-    <span className="mono whitespace-nowrap text-[12.5px] text-corpo">
+    <span className="mono whitespace-nowrap text-[calc(12.5px_+_var(--passo-tipo))] text-corpo">
       <span className={atrasados ? 'text-tom-parado' : undefined}>
         {inteiro(atrasados === undefined ? null : atrasados)} atrasados
       </span>
@@ -187,7 +187,7 @@ export default function VisaoGeral() {
             titulo="Visão geral"
             acoes={
               <>
-                <span className="mono text-[11px] text-fraco">
+                <span className="mono text-[calc(11px_+_var(--passo-tipo))] text-fraco">
                   atualizado {hora(d.atualizado_em)}
                 </span>
                 <SeletorPeriodo recorte="mes" referencia={referencia} onReferencia={setReferencia} />
@@ -225,9 +225,9 @@ export default function VisaoGeral() {
                           tom={d.tom}
                         />
                         <div className="pb-2">
-                          <p className="text-[15px] font-semibold text-forte">{d.situacao}</p>
+                          <p className="text-[calc(15px_+_var(--passo-tipo))] font-semibold text-forte">{d.situacao}</p>
                           {faltam === null ? null : (
-                            <p className="mt-0.5 text-[13.5px] text-fraco">
+                            <p className="mt-0.5 text-[calc(13.5px_+_var(--passo-tipo))] text-fraco">
                               faltam <Num className="text-corpo">{energia(faltam)}</Num> para a
                               meta do mês
                             </p>
@@ -249,7 +249,7 @@ export default function VisaoGeral() {
                       {noVeredito.length > 0 ? (
                         <div className="mt-6 max-w-[560px] space-y-1">
                           {noVeredito.map((a) => (
-                            <p key={a.especie} className="text-[13.5px] leading-relaxed text-corpo">
+                            <p key={a.especie} className="text-[calc(13.5px_+_var(--passo-tipo))] leading-relaxed text-corpo">
                               {a.titulo}
                               {a.detalhe ? (
                                 <span className="text-fraco"> — {a.detalhe}</span>
@@ -415,7 +415,7 @@ export default function VisaoGeral() {
                           celula: (u) => (
                             <div className="min-w-[140px]">
                               <Barra pct={u.pct} tom={u.tom} />
-                              <span className="mono mt-1.5 block text-[11.5px] text-fraco">
+                              <span className="mono mt-1.5 block text-[calc(11.5px_+_var(--passo-tipo))] text-fraco">
                                 {u.esperado_mes_kwh === null ? (
                                   <>{energia(u.energia_mes_kwh)} · sem meta de projeto</>
                                 ) : (
@@ -542,7 +542,7 @@ function SemCronograma({ usinas }: { usinas: UsinaResumo[] }) {
   const sem = usinas.filter((u) => u.manutencao !== null && u.manutencao.previsto_ate_mes === null)
   if (sem.length === 0) return null
   return (
-    <p className="mt-4 border-t border-borda-fraca pt-3 text-[12.5px] leading-relaxed text-fraco">
+    <p className="mt-4 border-t border-borda-fraca pt-3 text-[calc(12.5px_+_var(--passo-tipo))] leading-relaxed text-fraco">
       <Num className="text-tom-alerta">{inteiro(sem.length)}</Num> de{' '}
       <Num>{inteiro(usinas.length)}</Num> contratos ainda não publicaram o cronograma — sem ele
       não há atraso a cobrar.

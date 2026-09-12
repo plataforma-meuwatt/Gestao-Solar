@@ -1062,21 +1062,21 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
                   <span className="mono text-[34px] font-semibold leading-none text-forte">
                     {/* O "≈" fica pequeno e colado: a 34px ele vira um glifo solto que
                         disputa com o número, e o que se lê é o número. */}
-                    <span className="mr-1 align-[0.18em] text-[16px] font-normal text-fraco">≈</span>
+                    <span className="mr-1 align-[0.18em] text-[calc(16px_+_var(--passo-tipo))] font-normal text-fraco">≈</span>
                     {inteiro(conta.linhas)}
-                    <span className="ml-2 text-[15px] font-normal text-fraco">linhas</span>
+                    <span className="ml-2 text-[calc(15px_+_var(--passo-tipo))] font-normal text-fraco">linhas</span>
                   </span>
                   {/* Uma largura POR ABA, e não uma soma. Somar dava "37 colunas" num caderno
                       cuja aba mais larga tem 22 — número que o cliente não tem onde conferir
                       e que o Leia-me do próprio arquivo desmente linha a linha. */}
                   {conta.abas.map((aba) => (
-                    <span key={aba.nome} className="text-[13px] text-fraco">
+                    <span key={aba.nome} className="text-[calc(13px_+_var(--passo-tipo))] text-fraco">
                       {aba.nome}{' '}
                       {aba.colunas === null ? (
                         <>({aba.nota})</>
                       ) : (
                         <>
-                          <Num className="text-[15px] text-corpo">{inteiro(aba.colunas)}</Num>{' '}
+                          <Num className="text-[calc(15px_+_var(--passo-tipo))] text-corpo">{inteiro(aba.colunas)}</Num>{' '}
                           colunas
                           {aba.nota ? `, ${aba.nota}` : ''}
                         </>
@@ -1087,7 +1087,7 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
                 {/* A regra do produto, no lugar onde ela é lida: ao lado do arquivo, e não
                     como texto solto no pé da página. É a diferença entre uma célula vazia e
                     uma célula com zero — e é a leitura mais cara de errar numa planilha. */}
-                <p className="mono mt-2 text-[11.5px] text-fraco">
+                <p className="mono mt-2 text-[calc(11.5px_+_var(--passo-tipo))] text-fraco">
                   Vazio = sem leitura. 0 = zero medido.
                 </p>
               </>

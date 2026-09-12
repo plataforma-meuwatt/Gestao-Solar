@@ -135,7 +135,7 @@ function BarraDasAbertas({ abertas, vencidas }: { abertas: number | null; vencid
         <span className={`h-full ${c.texto} bg-tom-parado`} style={{ width: `${pctVencidas}%` }} />
         <span className={`h-full ${classesDoTom('alerta').meio}`} style={{ width: `${100 - pctVencidas}%` }} />
       </div>
-      <div className="mono mt-2 flex flex-wrap gap-x-4 text-[11.5px]">
+      <div className="mono mt-2 flex flex-wrap gap-x-4 text-[calc(11.5px_+_var(--passo-tipo))]">
         <span className="text-tom-parado">{inteiro(vencidas)} com prazo vencido</span>
         <span className="text-tom-alerta">{inteiro(abertas - vencidas)} ainda no prazo</span>
         <span className="text-fraco">de {inteiro(abertas)} abertas</span>

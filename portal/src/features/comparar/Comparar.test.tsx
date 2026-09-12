@@ -932,16 +932,16 @@ describe('os dois comparativos no menu e nas rotas', () => {
 
   it('aparecem nas três larguras — barra, trilho e gaveta', async () => {
     const { container } = abrir('/usinas/7/energia')
-    // O trilho (w-16, só ícone) e a barra (w-[238px], com rótulo) são desenhados juntos: quem os
+    // O trilho (w-16, só ícone) e a barra (w-[252px], com rótulo) são desenhados juntos: quem os
     // esconde é o CSS por largura, e no jsdom os dois estão no documento.
     await waitFor(() => expect(container.querySelectorAll('nav').length).toBeGreaterThanOrEqual(2))
 
     const navs = Array.from(container.querySelectorAll('nav'))
     const trilho = navs.find((n) => n.className.includes('w-16'))!
-    const barra = navs.find((n) => n.className.includes('w-[238px]'))!
+    const barra = navs.find((n) => n.className.includes('w-[252px]'))!
     for (const lugar of [trilho, barra]) {
       expect(within(lugar as HTMLElement).getByLabelText('Geração')).toBeTruthy()
-      expect(within(lugar as HTMLElement).getByLabelText('Manutenção das usinas')).toBeTruthy()
+      expect(within(lugar as HTMLElement).getByLabelText('Manutenção')).toBeTruthy()
     }
 
     // A gaveta do celular lê a MESMA lista — abrir e conferir é o que impede um item novo de
@@ -952,7 +952,7 @@ describe('os dois comparativos no menu e nas rotas', () => {
     const fechar = await screen.findAllByLabelText('Fechar menu')
     const aside = fechar.map((e) => e.closest('aside')).find((a): a is HTMLElement => a !== null)!
     expect(within(aside).getByLabelText('Geração')).toBeTruthy()
-    expect(within(aside).getByLabelText('Manutenção das usinas')).toBeTruthy()
+    expect(within(aside).getByLabelText('Manutenção')).toBeTruthy()
   })
 
   it('cada comparativo abre no PRIMEIRO lugar da sua família', async () => {
@@ -960,7 +960,7 @@ describe('os dois comparativos no menu e nas rotas', () => {
     await waitFor(() => expect(container.querySelectorAll('nav').length).toBeGreaterThanOrEqual(2))
 
     const barra = Array.from(container.querySelectorAll('nav')).find((n) =>
-      n.className.includes('w-[238px]'),
+      n.className.includes('w-[252px]'),
     )!
     const rotulos = Array.from(barra.querySelectorAll('a')).map((a) => a.getAttribute('aria-label'))
     expect(rotulos.indexOf('Comparar usinas')).toBeLessThan(rotulos.indexOf('Painel'))

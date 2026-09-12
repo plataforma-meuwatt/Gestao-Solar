@@ -201,7 +201,7 @@ export function AbaDia({ dia }: { dia: Dia }) {
           </div>
         )}
         {d.faisca_horas.length >= 2 ? (
-          <p className="mt-3 text-[11px] text-fraco">
+          <p className="mt-3 text-[calc(11px_+_var(--passo-tipo))] text-fraco">
             O traço cobre de {d.faisca_horas[0]} a {d.faisca_horas[d.faisca_horas.length - 1]}, em
             fatias de 15 minutos. Fatia sem leitura fica sem traço.
           </p>

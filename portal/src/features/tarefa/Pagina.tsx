@@ -199,7 +199,7 @@ export default function TarefaDaOrdem() {
 function Dado({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] uppercase tracking-wide text-rotulo">{rotulo}</dt>
+      <dt className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">{rotulo}</dt>
       <dd className="mt-0.5 truncate text-sm text-corpo">{children}</dd>
     </div>
   )
@@ -245,13 +245,13 @@ function Registro({ tarefa: t }: { tarefa: Tarefa }) {
       <CabecalhoCard rotulo="Registro do técnico" />
       {t.descricao ? (
         <>
-          <p className="text-[11px] uppercase tracking-wide text-rotulo">O que era para fazer</p>
+          <p className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">O que era para fazer</p>
           <p className="mt-1 whitespace-pre-line text-sm text-corpo">{t.descricao}</p>
         </>
       ) : null}
       {t.observacoes ? (
         <div className={t.descricao ? 'mt-4' : ''}>
-          <p className="text-[11px] uppercase tracking-wide text-rotulo">Observações</p>
+          <p className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">Observações</p>
           <p className="mt-1 whitespace-pre-line text-sm text-corpo">{t.observacoes}</p>
         </div>
       ) : null}
@@ -370,7 +370,7 @@ function BlocoMedicao({ medicao: m }: { medicao: Medicao }) {
   const linhas = Array.isArray(m.linhas) ? m.linhas : []
   return (
     <section className="mt-4">
-      <h3 className="text-[11px] uppercase tracking-wide text-rotulo">
+      <h3 className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">
         {m.nome}
         {m.unidade ? <span className="ml-1 normal-case text-fraco">({m.unidade})</span> : null}
       </h3>
@@ -417,13 +417,13 @@ function BlocoMedicao({ medicao: m }: { medicao: Medicao }) {
               )}
 
               {l.situacao === null && l.aprovado === false ? (
-                <span className="mt-0.5 block text-[11px] font-medium text-tom-parado">
+                <span className="mt-0.5 block text-[calc(11px_+_var(--passo-tipo))] font-medium text-tom-parado">
                   reprovado
                 </span>
               ) : null}
 
               {l.alvo ? (
-                <span className="mt-0.5 block text-[11px] text-fraco">
+                <span className="mt-0.5 block text-[calc(11px_+_var(--passo-tipo))] text-fraco">
                   alvo <Num>{l.alvo}</Num>
                   {l.desvio ? (
                     <>
@@ -446,7 +446,7 @@ function BlocoChecklist({ secao }: { secao: SecaoChecklist }) {
   const perguntas = Array.isArray(secao.perguntas) ? secao.perguntas : []
   return (
     <section className="mt-4">
-      <h3 className="text-[11px] uppercase tracking-wide text-rotulo">{secao.nome}</h3>
+      <h3 className="text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">{secao.nome}</h3>
       <ul className="mt-1">
         {perguntas.map((p, i) => (
           <li key={`${p.pergunta}-${i}`} className="border-b border-borda-fraca py-2 last:border-0">

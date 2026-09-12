@@ -150,7 +150,7 @@ export function QuandoAconteceram({
                 'repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 6px, transparent 6px 12px)',
             }}
           >
-            <span className="mono w-full px-2 pb-1 text-center text-[11px] text-fraco">
+            <span className="mono w-full px-2 pb-1 text-center text-[calc(11px_+_var(--passo-tipo))] text-fraco">
               {futuros.length === 1
                 ? `dia ${futuros[0].numero} · ainda não aconteceu`
                 : `dias ${futuros[0].numero} a ${futuros[futuros.length - 1].numero} · ainda não aconteceram`}
@@ -164,7 +164,7 @@ export function QuandoAconteceram({
       {/* O eixo só a cada três dias: um rótulo por dia vira uma faixa cinza ilegível. */}
       <div className="mt-1.5 flex gap-[3px]">
         {passados.map((d, i) => (
-          <span key={d.dia} className="mono flex-1 text-center text-[10px] text-fraco">
+          <span key={d.dia} className="mono flex-1 text-center text-[calc(10px_+_var(--passo-tipo))] text-fraco">
             {i % 3 === 0 ? d.numero : ''}
           </span>
         ))}

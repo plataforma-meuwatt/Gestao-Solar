@@ -95,7 +95,7 @@ export function Fotos({ fotos, titulo }: { fotos: Foto[] | number; titulo?: stri
   return (
     <div className="mt-3">
       {titulo ? (
-        <p className="mb-1.5 text-[11px] uppercase tracking-wide text-rotulo">
+        <p className="mb-1.5 text-[calc(11px_+_var(--passo-tipo))] uppercase tracking-wide text-rotulo">
           {titulo} · {lista.length}
         </p>
       ) : null}
@@ -114,7 +114,7 @@ export function Fotos({ fotos, titulo }: { fotos: Foto[] | number; titulo?: stri
             <span className="font-mono text-base font-semibold text-ambar-texto">
               +{escondidas}
             </span>
-            <span className="text-[10px] text-fraco">ver todas</span>
+            <span className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">ver todas</span>
           </button>
         ) : null}
       </div>
@@ -145,8 +145,8 @@ function Miniatura({ foto, aoAbrir }: { foto: Foto; aoAbrir: () => void }) {
       >
         {/* O MOTIVO, não "falhou". Um quadrado que só diz que deu errado manda todo mundo
             adivinhar entre sessão vencida, foto apagada e rede caída. */}
-        <span className="line-clamp-3 text-[10px] leading-tight text-corpo">{erro}</span>
-        <span className="text-[10px] text-fraco">clique para tentar</span>
+        <span className="line-clamp-3 text-[calc(10px_+_var(--passo-tipo))] leading-tight text-corpo">{erro}</span>
+        <span className="text-[calc(10px_+_var(--passo-tipo))] text-fraco">clique para tentar</span>
       </button>
     )
   }

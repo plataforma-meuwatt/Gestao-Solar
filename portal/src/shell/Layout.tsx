@@ -121,7 +121,7 @@ function Link({
       title={rotulo}
       aria-label={rotulo}
       className={({ isActive }) =>
-        `group flex items-center gap-3 rounded-campo px-3 py-2.5 text-[14.5px] transition ${
+        `group flex items-center gap-3 rounded-campo px-3 py-2.5 text-[calc(14.5px_+_var(--passo-tipo))] transition ${
           soIcone ? 'justify-center' : ''
         } ${
           isActive
@@ -285,7 +285,7 @@ export function Layout() {
           })}
         </>
       ) : soIcone ? null : (
-        <p className="px-3 text-[13px] leading-relaxed text-fraco">
+        <p className="px-3 text-[calc(13px_+_var(--passo-tipo))] leading-relaxed text-fraco">
           Escolha uma usina no topo para ver as seções dela.
         </p>
       )}
@@ -376,14 +376,16 @@ export function Layout() {
           meuWatt — e ganha fundo próprio (`bg-trilho`), que é o que separa a navegação do
           conteúdo sem precisar de uma linha grossa.
 
-          A largura é a do meuWatt: 238 px na barra com rótulo. As três larguras continuam:
-          trilho de ícones entre 768 e 1024, gaveta abaixo de 768.
+          A largura era a do meuWatt (238 px) e subiu para 252 quando a letra do portal
+          cresceu. O rótulo mais longo da carteira encolheu junto (ver `menu.ts`): rótulo
+          cortado no menu é o pior lugar para economizar pixel — é exatamente onde se lê
+          para decidir para onde ir.
         */}
         <nav className="hidden w-16 shrink-0 overflow-y-auto border-r border-borda bg-trilho px-2 py-5 md:block lg:hidden">
           {navegacao(true)}
         </nav>
 
-        <nav className="hidden w-[238px] shrink-0 overflow-y-auto border-r border-borda bg-trilho px-3 py-5 lg:block">
+        <nav className="hidden w-[252px] shrink-0 overflow-y-auto border-r border-borda bg-trilho px-3 py-5 lg:block">
           {navegacao(false)}
         </nav>
 

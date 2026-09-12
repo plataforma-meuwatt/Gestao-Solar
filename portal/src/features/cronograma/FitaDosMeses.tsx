@@ -112,7 +112,7 @@ function Legenda() {
       {itens.map(({ estado, palavra }) => {
         const tom = tomDoEstado(estado)
         return (
-          <span key={estado} className="flex items-center gap-2 whitespace-nowrap text-[12px]">
+          <span key={estado} className="flex items-center gap-2 whitespace-nowrap text-[calc(12px_+_var(--passo-tipo))]">
             <span
               aria-hidden
               className={`h-[3px] w-4 rounded-barra ${
@@ -158,14 +158,14 @@ export default function FitaDosMeses({ meses }: { meses: MesDaFita[] }) {
               aria-label={frase(m, estado)}
               className={`rounded-[12px] border px-[11px] pb-[11px] pt-2.5 ${moldura}`}
             >
-              <span className="mono block text-[10px] uppercase tracking-[0.1em] text-rotulo">
+              <span className="mono block text-[calc(10px_+_var(--passo-tipo))] uppercase tracking-[0.1em] text-rotulo">
                 {competenciaCurta(m.mes)}
               </span>
               <span aria-hidden className={`my-[7px] block h-[3px] rounded-barra ${barra}`} />
               {/* A contagem COM denominador, sempre. "13" sozinho não diz se o mês fechou;
                   "13 de 13" diz. E o mês sem previsão imprime o traço, que é a ausência de
                   contrato naquele mês — não um zero cumprido. */}
-              <span className="mono block text-[13px] text-corpo">
+              <span className="mono block text-[calc(13px_+_var(--passo-tipo))] text-corpo">
                 {estado === 'sem-previsao' ? (
                   '—'
                 ) : (
@@ -174,7 +174,7 @@ export default function FitaDosMeses({ meses }: { meses: MesDaFita[] }) {
                   </>
                 )}
               </span>
-              <span className={`mt-0.5 block text-[11px] ${c ? c.texto : 'text-fraco'}`}>
+              <span className={`mt-0.5 block text-[calc(11px_+_var(--passo-tipo))] ${c ? c.texto : 'text-fraco'}`}>
                 {PALAVRA[estado]}
               </span>
             </li>
@@ -183,7 +183,7 @@ export default function FitaDosMeses({ meses }: { meses: MesDaFita[] }) {
       </ul>
       {/* A procedência, embaixo: os dois números da fita vêm de fontes diferentes, e quem
           lê "3 de 13" numa reunião pergunta de onde saiu cada metade. */}
-      <p className="mt-3 text-[12px] text-fraco">
+      <p className="mt-3 text-[calc(12px_+_var(--passo-tipo))] text-fraco">
         A contagem vem do recorte de vigência do meuPlano; as atrasadas vêm da matriz.
       </p>
     </div>

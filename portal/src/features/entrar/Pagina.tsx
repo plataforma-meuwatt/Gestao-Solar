@@ -110,7 +110,7 @@ export default function Entrar() {
           <h1 className="text-[40px] font-semibold leading-[1.15] tracking-[-0.03em] text-forte">
             Uma conta, uma lista de usinas, os dois produtos por baixo
           </h1>
-          <p className="mt-5 text-[15px] leading-relaxed text-corpo">
+          <p className="mt-5 text-[calc(15px_+_var(--passo-tipo))] leading-relaxed text-corpo">
             O monitoramento da geração e a gestão da manutenção continuam onde sempre
             estiveram. O Gestão Solar se conecta aos dois com um token que o seu gestor de
             conta gera, e que pode ser revogado a qualquer momento — do lado de lá, não daqui.
@@ -130,7 +130,7 @@ export default function Entrar() {
             <LockupGS tamanho={44} />
           </div>
 
-          <h2 className="text-[22px] font-semibold tracking-[-0.02em] text-forte">Entrar</h2>
+          <h2 className="text-[calc(22px_+_var(--passo-tipo))] font-semibold tracking-[-0.02em] text-forte">Entrar</h2>
           <p className="mt-1 text-sm text-fraco">Use a conta que o seu gestor criou para você.</p>
 
           <form onSubmit={enviar} className="mt-7 flex flex-col gap-4">

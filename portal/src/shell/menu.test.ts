@@ -136,7 +136,7 @@ describe('os comparativos de carteira', () => {
 
   it('cada um tem rótulo e ícone próprios — no trilho estreito só há o ícone', () => {
     const carteira = SECOES.filter((s) => s.carteira)
-    expect(carteira.map((s) => s.rotulo)).toEqual(['Geração', 'Manutenção das usinas'])
+    expect(carteira.map((s) => s.rotulo)).toEqual(['Geração', 'Manutenção'])
     expect(new Set(carteira.map((s) => s.icone)).size).toBe(2)
     // E nenhum repete o ícone-cabeçalho da própria família: dois iguais empilhados
     // apagariam a separação que o cabeçalho existe para mostrar.

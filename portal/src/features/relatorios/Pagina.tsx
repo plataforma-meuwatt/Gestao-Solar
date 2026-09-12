@@ -263,7 +263,7 @@ function CartaoDaPeca({
         <p className="rotulo-secao">{publicada ? 'Publicado' : 'Não publicado'}</p>
         <h4 className="mt-2 text-base font-semibold text-forte">{nome}</h4>
         {O_QUE_CONTEM[tipo] ? (
-          <p className="mt-1.5 text-[13px] leading-relaxed text-fraco">{O_QUE_CONTEM[tipo]}</p>
+          <p className="mt-1.5 text-[calc(13px_+_var(--passo-tipo))] leading-relaxed text-fraco">{O_QUE_CONTEM[tipo]}</p>
         ) : null}
         <div className="mt-4">
           {publicada ? (
@@ -283,7 +283,7 @@ function CartaoDaPeca({
           ) : (
             // Não é botão: não há rota de pedido no BFF, e um botão que não faz nada é pior
             // que nenhum. É a frase que diz a quem pedir.
-            <p className="text-[13px] text-fraco">
+            <p className="text-[calc(13px_+_var(--passo-tipo))] text-fraco">
               Para publicar esta peça, peça ao seu gestor de conta — ela é gerada no meuWatt.
             </p>
           )}

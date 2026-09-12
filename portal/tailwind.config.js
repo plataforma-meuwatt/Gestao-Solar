@@ -44,6 +44,16 @@ export default {
           semDados: '#94A3B8',
         },
       },
+      // A escala nomeada, com o passo somado. É ela que carrega os ~320 usos de
+      // `text-xs` e `text-sm` do portal — mexer no `--passo-tipo` do `index.css` move
+      // todos de uma vez. A altura de linha vira RAZÃO (e não um valor fixo em rem):
+      // com o tamanho variável, uma altura fixa apertaria o texto assim que ele crescesse.
+      fontSize: {
+        xs: ['calc(0.75rem + var(--passo-tipo))', { lineHeight: '1.4' }],
+        sm: ['calc(0.875rem + var(--passo-tipo))', { lineHeight: '1.45' }],
+        base: ['calc(1rem + var(--passo-tipo))', { lineHeight: '1.5' }],
+        lg: ['calc(1.125rem + var(--passo-tipo))', { lineHeight: '1.5' }],
+      },
       fontFamily: {
         sans: ['Figtree', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['IBM Plex Mono', 'ui-monospace', 'Cascadia Mono', 'Menlo', 'monospace'],
