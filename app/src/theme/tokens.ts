@@ -156,11 +156,22 @@ export const tipo = {
   legenda: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoRotulo },
   fraco: { fontFamily: fontes.ui, fontSize: 11.5, color: cores.textoFraco },
 
-  /** Rótulo de card: caixa alta, espaçado, sempre acima do número. */
+  /**
+   * Rótulo de card: caixa alta, espaçado, sempre acima do número.
+   *
+   * **Em Mono, e não em Figtree.** É a mesma receita do `.rotulo-secao` do portal
+   * (`portal/src/index.css`), e é a marca tipográfica que mais distingue o Gestão Solar do
+   * meuWatt, de quem os dois herdaram a aparência. Enquanto o app rotulava em Figtree e o
+   * portal em Mono, as duas metades do mesmo produto assinavam as seções de jeitos
+   * diferentes — e é o cliente que abre os dois no mesmo dia quem nota.
+   *
+   * O peso é 500 e não 600: em caixa alta com tracking largo, o Mono semibold fecha as
+   * contra-formas e o rótulo vira uma barra cinza.
+   */
   rotuloCard: {
-    fontFamily: fontes.uiSemi,
-    fontSize: 12,
-    letterSpacing: 0.72,
+    fontFamily: fontes.mono,
+    fontSize: 11,
+    letterSpacing: 1.32,
     textTransform: 'uppercase' as const,
     color: cores.textoRotulo,
   },

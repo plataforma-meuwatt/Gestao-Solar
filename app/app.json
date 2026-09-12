@@ -7,12 +7,19 @@
     "scheme": "gestaosolar",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#02061A",
+    "_icone": "O selo GS, o MESMO desenho do portal (portal/public/marca/gs-selo.svg), rasterizado do SVG. O icon.png vai SANGRADO e sem raio próprio: iOS e Android recortam a moldura deles por cima, e um selo já arredondado dentro desse recorte daria o quadrado-dentro-do-quadrado. ATENÇÃO: ícone e splash são config NATIVA — não chegam por OTA. Só um build novo (eas build) os leva ao aparelho.",
+    "icon": "./assets/imagens/icon.png",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.meuwatt.gestaosolar"
     },
     "android": {
-      "package": "com.meuwatt.gestaosolar"
+      "package": "com.meuwatt.gestaosolar",
+      "_adaptiveIcon": "Android recorta até 33% de cada lado da máscara adaptativa e gira o ícone nas animações do launcher. Por isso o primeiro plano traz o selo a 58% do lado, centrado, com margem de sobra — e o fundo vem daqui, não desenhado na imagem.",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/imagens/adaptive-icon.png",
+        "backgroundColor": "#02061A"
+      }
     },
     "plugins": [
       "expo-router",

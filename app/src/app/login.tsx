@@ -28,6 +28,7 @@ import {
 } from 'react-native'
 
 import { Botao, Halo } from '@/components/base'
+import { SeloGS } from '@/components/marca'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme/tokens'
@@ -82,10 +83,18 @@ export default function Login() {
     >
       <Halo />
       <View style={estilos.miolo}>
+        {/*
+          A marca, e não só o nome escrito em duas cores.
+
+          O selo é o mesmo do portal (`components/marca.tsx`), e é ele que o cliente
+          reconhece antes de ler — na loja, na lista de apps do celular e aqui. O descritor
+          abaixo diz o que o produto faz, que é o que uma tela de entrada precisa responder
+          para quem abriu pela primeira vez.
+        */}
         <View style={estilos.marcaArea}>
-          <Text style={estilos.marca}>
-            Gestão <Text style={estilos.marcaAcento}>Solar</Text>
-          </Text>
+          <SeloGS tamanho={64} />
+          <Text style={estilos.marca}>Gestão Solar</Text>
+          <Text style={estilos.descritor}>CARTEIRA · GERAÇÃO · MANUTENÇÃO</Text>
         </View>
 
         {erro ? (
@@ -175,14 +184,21 @@ const estilos = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: cores.fundo },
   miolo: { flex: 1, paddingHorizontal: espaco.lg, paddingBottom: 34 },
 
-  marcaArea: { height: 190, alignItems: 'center', justifyContent: 'center' },
+  marcaArea: { height: 200, alignItems: 'center', justifyContent: 'center', gap: 14 },
   marca: {
     fontFamily: fontes.uiForte,
     fontSize: 28,
     letterSpacing: -0.56,
     color: cores.textoForte,
   },
-  marcaAcento: { color: cores.ambar },
+  // O descritor em Mono caixa alta com tracking largo — a mesma receita do rótulo de seção
+  // do portal, e o que mais distingue a tipografia do Gestão Solar da do meuWatt.
+  descritor: {
+    fontFamily: fontes.mono,
+    fontSize: 10.5,
+    letterSpacing: 1.5,
+    color: cores.textoRotulo,
+  },
 
   faixaErro: {
     flexDirection: 'row',
