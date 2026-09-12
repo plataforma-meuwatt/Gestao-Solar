@@ -45,11 +45,7 @@ o dono da usina, no celular e no navegador — e usam a mesma conta e o mesmo lo
 serve o time interno e tem porta própria (`/api/painel/...`, sessão marcada com
 `escopo: "painel"`, que o BFF recusa nas rotas de cliente).
 
-**O `talksolar/` não aparece neste desenho de propósito.** É um produto à parte que mora no
-mesmo repositório: servidor próprio, banco próprio (tabelas `ts_*`), sessão própria, e
-nenhuma linha do `bff/` importada. Ele conversa com o meuPlano por HTTP como qualquer
-sistema de fora, e não participa do caminho de dados do dono da usina. Documentação em
-`talksolar/docs/`.
+O **Talk Solar** (o mensageiro da equipe) morou aqui entre 04 e 11/09/2026 e **voltou para o repositório do meuPlano**, que é de quem ele é: a ferramenta é do corpo técnico, aparece em Ferramentas → Talk Solar, e a integração inteira já vivia lá. Ver `meuPlano/talksolar/`.
 
 ### Por que um BFF e não chamada direta às duas APIs
 

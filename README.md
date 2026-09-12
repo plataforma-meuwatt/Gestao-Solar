@@ -27,7 +27,6 @@ Não é um monolito dividido em pastas: são coisas que se falam por HTTP.
 | **`painel/`** | **FRONT** — o painel do gestor. React + Vite, servido por nginx. | o gestor (você) | `localhost:5180` | serviço no Railway |
 | **`portal/`** | **FRONT** — o portal do cliente, no navegador. React + Vite, servido por nginx. | o dono da usina | `localhost:5181` | **serviço ainda a criar** |
 | **`app/`** | **APP** — o aplicativo do dono da usina. Expo / React Native. | o dono da usina | Expo Go, no celular | lojas, via EAS |
-| **`talksolar/`** | **PRODUTO À PARTE** — o mensageiro da equipe. Servidor, banco e app de PC próprios; não é do Gestão Solar, só mora aqui. | a equipe | `localhost:8110` | **serviço ainda a criar** |
 | `docs/` | Arquitetura, contrato da API, telas | — | — | — |
 
 Nada mais na raiz é código: `dev.ps1` sobe tudo, `CLAUDE.md` orienta assistentes de IA.
@@ -54,9 +53,7 @@ meuWatt ou do meuPlano — eles só conhecem a API, que autoriza cada pedido ant
                   └──────────────┘ └─────────────┘
 ```
 
-O **`talksolar/` fica fora deste desenho de propósito**: banco próprio (tabelas `ts_*`),
-sessão própria, e nenhuma linha do `bff/` importada. Ele conversa com o meuPlano por HTTP,
-como faria qualquer sistema de fora. Ver [`talksolar/README.md`](talksolar/README.md).
+O **Talk Solar** (o mensageiro da equipe) morou aqui entre 04 e 11/09/2026 e **voltou para o repositório do meuPlano**, que é de quem ele é: a ferramenta é do corpo técnico, aparece em Ferramentas → Talk Solar, e a integração inteira já vivia lá. Ver `meuPlano/talksolar/`.
 
 ## Como subir
 
@@ -83,12 +80,6 @@ Cada parte abre na própria janela, com o nome no título. Para subir uma só, v
 | Painel (gestor) | <http://localhost:5180> | sempre |
 | Portal (cliente) | <http://localhost:5181> | sempre |
 | App | QR code na janela do Expo — o celular precisa estar na mesma rede | `-App` |
-| Talk Solar | <http://localhost:8110> · `/saude` | `-Talk` |
-
-O Talk Solar é opt-in porque tem **banco e `.env` próprios**: subi-lo sem eles daria erro na
-largada, todo dia, para quem só quer mexer no Gestão Solar. As outras portas estão tomadas
-(8100, 5180, 5181, e a 8081 do Metro) — a 8110 é dele, e a escolha está registrada no
-[`CLAUDE.md`](CLAUDE.md#3-como-rodar).
 
 Em desenvolvimento os fronts chamam a API por **proxy do Vite**, não por CORS: a origem é a
 mesma, e o caminho exercitado é o mesmo de produção. Em produção o endereço da API vem da
@@ -139,17 +130,11 @@ $env:PYTHONPATH = "$PWD"
 **Aplicativo** (a partir de `app/`): `npm start` · tipos com `npx tsc --noEmit`
 **Testes** (a partir de `bff/`): `.\venv\Scripts\python.exe -m pytest`
 
-**Talk Solar** (a partir de `talksolar/server/`, com venv e `.env` próprios):
-
 ```powershell
 .\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8110
 ```
 
 ⚠ Os testes de lá exigem o **`PYTHONPATH` vazio**. Os dois projetos têm um pacote chamado
-`app`; com o `PYTHONPATH` do BFF exportado, `talksolar/server/testes/test_contrato.py`
-morre em `ImportError: cannot import name 'webhooks' from 'app'` — que parece defeito do
-projeto e não é.
-
 ## Configuração
 
 O `bff/.env` guarda a URL do banco e as duas chaves (assinatura de sessão e cifra dos
@@ -168,18 +153,8 @@ dentro da própria pasta; no Railway, o serviço aponta o **Root Directory** par
 | **back** | `bff` | `bff/railway.json` | `DATABASE_URL` · `GS_JWT_SECRET` · `GS_ENCRYPTION_KEY` · `GS_CORS_ORIGENS` · `ENVIRONMENT=production` | no ar |
 | **painel** | `painel` | `painel/railway.json` | `API_URL` (o endereço público do back) | no ar |
 | **portal** | `portal` | `portal/railway.json` | `API_URL` | **a criar** |
-| **talksolar** | `talksolar/server` | `talksolar/server/railway.json` | `DATABASE_URL` (banco PRÓPRIO) · `TALK_JWT_SECRET` · `TALK_STORAGE=supabase` · `SUPABASE_URL` · `SUPABASE_SERVICE_KEY` · `TALK_BUCKET=talksolar` · `TALK_CORS` | **a criar** |
-| **talksolar-updates** | `talksolar/updates` | — | `RELEASES_TOKEN` · volume em `/data` | **a criar** — serve o instalador do app de PC |
 
 **O que ainda não existe no repositório, para não parecer que está pronto:** o
-`talksolar/server` tem `railway.json`, mas **não tem `Dockerfile`** — o que está lá usa
-`NIXPACKS` com `startCommand` **sem `exec`**, o que deixa o shell como PID 1 e mata o
-uvicorn sem encerrar as requisições em voo (é a armadilha que o `bff/Dockerfile` documenta
-e resolve). E a pasta `talksolar/updates` **ainda não existe**: ela é o servidor de
-releases do app de PC, que precisa ser próprio — publicar aquele instalador no servidor de
-releases do meuPlano sobrescreveria o `latest.yml` de lá e faria todo PC com o app de campo
-instalado baixar o mensageiro.
-
 **`railwayConfigFile` é ajuste do painel do Railway, não do repositório**, e o caminho é
 relativo à **raiz** — não ao Root Directory. Sem ele, o builder cai no Railpack, **ignora o
 `Dockerfile`** e o `entrypoint.sh` nunca escreve o `config.js`: o front sobe sem
@@ -224,6 +199,5 @@ O aplicativo não entra aqui: é publicado nas lojas pelo EAS.
 - [**Decisão de identidade**](docs/DECISAO_IDENTIDADE.md) — por que token pessoal, por que apelido
 - [**CLAUDE.md**](CLAUDE.md) — guia para assistentes de IA
 
-O Talk Solar tem documentação própria, que não se mistura com esta:
-[`talksolar/README.md`](talksolar/README.md) e `talksolar/docs/` (contrato da API, como
-plugar um sistema, o que falta entregar).
+A documentação do Talk Solar foi com ele: `meuPlano/talksolar/README.md` e
+`meuPlano/talksolar/docs/`.

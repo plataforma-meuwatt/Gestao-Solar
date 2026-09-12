@@ -11,8 +11,7 @@ São **três frentes**, para três públicos:
 | Portal | `portal/` | o dono da usina, no navegador | [§ 2](#2-portal-portal) |
 | Painel | `painel/` | o gestor (time interno) | [§ 3](#3-painel-painel) |
 
-O `talksolar/` **não entra nesta contagem**: é produto à parte, com telas e servidor
-próprios. A [§ 4](#4-talk-solar-talksolar) diz o mínimo para ninguém procurá-lo aqui.
+O **Talk Solar** (o mensageiro da equipe) morou aqui entre 04 e 11/09/2026 e **voltou para o repositório do meuPlano**, que é de quem ele é: a ferramenta é do corpo técnico, aparece em Ferramentas → Talk Solar, e a integração inteira já vivia lá. Ver `meuPlano/talksolar/`.
 
 ---
 
@@ -343,14 +342,6 @@ pessoais) → **Rotas** (*Sondar*: exercita uma a uma as rotas de upstream do ca
 
 ---
 
-## 4. Talk Solar (`talksolar/`)
+## 4. Talk Solar — saiu daqui
 
-**Não é do Gestão Solar** — é o mensageiro da equipe, produto à parte que mora neste
-repositório desde 04/09/2026. Não usa o BFF, não usa o banco do Gestão Solar e não responde
-à REGRA 0 (lá o dado é a mensagem que alguém digitou).
-
-- **Cliente:** app de PC (Electron), duas telas — entrar e conversar
-  (`talksolar/desktop/app/index.html`).
-- **Servidor:** 23 rotas sob `/v1`, mais `/saude`, num serviço próprio com banco próprio
-  (tabelas `ts_*`).
-- **Contrato e telas:** `talksolar/docs/` (`API.md`, `INTEGRACAO.md`, `ENTREGA.md`).
+O **Talk Solar** (o mensageiro da equipe) morou aqui entre 04 e 11/09/2026 e **voltou para o repositório do meuPlano**, que é de quem ele é: a ferramenta é do corpo técnico, aparece em Ferramentas → Talk Solar, e a integração inteira já vivia lá. Ver `meuPlano/talksolar/`.

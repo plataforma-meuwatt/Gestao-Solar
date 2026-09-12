@@ -71,9 +71,8 @@ Gestao Solar/            ← o repositório Git é aqui, na raiz
 ├── painel/       FRONT — React + Vite servido por nginx. O gestor (time interno)
 ├── portal/       FRONT — React + Vite servido por nginx. O cliente, no navegador
 ├── app/          APP   — Expo / React Native. O dono da usina, no celular
-├── talksolar/    PRODUTO À PARTE — o mensageiro da equipe: servidor, banco e app de PC
 │                 próprios. Chegou do repositório do meuPlano em 04/09/2026
-├── dev.ps1       sobe back + painel + portal (e, sob demanda, o app e o Talk Solar)
+├── dev.ps1       sobe back + painel + portal (e, sob demanda, o aplicativo)
 └── docs/         ARQUITETURA · CONTRATO_API · TELAS · DECISAO_IDENTIDADE · PROMPT_DESIGNER
 ```
 
@@ -83,11 +82,7 @@ Root Directory apontando para ela); o app vai para as lojas via EAS. A tabela de
 Root Directory, `railwayConfigFile` e variáveis de cada um — está no
 [`README.md`](README.md#deploy).
 
-**O `talksolar/` não é parte do Gestão Solar** — é um produto hospedado aqui. Não importa
-uma linha de `bff/`, não usa o banco do Gestão Solar e não responde à REGRA 0 (lá o dado é
-a mensagem que alguém digitou). Fala com o meuPlano e com este BFF por HTTP, como faria
-qualquer sistema de fora. O que vale lá está em [`talksolar/README.md`](talksolar/README.md)
-e em `talksolar/docs/`.
+O **Talk Solar** (o mensageiro da equipe) morou aqui entre 04 e 11/09/2026 e **voltou para o repositório do meuPlano**, que é de quem ele é: a ferramenta é do corpo técnico, aparece em Ferramentas → Talk Solar, e a integração inteira já vivia lá. Ver `meuPlano/talksolar/`.
 
 Consequências que o código carrega, e que não devem ser "simplificadas" de volta:
 
@@ -150,7 +145,6 @@ no endereço certo.
 | **5180** | painel (gestor) | `painel/vite.config.ts` |
 | **5181** | portal (cliente) | `portal/vite.config.ts` |
 | **8081** | Metro, do Expo | padrão do Expo |
-| **8110** | servidor do Talk Solar · `/saude` e `/docs` | `dev.ps1`, `talksolar/README.md` |
 
 O 8110 é escolha registrada aqui: deixa a faixa `810x` livre para o back e não colide com
 nenhuma das quatro acima. O Talk Solar veio do repositório do meuPlano documentado na
@@ -174,15 +168,9 @@ $env:PYTHONPATH = "$PWD"
 # painel/ · portal/ · app/
 npm run dev  ·  npm start  ·  npm run check  ·  npx tsc --noEmit
 
-# talksolar/server/ — venv PRÓPRIO, .env próprio, banco próprio
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8110
-```
-
 ⚠ **O Talk Solar tem `PYTHONPATH` próprio, e o do BFF o quebra.** Os dois têm um pacote
 chamado `app`: com o `PYTHONPATH` do BFF exportado, os testes de lá morrem em
 `ImportError: cannot import name 'webhooks' from 'app'` — que parece defeito do projeto e
-não é. Rode `talksolar/server/testes/test_contrato.py` com o `PYTHONPATH` **vazio**.
-
 O banco é o Postgres do Supabase, configurado em `bff/.env` (não versionado; modelo em
 `.env.example`). Duas armadilhas já resolvidas, que voltariam se alguém refizer a
 configuração do zero:
@@ -192,8 +180,6 @@ configuração do zero:
   sessão entre comandos e o Alembic precisa disso.
 
 O Talk Solar tem **banco próprio** (nove tabelas `ts_*`), com a sua `DATABASE_URL` em
-`talksolar/server/.env` — modelo em `.env.exemplo`. As duas armadilhas acima valem igual.
-
 ---
 
 ## 4. Stack

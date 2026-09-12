@@ -5,7 +5,6 @@
 #
 #     .\dev.ps1            back (API) + painel (gestor) + portal (cliente)
 #     .\dev.ps1 -App       + o aplicativo (Expo)
-#     .\dev.ps1 -Talk      + o servidor do Talk Solar
 #     .\dev.ps1 -Instalar  refaz a instalação (venv, npm, migrations) e sobe
 #
 # O PORTAL sobe por padrão desde 04/09/2026. Antes ele não subia — e foi assim que uma
@@ -23,7 +22,7 @@
 # CORS: assim o caminho exercitado aqui é o mesmo de produção.
 #
 # As portas não se repetem, e cada uma tem dono (a tabela está no CLAUDE.md, § "Como
-# rodar"): 8100 back · 5180 painel · 5181 portal · 8081 Metro do Expo · 8110 Talk Solar.
+# rodar"): 8100 back · 5180 painel · 5181 portal · 8081 Metro do Expo.
 #
 # ⚠ ESTE ARQUIVO PRECISA DO BOM DE UTF-8, e não é preciosismo: o Windows PowerShell 5.1 lê
 # .ps1 sem BOM como cp1252, e aí os bytes de `—` (E2 80 94) terminam em 0x94, que em cp1252
@@ -34,7 +33,6 @@
 
 param(
     [switch]$App,
-    [switch]$Talk,
     [switch]$Instalar
 )
 
@@ -81,32 +79,6 @@ if (($Instalar -or $App) -and -not (Test-Path (Join-Path $raiz 'app\node_modules
     Push-Location (Join-Path $raiz 'app'); npm install; Pop-Location
 }
 
-# O Talk Solar tem venv PRÓPRIO — não reaproveita o do bff. Os dois têm um pacote chamado
-# `app`, e misturar os caminhos de importação é o que faz os testes de lá morrerem em
-# `ImportError: cannot import name 'webhooks' from 'app'`.
-#
-# NADA daqui pode derrubar o script: com $ErrorActionPreference = 'Stop', um erro solto
-# aqui abortaria antes da subida e deixaria quem pediu `-Talk` sem back e sem painel — por
-# causa de um produto que só é vizinho de pasta. Por isso o try/catch, e por isso as
-# migrations NÃO rodam aqui: o banco é outro, e as nove tabelas `ts_*` nunca foram criadas
-# em Postgres nenhum.
-$pythonTalk = Join-Path $raiz 'talksolar\server\venv\Scripts\python.exe'
-$envTalk    = Join-Path $raiz 'talksolar\server\.env'
-$talkPronto = $Talk
-
-if ($Talk -and -not (Test-Path $pythonTalk)) {
-    Write-Host "> Preparando o Talk Solar…" -ForegroundColor Cyan
-    try {
-        python -m venv (Join-Path $raiz 'talksolar\server\venv')
-        & $pythonTalk -m pip install --upgrade pip --quiet
-        & $pythonTalk -m pip install -r (Join-Path $raiz 'talksolar\server\requirements.txt') --quiet
-        if (-not (Test-Path $pythonTalk)) { throw 'o venv não foi criado' }
-    } catch {
-        $talkPronto = $false
-        Write-Host "  Talk Solar não preparado ($_). O Gestão Solar sobe assim mesmo." -ForegroundColor Yellow
-    }
-}
-
 # -------------------------------------------------------------------- subida
 
 Write-Host "`n> Subindo…" -ForegroundColor Cyan
@@ -121,14 +93,6 @@ Abrir 'Gestao Solar — PORTAL (cliente)' (Join-Path $raiz 'portal') 'npm run de
 
 if ($App) {
     Abrir 'Gestao Solar — APLICATIVO (Expo)' (Join-Path $raiz 'app') 'npm start'
-}
-
-# A porta 8110 é do Talk Solar: 8100 é do back, 5180 do painel, 5181 do portal e 8081 do
-# Metro. Porta repetida não dá erro claro — ou o segundo servidor recusa subir, ou quem
-# chama encontra o programa errado atendendo no endereço certo.
-if ($talkPronto -and (Test-Path $envTalk)) {
-    Abrir 'Talk Solar — SERVIDOR' (Join-Path $raiz 'talksolar\server') `
-        '.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8110'
 }
 
 $ip = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } |
@@ -147,20 +111,3 @@ if ($App) {
     Write-Host "  Para subir o aplicativo também: .\dev.ps1 -App" -ForegroundColor DarkGray
 }
 
-if (-not $Talk) {
-    Write-Host "  Para subir o Talk Solar (mensageiro, produto à parte): .\dev.ps1 -Talk`n" -ForegroundColor DarkGray
-} elseif ($talkPronto -and (Test-Path $envTalk)) {
-    Write-Host "  TALK SOLAR        http://localhost:8110     /saude e /docs`n" -ForegroundColor Green
-} elseif (-not $talkPronto) {
-    Write-Host "  TALK SOLAR        não subiu — o venv de talksolar\server não foi preparado`n" -ForegroundColor Yellow
-} else {
-    # Dizer o que falta, e não deixar a janela abrir e morrer com um erro de conexão que
-    # parece defeito do projeto: o Talk Solar tem banco próprio e nunca teve `.env` aqui.
-    Write-Host @"
-  TALK SOLAR        não subiu — falta talksolar\server\.env
-                    copie o .env.exemplo e preencha DATABASE_URL (banco PRÓPRIO, não o do
-                    Gestão Solar) e TALK_JWT_SECRET; depois rode, de talksolar\server\:
-                    .\venv\Scripts\python.exe -m alembic upgrade head
-
-"@ -ForegroundColor Yellow
-}
