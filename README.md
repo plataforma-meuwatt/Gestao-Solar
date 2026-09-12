@@ -148,11 +148,21 @@ Conexões e guardados cifrados no banco, para poderem ser trocados e testados se
 Um serviço no Railway por aplicação. Cada um tem seu `Dockerfile` e seu `railway.json`
 dentro da própria pasta; no Railway, o serviço aponta o **Root Directory** para ela.
 
-| Serviço | Root Directory | `railwayConfigFile` | Variáveis | Estado |
-|---|---|---|---|---|
-| **back** | `bff` | `bff/railway.json` | `DATABASE_URL` · `GS_JWT_SECRET` · `GS_ENCRYPTION_KEY` · `GS_CORS_ORIGENS` · `ENVIRONMENT=production` | no ar |
-| **painel** | `painel` | `painel/railway.json` | `API_URL` (o endereço público do back) | no ar |
-| **portal** | `portal` | `portal/railway.json` | `API_URL` | **a criar** |
+| Serviço no Railway | Root Directory | `railwayConfigFile` | Variáveis | Deploy | Estado |
+|---|---|---|---|---|---|
+| **back** (`Gestao-Solar`) | `bff` | `bff/railway.json` | `DATABASE_URL` · `GS_JWT_SECRET` · `GS_ENCRYPTION_KEY` · `GS_CORS_ORIGENS` · `ENVIRONMENT=production` | no push | no ar |
+| **painel** (`front`) | `painel` | `painel/railway.json` | `API_URL` (o endereço público do back) | no push | no ar |
+| **portal** (`appgestao`) | `portal` | `portal/railway.json` | `API_URL` | ⛔ **à mão** | no ar |
+
+⛔ **O `appgestao` não está ligado ao GitHub, e o `railway up` dele tem armadilha.** Um push
+que mexe só em `portal/` não muda nada em produção, e a falha é silenciosa: o site continua
+respondendo 200, com o código antigo. Pior, o CLI 5.45.7 passou a subir o **repositório
+inteiro** em vez da pasta atual, então o `cd portal && railway up` que funcionava morre no
+Railpack em ~25 s — o `Dockerfile` do portal não fica na raiz do contexto, e o *Root
+Directory* da tabela acima **não salva**: ele vale para build vindo do GitHub, não para
+upload do CLI, em que o arquivo enviado É o contexto. O passo a passo que funciona (montar o
+contexto fora do repositório) está em [`CLAUDE.md`](CLAUDE.md) §6, junto com a prova por
+arquivo novo — o SPA devolve 200 em qualquer caminho, então status não prova deploy.
 
 **O que ainda não existe no repositório, para não parecer que está pronto:** o
 **`railwayConfigFile` é ajuste do painel do Railway, não do repositório**, e o caminho é

@@ -386,7 +386,8 @@ atravessa os dois o servidor anda e a tela não.
    CTX=/tmp/ctx-portal && rm -rf $CTX && mkdir -p $CTX
    cd "/c/Dev/Gestao Solar/portal"
    tar --exclude=node_modules --exclude=dist -cf - . | (cd $CTX && tar -xf -)
-   cd $CTX && railway up --project ae0386b7-5b51-44fe-bb74-d41ac885903a        --service appgestao --environment production --detach
+   cd $CTX && railway up --project ae0386b7-5b51-44fe-bb74-d41ac885903a \
+       --service appgestao --environment production --detach
    ```
 
    Fora de um repositório git, o CLI sobe a pasta e o `Dockerfile` volta a ficar na raiz do
@@ -444,8 +445,18 @@ Três armadilhas do deploy, todas já pagas:
   escreve o `config.js`: o front sobe sem `window.__GS_API__`, chama a si mesmo, recebe o
   próprio HTML e o console diz `Unexpected token '<'` — longe da causa. A tabela de deploy
   do [`README.md`](README.md#deploy) traz o valor de cada serviço.
-- **O token do `.env.txt` é de projeto, não de conta.** Vai em `RAILWAY_TOKEN`; com
-  `RAILWAY_API_TOKEN` ou em `railway whoami` responde `Unauthorized`.
+- ⛔ **NÃO exporte o token do Railway para publicar.** Esta linha já disse o contrário, e
+  custou uma investigação inteira em 12/09/2026. O `.env.txt` traz um token de escopo
+  estreito: exportado em `RAILWAY_TOKEN`, ele **esconde metade do projeto** — `railway
+  status` passa a listar só `Gestao-Solar` e `gs-teste-permissao`, o `front` (painel) e o
+  `appgestao` (portal) somem, e `railway list`/`railway whoami` respondem `Unauthorized`.
+  O sintoma engana com perfeição: parece que os dois serviços estão em OUTRO projeto e que
+  a máquina não tem credencial para eles. Estão no mesmo projeto, e ela tem.
+
+  **A máquina já está logada na conta** (`railway whoami` → `Paulo Renan Marquezini`), e é
+  esse login que enxerga os quatro serviços. Então, para qualquer coisa de Railway:
+  `unset RAILWAY_TOKEN` primeiro, e só use o token do `.env.txt` se algum comando pedir
+  explicitamente um escopo de projeto. Ver o passo a passo de publicação em §6.
 
 **A carteira depende de duas ondas para não abrir em cinza.** `GET /api/v1/resumo` compõe
 energia, paradas, cronograma, ordens e pendências de TODAS as usinas: contra os upstreams
@@ -545,6 +556,11 @@ working tree. Um push que muda o `app/` sem OTA correspondente não chegou em ni
 e `eas whoami` dizendo "Not logged in" **não** significa que falta credencial: significa que
 faltou exportar a variável.
 
+⚠ **Isso vale para o Expo. Para o Railway, é o contrário: NÃO exporte o token.** A máquina
+está logada na conta, e o token do `.env.txt` tem escopo menor — exportá-lo faz dois dos
+quatro serviços desaparecerem da listagem e produz um `Unauthorized` que parece falta de
+permissão da conta. Ver a armadilha inteira em §6.
+
 Carregar sem estampar o valor no terminal:
 
 ```bash
@@ -556,9 +572,18 @@ que o `rg`/Grep passa batido: sendo ignorado pelo git, ele fica invisível na bu
 
 ### BFF, painel e portal → Railway, no push
 
-Não há CLI no caminho normal: **o push para `main` já dispara o deploy** de cada serviço
-web existente, com o Root Directory dele. Leva ~1–2 min. Hoje isso vale para o back e o
-painel; o portal e o Talk Solar passam a entrar quando os serviços forem criados (§6).
+**O push para `main` dispara o deploy — mas só do que está ligado ao GitHub**, e hoje isso é
+o **back** e o **painel**, com o Root Directory de cada um. Leva ~1–2 min.
+
+⛔ **O portal NÃO entra nesse caminho.** O serviço `appgestao` existe e está no ar, e não está
+conectado ao repositório: um push que mexe só em `portal/` **não muda nada em produção**, e a
+falha é silenciosa — o site continua respondendo 200, com o código antigo. Publicar o portal é
+um `railway up` à mão, e ele tem três armadilhas próprias: estão em §6, com o comando pronto.
+
+E a ordem inverte sozinha aqui: numa mudança que atravessa BFF e portal, **o servidor sobe no
+push e a tela não sobe nenhuma vez** até alguém rodar o `railway up`. Como o BFF só ganha
+campo e nunca tira, o portal antigo não quebra — mas a tela nova fica esperando um deploy que
+ninguém deu.
 
 Confirme por probe, nunca pelo push. `/openapi.json` **não serve** — docs está desabilitado em
 produção e a resposta vem vazia. Use o par rota-nova × caminho-irmão-inexistente:
