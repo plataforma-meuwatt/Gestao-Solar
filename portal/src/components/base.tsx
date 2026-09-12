@@ -17,9 +17,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 
 import { energia, inteiro, numero } from '@/lib/format'
 import { classesDoTom, tons, type Tom } from '@/lib/tons'
+import { iconeDoCaminho } from '@/shell/menu'
 
 /* ------------------------------------------------------------------ número */
 
@@ -60,6 +62,8 @@ export function Pagina({
   acoes?: ReactNode
   children: ReactNode
 }) {
+  const local = useLocation()
+  const Icone = iconeDoCaminho(local.pathname)
   return (
     /*
       1600 px, e não 1400. Com o trilho colado na borda (ver `shell/Layout.tsx`) o conteúdo
@@ -70,14 +74,27 @@ export function Pagina({
     */
     <div className="mx-auto w-full max-w-[1600px] px-6 py-7 lg:px-8">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-4">
+          {/*
+            O ícone da seção, o MESMO que está aceso no menu. É o que amarra "onde estou" a
+            "o que estou lendo" — e some nas telas que não são seção de menu (a ficha de uma
+            tarefa, a conta), onde um ícone emprestado da seção pai diria que se está um
+            nível acima. Quem resolve é `menu.iconeDoCaminho`, para os dois não divergirem.
+          */}
+          {Icone ? (
+            <span className="mt-1 hidden h-11 w-11 shrink-0 items-center justify-center rounded-campo border border-borda bg-superficie text-ambar sm:flex">
+              <Icone size={22} strokeWidth={1.9} aria-hidden />
+            </span>
+          ) : null}
+          <div className="min-w-0">
           {rotulo ? <div className="rotulo-secao mb-2">{rotulo}</div> : null}
           {/* 32px, e não os 24 de antes: numa tela de 1400 px o título competia em tamanho
               com os rótulos dos cartões, e nada dizia onde a página começava. */}
           <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.025em] text-forte">
             {titulo}
           </h1>
-          {subtitulo ? <div className="mt-1 text-sm text-fraco">{subtitulo}</div> : null}
+          {subtitulo ? <div className="mt-1 text-[14.5px] text-fraco">{subtitulo}</div> : null}
+          </div>
         </div>
         {acoes ? <div className="flex flex-wrap items-center gap-2">{acoes}</div> : null}
       </header>

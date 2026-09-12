@@ -229,3 +229,23 @@ export function casamentoExato(fim: string): boolean {
 export function ehDaCarteira(caminho: string): boolean {
   return SECOES.some((s) => s.carteira && (caminho === s.fim || caminho.startsWith(`${s.fim}/`)))
 }
+
+/**
+ * O ícone da seção em que este caminho está — o MESMO que o menu acende.
+ *
+ * O cabeçalho de página do meuWatt leva o ícone da seção ao lado do título, e é ele que
+ * amarra "onde estou no menu" a "o que estou lendo". Resolver aqui, e não deixar cada tela
+ * passar o seu, é o que impede os dois de divergirem: no dia em que Paradas trocar de ícone,
+ * ele troca nos dois lugares ou em nenhum.
+ *
+ * `null` para caminho que não é seção de menu (a ficha de uma tarefa, a conta): ali o título
+ * responde sozinho, e um ícone emprestado da seção pai diria que se está um nível acima.
+ */
+export function iconeDoCaminho(caminho: string): LucideIcon | null {
+  if (caminho === VISAO_GERAL.para) return VISAO_GERAL.icone
+  const candidatas = [...SECOES].sort((a, b) => b.fim.length - a.fim.length)
+  const achada = candidatas.find(
+    (s) => caminho === s.fim || caminho.endsWith(s.fim) || caminho.includes(`${s.fim}/`),
+  )
+  return achada?.icone ?? null
+}

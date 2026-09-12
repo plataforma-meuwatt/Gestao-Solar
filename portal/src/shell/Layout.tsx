@@ -85,7 +85,19 @@ class LimiteDeErro extends Component<
   }
 }
 
-/** Uma entrada da navegação, nas três formas (barra, trilho e gaveta). */
+/**
+ * Uma entrada da navegação, nas três formas (barra, trilho e gaveta).
+ *
+ * **O item inativo é CLARO, não cinza.** Ele era `text-fraco` (#94A3B8), o mesmo tom que o
+ * produto reserva para legenda e para texto de apoio — e com ele os ícones, que herdam a cor,
+ * ficavam lavados a ponto de não se distinguirem uns dos outros a um metro da tela. No
+ * meuWatt, de onde este portal herda a família, o menu é a única coisa sempre visível e por
+ * isso é desenhado com o tom do CORPO: o que está apagado ali é o que não existe, não o que
+ * simplesmente não está aberto.
+ *
+ * O ícone tem cor própria, um degrau abaixo do rótulo (`text-rotulo`), pelo motivo oposto:
+ * cheio, ele competia com a palavra. No item aberto os dois viram âmbar juntos.
+ */
 function Link({
   para,
   rotulo,
@@ -109,20 +121,29 @@ function Link({
       title={rotulo}
       aria-label={rotulo}
       className={({ isActive }) =>
-        `flex items-center gap-3 rounded-campo px-3 py-[9px] text-[14.5px] transition ${
+        `group flex items-center gap-3 rounded-campo px-3 py-2.5 text-[14.5px] transition ${
           soIcone ? 'justify-center' : ''
         } ${
           isActive
-            // O item ativo em ÂMBAR, como no meuWatt: o cinza-claro de antes era quase a
+            // O item aberto em ÂMBAR, como no meuWatt: o cinza-claro de antes era quase a
             // mesma coisa que o hover, e numa lista de dez itens o cliente não achava onde
             // estava sem ler todos.
             ? 'bg-ambar/14 font-semibold text-ambar-texto'
-            : 'text-fraco hover:bg-superficie hover:text-corpo'
+            : 'font-medium text-corpo hover:bg-superficie hover:text-forte'
         }`
       }
     >
-      <Icone size={18} aria-hidden />
-      {soIcone ? null : <span className="truncate">{rotulo}</span>}
+      {({ isActive }: { isActive: boolean }) => (
+        <>
+          <Icone
+            size={19}
+            strokeWidth={isActive ? 2.2 : 1.9}
+            aria-hidden
+            className={`shrink-0 ${isActive ? '' : 'text-rotulo group-hover:text-corpo'}`}
+          />
+          {soIcone ? null : <span className="truncate">{rotulo}</span>}
+        </>
+      )}
     </NavLink>
   )
 }
@@ -192,9 +213,7 @@ export function Layout() {
       */}
       <div className={soIcone ? 'mb-3' : 'mb-4'}>
         {soIcone ? null : (
-          <p className="rotulo-secao px-3 pb-2">
-            Comparar usinas
-          </p>
+          <p className="rotulo-secao px-3 pb-2 pt-1">Comparar usinas</p>
         )}
         <ul className="space-y-0.5">
           {secoesDaCarteira().map((s) => {
@@ -219,7 +238,7 @@ export function Layout() {
       {atual ? (
         <>
           {soIcone ? null : (
-            <p className="rotulo-secao px-3 pb-2">Esta usina</p>
+            <p className="rotulo-secao px-3 pb-2 pt-1">Esta usina</p>
           )}
           {GRUPOS.map((grupo, i) => {
             // Só as seções DA USINA: as de carteira já saíram no bloco acima.
@@ -242,9 +261,7 @@ export function Layout() {
                     </div>
                   ) : null
                 ) : grupo.nome ? (
-                  <p className="rotulo-secao px-3 pb-1">
-                    {grupo.nome}
-                  </p>
+                  <p className="rotulo-secao px-3 pb-1.5">{grupo.nome}</p>
                 ) : null}
 
                 <ul className="space-y-0.5">
@@ -268,7 +285,9 @@ export function Layout() {
           })}
         </>
       ) : soIcone ? null : (
-        <p className="px-3 text-sm text-fraco">Escolha uma usina para ver as seções dela.</p>
+        <p className="px-3 text-[13px] leading-relaxed text-fraco">
+          Escolha uma usina no topo para ver as seções dela.
+        </p>
       )}
     </>
   )
