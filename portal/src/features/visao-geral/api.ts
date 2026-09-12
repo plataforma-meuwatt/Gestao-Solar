@@ -44,6 +44,8 @@ export type UsinaResumo = {
   situacao: string
 
   potencia_kw: number | null
+  /** A potência instalada declarada (kWp) — o tamanho da usina, não a leitura de agora. */
+  capacidade_kwp: number | null
   energia_mes_kwh: number | null
   /** A meta do projeto (PVsyst cadastrado no meuWatt). Sem cadastro, nulo — nunca 100%. */
   esperado_mes_kwh: number | null
@@ -74,12 +76,28 @@ export type PendenciasResumo = {
   cobradas_abertas: number | null
 }
 
-/** Uma faixa do topo. `rota` é o caminho do portal para onde o clique leva. */
+/**
+ * Uma faixa do topo — uma ESPÉCIE de problema, já reunida pelo servidor.
+ *
+ * Antes vinha uma faixa por usina, e a carteira de sete abria com sete tarjas idênticas
+ * dizendo "bem abaixo do esperado". O agrupamento é do BFF (`resumo._atencao`) porque o que
+ * muda com ele é a FRASE — "4 pendências com prazo vencido" contra "Ouro Fino tem 2
+ * pendências com prazo vencido" —, e frase que o cliente lê é dado da API.
+ *
+ * `rota` é o caminho do portal para onde o clique leva: a usina, quando a faixa é de uma só;
+ * a tela de carteira, quando resume várias.
+ */
 export type AtencaoResumo = {
   tom: string
   titulo: string
   detalhe: string | null
   rota: string
+  /** O texto do botão, pronto ("Abrir paradas", "Ver pendências"). */
+  acao: string
+  /** Quantas ocorrências a faixa resume — o número do quadrado à esquerda. */
+  contagem: number
+  /** A chave estável da espécie. Não vai à tela; serve de `key` e de depuração. */
+  especie: string
 }
 
 export type ResumoOut = {

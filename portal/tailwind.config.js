@@ -49,9 +49,20 @@ export default {
   },
   // As classes de tom são montadas a partir do valor que vem do servidor; o Tailwind não
   // as enxerga no fonte e as descartaria do CSS. A lista abaixo garante cada uma.
+  //
+  // **Os degraus de alfa são uma escada fechada, e é `lib/tons.ts` quem a nomeia.** Um alfa
+  // que não esteja aqui e seja montado a partir do `tom` do servidor (`bg-tom-${tom}/6`) não
+  // emite classe nenhuma: o elemento sai SEM fundo, e nada acusa — não há erro de build, de
+  // tipo nem de console, só uma faixa transparente na tela. O redesenho de 09/2026 pedia
+  // sete alfas diferentes (/5, /6, /7, /16, /28, /32, /35, /55); em vez de safelistar cada
+  // capricho, eles foram reduzidos a cinco degraus com nome e papel, declarados em
+  // `classesDoTom`. Precisa de um sexto? Ele entra aqui E lá, no mesmo commit.
   safelist: [
     { pattern: /^(text|bg|border|fill|stroke)-tom-(parado|alerta|multiplos|tempoRuim|ok|semDados)$/ },
-    { pattern: /^(bg|border)-tom-(parado|alerta|multiplos|tempoRuim|ok|semDados)\/(10|20|30|40)$/ },
+    {
+      pattern:
+        /^(bg|border)-tom-(parado|alerta|multiplos|tempoRuim|ok|semDados)\/(6|10|16|20|30|40|55)$/,
+    },
   ],
   plugins: [],
 }

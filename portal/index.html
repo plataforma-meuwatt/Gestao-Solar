@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>Gestão Solar</title>
+    <!-- O selo da marca como favicon. SVG, e não `.ico`: o desenho é o mesmo em qualquer
+         densidade de tela e o arquivo tem 2 KB. O `sizes="any"` é o que faz o Chrome preferir
+         este ao `/favicon.ico` que ele procura sozinho na raiz — sem ele, o 404 do `.ico`
+         ganha e a aba volta para o ícone genérico.
+
+         Falta um PNG para quem ainda não lê favicon em SVG (Safari < 16) e para o atalho de
+         tela de início do iOS (`apple-touch-icon` não aceita SVG). Gerar os dois é trabalho de
+         rasterização, não de código, e está anotado como pendência deste item. -->
+    <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg" />
+    <!-- Âmbar da marca: é a cor da barra do navegador no Android e do cartão de link. Fica no
+         HTML porque o `tailwind.config.js` não alcança o `<head>`. -->
+    <meta name="theme-color" content="#FFC315" />
   </head>
   <body>
     <div id="root"></div>

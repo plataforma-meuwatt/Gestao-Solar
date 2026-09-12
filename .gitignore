@@ -51,3 +51,13 @@ desktop.ini
 *.log
 /tmp/
 scratch/
+
+# A referência de design do redesenho do portal (09/2026). O handoff, o protótipo e a marca
+# do meuWatt ficam versionados — são o que quem implementar os itens seguintes vai ler. Os
+# prints de tela que alimentaram o desenho, não: são dezenas de megabytes de JPG que não se
+# leem em diff e que o handoff já descreve em texto.
+Layout/**/uploads/
+Layout/Gestao Solar/
+Layout/meuPlano/
+Layout/meuWatt/
+Layout/**/.thumbnail

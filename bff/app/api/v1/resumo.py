@@ -87,6 +87,10 @@ class UsinaResumoOut(BaseModel):
     situacao: str
 
     potencia_kw: float | None = None
+    #: A potência instalada declarada (kWp). É o tamanho da usina, não a leitura de agora —
+    #: entra para o cabeçalho da carteira poder dizer de quantos MWp ela é. Nulo quando nem o
+    #: meuWatt nem o vínculo do painel declaram capacidade.
+    capacidade_kwp: float | None = None
     energia_mes_kwh: float | None = None
     #: A meta do projeto (PVsyst cadastrado no meuWatt) para o mês. Sem cadastro, nulo —
     #: e a tela diz "sem meta", nunca 100%.
@@ -124,13 +128,36 @@ class PendenciasResumoOut(BaseModel):
 
 
 class AtencaoResumoOut(BaseModel):
-    """O que está pedindo olho, em ordem de gravidade. A lista vazia é a boa notícia."""
+    """O que está pedindo olho, em ordem de gravidade. A lista vazia é a boa notícia.
+
+    **Uma faixa é uma ESPÉCIE de problema, não uma usina.** Antes cada usina gerava a sua
+    faixa, e uma carteira de sete com a mesma queda de geração abria a Visão geral com sete
+    tarjas idênticas — a primeira tela inteira dizendo a mesma coisa sete vezes. Sete alertas
+    iguais é zero alerta: o olho aprende a pular o bloco, e a parada em aberto que estava no
+    meio dele some junto.
+
+    Agora as ocorrências da mesma `especie` viram UMA faixa, com a `contagem` e as usinas
+    nomeadas no `detalhe`. A espécie que aparece numa usina só continua nomeando a usina no
+    `titulo` — é o caso excepcional, e é o que merece faixa própria.
+
+    O agrupamento é aqui, e não na tela, porque o que muda com ele é a FRASE: "4 pendências
+    com prazo vencido" contra "Ouro Fino tem 2 pendências com prazo vencido". Frase que o
+    cliente lê é dado da API — a tela que a montasse a partir de um código teria a sua
+    própria gramática, e duas telas com gramáticas próprias discordam.
+    """
 
     tom: str
+    #: A frase do grupo. É o que a tela imprime em destaque, pronta.
     titulo: str
     detalhe: str | None = None
-    #: Rota do portal para onde o clique leva.
+    #: Rota do portal para onde o clique leva. Numa faixa de várias usinas, a rota da lista.
     rota: str
+    #: O que o botão de ação diz. Vem pronto pelo mesmo motivo do `titulo`.
+    acao: str = "Abrir"
+    #: Quantas ocorrências a faixa resume — o número do quadrado à esquerda.
+    contagem: int = 1
+    #: A chave estável da espécie. A tela NÃO a imprime; serve a teste e a depuração.
+    especie: str = "outro"
 
 
 class ResumoOut(BaseModel):
@@ -365,6 +392,7 @@ async def _resumo_da_usina(
     u = UsinaResumoOut(
         id=base.id, nome=base.nome, cidade=base.cidade, uf=base.uf,
         tom=base.tom, situacao=base.situacao, potencia_kw=base.potencia_kw,
+        capacidade_kwp=base.capacidade_kwp,
     )
     recorte = _Recorte(usina=u)
     avisos: list[str] = []
@@ -428,53 +456,163 @@ async def _resumo_da_usina(
 _PESO_DO_TOM = {"parado": 0, "multiplos": 1, "alerta": 2, "tempoRuim": 3, "semDados": 4, "ok": 5}
 
 
+@dataclass
+class _Ocorrencia:
+    """Um problema numa usina, antes de virar faixa. `quantas` é o que a usina contribui
+    para a contagem do grupo: duas paradas em aberto em Tiete contam duas, não uma."""
+
+    especie: str
+    tom: str
+    usina: str
+    quantas: int
+    rota_da_usina: str
+
+
+#: Como cada espécie se escreve, no singular e no plural, e para onde ela leva.
+#:
+#: `um` recebe a usina e a contagem dela; `muitos` recebe a contagem total e o número de
+#: usinas. As duas frases existem porque elas dizem coisas diferentes: uma parada em aberto
+#: numa usina é um fato sobre AQUELA usina; catorze espalhadas por seis são um fato sobre a
+#: carteira, e nomear uma delas no título esconderia as outras cinco.
+_ESPECIES: dict[str, dict[str, Any]] = {
+    "usina_parada": {
+        "tom": "parado",
+        "sufixo": "",
+        "acao": "Abrir usina",
+        "um": lambda u, n: f"{u} está parada",
+        "muitos": lambda n, k: f"{k} usinas paradas",
+    },
+    "parada_aberta": {
+        "tom": "parado",
+        "sufixo": "/energia/paradas",
+        "acao": "Abrir paradas",
+        "um": lambda u, n: f"{u} tem {n} parada{'s' if n > 1 else ''} em aberto",
+        "muitos": lambda n, k: f"{n} paradas em aberto em {k} usinas",
+    },
+    "atividade_atrasada": {
+        "tom": "alerta",
+        "sufixo": "/manutencao/cronograma",
+        "acao": "Ver cronograma",
+        "um": lambda u, n: (
+            f"{u} tem {n} atividade{'s' if n > 1 else ''} "
+            f"atrasada{'s' if n > 1 else ''} no cronograma"
+        ),
+        "muitos": lambda n, k: f"{n} atividades atrasadas no cronograma, em {k} usinas",
+    },
+    "pendencia_vencida": {
+        "tom": "alerta",
+        "sufixo": "/manutencao/pendencias",
+        "acao": "Ver pendências",
+        "um": lambda u, n: f"{u} tem {n} pendência{'s' if n > 1 else ''} com prazo vencido",
+        "muitos": lambda n, k: f"{n} pendências com prazo vencido, em {k} usinas",
+    },
+    "abaixo_do_esperado": {
+        "tom": "alerta",
+        "sufixo": "",
+        "acao": "Comparar usinas",
+        "um": lambda u, n: f"{u} ficou bem abaixo do esperado no mês",
+        "muitos": lambda n, k: f"{k} usinas ficaram bem abaixo do esperado no mês",
+    },
+}
+
+#: Onde uma espécie espalhada por várias usinas pode ser vista inteira. Espécie sem tela de
+#: carteira cai na Visão geral, que é onde a tabela por usina está.
+_ROTA_DA_CARTEIRA: dict[str, str] = {
+    "atividade_atrasada": "/comparar/manutencao",
+    "pendencia_vencida": "/comparar/manutencao",
+    "abaixo_do_esperado": "/comparar/energia",
+}
+
+
+#: Quantas usinas o detalhe nomeia antes de resumir o resto. Acima disso a linha vira uma
+#: parede de nomes e deixa de ser lida — e quem quer a lista inteira tem a tabela abaixo.
+_NOMES_NO_DETALHE = 3
+
+
+def _detalhe_das_usinas(ocorrencias: list[_Ocorrencia]) -> str:
+    """"2 em Ouro Fino · 2 em Pereiras" — ou, com muitas, "… e outras 4"."""
+    partes = [
+        (o.usina if o.quantas == 1 else f"{o.quantas} em {o.usina}")
+        for o in ocorrencias[:_NOMES_NO_DETALHE]
+    ]
+    resto = len(ocorrencias) - _NOMES_NO_DETALHE
+    if resto > 0:
+        partes.append(f"e outras {resto}")
+    return " · ".join(partes)
+
+
 def _atencao(recortes: list[_Recorte]) -> list[AtencaoResumoOut]:
     """As faixas do topo, só sobre fato: usina parada, parada em aberto, atividade
     atrasada no contrato, pendência com prazo vencido, geração bem abaixo da meta.
 
     Uma faixa vermelha que não corresponde a problema real é pior do que nenhuma: da
     segunda vez que o cliente abrir e não encontrar nada de errado, ele para de olhar.
+
+    E uma faixa REPETIDA tem o mesmo efeito, pelo caminho oposto: sete tarjas iguais na
+    primeira tela ensinam o olho a pular o bloco inteiro. Por isso as ocorrências da mesma
+    espécie saem daqui já reunidas numa faixa só — ver `AtencaoResumoOut`.
     """
-    saida: list[AtencaoResumoOut] = []
+    ocorrencias: list[_Ocorrencia] = []
     for r in recortes:
         u = r.usina
         rota = f"/usinas/{u.id}"
+
+        def anotar(especie: str, quantas: int) -> None:
+            ocorrencias.append(_Ocorrencia(
+                especie=especie, tom=_ESPECIES[especie]["tom"],
+                usina=u.nome, quantas=quantas, rota_da_usina=rota,
+            ))
+
         if u.tom == "parado":
-            saida.append(AtencaoResumoOut(tom="parado", titulo=u.nome, detalhe=u.situacao, rota=rota))
-
+            anotar("usina_parada", 1)
         if r.paradas_em_aberto:
-            n = r.paradas_em_aberto
-            saida.append(AtencaoResumoOut(
-                tom="parado", titulo=u.nome,
-                detalhe=f"{n} parada{'s' if n > 1 else ''} em aberto",
-                rota=f"{rota}/paradas",
-            ))
-
+            anotar("parada_aberta", r.paradas_em_aberto)
         if u.manutencao and u.manutencao.atrasados:
-            n = u.manutencao.atrasados
-            saida.append(AtencaoResumoOut(
-                tom="alerta", titulo=u.nome,
-                detalhe=f"{n} atividade{'s' if n > 1 else ''} atrasada{'s' if n > 1 else ''} no cronograma",
-                rota=f"{rota}/cronograma",
-            ))
-
-        vencidas = r.pendencias.get("prazo_vencido")
-        if vencidas:
-            saida.append(AtencaoResumoOut(
-                tom="alerta", titulo=u.nome,
-                detalhe=f"{vencidas} pendência{'s' if vencidas > 1 else ''} com prazo vencido",
-                rota=f"{rota}/pendencias",
-            ))
+            anotar("atividade_atrasada", u.manutencao.atrasados)
+        if r.pendencias.get("prazo_vencido"):
+            anotar("pendencia_vencida", r.pendencias["prazo_vencido"])
 
         # Só o "bem abaixo" acende faixa; "abaixo" já está na cor do número, e faixa
         # demais é faixa ignorada.
-        _, tom_energia, frase = _situacao_do_projeto(u.energia_mes_kwh, u.esperado_mes_kwh)
+        _, tom_energia, _frase = _situacao_do_projeto(u.energia_mes_kwh, u.esperado_mes_kwh)
         if tom_energia == "parado":
-            saida.append(AtencaoResumoOut(tom="alerta", titulo=u.nome, detalhe=f"{frase} no mês", rota=rota))
+            anotar("abaixo_do_esperado", 1)
 
-    # Estável: a ordem de gravidade primeiro e, dentro dela, a ordem das usinas.
+    saida: list[AtencaoResumoOut] = []
+    for especie, regra in _ESPECIES.items():
+        do_grupo = [o for o in ocorrencias if o.especie == especie]
+        if not do_grupo:
+            continue
+        # Maior primeiro: numa faixa que resume seis usinas, é a pior que dá o nome ao
+        # detalhe — e é nela que o cliente clica.
+        do_grupo.sort(key=lambda o: -o.quantas)
+        total = sum(o.quantas for o in do_grupo)
+        uma_usina = len(do_grupo) == 1
+        saida.append(AtencaoResumoOut(
+            tom=regra["tom"],
+            titulo=(
+                regra["um"](do_grupo[0].usina, do_grupo[0].quantas)
+                if uma_usina
+                else regra["muitos"](total, len(do_grupo))
+            ),
+            # Numa usina só o título já diz tudo; repetir o nome embaixo é ruído.
+            detalhe=None if uma_usina else _detalhe_das_usinas(do_grupo),
+            # Com uma usina, a rota é a dela; com várias, não há uma usina para abrir, e a
+            # tela da carteira é o único destino honesto.
+            rota=(
+                f"{do_grupo[0].rota_da_usina}{regra['sufixo']}"
+                if uma_usina
+                else _ROTA_DA_CARTEIRA.get(especie, "/")
+            ),
+            acao=regra["acao"],
+            contagem=total,
+            especie=especie,
+        ))
+
+    # Estável: a ordem de gravidade primeiro e, dentro dela, a ordem das espécies.
     saida.sort(key=lambda a: _PESO_DO_TOM.get(a.tom, 9))
     return saida
+
 
 
 # ── rota ────────────────────────────────────────────────────────────────────

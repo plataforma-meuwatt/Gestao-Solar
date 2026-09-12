@@ -263,15 +263,40 @@ async def test_atencao_aponta_a_rota_de_cada_problema(db, dono, cenario):
     saida = await resumo(referencia=REFERENCIA.isoformat(), db=db, usuario=dono)
 
     porto = _por_nome(saida, "Porto Ferreira")
-    rotas = {a.rota: a for a in saida.atencao}
-    assert f"/usinas/{porto.id}/paradas" in rotas
-    assert rotas[f"/usinas/{porto.id}/paradas"].tom == "parado"
-    assert "1 parada em aberto" == rotas[f"/usinas/{porto.id}/paradas"].detalhe
-    assert f"/usinas/{porto.id}/cronograma" in rotas
-    assert f"/usinas/{porto.id}/pendencias" in rotas
+    por_especie = {a.especie: a for a in saida.atencao}
+
+    # Uma faixa por ESPÉCIE, não por usina. Com uma usina só na espécie, a faixa nomeia a
+    # usina no título e leva direto à tela dela.
+    parada = por_especie["parada_aberta"]
+    assert parada.tom == "parado"
+    assert parada.rota == f"/usinas/{porto.id}/energia/paradas"
+    assert parada.titulo == "Porto Ferreira tem 1 parada em aberto"
+    assert parada.contagem == 1
+    assert parada.acao == "Abrir paradas"
+    # Numa usina só o detalhe fica vazio: repetir o nome embaixo do título é ruído.
+    assert parada.detalhe is None
+
+    assert por_especie["atividade_atrasada"].rota == f"/usinas/{porto.id}/manutencao/cronograma"
+    assert por_especie["pendencia_vencida"].rota == f"/usinas/{porto.id}/manutencao/pendencias"
+
     # O vermelho vem antes do âmbar — a lista já sai na ordem em que a tela a desenha.
     tons = [a.tom for a in saida.atencao]
     assert tons == sorted(tons, key=lambda t: {"parado": 0, "alerta": 1}[t])
+
+
+async def test_atencao_reune_a_mesma_especie_de_varias_usinas(db, dono, cenario):
+    """Sete usinas com o mesmo problema são UMA faixa — sete tarjas iguais é zero alerta."""
+    saida = await resumo(referencia=REFERENCIA.isoformat(), db=db, usuario=dono)
+
+    # Cada espécie aparece no máximo uma vez, quantas usinas quer que a tenham.
+    especies = [a.especie for a in saida.atencao]
+    assert len(especies) == len(set(especies))
+
+    for faixa in saida.atencao:
+        # A contagem nunca é zero: uma faixa existe porque há ocorrência.
+        assert faixa.contagem >= 1
+        # E o título nunca sai vazio — é ele que a tela imprime em destaque.
+        assert faixa.titulo
 
 
 async def test_meuwatt_fora_deixa_a_energia_nula_e_a_manutencao_de_pe(db, dono, cenario):

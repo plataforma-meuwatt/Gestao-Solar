@@ -97,8 +97,19 @@
     @apply btn h-9 px-3 text-xs bg-transparent border border-borda text-rotulo
            hover:text-forte hover:border-borda-forte;
   }
+  /* O rótulo de seção — o "O QUE É ISTO" que fica acima de todo cartão.
+
+     Mono em caixa alta com tracking largo, e não Figtree: é a mudança tipográfica que mais
+     distingue o Gestão Solar do meuWatt, de quem o portal herdou a aparência. O Figtree
+     seguia sendo o texto corrido E o rótulo, então nada na página dizia onde uma seção
+     terminava e outra começava a não ser o tamanho da letra.
+
+     O peso é 500, não 600: em caixa alta com 0,12em de tracking, o 600 do Mono fecha os
+     contra-formas e o rótulo vira uma barra cinza. `.mono` traz o `tabular-nums` junto, que
+     aqui não custa nada e serve aos rótulos que carregam número ("ÚLTIMOS 12 MESES"). */
   .rotulo-secao {
-    @apply text-[11px] font-semibold tracking-[0.08em] uppercase text-rotulo;
+    @apply font-mono text-[10.5px] font-medium tracking-[0.12em] uppercase text-rotulo;
+    font-variant-numeric: tabular-nums;
   }
   /* Esqueleto: a forma do que vai aparecer, pulsando. É o 1º dos 4 estados. */
   .esqueleto {

@@ -33,6 +33,7 @@ import { Menu as IconeMenu, UserRound, X, type LucideIcon } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { AtualizadoAs, Cartao, Erro } from '@/components/base'
+import { LockupGS } from '@/components/marca'
 import { useLeitura } from '@/lib/leitura'
 import {
   GRUPOS,
@@ -288,14 +289,31 @@ export function Layout() {
             <IconeMenu size={20} aria-hidden />
           </button>
 
+          {/*
+            A marca, e não só o nome escrito.
+
+            O portal abre o meuWatt e o meuPlano em aba nova (`AbrirProduto`), e o cliente vai e
+            volta entre os três durante a mesma reunião. Sem selo, as três abas eram três textos
+            parecidos num fundo escuro igual — e o diretor lia "Gestão Solar" para descobrir onde
+            estava. O selo é o que se reconhece antes de ler.
+
+            O nome sai abaixo de 768 px: ali o topo tem de caber o botão do menu, o seletor de
+            usina e os atalhos dos produtos. Quem nomeia o destino para um leitor de tela é o
+            `aria-label` deste link, que não depende de largura.
+          */}
           <NavLink
             to={usinaUnica ? `/usinas/${usinaUnica}${SECAO_PADRAO}` : '/'}
+            aria-label={usinaUnica ? 'Gestão Solar — abrir a usina' : 'Gestão Solar — Visão geral'}
             className="shrink-0"
           >
-            <span className="text-base font-semibold tracking-tight text-forte">Gestão Solar</span>
+            <LockupGS classeNome="hidden md:block" />
           </NavLink>
 
-          <div className="ml-1 min-w-0 flex-1">
+          {/* O separador que desgruda a marca do contexto: o que vem depois é a USINA, não mais o
+              produto. Sem ele o nome do produto e o nome da usina lêem como uma frase só. */}
+          <span aria-hidden className="hidden h-6 w-px shrink-0 bg-borda md:block" />
+
+          <div className="min-w-0 flex-1">
             <SeletorUsina atual={atual} />
           </div>
 

@@ -29,6 +29,7 @@ const PORTO: UsinaResumo = {
   uf: 'SP',
   tom: 'ok',
   situacao: 'Gerando',
+  capacidade_kwp: 7400,
   potencia_kw: 300,
   energia_mes_kwh: 128037.3,
   esperado_mes_kwh: 130266.67,
@@ -143,19 +144,41 @@ describe('Visão geral', () => {
     expect(await screen.findByText('Concluídas no mês')).toBeTruthy()
   })
 
-  it('a tabela cabe em oito colunas: medido e esperado na mesma célula', async () => {
+  it('a tabela cabe em seis colunas: o que era três vira a célula de Manutenção', async () => {
     servidor()
     const { container } = montar()
     await screen.findAllByText('Porto Ferreira')
     const cabecalhos = Array.from(container.querySelectorAll('thead th')).map((t) =>
       (t.textContent ?? '').trim(),
     )
-    expect(cabecalhos.length).toBeLessThanOrEqual(8)
-    expect(cabecalhos).toContain('Energia no mês')
-    expect(cabecalhos).not.toContain('Esperado')
+    // Seis colunas com conteúdo, mais a coluna muda da barra de tom. Acima disso a tabela
+    // transborda num monitor de 1500 px e a última some atrás da rolagem lateral.
+    expect(cabecalhos.filter(Boolean).length).toBeLessThanOrEqual(6)
+    expect(cabecalhos).toContain('Manutenção')
+    // As três que viraram uma só não voltam como coluna.
+    expect(cabecalhos).not.toContain('Atrasados')
+    expect(cabecalhos).not.toContain('OS em andamento')
+    expect(cabecalhos).not.toContain('Pendências abertas')
   })
 
-  it('usina sem meta diz "sem meta" na célula, e não um número inventado', async () => {
+  it('a barra de tom da linha usa o tom do SERVIDOR, sem régua na tela', async () => {
+    // A tabela desenha as usinas da PRIMEIRA onda, então é ela que precisa dos dois tons —
+    // `servidor()` sozinho só troca a resposta da segunda.
+    vi.spyOn(api, 'get').mockImplementation(async (url: unknown) => {
+      if (String(url).includes('blocos=manutencao')) return { data: resposta({}) } as never
+      return {
+        data: resposta({ usinas: [PORTO, { ...IBITINGA, tom: 'parado', situacao: 'Sem gerar' }] }),
+      } as never
+    })
+    const { container } = montar()
+    await screen.findAllByText('Porto Ferreira')
+    // Uma linha "ok" e uma "parado": as duas classes existem porque o SERVIDOR mandou os
+    // dois tons. A tela não compara percentual com limiar nenhum para chegar neles.
+    expect(container.querySelector('.bg-tom-ok')).toBeTruthy()
+    expect(container.querySelector('.bg-tom-parado')).toBeTruthy()
+  })
+
+  it('usina sem meta não ganha número inventado na célula de comparação', async () => {
     servidor()
     vi.spyOn(api, 'get').mockImplementation(async (url: unknown) => {
       if (String(url).includes('blocos=manutencao')) return { data: resposta({}) } as never
@@ -164,6 +187,26 @@ describe('Visão geral', () => {
       } as never
     })
     montar()
-    expect(await screen.findByText('sem meta')).toBeTruthy()
+    expect(await screen.findByText(/sem meta de projeto/)).toBeTruthy()
+  })
+
+  it('a frase do veredito é o TEXTO do servidor, não uma montada na tela', async () => {
+    servidor(
+      resposta({
+        atencao: [
+          {
+            tom: 'alerta',
+            titulo: '6 usinas ficaram bem abaixo do esperado no mês',
+            detalhe: 'Ibitinga · Ouro Fino',
+            rota: '/comparar/energia',
+            acao: 'Comparar usinas',
+            contagem: 6,
+            especie: 'abaixo_do_esperado',
+          },
+        ],
+      }),
+    )
+    montar()
+    expect(await screen.findByText('6 usinas ficaram bem abaixo do esperado no mês')).toBeTruthy()
   })
 })

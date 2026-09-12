@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { numero } from '@/lib/format'
+import { energia, inteiro, numero } from '@/lib/format'
 import { classesDoTom, tons, type Tom } from '@/lib/tons'
 
 /* ------------------------------------------------------------------ número */
@@ -43,11 +43,18 @@ export function Num({ children, className = '' }: { children: ReactNode; classNa
  * usina está e o que esta tela responde.
  */
 export function Pagina({
+  rotulo,
   titulo,
   subtitulo,
   acoes,
   children,
 }: {
+  /**
+   * A linha de contexto acima do título, em Mono caixa alta: "A CARTEIRA · 7 USINAS ·
+   * 21,3 MWP". Diz de QUE recorte a tela fala — e é o lugar onde o tamanho da carteira
+   * aparece sem disputar espaço com o título.
+   */
+  rotulo?: ReactNode
   titulo: string
   subtitulo?: ReactNode
   acoes?: ReactNode
@@ -57,7 +64,12 @@ export function Pagina({
     <div className="mx-auto w-full max-w-[1400px] px-6 py-6">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-forte">{titulo}</h1>
+          {rotulo ? <div className="rotulo-secao mb-2">{rotulo}</div> : null}
+          {/* 32px, e não os 24 de antes: numa tela de 1400 px o título competia em tamanho
+              com os rótulos dos cartões, e nada dizia onde a página começava. */}
+          <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.025em] text-forte">
+            {titulo}
+          </h1>
           {subtitulo ? <div className="mt-1 text-sm text-fraco">{subtitulo}</div> : null}
         </div>
         {acoes ? <div className="flex flex-wrap items-center gap-2">{acoes}</div> : null}
@@ -87,19 +99,40 @@ export function Cartao({
   )
 }
 
+/**
+ * O cabeçalho de um cartão: o rótulo da seção à esquerda, a procedência à direita.
+ *
+ * O rótulo usa a classe `.rotulo-secao` do `index.css`, e não um estilo inline. Ela existia
+ * desde o começo e não era usada por ninguém — este componente copiava as declarações, e as
+ * duas versões já tinham divergido (`tracking-wide`, que é 0,025em, contra os 0,08em da
+ * classe). Com 21 telas chamando este cabeçalho, mudar a tipografia dos rótulos do portal
+ * inteiro passou a ser uma linha de CSS.
+ *
+ * `pergunta` é a frase que diz o que o cartão responde ("Quem puxou a carteira para baixo,
+ * em MWh"). O rótulo nomeia a seção; a pergunta nomeia a leitura — e é ela que faz alguém
+ * olhar para o gráfico certo. Fica em Figtree, porque é frase, não etiqueta.
+ *
+ * `direita` continua em Figtree 12px `fraco`: é a procedência ("a contagem vem do recorte de
+ * vigência do meuPlano"), que se lê depois do número, nunca antes.
+ */
 export function CabecalhoCard({
   rotulo,
+  pergunta,
   direita,
   className = '',
 }: {
   rotulo: ReactNode
+  pergunta?: ReactNode
   direita?: ReactNode
   className?: string
 }) {
   return (
-    <div className={`mb-3 flex items-center justify-between gap-3 ${className}`}>
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-rotulo">{rotulo}</h2>
-      {direita ? <div className="text-xs text-fraco">{direita}</div> : null}
+    <div className={`mb-3 flex items-start justify-between gap-3 ${className}`}>
+      <div className="min-w-0">
+        <h2 className="rotulo-secao">{rotulo}</h2>
+        {pergunta ? <p className="mt-1 text-sm text-fraco">{pergunta}</p> : null}
+      </div>
+      {direita ? <div className="shrink-0 text-xs text-fraco">{direita}</div> : null}
     </div>
   )
 }
@@ -124,20 +157,95 @@ export function Kpi({
   valor: string
   unidade?: string
   detalhe?: ReactNode
-  tamanho?: 'normal' | 'grande'
+  /**
+   * `veredito` é a terceira medida, e existe para UM número por tela: o que responde a
+   * pergunta do cabeçalho. A 64px ele não concorre com nada — e é essa a intenção. Numa
+   * tela com dois vereditos, nenhum dos dois é veredito.
+   */
+  tamanho?: 'normal' | 'grande' | 'veredito'
   tom?: Tom | string
 }) {
   const cor = tom ? classesDoTom(tom).texto : 'text-forte'
+  const veredito = tamanho === 'veredito'
+  const corpo =
+    veredito
+      ? 'text-[64px] leading-[0.9] tracking-[-0.03em]'
+      : tamanho === 'grande'
+        ? 'text-[26px]'
+        : 'text-[22px]'
+  // A unidade do veredito é grande também (34px contra 64): a "%" de um percentual não é
+  // legenda, é parte do número — em 14px ela vira um asterisco pendurado.
+  const corpoUnidade = veredito ? 'text-[34px] leading-none' : 'text-sm'
   return (
     <div className="min-w-0">
-      {rotulo ? <div className="text-xs uppercase tracking-wide text-rotulo">{rotulo}</div> : null}
-      <div className="mt-1 flex items-baseline gap-1.5">
-        <Num className={`${tamanho === 'grande' ? 'text-4xl' : 'text-2xl'} font-semibold ${cor}`}>
-          {valor}
-        </Num>
-        {unidade ? <span className="text-sm text-fraco">{unidade}</span> : null}
+      {rotulo ? <div className="rotulo-secao">{rotulo}</div> : null}
+      <div className={`flex items-baseline gap-1.5 ${veredito ? 'mt-3' : 'mt-1.5'}`}>
+        <Num className={`${corpo} font-semibold ${cor}`}>{valor}</Num>
+        {unidade ? (
+          <span className={`${corpoUnidade} ${veredito ? cor : 'text-fraco'}`}>{unidade}</span>
+        ) : null}
       </div>
-      {detalhe ? <div className="mt-1 text-xs text-fraco">{detalhe}</div> : null}
+      {detalhe ? (
+        <div className={`mt-1.5 text-fraco ${veredito ? 'text-[13px]' : 'text-xs'}`}>{detalhe}</div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * A régua: onde o medido parou entre o zero e o alvo.
+ *
+ * Um percentual sozinho ("63,2%") não diz de quanto. A régua põe os dois denominadores na
+ * mesma linha — o que se mediu, e o alvo contra o qual isso se lê — e é por isso que ela
+ * mora colada ao veredito e não num cartão à parte.
+ *
+ * **Ela não pinta veredito nenhum.** O preenchimento é sempre âmbar, a cor da energia
+ * medida, mesmo quando a situação é ruim: quem diz se 63,2% é bom ou mau é o `tom` do
+ * servidor, no número acima. Uma régua que ficasse vermelha sozinha seria uma segunda régua
+ * de cor, decidida na tela — exatamente o que `lib/tons.ts` existe para impedir.
+ *
+ * `pct` nulo desenha o trilho vazio e nenhuma marca de meio: sem leitura não há onde marcar,
+ * e uma régua zerada leria como "mediu zero".
+ */
+export function Regua({
+  pct,
+  inicio = '0',
+  meio,
+  fim,
+}: {
+  pct: number | null
+  /** A marca da esquerda. Quase sempre "0" — é o começo da escala, não um dado. */
+  inicio?: ReactNode
+  /** O medido, centrado no fim do preenchimento. */
+  meio?: ReactNode
+  /** O alvo, à direita. */
+  fim?: ReactNode
+}) {
+  const largura = pct === null ? null : Math.max(0, Math.min(100, pct))
+  return (
+    <div>
+      <div className="relative h-2.5 overflow-hidden rounded-[5px] bg-superficie-alta">
+        {largura === null ? null : (
+          <div
+            className="absolute inset-y-0 left-0 rounded-[5px] bg-ambar"
+            style={{ width: `${largura}%` }}
+          />
+        )}
+      </div>
+      <div className="relative mt-1.5 h-4">
+        <span className="mono absolute left-0 text-[11px] text-fraco">{inicio}</span>
+        {meio && largura !== null ? (
+          // Preso entre 8% e 92% para a marca não escapar da caixa nos extremos: numa usina a
+          // 4% do alvo, centrar o rótulo no fim do preenchimento o jogaria para fora.
+          <span
+            className="mono absolute -translate-x-1/2 whitespace-nowrap text-[11px] text-ambar-texto"
+            style={{ left: `${Math.max(8, Math.min(92, largura))}%` }}
+          >
+            {meio}
+          </span>
+        ) : null}
+        <span className="mono absolute right-0 text-[11px] text-corpo">{fim}</span>
+      </div>
     </div>
   )
 }
@@ -334,37 +442,66 @@ export function AtualizadoAs({ em, offlineDesde }: { em?: string; offlineDesde?:
  * A faixa que chama o cliente para uma ação — parada em curso, prazo vencido, OS em
  * execução.
  *
- * O texto vem do SERVIDOR (`atencao.titulo` / `atencao.detalhe`): quem sabe o que merece
- * destaque é quem tem o dado inteiro, não a tela. Clicável quando há para onde ir; sem
- * `aoAbrir` continua sendo um aviso legítimo, e não um botão morto.
+ * O texto vem do SERVIDOR (`atencao.titulo` / `atencao.detalhe` / `atencao.acao`): quem sabe
+ * o que merece destaque, e como isso se escreve, é quem tem o dado inteiro. Clicável quando
+ * há para onde ir; sem `aoAbrir` continua sendo um aviso legítimo, e não um botão morto.
+ *
+ * **A faixa resume uma espécie, não uma usina.** Quem reúne é o BFF (`resumo._atencao`), e a
+ * `contagem` é o que ele reuniu: o quadrado da esquerda imprime o número, que é o que dá
+ * peso relativo a duas faixas do mesmo tom. Sem ele, "2 paradas em aberto" e "14 pendências
+ * vencidas" ocupam o mesmo tamanho na tela e parecem o mesmo problema.
  */
 export function FaixaAtencao({
   tom: valor = 'alerta',
   titulo,
   detalhe,
+  contagem,
+  acao,
   aoAbrir,
 }: {
   tom?: Tom | string
   titulo: string
   detalhe?: ReactNode
+  /** O número do quadrado à esquerda. Ausente, o quadrado não aparece. */
+  contagem?: number | null
+  /** O texto do botão. Sem ele (e com `aoAbrir`), a faixa fecha com a seta de sempre. */
+  acao?: string
   aoAbrir?: () => void
 }) {
   const c = classesDoTom(valor)
   const conteudo = (
     <>
-      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-chip ${c.fundo} border ${c.borda}`} />
-      <span className="min-w-0">
-        <span className={`block text-sm font-medium ${c.texto}`}>{titulo}</span>
-        {detalhe ? <span className="mt-0.5 block text-sm text-corpo">{detalhe}</span> : null}
+      {typeof contagem === 'number' ? (
+        <span
+          className={`mono flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] text-[17px] font-semibold ${c.realce} ${c.texto}`}
+        >
+          {inteiro(contagem)}
+        </span>
+      ) : (
+        <span className={`mt-1 h-2 w-2 shrink-0 rounded-chip ${c.fundo} border ${c.borda}`} />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14.5px] font-semibold text-forte">{titulo}</span>
+        {detalhe ? <span className="mt-0.5 block text-[13px] text-corpo">{detalhe}</span> : null}
       </span>
       {aoAbrir ? (
-        <span aria-hidden className="ml-auto self-center text-fraco">
-          ›
-        </span>
+        acao ? (
+          // Um rótulo, e não um `<button>`: a faixa INTEIRA já é o botão, e um botão dentro
+          // de outro é HTML inválido — além de dar dois alvos de clique para uma ação só.
+          <span
+            className={`shrink-0 rounded-[9px] border px-3.5 py-1.5 text-[13px] font-medium text-forte ${c.borda}`}
+          >
+            {acao}
+          </span>
+        ) : (
+          <span aria-hidden className="shrink-0 self-center text-fraco">
+            ›
+          </span>
+        )
       ) : null}
     </>
   )
-  const classe = `flex w-full items-start gap-3 rounded-card border px-4 py-3 text-left ${c.borda} ${c.fundo}`
+  const classe = `flex w-full items-center gap-4 rounded-[14px] border px-5 py-[18px] text-left ${c.borda} ${c.fundoFraco}`
   return aoAbrir ? (
     <button type="button" onClick={aoAbrir} className={`${classe} transition hover:brightness-125`}>
       {conteudo}
@@ -1170,21 +1307,59 @@ export function PassoPeriodo({
  * `aoClicar` na linha inteira: no desktop o alvo é o mouse, e uma linha inteira clicável é
  * mais fácil de acertar que um link no meio dela.
  */
+/**
+ * Uma coluna da tabela.
+ *
+ * `largura` é CSS (`250px`, `1fr`, `minmax(0,1fr)`) e serve para segurar a coluna que
+ * carrega texto longo. Sem ela, a coluna de nome com um aviso dentro reservava a largura do
+ * texto inteiro e empurrava os números para fora da tela, atrás de uma rolagem lateral que
+ * ninguém procura.
+ */
+export type ColunaDaTabela<T> = {
+  titulo: string
+  alinhar?: 'esq' | 'dir'
+  largura?: string
+  celula: (item: T) => ReactNode
+}
+
+/**
+ * A tabela do portal.
+ *
+ * `tomDaLinha` acende uma barra de 3px na borda esquerda de cada linha, na cor do estado
+ * daquela linha. É emprestado do meuWatt e é o que faz o estado ser lido ANTES do texto:
+ * numa lista de dezessete usinas, a vermelha se acha sem ler nome nenhum. O tom vem do
+ * servidor, como todo tom — a tabela não classifica coisa alguma.
+ *
+ * **Seis colunas é o teto.** Não é regra de gosto: acima disso a tabela transborda num
+ * monitor de 1500 px e a última coluna some atrás de uma rolagem lateral. O que não cabe
+ * vira segunda linha da célula — ver a coluna "Manutenção" da Visão geral, que reúne três
+ * contadores que eram três colunas.
+ */
 export function Tabela<T>({
   colunas,
   linhas,
   chave,
   aoClicar,
+  tomDaLinha,
   vazio,
 }: {
-  colunas: { titulo: string; alinhar?: 'esq' | 'dir'; celula: (item: T) => ReactNode }[]
+  colunas: ColunaDaTabela<T>[]
   linhas: T[]
   chave: (item: T) => string | number
   aoClicar?: (item: T) => void
+  tomDaLinha?: (item: T) => Tom | string
   vazio?: ReactNode
 }) {
   if (linhas.length === 0 && vazio) return <>{vazio}</>
-  return <TabelaRolavel colunas={colunas} linhas={linhas} chave={chave} aoClicar={aoClicar} />
+  return (
+    <TabelaRolavel
+      colunas={colunas}
+      linhas={linhas}
+      chave={chave}
+      aoClicar={aoClicar}
+      tomDaLinha={tomDaLinha}
+    />
+  )
 }
 
 /**
@@ -1206,11 +1381,13 @@ function TabelaRolavel<T>({
   linhas,
   chave,
   aoClicar,
+  tomDaLinha,
 }: {
-  colunas: { titulo: string; alinhar?: 'esq' | 'dir'; celula: (item: T) => ReactNode }[]
+  colunas: ColunaDaTabela<T>[]
   linhas: T[]
   chave: (item: T) => string | number
   aoClicar?: (item: T) => void
+  tomDaLinha?: (item: T) => Tom | string
 }) {
   const caixa = useRef<HTMLDivElement | null>(null)
   const [sombra, setSombra] = useState<{ esq: boolean; dir: boolean }>({
@@ -1269,12 +1446,26 @@ function TabelaRolavel<T>({
         a célula, e ela se limita com `max-w` (ver a coluna "Pendência").
       */}
       <table className="w-full min-w-max border-collapse text-sm">
+        {/* A largura declarada vale como pedido, não como ordem: o `min-w-max` da tabela
+            continua mandando quando o conteúdo não cabe. É o que impede a coluna de nome de
+            reservar a largura do aviso inteiro e empurrar os números para fora. */}
+        {colunas.some((c) => c.largura) ? (
+          <colgroup>
+            {tomDaLinha ? <col style={{ width: '3px' }} /> : null}
+            {colunas.map((c) => (
+              <col key={c.titulo} style={c.largura ? { width: c.largura } : undefined} />
+            ))}
+          </colgroup>
+        ) : null}
         <thead>
           <tr className="border-b border-borda">
+            {/* A coluna da barra de tom não tem cabeçalho: o que ela diz já está escrito na
+                coluna de situação, ao lado. Um título ali seria legenda de uma legenda. */}
+            {tomDaLinha ? <th className="w-[3px] p-0" aria-hidden /> : null}
             {colunas.map((c) => (
               <th
                 key={c.titulo}
-                className={`whitespace-nowrap px-3 py-2 text-xs font-medium uppercase tracking-wide text-rotulo ${
+                className={`rotulo-secao whitespace-nowrap px-3 py-2 ${
                   c.alinhar === 'dir' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -1292,10 +1483,20 @@ function TabelaRolavel<T>({
                 aoClicar ? 'cursor-pointer hover:bg-superficie-alta' : ''
               }`}
             >
+              {tomDaLinha ? (
+                <td className="p-0 align-middle">
+                  {/* 3px de largura, 34px de altura: uma marca, não uma borda. Uma borda de
+                      linha inteira somaria dezessete traços verticais e viraria grade. */}
+                  <span
+                    aria-hidden
+                    className={`block h-[34px] w-[3px] rounded-[2px] bg-tom-${tons(tomDaLinha(item))}`}
+                  />
+                </td>
+              ) : null}
               {colunas.map((c) => (
                 <td
                   key={c.titulo}
-                  className={`px-3 py-3 align-middle text-corpo ${c.alinhar === 'dir' ? 'text-right' : ''}`}
+                  className={`px-3 py-3.5 align-middle text-corpo ${c.alinhar === 'dir' ? 'text-right' : ''}`}
                 >
                   {c.celula(item)}
                 </td>
@@ -1311,13 +1512,28 @@ function TabelaRolavel<T>({
 
 /* ------------------------------------------------------------------ barra */
 
-/** Progresso simples — tarefas feitas de uma OS, por exemplo. */
+/**
+ * Progresso — tarefas feitas de uma OS, medido contra o esperado numa célula de tabela.
+ *
+ * 8px de altura, e não 6: ela passou a entrar DENTRO da célula e do cartão de veredito,
+ * onde precisa ser lida de relance junto com o número ao lado. O trilho é
+ * `superficie-alta`, o token mais claro que existe — o desenho pedia `rgba(255,255,255,.07)`
+ * e o `tailwind.config.js` é a fonte única de cor, então vale o vizinho de 0,08.
+ *
+ * `pct` nulo desenha o trilho VAZIO, sem preenchimento. Barra de largura zero e barra sem
+ * dado se pareceriam, mas dizem coisas opostas — e é a segunda que precisa do "—" ao lado.
+ */
 export function Barra({ pct, tom: valor = 'ok' }: { pct: number | null; tom?: Tom | string }) {
   // `bg-tom-X` cheio (sem opacidade) está na safelist do Tailwind — a classe existe sempre.
-  const largura = pct === null ? 0 : Math.max(0, Math.min(100, pct))
+  const largura = pct === null ? null : Math.max(0, Math.min(100, pct))
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-barra bg-afundado">
-      <div className={`h-full bg-tom-${tons(valor)}`} style={{ width: `${largura}%` }} />
+    <div className="h-2 w-full overflow-hidden rounded-[4px] bg-superficie-alta">
+      {largura === null ? null : (
+        <div
+          className={`h-full rounded-[4px] bg-tom-${tons(valor)}`}
+          style={{ width: `${largura}%` }}
+        />
+      )}
     </div>
   )
 }
@@ -1517,20 +1733,29 @@ export function Tela4Estados<T>({
 export type PontoBarra = { rotulo: string; valor: number | null; esperado?: number | null }
 
 /**
- * Barras de energia, com o esperado do projeto sobreposto.
+ * Medido × projeto, uma usina por posição — **o par lado a lado**.
  *
- * Duas decisões que vêm do aplicativo e não devem ser "simplificadas":
+ * O esperado era uma linha tracejada sobre a barra medida, e a pergunta que a Visão geral faz
+ * não é "cheguei lá?" e sim "quem puxou a carteira para baixo, e por quanto". Com a marca
+ * sobreposta, duas usinas a 60% pareciam iguais mesmo quando uma devia 8 MWh e a outra 300:
+ * o que se lia era a altura da barra, que é o valor ABSOLUTO, e não a distância até a marca.
+ * Lado a lado, a falta é um espaço — e espaço se compara de longe.
  *
- * **Ponto sem leitura NÃO vira barra rasteira.** Ele fica vazio. Barra no zero se lê como
- * "a usina não gerou", que é uma afirmação diferente de "não medimos" — e é o erro mais caro
- * que este portal pode cometer.
+ * Três regras que vêm do aplicativo e não devem ser "simplificadas":
  *
- * **O esperado é uma marca, não uma segunda barra.** A pergunta é "cheguei lá?", e duas
- * barras lado a lado transformam isso em comparação de tamanhos.
+ * **Ponto sem leitura NÃO vira barra rasteira.** Ele vira um traço de 1px e a palavra "sem
+ * leitura". Barra no zero se lê como "a usina não gerou", que é uma afirmação diferente de
+ * "não medimos" — e é o erro mais caro que este portal pode cometer.
+ *
+ * **O valor medido é rotulado acima da coluna.** Um gráfico que exige passar o mouse para
+ * dizer o número não serve a quem projeta a tela numa reunião, que é onde ele é lido.
+ *
+ * **O âmbar é do medido, sempre.** O projeto é cinza porque é o trilho, o alvo — pintá-lo de
+ * uma cor de status faria dele um veredito, e quem dá veredito aqui é o `tom` do servidor.
  */
 export function GraficoBarras({
   pontos,
-  altura = 200,
+  altura = 170,
   unidade = 'kWh',
 }: {
   pontos: PontoBarra[]
@@ -1540,58 +1765,77 @@ export function GraficoBarras({
   const [marcado, setMarcado] = useState<number | null>(null)
   if (pontos.length === 0) return null
 
-  const valores = pontos.flatMap((p) => [p.valor, p.esperado ?? null]).filter((v): v is number => typeof v === 'number')
+  // O rótulo usa o MESMO formatador da tabela que fica embaixo. Com `numero` cru a barra
+  // dizia "47.634,5" e a linha da mesma usina dizia "47,6 MWh": dois números para a mesma
+  // medição, na mesma tela. `unidade` fica para quem mede outra coisa que não energia.
+  const rotular = (v: number | null) => (unidade === 'kWh' ? energia(v) : `${numero(v, 1)} ${unidade}`)
+
+  const valores = pontos
+    .flatMap((p) => [p.valor, p.esperado ?? null])
+    .filter((v): v is number => typeof v === 'number')
   const maximo = valores.length ? Math.max(...valores) : 0
-  const alturaDe = (v: number | null) => (maximo > 0 && typeof v === 'number' ? (v / maximo) * altura : 0)
-  const lido = marcado !== null ? pontos[marcado] : null
+  const alturaDe = (v: number | null) =>
+    maximo > 0 && typeof v === 'number' ? Math.max(2, (v / maximo) * altura) : 0
 
   return (
     <div>
-      <div className="mb-2 h-5 text-xs text-corpo">
-        {lido ? (
-          <>
-            {lido.rotulo} · <Num>{numero(lido.valor, 1)}</Num> {unidade}
-            {typeof lido.esperado === 'number' ? (
-              <span className="text-fraco">
-                {' '}
-                · esperado <Num>{numero(lido.esperado, 1)}</Num>
-              </span>
-            ) : null}
-          </>
-        ) : (
-          <span className="text-fraco">passe o mouse numa barra para ver o valor</span>
-        )}
-      </div>
-
-      <div className="flex items-end gap-1" style={{ height: altura }}>
+      <div className="flex items-end gap-3" style={{ height: altura + 26 }}>
         {pontos.map((p, i) => (
           <div
             key={`${p.rotulo}-${i}`}
             onMouseEnter={() => setMarcado(i)}
             onMouseLeave={() => setMarcado(null)}
-            className="relative flex flex-1 cursor-default items-end justify-center"
-            style={{ height: altura }}
+            title={
+              typeof p.esperado === 'number'
+                ? `${p.rotulo}: ${rotular(p.valor)} de ${rotular(p.esperado)}`
+                : `${p.rotulo}: ${rotular(p.valor)}`
+            }
+            className="flex flex-1 cursor-default flex-col items-center justify-end gap-2"
           >
-            {typeof p.valor === 'number' ? (
-              <div
-                className={`w-full rounded-t-[3px] ${marcado === i ? 'bg-ambar' : 'bg-ambar/70'}`}
-                style={{ height: Math.max(2, alturaDe(p.valor)) }}
-              />
-            ) : null}
-            {typeof p.esperado === 'number' && maximo > 0 ? (
-              <div
-                className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-fraco"
-                style={{ bottom: alturaDe(p.esperado) }}
-              />
-            ) : null}
+            <span
+              className={`mono text-[11.5px] ${
+                p.valor === null ? 'text-fraco' : 'text-ambar-texto'
+              }`}
+            >
+              {p.valor === null ? 'sem leitura' : rotular(p.valor)}
+            </span>
+            <div className="flex items-end justify-center gap-[5px]" style={{ height: altura }}>
+              {p.valor === null ? (
+                // O traço: a posição existe, a medição não. É a diferença entre "não gerou"
+                // e "não medimos", desenhada.
+                <span className="h-px w-[26px] bg-borda-forte" />
+              ) : (
+                <span
+                  className={`w-[26px] rounded-t-[3px] transition-colors ${
+                    marcado === i ? 'bg-ambar-texto' : 'bg-ambar'
+                  }`}
+                  style={{ height: alturaDe(p.valor) }}
+                />
+              )}
+              {typeof p.esperado === 'number' ? (
+                <span
+                  className="w-[26px] rounded-t-[3px] bg-superficie-destacada"
+                  style={{ height: alturaDe(p.esperado) }}
+                />
+              ) : null}
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="mt-2 flex gap-1">
+      {/* O eixo de base: 1px que diz onde é o zero. Sem ele as barras flutuam. */}
+      <div className="h-px w-full bg-borda-forte" />
+
+      <div className="mt-2 flex gap-3">
         {pontos.map((p, i) => (
-          <div key={`r-${p.rotulo}-${i}`} className="flex-1 text-center text-[10px] text-fraco">
-            {i % Math.max(1, Math.ceil(pontos.length / 12)) === 0 ? p.rotulo : ''}
+          <div
+            key={`r-${p.rotulo}-${i}`}
+            title={p.rotulo}
+            className={`flex-1 truncate text-center text-[11px] ${
+              marcado === i ? 'text-corpo' : 'text-fraco'
+            }`}
+          >
+            {p.rotulo}
           </div>
         ))}
       </div>
