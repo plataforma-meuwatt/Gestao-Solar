@@ -53,6 +53,7 @@ import {
 } from '@/components/base'
 import { dataCurta, inteiro, quando } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
+import { classesDoTom } from '@/lib/tons'
 import { Drawer } from '@/features/pendencias/Drawer'
 import {
   BarraDeFiltros,
@@ -114,6 +115,35 @@ function EsqueletoDaLista() {
   )
 }
 
+/**
+ * As abertas divididas em vencidas × no prazo, numa barra só.
+ *
+ * Os dois números já estavam na tela, em dois KPIs lado a lado — e lidos assim ("14" e "4")
+ * não dizem a proporção, que é a pergunta: quatro vencidas de catorze é um problema; quatro
+ * de quatro é outro. As duas partes são do MESMO tom porque são a mesma coisa em estágios
+ * diferentes de urgência, e o que as separa é a intensidade, não a cor.
+ *
+ * Nulo não vira barra: sem saber quantas venceram, não há proporção a desenhar.
+ */
+function BarraDasAbertas({ abertas, vencidas }: { abertas: number | null; vencidas: number | null }) {
+  if (abertas === null || vencidas === null || abertas <= 0) return null
+  const pctVencidas = Math.max(0, Math.min(100, (vencidas / abertas) * 100))
+  const c = classesDoTom('parado')
+  return (
+    <div className="mt-5">
+      <div className="flex h-2 w-full overflow-hidden rounded-[4px] bg-superficie-alta">
+        <span className={`h-full ${c.texto} bg-tom-parado`} style={{ width: `${pctVencidas}%` }} />
+        <span className={`h-full ${classesDoTom('alerta').meio}`} style={{ width: `${100 - pctVencidas}%` }} />
+      </div>
+      <div className="mono mt-2 flex flex-wrap gap-x-4 text-[11.5px]">
+        <span className="text-tom-parado">{inteiro(vencidas)} com prazo vencido</span>
+        <span className="text-tom-alerta">{inteiro(abertas - vencidas)} ainda no prazo</span>
+        <span className="text-fraco">de {inteiro(abertas)} abertas</span>
+      </div>
+    </div>
+  )
+}
+
 function Contadores({ dados }: { dados: PendenciasOut }) {
   return (
     <Cartao>
@@ -129,6 +159,8 @@ function Contadores({ dados }: { dados: PendenciasOut }) {
         <Kpi rotulo="Concluídas" valor={inteiro(dados.concluidas)} />
         <Kpi rotulo="Total compartilhado" valor={inteiro(dados.total)} />
       </div>
+
+      <BarraDasAbertas abertas={dados.abertas} vencidas={dados.prazo_vencido} />
       {/* Dito por escrito, e não deduzido do fato de os números não se mexerem: quem filtra
           e vê o cartão parado precisa saber que é assim de propósito. */}
       <p className="mt-4 text-xs text-fraco">

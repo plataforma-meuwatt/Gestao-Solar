@@ -794,8 +794,12 @@ describe('Comparar manutenção', () => {
     const ibitinga = linhaDe(container, 'Ibitinga')
     // 13 executadas e 4 dispensadas aparecem separadas; somadas dariam 17, e "foi feito" e
     // "foi dispensado" são afirmações diferentes.
-    expect(ibitinga.textContent).toContain('13')
-    expect(ibitinga.textContent).toContain('4 dispensada(s)')
+    //
+    // As duas desceram para dentro da célula de Cumprimento — são o detalhe do MESMO
+    // denominador, e como coluna própria levavam a tabela a oito, transbordando a tela.
+    // A separação, que é o que este teste guarda, continua de pé.
+    expect(ibitinga.textContent).toContain('13 feitas')
+    expect(ibitinga.textContent).toContain('4 dispensadas')
     expect(ibitinga.textContent).not.toContain('17')
   })
 
@@ -818,7 +822,7 @@ describe('Comparar manutenção', () => {
       'Cronograma não publicado neste contrato.',
     )
     // E o cabeçalho do total diz de quantas usinas ele fala.
-    expect(container.textContent).toContain('usinas com cronograma publicado')
+    expect(container.textContent).toContain('Contratos com cronograma publicado')
   })
 
   it('a barra some quando não há denominador — não vira uma barra vazia', async () => {

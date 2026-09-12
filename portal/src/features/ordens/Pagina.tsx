@@ -43,6 +43,7 @@ import {
   Vazio,
 } from '@/components/base'
 import { dataCurta, duracao, inteiro } from '@/lib/format'
+import { classesDoTom } from '@/lib/tons'
 import {
   blocoDaOrdem,
   dataDaOrdem,
@@ -172,11 +173,17 @@ export default function Ordens() {
                 {dados.aviso ? <Aviso>{dados.aviso}</Aviso> : null}
 
                 {emCurso ? (
-                  <Cartao semPadding>
+                  // A borda e o fundo saem do TOM DA ORDEM, que é do servidor. Um cartão
+                  // destacado com cor fixa diria "isto está bem" mesmo quando a OS em curso
+                  // é a que estourou o prazo — e quem classifica prazo é o meuPlano.
+                  <Cartao
+                    semPadding
+                    className={`${classesDoTom(emCurso.tom).borda} ${classesDoTom(emCurso.tom).fundoFraco}`}
+                  >
                     <button
                       type="button"
                       onClick={() => abrir(emCurso)}
-                      className="w-full rounded-card p-5 text-left transition hover:bg-superficie-alta"
+                      className="w-full rounded-card p-6 text-left transition hover:brightness-125"
                     >
                       <CabecalhoCard
                         rotulo="Acontecendo agora"
@@ -237,49 +244,61 @@ export default function Ordens() {
                       colunas={[
                         {
                           titulo: 'Ordem',
+                          largura: 'minmax(0,1fr)',
                           celula: (o) => (
-                            <span className="block min-w-0">
+                            <span className="block min-w-0 max-w-[26rem]">
                               <span className="block truncate font-medium text-forte">
                                 {o.objetivo}
                               </span>
                               {/* o número da OS é IDENTIDADE, não quantidade: vai sem separador
                                   de milhar (a OS 1016 não é "1.016") e é por ele que o cliente
                                   fala da ordem com a equipe. */}
-                              <span className="block text-xs text-fraco">
-                                OS <Num>{o.id}</Num>
+                              <span className="mt-1 flex items-center gap-2">
+                                <span className="text-xs text-fraco">
+                                  OS <Num>{o.id}</Num>
+                                </span>
+                                <SeloClasse
+                                  classificacao={o.classificacao}
+                                  tom={o.classificacao_tom}
+                                />
                               </span>
                             </span>
                           ),
                         },
                         {
                           titulo: tituloDaData(bloco),
+                          largura: '130px',
                           celula: (o) => <Num>{dataCurta(dataDaOrdem(o))}</Num>,
                         },
-                        { titulo: 'Situação', celula: (o) => <Selo tom={o.tom}>{o.situacao}</Selo> },
                         {
-                          titulo: 'Classificação',
-                          celula: (o) => (
-                            <SeloClasse
-                              classificacao={o.classificacao}
-                              tom={o.classificacao_tom}
-                            />
-                          ),
+                          titulo: 'Situação',
+                          largura: '190px',
+                          celula: (o) => <Selo tom={o.tom}>{o.situacao}</Selo>,
                         },
                         {
                           titulo: 'Técnico',
+                          largura: '170px',
                           celula: (o) => <span className="text-fraco">{o.tecnico ?? '—'}</span>,
-                        },
-                        {
-                          titulo: 'Execução',
-                          alinhar: 'dir',
-                          celula: (o) => <Num>{duracao(o.execucao_min)}</Num>,
                         },
                         {
                           titulo: 'Tarefas',
                           alinhar: 'dir',
-                          celula: (o) => <Num>{tarefasTexto(o)}</Num>,
+                          largura: '130px',
+                          celula: (o) => (
+                            <>
+                              <Num>{tarefasTexto(o)}</Num>
+                              {/* a execução embaixo: as duas medem o MESMO trabalho, e
+                                  separadas ocupavam duas colunas para uma leitura só */}
+                              {o.execucao_min === null ? null : (
+                                <span className="block text-xs text-fraco">
+                                  <Num>{duracao(o.execucao_min)}</Num> de execução
+                                </span>
+                              )}
+                            </>
+                          ),
                         },
                       ]}
+                      tomDaLinha={(o) => o.tom}
                       linhas={linhas}
                       chave={(o) => o.id}
                       aoClicar={abrir}

@@ -95,6 +95,16 @@ export default function Conta() {
 
   return (
     <Pagina
+      // O rótulo de contexto identifica a conta pelo APELIDO, não pelo e-mail. A identidade
+      // aqui é o apelido (`bff/app/core/apelido.py`): o e-mail é contato, opcional e não
+      // único — a mesma pessoa pode ter duas contas com o mesmo e-mail e poderes
+      // diferentes. Carimbar o e-mail no alto convidaria a tentar entrar com ele.
+      rotulo={
+        <>
+          {usuario.apelido}
+          {usuario.empresa ? ` · ${usuario.empresa}` : ''}
+        </>
+      }
       titulo="Minha conta"
       subtitulo="Quem está logado, quais usinas enxergo e como troco minha senha"
       acoes={acoes}
@@ -113,8 +123,22 @@ export default function Conta() {
               <Dado rotulo="E-mail" valor={usuario.email} />
               <Dado rotulo="Empresa" valor={usuario.empresa} />
             </dl>
-            <p className="mt-3 text-xs text-fraco">
+            <p className="mt-3 text-xs leading-relaxed text-fraco">
               Para corrigir qualquer um destes dados, fale com o seu gestor de conta.
+            </p>
+            {/*
+              A ponte para os dois produtos, dita por escrito.
+
+              O portal lê o meuWatt e o meuPlano por um token que o gestor conecta do lado
+              dele — não há nada para o cliente configurar aqui, e é de propósito: o token
+              vale o que a conta de quem o gerou vale, e uma tela de conexão no portal daria
+              ao cliente a impressão de que ele pode trocá-lo. Quem desconecta é o gestor, e
+              desconectar não é revogar: o token só deixa de ser usado pelo Gestão Solar e
+              continua válido no produto de origem, que é onde a porta se fecha.
+            */}
+            <p className="mt-2 text-xs leading-relaxed text-fraco">
+              A conexão com o monitoramento e com a manutenção é mantida pelo seu gestor de
+              conta. Os atalhos no topo abrem os dois produtos já autenticado.
             </p>
           </Cartao>
 

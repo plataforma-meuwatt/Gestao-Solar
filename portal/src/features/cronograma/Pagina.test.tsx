@@ -325,7 +325,9 @@ describe('tela de Cronograma', () => {
     // "41,9 %" na outra. O 270 continua na tela — mas como contexto, nunca como denominador.
     servidor(cronograma())
     montar()
-    expect(await screen.findByText('13 de 13')).toBeTruthy()
+    // `findAllByText` porque "13 de 13" aparece DUAS vezes de propósito: no número grande e
+    // no bloco do mês que fechou, na fita dos doze meses. As duas dizem a mesma verdade.
+    expect((await screen.findAllByText('13 de 13')).length).toBeGreaterThan(0)
     expect(screen.getByText('Atividades cumpridas até aqui')).toBeTruthy()
     expect(screen.getByText(/previstas no contrato/).textContent).toContain('270')
     expect(screen.queryByText('13 de 270')).toBeNull()

@@ -23,6 +23,8 @@
  * continuar voltando vazio.
  */
 
+import { classesDoTom } from '@/lib/tons'
+
 /**
  * O contorno do monograma, normalizado num quadrado de 100.
  *
@@ -123,6 +125,45 @@ export function LockupGS({
           </span>
         ) : null}
       </span>
+    </span>
+  )
+}
+
+/**
+ * O anel: a marca de DOCUMENTO.
+ *
+ * O selo cheio identifica o produto; o anel identifica uma peça que saiu dele — um PDF, um
+ * fechamento, um relatório. São o mesmo monograma em dois pesos de presença: o selo é
+ * chapado e pequeno, para conviver com o resto da interface; o anel é vazado e grande, para
+ * ocupar a capa de um documento que ainda não tem miniatura.
+ *
+ * É o mesmo desenho da `Rosca` do fechamento de mês (`features/energia/graficos.tsx`), e
+ * isso não é coincidência: as duas são um círculo que emoldura um dado.
+ *
+ * `tom` pinta o anel na cor do estado do documento (o anexo de paradas em `parado`, por
+ * exemplo). Sem ele, âmbar — a cor da marca. `tracejado` é o documento que NÃO existe: a
+ * peça não publicada não desaparece nem fica cinza-morta, ela aparece com a capa vazada.
+ */
+export function AnelGS({
+  tamanho = 72,
+  tom,
+  tracejado = false,
+}: {
+  tamanho?: number
+  tom?: string
+  tracejado?: boolean
+}) {
+  const cor = tom ? classesDoTom(tom).texto : 'text-ambar-texto'
+  const borda = tom ? classesDoTom(tom).borda : 'border-ambar/50'
+  return (
+    <span
+      aria-hidden
+      style={{ width: tamanho, height: tamanho, fontSize: Math.round(tamanho * 0.36) }}
+      className={`inline-flex shrink-0 items-center justify-center rounded-[50%] border-[2.5px] font-semibold tracking-[-0.03em] ${cor} ${
+        tracejado ? 'border-dashed border-borda-forte' : borda
+      }`}
+    >
+      GS
     </span>
   )
 }

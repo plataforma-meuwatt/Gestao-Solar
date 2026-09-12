@@ -1033,46 +1033,73 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
         />
       ) : null}
 
-      {/* O rodapé GRUDENTO: com quatro cartões na tela, a estimativa e o botão sairiam do campo
-          de visão justamente enquanto se mexe no que os muda. Não é um `Kpi` de propósito —
-          aquela peça é a dos fatos medidos, e isto aqui é uma conta aproximada. */}
-      <div className="sticky bottom-2 z-10 flex flex-wrap items-center justify-between gap-4 rounded-card border border-borda-forte bg-painel px-4 py-3 shadow-xl">
-        <div className="min-w-0 flex-1 text-sm">
-          {impede ? (
-            <span className="text-tom-alerta">{impede.texto}</span>
-          ) : (
-            /* Uma largura POR ABA, e não uma soma. Somar dava "37 colunas" num caderno cuja
-               aba mais larga tem 22 — número que o cliente não tem onde conferir e que o
-               Leia-me do próprio arquivo desmente linha a linha. */
-            <span className="text-fraco">
-              ≈ <Num className="text-forte">{inteiro(conta.linhas)}</Num> linhas ·{' '}
-              {conta.abas.map((aba, i) => (
-                <span key={aba.nome}>
-                  {i > 0 ? ' · ' : ''}
-                  {aba.nome}{' '}
-                  {aba.colunas === null ? (
-                    <>({aba.nota})</>
-                  ) : (
-                    <>
-                      <Num className="text-forte">{inteiro(aba.colunas)}</Num> colunas
-                      {aba.nota ? `, ${aba.nota}` : ''}
-                    </>
-                  )}
-                </span>
-              ))}{' '}
-              · vazio = sem leitura, 0 = zero medido
-            </span>
-          )}
-          {pronto ? (
-            <div className="mt-1 text-sm text-tom-ok">
-              Pronto: <Num>{pronto.nome}</Num> ({tamanhoEmTexto(pronto.bytes)}) — o navegador
-              salvou na sua pasta de downloads.
-            </div>
-          ) : null}
+      {/*
+        O TRILHO DO ARQUIVO, grudento no pé da tela.
+
+        Com quatro cartões de configuração acima, a estimativa e o botão sairiam do campo de
+        visão justamente enquanto se mexe no que os muda — e o defeito que isso produzia é o
+        que o handoff descreve: configurar 22 colunas no escuro e só o Excel revelar o
+        resultado. Aqui o tamanho do arquivo é lido no mesmo gesto em que se muda a fonte.
+
+        Os dois números ganham corpo de 34px (a medida que o redesenho reserva para o
+        "quanto") e o resto desce para legenda. Não é um `Kpi` de propósito: aquela peça é a
+        dos fatos MEDIDOS, e isto é uma conta aproximada — daí o "≈" na frente.
+
+        O que NÃO está aqui, e por quê: o desenho pedia uma prévia das primeiras colunas com
+        três linhas de exemplo. Linha de exemplo é dado inventado na tela, que é o que a
+        REGRA 0 proíbe — e numa tela cujo produto final é uma planilha de medições, três
+        valores fabricados seriam confundidos com a amostra real do arquivo.
+      */}
+      <div className="sticky bottom-2 z-10 rounded-card border border-ambar/28 bg-painel px-5 py-4 shadow-xl">
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div className="min-w-0 flex-1">
+            {impede ? (
+              <span className="text-sm text-tom-alerta">{impede.texto}</span>
+            ) : (
+              <>
+                <div className="rotulo-secao">O arquivo que vai sair</div>
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                  <span className="mono text-[34px] font-semibold leading-none text-forte">
+                    ≈ {inteiro(conta.linhas)}
+                    <span className="ml-2 text-[15px] font-normal text-fraco">linhas</span>
+                  </span>
+                  {/* Uma largura POR ABA, e não uma soma. Somar dava "37 colunas" num caderno
+                      cuja aba mais larga tem 22 — número que o cliente não tem onde conferir
+                      e que o Leia-me do próprio arquivo desmente linha a linha. */}
+                  {conta.abas.map((aba) => (
+                    <span key={aba.nome} className="text-[13px] text-fraco">
+                      {aba.nome}{' '}
+                      {aba.colunas === null ? (
+                        <>({aba.nota})</>
+                      ) : (
+                        <>
+                          <Num className="text-[15px] text-corpo">{inteiro(aba.colunas)}</Num>{' '}
+                          colunas
+                          {aba.nota ? `, ${aba.nota}` : ''}
+                        </>
+                      )}
+                    </span>
+                  ))}
+                </div>
+                {/* A regra do produto, no lugar onde ela é lida: ao lado do arquivo, e não
+                    como texto solto no pé da página. É a diferença entre uma célula vazia e
+                    uma célula com zero — e é a leitura mais cara de errar numa planilha. */}
+                <p className="mono mt-2 text-[11.5px] text-fraco">
+                  Vazio = sem leitura. 0 = zero medido.
+                </p>
+              </>
+            )}
+            {pronto ? (
+              <div className="mt-2 text-sm text-tom-ok">
+                Pronto: <Num>{pronto.nome}</Num> ({tamanhoEmTexto(pronto.bytes)}) — o navegador
+                salvou na sua pasta de downloads.
+              </div>
+            ) : null}
+          </div>
+          <Botao onClick={() => void baixar()} desabilitado={!podeBaixar}>
+            {baixando ? 'Gerando…' : 'Baixar planilha'}
+          </Botao>
         </div>
-        <Botao onClick={() => void baixar()} desabilitado={!podeBaixar}>
-          {baixando ? 'Gerando…' : 'Baixar planilha'}
-        </Botao>
       </div>
 
       <Modal titulo="Preparando a planilha" aberto={baixando} aoFechar={cancelar}>

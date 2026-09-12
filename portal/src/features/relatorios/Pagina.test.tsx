@@ -374,11 +374,19 @@ describe('Relatórios · Energia', () => {
     expect(await screen.findByText('Fechamento de agosto')).toBeTruthy()
     // Os três, na ordem do documento — e com o NOME do cliente, nunca o do arquivo. A
     // terceira peça é o item 5 do pedido do dono; o BFF a recusava até agora.
+    //
+    // Cada peça é um CARTÃO com capa: o nome é o título dele, e o botão diz "Abrir PDF".
+    // Antes o nome era o rótulo do botão — e três botões enfileirados não diziam que o
+    // Resumo Executivo existe, só que dava para clicar nele.
     const nomes = screen
-      .getAllByRole('button')
-      .map((b) => b.textContent)
-      .filter((t) => t === 'Relatório de geração' || t === 'Anexo de paradas' || t === 'Resumo executivo')
+      .getAllByRole('heading', { level: 4 })
+      .map((h) => h.textContent)
+      .filter(
+        (t) =>
+          t === 'Relatório de geração' || t === 'Anexo de paradas' || t === 'Resumo executivo',
+      )
     expect(nomes).toEqual(['Relatório de geração', 'Anexo de paradas', 'Resumo executivo'])
+    expect(screen.getAllByRole('button', { name: 'Abrir PDF' }).length).toBe(3)
     expect(screen.queryByText('resumo-agosto.pdf')).toBeNull()
 
     const caminhos = get.mock.calls.map((c) => String(c[0]))
@@ -404,13 +412,15 @@ describe('Relatórios · Energia', () => {
     })
     montar()
 
-    expect(await screen.findByRole('button', { name: 'Resumo executivo' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Relatório de geração' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Anexo de paradas' })).toBeNull()
-    expect(
-      screen.getByText('Relatório de geração · não publicado neste fechamento'),
-    ).toBeTruthy()
-    expect(screen.getByText('Anexo de paradas · não publicado neste fechamento')).toBeTruthy()
+    // As três aparecem NOMEADAS, publicadas ou não: a peça que falta é estado, não erro.
+    expect(await screen.findByText('Resumo executivo')).toBeTruthy()
+    expect(screen.getByText('Relatório de geração')).toBeTruthy()
+    expect(screen.getByText('Anexo de paradas')).toBeTruthy()
+    // Só a publicada tem como ser aberta — as outras duas não oferecem botão morto.
+    expect(screen.getAllByRole('button', { name: 'Abrir PDF' }).length).toBe(1)
+    // E o rótulo da capa diz qual é qual, em vez de deixar o cliente deduzir pela ausência.
+    expect(screen.getAllByText('Não publicado').length).toBe(2)
+    expect(screen.getAllByText('Publicado').length).toBe(1)
   })
 
   it('lista vazia explica que o fechamento ainda não foi enviado — e não é erro', async () => {

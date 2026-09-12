@@ -470,19 +470,23 @@ describe('Baixar dados — paridade com a tela do meuWatt', () => {
     // ⛔ E ela é POR ABA. Somar as larguras dava um número que não é a largura de nada: os
     // juízes abriram a planilha e acharam 42 colunas em 4 abas onde o rodapé prometia 37, e
     // a aba mais larga tinha 22. Agora cada aba diz a sua, contando o `Início (BRT)`.
-    const rodape = screen.getByText(/linhas ·/)
-    expect(rodape.textContent).toContain('≈')
-    expect(rodape.textContent).toContain('vazio = sem leitura, 0 = zero medido')
-    expect(rodape.textContent).not.toContain('Paradas')
+    //
+    // O rodapé virou o TRILHO DO ARQUIVO: os dois números ganharam corpo e a legenda saiu
+    // da mesma linha que eles. Por isso o alvo agora é o bloco inteiro, e não a frase.
+    const trilho = screen.getByText('O arquivo que vai sair').parentElement as HTMLElement
+    expect(trilho.textContent).toContain('≈')
+    expect(trilho.textContent).toContain('Vazio = sem leitura. 0 = zero medido.')
+    expect(trilho.textContent).not.toContain('Paradas')
     // O padrão da tela é a usina inteira: 20 inversores + Usina + Início = 22 (medido).
-    expect(rodape.textContent).toMatch(/Inversores\s*22 colunas/)
+    expect(trilho.textContent).toMatch(/Inversores\s*22 colunas/)
 
     // (61) Marcar "Intervalos desligados" acrescenta uma ABA ao arquivo — e ela não tem
     // número de linhas para dar, então o rodapé diz o que ela é em vez de inventar um.
     abrirColunas('Inversores')
     fireEvent.click(screen.getByRole('checkbox', { name: /Intervalos desligados/ }))
     fireEvent.keyDown(document, { key: 'Escape' })
-    const comParadas = screen.getByText(/linhas ·/).textContent ?? ''
+    const comParadas =
+      (screen.getByText('O arquivo que vai sair').parentElement as HTMLElement).textContent ?? ''
     expect(comParadas).toContain('Paradas (uma linha por parada no período)')
     // E a aba de inversores engordou uma coluna por inversor, mais o total da usina.
     expect(comParadas).toMatch(/Inversores\s*43 colunas/)

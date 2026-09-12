@@ -45,7 +45,12 @@
  * fácil — token na query string — é a proibida: endereço entra em log e em histórico. Por
  * isso tudo passa por `abrirPdf`/`baixarArquivo` (fetch + Bearer + blob).
  *
- * ⚠ POR QUE A ABA ENERGIA AINDA ABRE VAZIA (medido em 05/09/2026, no upstream real). O
+ * ✅ A ABA ENERGIA DEIXOU DE ABRIR VAZIA (conferido em 12/09/2026, no upstream real): Porto
+ * Ferreira tem o fechamento de agosto publicado com as TRÊS peças, e a tela as mostra. O
+ * aviso abaixo fica como história do caso e como diagnóstico para a usina que ainda estiver
+ * sem arquivo — o sintoma é idêntico, e a causa não é deste lado.
+ *
+ * ⚠ POR QUE A ABA ENERGIA ABRIA VAZIA (medido em 05/09/2026, no upstream real). O
  * caminho está inteiro deste lado: o BFF aceita as três peças (`geracao`, `paradas`,
  * `resumo`), recusa qualquer outra com 422, e a tela nomeia cada uma. O que não existe é o
  * ARQUIVO: `GET /reports/portal` do meuWatt devolve hoje cinco fechamentos — Tietê, Ouro
@@ -63,12 +68,12 @@ import {
   Botao,
   Cartao,
   LinhaNavegacao,
-  Num,
   Pagina,
   Segmentado,
   Tela4Estados,
   Vazio,
 } from '@/components/base'
+import { AnelGS } from '@/components/marca'
 import { dataCurta, dataPorExtenso } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
 import {
@@ -183,12 +188,109 @@ function PonteParaDados({ usinaId }: { usinaId: number }) {
   )
 }
 
+/**
+ * O que cada peça do fechamento contém, em uma frase.
+ *
+ * É descrição do PRODUTO — o que aquele documento é, sempre —, e não dado de medição: o
+ * "Anexo de paradas" contém as paradas do mês em qualquer usina e em qualquer competência.
+ * Por isso pode morar aqui, ao lado do nome que já mora. O que nunca moraria aqui é um
+ * número, uma contagem ou uma data: essas vêm do servidor, no `Documento`.
+ */
+const O_QUE_CONTEM: Record<string, string> = {
+  geracao: 'A energia medida do mês contra a meta do projeto, dia a dia e por inversor.',
+  paradas: 'Cada parada do mês: quando começou, quanto durou e quanta energia deixou de gerar.',
+  resumo: 'As duas páginas que vão à diretoria — o veredito do mês, sem o detalhamento.',
+}
+
 /** O nome que o cliente lê. Kind desconhecido sai com o nome que o servidor mandou. */
 function nomeDaPeca(tipo: string, arquivo: ArquivoDoDocumento | null): string {
   const conhecido = NOME_DO_ARQUIVO[tipo]
   if (conhecido) return conhecido
   if (arquivo !== null && arquivo.nome) return arquivo.nome
   return tipo
+}
+
+/**
+ * O cartão de UMA peça do fechamento — publicada ou não.
+ *
+ * **A peça que falta não desaparece e não fica cinza-morta.** Ela aparece com a capa vazada,
+ * a frase que explica o que ela seria, e o caminho para pedi-la. Escondê-la deixaria o
+ * cliente sem saber se o Resumo Executivo não existe naquele mês ou se a tela esqueceu de
+ * mostrá-lo — e é justamente o resumo que a diretoria pede.
+ *
+ * A capa tem o anel da marca porque um PDF não tem miniatura antes de ser aberto, e uma
+ * caixa vazia de 132px se lê como imagem que não carregou.
+ */
+function CartaoDaPeca({
+  tipo,
+  arquivo,
+  documentoId,
+  tom,
+  baixando,
+  aoBaixar,
+}: {
+  tipo: string
+  arquivo: ArquivoDoDocumento | null
+  documentoId: number
+  tom?: string
+  baixando: string | null
+  aoBaixar: (marca: string, caminho: string, nome: string) => void
+}) {
+  const nome = nomeDaPeca(tipo, arquivo)
+  const marca = `${documentoId}-${tipo}`
+  const publicada = arquivo !== null
+  return (
+    <div
+      className={`overflow-hidden rounded-card border ${
+        publicada ? 'border-borda bg-superficie' : 'border-dashed border-borda'
+      }`}
+    >
+      <div
+        className={`flex h-[132px] items-center justify-center ${publicada ? 'bg-afundado' : ''}`}
+        style={
+          publicada
+            ? undefined
+            : {
+                // A hachura diz "vazio de propósito". Um fundo chapado diria "carregando".
+                backgroundImage:
+                  'repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 6px, transparent 6px 12px)',
+              }
+        }
+      >
+        <AnelGS tom={publicada ? tom : undefined} tracejado={!publicada} />
+      </div>
+      <div className="border-t border-borda p-5">
+        <p className="rotulo-secao">{publicada ? 'Publicado' : 'Não publicado'}</p>
+        <h4 className="mt-2 text-base font-semibold text-forte">{nome}</h4>
+        {O_QUE_CONTEM[tipo] ? (
+          <p className="mt-1.5 text-[13px] leading-relaxed text-fraco">{O_QUE_CONTEM[tipo]}</p>
+        ) : null}
+        <div className="mt-4">
+          {publicada ? (
+            <Botao
+              variante="secundario"
+              desabilitado={baixando !== null}
+              onClick={() =>
+                aoBaixar(
+                  marca,
+                  caminhoDoArquivo(documentoId, tipo),
+                  arquivo.nome ? arquivo.nome : `${marca}.pdf`,
+                )
+              }
+            >
+              {baixando === marca ? 'Abrindo…' : 'Abrir PDF'}
+            </Botao>
+          ) : (
+            // Não é botão: não há rota de pedido no BFF, e um botão que não faz nada é pior
+            // que nenhum. É a frase que diz a quem pedir.
+            <p className="text-[13px] text-fraco">
+              Para publicar esta peça, peça ao seu gestor de conta — ela é gerada no meuWatt.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function CartaoDoDocumento({
@@ -208,72 +310,43 @@ function CartaoDoDocumento({
   )
 
   return (
-    <Cartao>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <Cartao className="p-6">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-medium text-forte">{d.nome}</h3>
-          <p className="mt-0.5 text-xs text-fraco">
+          <h3 className="truncate text-base font-semibold text-forte">{d.nome}</h3>
+          <p className="mono mt-1 text-xs text-fraco">
             {d.periodo ? `${d.periodo} · ` : ''}
-            <Num>{dataCurta(d.de)}</Num> a <Num>{dataCurta(d.ate)}</Num>
+            {dataCurta(d.de)} a {dataCurta(d.ate)}
           </p>
         </div>
         <span className="text-xs text-fraco">publicado em {dataPorExtenso(d.publicado_em)}</span>
       </div>
 
-      {d.arquivos.length === 0 ? (
-        // O fechamento existe mas nenhum arquivo veio junto: dizer isso é melhor que
-        // oferecer um botão que devolveria 404.
-        <p className="mt-3 text-sm text-fraco">Este fechamento não tem arquivo publicado.</p>
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {PECAS_DO_FECHAMENTO.map((tipo) => {
-            const a = porTipo.get(tipo) ?? null
-            const nome = nomeDaPeca(tipo, a)
-            if (a === null) {
-              // Peça que falta é ESTADO, não erro: o Resumo Executivo só existe quando o mês
-              // teve o resumo gerado no meuWatt, e escondê-la deixaria o cliente sem saber se
-              // ela não existe ou se a tela esqueceu de mostrá-la.
-              return (
-                <span
-                  key={tipo}
-                  className="inline-flex min-h-[38px] items-center rounded-campo border border-dashed border-borda px-3.5 text-sm text-fraco"
-                >
-                  {nome} · não publicado neste fechamento
-                </span>
-              )
-            }
-            const marca = `${d.id}-${tipo}`
-            return (
-              <Botao
-                key={marca}
-                variante="secundario"
-                desabilitado={baixando !== null}
-                onClick={() =>
-                  aoBaixar(marca, caminhoDoArquivo(d.id, tipo), a.nome ? a.nome : `${marca}.pdf`)
-                }
-              >
-                {baixando === marca ? 'Abrindo…' : nome}
-              </Botao>
-            )
-          })}
-
-          {extras.map((a) => {
-            const marca = `${d.id}-${a.tipo}`
-            return (
-              <Botao
-                key={marca}
-                variante="secundario"
-                desabilitado={baixando !== null}
-                onClick={() =>
-                  aoBaixar(marca, caminhoDoArquivo(d.id, a.tipo), a.nome ? a.nome : `${marca}.pdf`)
-                }
-              >
-                {baixando === marca ? 'Abrindo…' : nomeDaPeca(a.tipo, a)}
-              </Botao>
-            )
-          })}
-        </div>
-      )}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {PECAS_DO_FECHAMENTO.map((tipo) => (
+          <CartaoDaPeca
+            key={tipo}
+            tipo={tipo}
+            arquivo={porTipo.get(tipo) ?? null}
+            documentoId={d.id}
+            // O anexo de paradas fala de interrupção, e o tom dele diz isso na capa. Não é
+            // veredito sobre o mês: é a espécie do documento, que é fixa.
+            tom={tipo === 'paradas' ? 'parado' : undefined}
+            baixando={baixando}
+            aoBaixar={aoBaixar}
+          />
+        ))}
+        {extras.map((a) => (
+          <CartaoDaPeca
+            key={a.tipo}
+            tipo={a.tipo}
+            arquivo={a}
+            documentoId={d.id}
+            baixando={baixando}
+            aoBaixar={aoBaixar}
+          />
+        ))}
+      </div>
     </Cartao>
   )
 }

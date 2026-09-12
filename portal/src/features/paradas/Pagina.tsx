@@ -50,6 +50,7 @@ import {
   type ParadasOut,
   type RecorteDeParadas,
 } from '@/features/paradas/api'
+import { QuandoAconteceram } from '@/features/paradas/QuandoAconteceram'
 
 /** A mancha do que vai chegar: os quatro números e a lista. Nunca um spinner solto. */
 function EsqueletoParadas() {
@@ -93,46 +94,65 @@ function Numeros({
         rotulo={rotulo}
         direita={<AtualizadoAs em={atualizadoEm} offlineDesde={offlineDesde} />}
       />
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi
-          rotulo="Paradas"
-          valor={inteiro(dados.total)}
-          tamanho="grande"
-          tom={semParada ? 'ok' : undefined}
-          detalhe={`de ${dataCurta(dados.inicio)} a ${dataCurta(dados.fim)}`}
-        />
-        <Kpi
-          rotulo="Tempo parado"
-          valor={duracao(dados.tempo_parado_min)}
-          // Nulo com paradas na lista não é "zero minuto": é o BFF recusando somar pela
-          // metade porque uma delas veio sem duração. Dizer isso evita a leitura errada.
-          detalhe={
-            dados.tempo_parado_min === null && !semParada
-              ? 'alguma parada veio sem o tempo'
-              : undefined
-          }
-        />
-        <Kpi
-          rotulo="Energia perdida"
-          valor={energia(dados.perda_kwh)}
-          detalhe={
-            dados.perda_kwh === null && !semParada
-              ? 'alguma parada veio sem o número'
-              : undefined
-          }
-        />
-        <Kpi
-          rotulo="Em aberto agora"
-          valor={inteiro(dados.em_aberto)}
-          tom={dados.em_aberto > 0 ? 'parado' : 'ok'}
-          detalhe={
-            dados.em_aberto > 0 ? (
-              <Selo tom="parado">Ainda parada</Selo>
-            ) : (
-              'nada parado neste momento'
-            )
-          }
-        />
+      {/*
+        O CUSTO é o veredito, e o custo é TEMPO. Os quatro números eram do mesmo tamanho, e
+        com isso a contagem de paradas ("24") liderava a tela — que é o número que menos
+        importa: vinte e quatro paradas de dezenove minutos num mês custam menos do que uma
+        de seis horas, e a contagem não distingue as duas.
+      */}
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_1px_300px]">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-end gap-7">
+            <Kpi
+              rotulo="Tempo parado"
+              valor={duracao(dados.tempo_parado_min)}
+              tamanho="veredito"
+              tom={semParada ? 'ok' : undefined}
+            />
+            <div className="pb-3">
+              <Kpi rotulo="Energia perdida" valor={energia(dados.perda_kwh)} tamanho="grande" />
+            </div>
+          </div>
+          {/* As duas ausências ditas por extenso. Nulo com paradas na lista não é "zero
+              minuto": é o BFF recusando somar pela metade porque alguma veio sem o dado. */}
+          <div className="mt-4 space-y-1 text-[13px] text-fraco">
+            {dados.tempo_parado_min === null && !semParada ? (
+              <p>O tempo somado não aparece porque alguma parada do período veio sem duração.</p>
+            ) : null}
+            {dados.perda_kwh === null && !semParada ? (
+              <p>A energia perdida não aparece porque alguma parada veio sem o número.</p>
+            ) : null}
+            <p>
+              De <Num>{dataCurta(dados.inicio)}</Num> a <Num>{dataCurta(dados.fim)}</Num>.
+            </p>
+          </div>
+        </div>
+
+        <div aria-hidden className="hidden bg-borda lg:block" />
+
+        <div className="flex flex-col gap-4">
+          <Kpi
+            rotulo="Paradas no período"
+            valor={inteiro(dados.total)}
+            tamanho="grande"
+            tom={semParada ? 'ok' : undefined}
+          />
+          <div className="border-t border-borda-fraca pt-4">
+            <Kpi
+              rotulo="Em aberto agora"
+              valor={inteiro(dados.em_aberto)}
+              tamanho="grande"
+              tom={dados.em_aberto > 0 ? 'parado' : 'ok'}
+              detalhe={
+                dados.em_aberto > 0 ? (
+                  <Selo tom="parado">Ainda parada</Selo>
+                ) : (
+                  'nada parado neste momento'
+                )
+              }
+            />
+          </div>
+        </div>
       </div>
     </Cartao>
   )
@@ -153,6 +173,7 @@ function Lista({ paradas }: { paradas: Parada[] }) {
       <Tabela<Parada>
         linhas={paradas}
         chave={(p) => p.id}
+        tomDaLinha={(p) => p.tom}
         colunas={[
           { titulo: 'Início', celula: (p) => <Num>{dataHora(p.inicio)}</Num> },
           // Parada em aberto não tem fim: "—". Carimbar a hora de agora a faria parecer
@@ -216,7 +237,23 @@ function Conteudo({
           descricao="A usina não registrou parada nem degradação nesta janela."
         />
       ) : (
-        <Lista paradas={dados.paradas} />
+        <>
+          {/* O desenho vem ANTES da lista: ele responde "isto é um evento ou um padrão?",
+              que é a pergunta que a parede de linhas quase idênticas não deixa fazer. */}
+          <Cartao className="p-6">
+            <CabecalhoCard
+              rotulo="Quando aconteceram"
+              pergunta="A altura de cada barra é o tempo parado somado no dia"
+            />
+            <QuandoAconteceram
+              paradas={dados.paradas}
+              inicio={dados.inicio}
+              fim={dados.fim}
+              hoje={hojeIso()}
+            />
+          </Cartao>
+          <Lista paradas={dados.paradas} />
+        </>
       )}
     </>
   )

@@ -29,6 +29,7 @@ import { useEffect, useState, type InputHTMLAttributes } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { Aviso } from '@/components/base'
+import { LockupGS } from '@/components/marca'
 import { useAuth } from '@/store/auth'
 
 /** Campo de formulário — rótulo, `id` amarrado e as classes de `index.css`. */
@@ -83,61 +84,119 @@ export default function Entrar() {
   const podeEnviar = apelido.trim().length > 0 && senha.length > 0 && !entrando
 
   return (
-    <div className="grid min-h-full place-items-center px-4 py-10">
-      <div className="w-full max-w-sm">
-        <div className="mb-7 text-center">
-          <p className="text-3xl font-bold tracking-tight text-forte">
-            Gestão <span className="text-ambar">Solar</span>
+    <div className="relative grid min-h-full grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_520px]">
+      {/*
+        O halo é ÂMBAR e nasce no canto superior esquerdo — no lugar do azul central herdado
+        do rebrand do meuWatt. É a única mudança de fundo do sistema, e vale só nesta tela:
+        é aqui que a marca se apresenta, e um halo azul atrás de um selo âmbar dizia que o
+        produto é de outra família. O `bg-fundo` opaco é obrigatório: o `body` tem o halo
+        azul global desenhado por baixo, e sem cobri-lo os dois se somariam.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-fundo"
+        style={{
+          backgroundImage:
+            'radial-gradient(120% 90% at 12% 0%, rgba(255,195,21,.08), transparent 62%)',
+        }}
+      />
+
+      {/* A metade da marca. Some no celular: ali a tela é o formulário, e uma frase de
+          produto acima dele empurraria os campos para fora da primeira dobra. */}
+      <div className="relative z-10 hidden flex-col justify-between p-12 lg:flex">
+        <LockupGS tamanho={56} descritor="carteira · geração · manutenção" />
+
+        <div className="max-w-[560px]">
+          <h1 className="text-[40px] font-semibold leading-[1.15] tracking-[-0.03em] text-forte">
+            Uma conta, uma lista de usinas, os dois produtos por baixo
+          </h1>
+          <p className="mt-5 text-[15px] leading-relaxed text-corpo">
+            O monitoramento da geração e a gestão da manutenção continuam onde sempre
+            estiveram. O Gestão Solar se conecta aos dois com um token que o seu gestor de
+            conta gera, e que pode ser revogado a qualquer momento — do lado de lá, não daqui.
           </p>
-          <p className="mt-1 text-sm text-rotulo">A sua usina, em um lugar só</p>
         </div>
 
-        <form onSubmit={enviar} className="cartao flex flex-col gap-4 p-5">
-          {/* `role="alert"` porque a recusa chega depois do envio: sem isso, quem usa leitor
-              de tela fica esperando uma resposta que já está escrita na tela. */}
-          {erro ? (
-            <div role="alert">
-              <Aviso tom="parado">{erro}</Aviso>
-            </div>
-          ) : null}
+        <p className="text-xs text-fraco">
+          Gestão Solar · o portal do proprietário de usina fotovoltaica
+        </p>
+      </div>
 
-          <Campo
-            id="apelido"
-            rotulo="Apelido"
-            value={apelido}
-            // A caixa é corrigida enquanto se digita, e não só no envio: ver "Renan" na
-            // tela e receber erro sem entender o motivo é o pior dos dois mundos.
-            onChange={(e) => setApelido(e.target.value.toLowerCase())}
-            autoComplete="username"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="seu.apelido"
-            autoFocus
-            required
-          />
+      {/* A metade do formulário. */}
+      <div className="relative z-10 grid place-items-center border-borda px-5 py-10 lg:border-l lg:bg-superficie">
+        <div className="w-full max-w-[380px]">
+          {/* No celular a marca não tem coluna própria: ela vem aqui, acima do formulário. */}
+          <div className="mb-8 lg:hidden">
+            <LockupGS tamanho={44} />
+          </div>
 
-          <Campo
-            id="senha"
-            rotulo="Senha"
-            type="password"
-            value={senha}
-            onChange={(e) => setSenha(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
+          <h2 className="text-[22px] font-semibold tracking-[-0.02em] text-forte">Entrar</h2>
+          <p className="mt-1 text-sm text-fraco">Use a conta que o seu gestor criou para você.</p>
 
-          {/* `type="submit"`: o Enter em qualquer campo envia, que é como se entra num
-              formulário de duas linhas sem tirar a mão do teclado. */}
-          <button type="submit" className="btn-primario" disabled={!podeEnviar}>
-            {entrando ? 'Entrando…' : 'Entrar'}
-          </button>
+          <form onSubmit={enviar} className="mt-7 flex flex-col gap-4">
+            {/* `role="alert"` porque a recusa chega depois do envio: sem isso, quem usa
+                leitor de tela fica esperando uma resposta que já está escrita na tela. */}
+            {erro ? (
+              <div role="alert">
+                <Aviso tom="parado">{erro}</Aviso>
+              </div>
+            ) : null}
 
-          <p className="text-xs leading-relaxed text-fraco">
-            Esqueceu a senha? Peça uma senha provisória ao seu gestor de conta — ela é gerada
-            na hora, e o portal pede a troca no primeiro acesso.
-          </p>
-        </form>
+            {/*
+              O PRIMEIRO CAMPO É O APELIDO, e não o e-mail. A identidade de uma conta aqui é
+              o apelido (`bff/app/core/apelido.py`); o e-mail é contato, opcional e não
+              único — a MESMA pessoa pode ter duas contas, uma de gestor e uma de dono de
+              usina, com o mesmo e-mail. Um campo "E-mail" no topo convidaria a tentar
+              entrar com ele, que é exatamente o que não funciona.
+            */}
+            <Campo
+              id="apelido"
+              rotulo="Apelido"
+              value={apelido}
+              // A caixa é corrigida enquanto se digita, e não só no envio: ver "Renan" na
+              // tela e receber erro sem entender o motivo é o pior dos dois mundos.
+              onChange={(e) => setApelido(e.target.value.toLowerCase())}
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="seu.apelido"
+              autoFocus
+              required
+            />
+            <p className="-mt-2 text-xs text-fraco">
+              Minúsculas, sem acento, um separador por vez — <span className="mono">ponto</span> ou{' '}
+              <span className="mono">hífen</span>.
+            </p>
+
+            <Campo
+              id="senha"
+              rotulo="Senha"
+              type="password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+
+            {/* `type="submit"`: o Enter em qualquer campo envia, que é como se entra num
+                formulário de duas linhas sem tirar a mão do teclado. */}
+            <button type="submit" className="btn-primario mt-1 h-[46px]" disabled={!podeEnviar}>
+              {entrando ? 'Entrando…' : 'Entrar'}
+            </button>
+          </form>
+
+          <div className="mt-8 space-y-2 border-t border-borda pt-5 text-xs leading-relaxed text-fraco">
+            <p>
+              Esqueceu a senha? Peça uma senha provisória ao seu gestor de conta — ela é gerada
+              na hora, e o portal pede a troca no primeiro acesso.
+            </p>
+            <p>
+              A senha provisória é entregue junto com o apelido. Não há autoatendimento de
+              senha neste portal.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   )

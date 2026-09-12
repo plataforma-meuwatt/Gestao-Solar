@@ -127,11 +127,15 @@ describe('tela de Paradas', () => {
     const linhas = container.querySelectorAll('tbody tr')
     expect(linhas.length).toBe(2)
     // A ordem é a que o servidor mandou; a primeira linha é a parada ainda aberta.
+    //
+    // A célula 0 é a BARRA DE TOM, sem texto: ela é a primeira coluna de toda tabela que
+    // recebe `tomDaLinha`, e é por isso que o conteúdo começa em 1.
     const celulas = linhas[0].querySelectorAll('td')
-    expect(celulas[1].textContent).toBe('—') // fim
-    expect(celulas[2].textContent).toBe('—') // duração desconhecida, não "0 min"
-    expect(celulas[4].textContent).toBe('Parada')
-    expect(linhas[1].querySelectorAll('td')[4].textContent).toBe('Degradação')
+    expect(celulas[0].textContent).toBe('')
+    expect(celulas[2].textContent).toBe('—') // fim
+    expect(celulas[3].textContent).toBe('—') // duração desconhecida, não "0 min"
+    expect(celulas[5].textContent).toBe('Parada')
+    expect(linhas[1].querySelectorAll('td')[5].textContent).toBe('Degradação')
   })
 
   it('escreve os números em pt-BR e explica a soma que o servidor recusou fazer', async () => {
@@ -149,8 +153,11 @@ describe('tela de Paradas', () => {
     // 13800 kWh viram "13,8 MWh"; 180 min viram "3 h" — tudo por `lib/format`.
     expect(await screen.findByText('13,8 MWh')).toBeTruthy()
     expect(screen.getByText('3 h')).toBeTruthy()
-    expect(screen.getByText('alguma parada veio sem o tempo')).toBeTruthy()
-    expect(screen.getByText('alguma parada veio sem o número')).toBeTruthy()
+    // As duas ausências saem por extenso, e não como legenda de KPI: o cliente precisa
+    // saber POR QUE o número não está lá, e "alguma parada veio sem o tempo" pendurado
+    // embaixo de um travessão se lia como rótulo, não como explicação.
+    expect(screen.getByText(/alguma parada do período veio sem duração/)).toBeTruthy()
+    expect(screen.getByText(/alguma parada veio sem o número/)).toBeTruthy()
     expect(screen.getByText('Ainda parada')).toBeTruthy()
   })
 })

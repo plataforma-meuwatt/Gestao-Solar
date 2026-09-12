@@ -28,7 +28,7 @@
  * célula de vermelho). Nada é somado aqui.
  */
 
-import { Num } from '@/components/base'
+import { CabecalhoCard } from '@/components/base'
 import { competenciaCurta, inteiro } from '@/lib/format'
 import { classesDoTom, type Tom } from '@/lib/tons'
 
@@ -92,47 +92,100 @@ function frase(m: MesDaFita, estado: EstadoDoMes): string {
   return `${quando}: ${contagem} — ${PALAVRA[estado]}`
 }
 
+/**
+ * A legenda das quatro cores, no cabeçalho da fita.
+ *
+ * **Cor nunca é a única legenda.** O quadro é lido em reunião e muitas vezes projetado, onde
+ * o vermelho e o âmbar de um projetor ruim se confundem — e onde há sempre alguém que não
+ * distingue os dois. Cada bloco já imprime a palavra do estado; a legenda aqui é para quem
+ * lê a fita de longe, antes de ler bloco nenhum.
+ */
+function Legenda() {
+  const itens: { estado: EstadoDoMes; palavra: string }[] = [
+    { estado: 'cumprido', palavra: PALAVRA.cumprido },
+    { estado: 'andamento', palavra: PALAVRA.andamento },
+    { estado: 'atraso', palavra: PALAVRA.atraso },
+    { estado: 'futuro', palavra: 'ainda não venceu' },
+  ]
+  return (
+    <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      {itens.map(({ estado, palavra }) => {
+        const tom = tomDoEstado(estado)
+        return (
+          <span key={estado} className="flex items-center gap-2 whitespace-nowrap text-[12px]">
+            <span
+              aria-hidden
+              className={`h-[3px] w-4 rounded-barra ${
+                tom ? `bg-tom-${tom}` : 'bg-superficie-destacada'
+              }`}
+            />
+            {palavra}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 export default function FitaDosMeses({ meses }: { meses: MesDaFita[] }) {
   if (meses.length === 0) return null
   return (
-    <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12">
-      {meses.map((m) => {
-        const estado = estadoDoMes(m)
-        const tom = tomDoEstado(estado)
-        const c = tom ? classesDoTom(tom) : null
-        // Sem cor de status o bloco não fica invisível: ele usa a superfície do produto,
-        // e usa o token PURO. O modificador de opacidade do Tailwind sobre um token
-        // declarado como `rgba(...)` SUBSTITUI o alfa dele em vez de multiplicar — era o
-        // que produzia o cinza chapado, cinco vezes mais claro que o token, na antiga faixa
-        // de bloco desta tela. A regra que proíbe isso está em `scripts/regra0.mjs`, e é ela
-        // que recusa esta linha se alguém acrescentar um `/NN` aqui.
-        const moldura = c ? `${c.borda} ${c.fundo}` : 'border-borda bg-superficie'
-        const barra = c ? `bg-tom-${c.tom}` : 'bg-superficie-destacada'
-        const contagem = estado === 'sem-previsao' ? null : (
-          <span className="mt-1.5 block text-sm text-corpo">
-            <Num>{inteiro(m.cumprido)}</Num> de <Num>{inteiro(m.previsto)}</Num>
-          </span>
-        )
-        return (
-          <li
-            key={m.mes}
-            data-mes={m.mes}
-            data-estado={estado}
-            title={frase(m, estado)}
-            aria-label={frase(m, estado)}
-            className={`rounded-campo border px-2.5 py-2 ${moldura}`}
-          >
-            <span className="block text-xs uppercase tracking-wide text-rotulo">
-              {competenciaCurta(m.mes)}
-            </span>
-            <span aria-hidden className={`mt-1.5 block h-1 rounded-barra ${barra}`} />
-            {contagem}
-            <span className={`mt-0.5 block text-xs ${c ? c.texto : 'text-fraco'}`}>
-              {PALAVRA[estado]}
-            </span>
-          </li>
-        )
-      })}
-    </ul>
+    <div>
+      <CabecalhoCard
+        rotulo="Os doze meses do contrato"
+        direita={<Legenda />}
+        className="mb-3 items-center"
+      />
+      <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12">
+        {meses.map((m) => {
+          const estado = estadoDoMes(m)
+          const tom = tomDoEstado(estado)
+          const c = tom ? classesDoTom(tom) : null
+          // Sem cor de status o bloco não fica invisível: ele usa a superfície do produto,
+          // e usa o token PURO. O modificador de opacidade do Tailwind sobre um token
+          // declarado como `rgba(...)` SUBSTITUI o alfa dele em vez de multiplicar — era o
+          // que produzia o cinza chapado, cinco vezes mais claro que o token, na antiga
+          // faixa de bloco desta tela. A regra que proíbe isso está em `scripts/regra0.mjs`,
+          // e é ela que recusa esta linha se alguém acrescentar um `/NN` aqui.
+          const moldura = c ? `${c.borda} ${c.fundo}` : 'border-borda bg-superficie'
+          const barra = c ? `bg-tom-${c.tom}` : 'bg-superficie-destacada'
+          return (
+            <li
+              key={m.mes}
+              data-mes={m.mes}
+              data-estado={estado}
+              title={frase(m, estado)}
+              aria-label={frase(m, estado)}
+              className={`rounded-[12px] border px-[11px] pb-[11px] pt-2.5 ${moldura}`}
+            >
+              <span className="mono block text-[10px] uppercase tracking-[0.1em] text-rotulo">
+                {competenciaCurta(m.mes)}
+              </span>
+              <span aria-hidden className={`my-[7px] block h-[3px] rounded-barra ${barra}`} />
+              {/* A contagem COM denominador, sempre. "13" sozinho não diz se o mês fechou;
+                  "13 de 13" diz. E o mês sem previsão imprime o traço, que é a ausência de
+                  contrato naquele mês — não um zero cumprido. */}
+              <span className="mono block text-[13px] text-corpo">
+                {estado === 'sem-previsao' ? (
+                  '—'
+                ) : (
+                  <>
+                    {inteiro(m.cumprido)} de {inteiro(m.previsto)}
+                  </>
+                )}
+              </span>
+              <span className={`mt-0.5 block text-[11px] ${c ? c.texto : 'text-fraco'}`}>
+                {PALAVRA[estado]}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      {/* A procedência, embaixo: os dois números da fita vêm de fontes diferentes, e quem
+          lê "3 de 13" numa reunião pergunta de onde saiu cada metade. */}
+      <p className="mt-3 text-[12px] text-fraco">
+        A contagem vem do recorte de vigência do meuPlano; as atrasadas vêm da matriz.
+      </p>
+    </div>
   )
 }

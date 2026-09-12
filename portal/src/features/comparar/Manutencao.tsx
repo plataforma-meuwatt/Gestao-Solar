@@ -49,6 +49,7 @@ import {
 import { SeletorPeriodo } from '@/components/SeletorPeriodo'
 import { inteiro, porcento } from '@/lib/format'
 import { hojeIso, type Recorte } from '@/lib/periodo'
+import { classesDoTom } from '@/lib/tons'
 import { useEstadoNaUrl, useTextoNaUrl } from '@/lib/urlestado'
 import {
   RECORTES_ACEITOS,
@@ -63,7 +64,6 @@ import {
   useComparativo,
   type ComparativoOut,
   type JanelaOut,
-  type RankingOut,
   type UsinaManutencaoOut,
 } from '@/features/comparar/api'
 
@@ -234,59 +234,106 @@ export default function CompararManutencao() {
             <>
               {d.aviso ? <Aviso>{d.aviso}</Aviso> : null}
 
-              {/* 1 — a carteira somada. O cabeçalho diz de quantas usinas o total fala. */}
-              <Cartao>
-                <CabecalhoCard
-                  rotulo={`A carteira · ${d.janela.rotulo ?? ''}`}
-                  direita={
-                    <>
-                      <Num>{inteiro(totais.usinas_no_total)}</Num> de{' '}
-                      <Num>{inteiro(d.usinas_no_escopo)}</Num> usinas com cronograma publicado
-                    </>
-                  }
-                />
-                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                  <Kpi
-                    rotulo="Atividades atrasadas"
-                    valor={inteiro(totais.atrasadas)}
-                    tamanho="grande"
-                    tom={totais.atrasadas ? 'parado' : undefined}
-                    detalhe="o prazo do cronograma já passou"
-                  />
-                  <Kpi
-                    rotulo="Cumprimento"
-                    valor={porcento(totais.cumprimento_pct, 1)}
-                    // O denominador ao lado do percentual, sempre. Sozinho, 41,9 % não quer
-                    // dizer nada — e foi por isso que duas telas já discordaram.
-                    //
-                    // Sem percentual, porém, o denominador é outro travessão, e dois
-                    // travessões empilhados leem como defeito da tela em vez de como
-                    // resposta. Aí entra a FRASE, e ela diz qual das duas ausências é:
-                    // ninguém publicou cronograma, ou publicou e nada venceu ainda.
-                    detalhe={
-                      totais.cumprimento_pct !== null
+              {/*
+                1 — O QUE A TELA DE FATO DESCOBRIU.
+
+                Ela liderava com "0 atividades atrasadas" e escondia o achado num bloco de
+                rodapé chamado FORA DESTE RANKING (6). Mas zero atrasadas com um cronograma
+                publicado de sete não é manutenção em dia: é ausência de previsto. Sem
+                cronograma não há data combinada, sem data combinada não há atraso, e o
+                contador de atrasadas não tem o que contar. O cliente lia o número mais
+                tranquilizador da tela justamente quando devia cobrar a publicação.
+
+                Agora a proporção de contratos publicados é o veredito, em `alerta` enquanto
+                faltar algum, e os três contadores descem para leituras de apoio.
+              */}
+              {(() => {
+                const publicados = totais.usinas_no_total
+                const escopo = d.usinas_no_escopo
+                const faltam = publicados !== null && publicados < escopo
+                const c = classesDoTom(faltam ? 'alerta' : 'ok')
+                return (
+                  <Cartao className={`p-7 ${c.borda} ${c.fundoFraco}`}>
+                    <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_1px_300px]">
+                      <div className="min-w-0">
+                        <div className="rotulo-secao mb-3">
+                          Contratos com cronograma publicado · {d.janela.rotulo ?? ''}
+                        </div>
+                        <Kpi
+                          valor={inteiro(publicados)}
+                          unidade={`de ${inteiro(escopo)}`}
+                          tamanho="veredito"
+                          tom={faltam ? 'alerta' : 'ok'}
+                        />
+                        {faltam ? (
+                          <p className="mt-5 max-w-[560px] text-[13.5px] leading-relaxed text-corpo">
+                            Sem cronograma publicado não há previsto, e sem previsto não existe
+                            atraso a cobrar. É por isso que as usinas sem contrato consolidado
+                            aparecem abaixo com <span className="mono text-forte">—</span> e não
+                            com zero: o travessão diz "não há o que contar"; o zero diria "está
+                            tudo em dia".
+                          </p>
+                        ) : (
+                          <p className="mt-5 max-w-[560px] text-[13.5px] leading-relaxed text-corpo">
+                            Todos os contratos da carteira têm cronograma consolidado — os
+                            números abaixo falam da carteira inteira.
+                          </p>
+                        )}
+                      </div>
+
+                      <div aria-hidden className="hidden bg-borda lg:block" />
+
+                      <div className="flex flex-col gap-4">
+                        <Kpi
+                          rotulo="Atividades atrasadas"
+                          valor={inteiro(totais.atrasadas)}
+                          tamanho="grande"
+                          tom={totais.atrasadas ? 'parado' : undefined}
+                          detalhe="o prazo do cronograma já passou"
+                        />
+                        <div className="border-t border-borda-fraca pt-4">
+                          <Kpi
+                            rotulo="Ordens em andamento"
+                            valor={inteiro(totais.os_em_andamento)}
+                            tamanho="grande"
+                            detalhe="agora, não no período"
+                          />
+                        </div>
+                        <div className="border-t border-borda-fraca pt-4">
+                          <Kpi
+                            rotulo="Pendências abertas"
+                            valor={inteiro(totais.pendencias_abertas)}
+                            tamanho="grande"
+                            detalhe={
+                              <span
+                                className={
+                                  totais.pendencias_vencidas ? 'text-tom-parado' : undefined
+                                }
+                              >
+                                <Num>{inteiro(totais.pendencias_vencidas)}</Num> com prazo vencido
+                              </span>
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* O cumprimento continua na tela, mas como LINHA, não como um dos quatro
+                        números grandes: sozinho ele é o percentual que já discordou entre duas
+                        telas, e o que o torna legível é o denominador ao lado. */}
+                    <p className="mt-6 border-t border-borda-fraca pt-4 text-[12.5px] text-fraco">
+                      Cumprimento do previsto:{' '}
+                      <Num className="text-forte">{porcento(totais.cumprimento_pct, 1)}</Num>
+                      {' — '}
+                      {totais.cumprimento_pct !== null
                         ? totais.cumprimento_rotulo
                         : totais.denominador === 0
                           ? 'nada era cobrável neste período'
-                          : 'sem cronograma publicado'
-                    }
-                  />
-                  <Kpi
-                    rotulo="Ordens em andamento"
-                    valor={inteiro(totais.os_em_andamento)}
-                    detalhe="agora, não no período"
-                  />
-                  <Kpi
-                    rotulo="Pendências abertas"
-                    valor={inteiro(totais.pendencias_abertas)}
-                    detalhe={
-                      <>
-                        <Num>{inteiro(totais.pendencias_vencidas)}</Num> com prazo vencido
-                      </>
-                    }
-                  />
-                </div>
-              </Cartao>
+                          : 'sem cronograma publicado'}
+                    </p>
+                  </Cartao>
+                )
+              })()}
 
               {/* 2 — a pergunta escolhida, escrita; e a lista na ordem que o servidor deu */}
               <Cartao semPadding>
@@ -397,32 +444,29 @@ export default function CompararManutencao() {
                               {u.fora_da_conta ? (
                                 <span className="text-xs text-fraco">{u.fora_da_conta}</span>
                               ) : null}
+                              {/* Feitas e dispensadas eram uma coluna à parte, e são o
+                                  DETALHE deste mesmo denominador: quantas das previstas
+                                  fecharam, e quantas fecharam por dispensa. A dispensa
+                                  aparece separada SEMPRE — fundi-la com o feito apagaria a
+                                  diferença entre executar e dispensar. */}
+                              <span className="text-xs text-fraco">
+                                <Num>{inteiro(u.feitas)}</Num> feitas ·{' '}
+                                <Num>{inteiro(u.dispensadas)}</Num> dispensadas · previsto{' '}
+                                <Num>{inteiro(u.previsto)}</Num>
+                              </span>
                             </div>
                           ),
                       },
                       {
-                        titulo: 'Feitas · dispensadas',
+                        titulo: 'OS',
                         alinhar: 'dir',
-                        celula: (u) => (
-                          <>
-                            <Num>{inteiro(u.feitas)}</Num>
-                            <span className="block text-xs text-fraco">
-                              {/* A dispensa aparece separada SEMPRE. Fundi-la com o feito
-                                  apagaria a diferença entre executar e dispensar. */}
-                              <Num>{inteiro(u.dispensadas)}</Num> dispensada(s) · previsto{' '}
-                              <Num>{inteiro(u.previsto)}</Num>
-                            </span>
-                          </>
-                        ),
-                      },
-                      {
-                        titulo: 'OS em andamento',
-                        alinhar: 'dir',
+                        largura: '90px',
                         celula: (u) => <Num>{inteiro(u.os_em_andamento)}</Num>,
                       },
                       {
                         titulo: 'Pendências',
                         alinhar: 'dir',
+                        largura: '200px',
                         celula: (u) => (
                           <>
                             <Num>{inteiro(u.pendencias_abertas)}</Num>
@@ -432,20 +476,14 @@ export default function CompararManutencao() {
                                 <Num>{inteiro(u.pendencias_vencidas)}</Num> com prazo vencido
                               </span>
                             ) : null}
-                          </>
-                        ),
-                      },
-                      {
-                        titulo: 'Críticas · cobradas',
-                        alinhar: 'dir',
-                        celula: (u) => (
-                          <>
-                            {/* "Críticas", e não "urgentes": a ordem de serviço que chega a
-                                este portal não tem campo de prioridade, e o servidor usou a
-                                criticidade da pendência em vez de inventar um. A tela repete
-                                a palavra do servidor pelo mesmo motivo. */}
-                            <Num>{inteiro(u.pendencias_criticas)}</Num>
+                            {/* Críticas e cobradas eram a oitava coluna, e são RECORTES
+                                destas mesmas abertas — não outra medida. "Críticas", e não
+                                "urgentes": a ordem de serviço que chega a este portal não
+                                tem campo de prioridade, e o servidor usou a criticidade da
+                                pendência em vez de inventar um. A tela repete a palavra do
+                                servidor pelo mesmo motivo. */}
                             <span className="block text-xs text-fraco">
+                              <Num>{inteiro(u.pendencias_criticas)}</Num> críticas ·{' '}
                               <Num>{inteiro(u.pendencias_cobradas)}</Num> cobradas por você
                             </span>
                           </>
@@ -455,7 +493,15 @@ export default function CompararManutencao() {
                   />
                 </div>
 
-                {ranking && ranking.fora.length > 0 ? <ForaDoRanking ranking={ranking} /> : null}
+                {/*
+                  O bloco FORA DESTE RANKING saiu daqui.
+
+                  Ele repetia, num rodapé cinza, o mesmo motivo que a linha de cada usina já
+                  imprime em âmbar sob o nome do contrato — e, pior, era onde o achado da
+                  tela morava: "(6)" entre parênteses num cabeçalho de rodapé, enquanto o
+                  topo anunciava "0 atividades atrasadas". O motivo passou a viver na linha
+                  da usina, que é onde se olha, e a proporção subiu para o veredito.
+                */}
               </Cartao>
 
               {/* 3 — o rodapé fixo, com a ressalva do "em curso" */}
@@ -503,20 +549,3 @@ function RodapeDaJanela({ janela, escopo }: { janela: JanelaOut; escopo: number 
   )
 }
 
-/** Quem ficou de fora deste ranking, com o motivo — a ausência é um fato, não um defeito. */
-function ForaDoRanking({ ranking }: { ranking: RankingOut }) {
-  return (
-    <div className="border-t border-borda-fraca px-5 py-3">
-      <p className="text-xs uppercase tracking-wide text-rotulo">
-        Fora deste ranking ({inteiro(ranking.fora.length)})
-      </p>
-      <ul className="mt-1 space-y-0.5">
-        {ranking.fora.map((f) => (
-          <li key={f} className="text-xs text-fraco">
-            {f}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
