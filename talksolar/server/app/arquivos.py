@@ -1,9 +1,24 @@
 # -*- coding: utf-8 -*-
 """Onde os anexos ficam.
 
-Dois destinos com a MESMA interface: disco (para desenvolver) e Supabase Storage (o projeto do
-Gestão Solar). Quem chama não sabe qual está em uso — e é isso que permite trocar sem mexer no
-resto.
+Três destinos com a MESMA interface — quem chama não sabe qual está em uso, e é isso que
+permite trocar sem mexer no resto:
+
+* **`r2`** (Cloudflare R2, S3-compatível) — o destino de produção;
+* `supabase` — legado, de quando este projeto foi entregue;
+* `local` — disco, só para desenvolver.
+
+## Por que R2, e não o Supabase que este projeto declarava
+
+A regra é da empresa, não desta caixa (`meuPlano/skills/onde-mora-cada-coisa.md`, 11/09/2026):
+
+> Linha de tabela → Supabase. Arquivo que alguém baixa → R2.
+
+E o critério é **egress**, não tamanho. O Supabase cobra banda de saída e já suspendeu o
+Storage por cota (HTTP 402, `exceed_egress_quota`); o R2 cobra armazenamento e não cobra
+egress. Anexo de conversa é o caso extremo dessa régua: uma foto numa conversa de equipe é
+baixada por todo mundo que rola a tela, todo dia — pôr isso no Supabase seria escolher, de
+propósito, o serviço que já caiu por esse motivo.
 
 ⚠ `TALK_STORAGE=local` no Railway significa **perder os anexos a cada deploy** (o disco do
 contêiner é efêmero). O servidor avisa isso em `/saude`, alto, porque é o tipo de detalhe que
@@ -31,6 +46,35 @@ TIPOS_OK = {
 }
 
 
+_r2 = None
+
+
+def _cliente_r2():
+    """Cliente boto3 do R2, criado uma vez por processo.
+
+    Importado aqui dentro, e não no topo: quem roda com `local` (todo desenvolvimento, e o
+    teste de contrato) não precisa de boto3 instalado para o módulo carregar.
+    """
+    global _r2
+    if _r2 is not None:
+        return _r2
+    import boto3
+    from botocore.config import Config
+
+    _r2 = boto3.client(
+        "s3",
+        endpoint_url=f"https://{config.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=config.R2_ACCESS_KEY_ID,
+        aws_secret_access_key=config.R2_SECRET_ACCESS_KEY,
+        # `auto` é o que o R2 espera; ele não tem regiões como a AWS.
+        region_name="auto",
+        # Timeout curto e uma tentativa extra: um anexo que demora meio minuto para subir é
+        # um anexo que o usuário já tentou mandar de novo.
+        config=Config(connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}),
+    )
+    return _r2
+
+
 def validar(tipo: str, tamanho: int) -> Optional[str]:
     """A recusa acontece ANTES de gravar o primeiro byte — nada de arquivo órfão."""
     if tipo not in TIPOS_OK:
@@ -48,6 +92,11 @@ def _ext(nome: str, tipo: str) -> str:
 
 
 def _gravar(chave: str, dados: bytes, tipo: str) -> None:
+    if config.STORAGE == "r2":
+        _cliente_r2().put_object(
+            Bucket=config.R2_BUCKET, Key=chave, Body=dados,
+            ContentType=tipo or "application/octet-stream")
+        return
     if config.STORAGE == "supabase":
         r = httpx.post(
             f"{config.SUPABASE_URL}/storage/v1/object/{config.SUPABASE_BUCKET}/{chave}",
@@ -71,6 +120,18 @@ def url(chave: Optional[str], base: str = "") -> Optional[str]:
     """
     if not chave:
         return None
+    if config.STORAGE == "r2":
+        if config.R2_PUBLIC_BASE_URL:
+            return f"{config.R2_PUBLIC_BASE_URL}/{chave}"
+        try:
+            # Uma hora: o tempo de alguém abrir a conversa e olhar. Link de anexo de
+            # conversa interna não pode ser eterno — é onde se manda o que não se manda por
+            # e-mail.
+            return _cliente_r2().generate_presigned_url(
+                "get_object", Params={"Bucket": config.R2_BUCKET, "Key": chave},
+                ExpiresIn=3600)
+        except Exception:                   # noqa: BLE001 — a tela mostra o anexo sem prévia
+            return None
     if config.STORAGE == "supabase":
         try:
             r = httpx.post(
@@ -87,6 +148,12 @@ def url(chave: Optional[str], base: str = "") -> Optional[str]:
 
 def apagar(chave: Optional[str]) -> None:
     if not chave:
+        return
+    if config.STORAGE == "r2":
+        try:
+            _cliente_r2().delete_object(Bucket=config.R2_BUCKET, Key=chave)
+        except Exception:                   # noqa: BLE001 — objeto órfão não quebra ninguém
+            pass
         return
     if config.STORAGE == "supabase":
         try:

@@ -296,6 +296,54 @@ def main() -> int:  # noqa: C901
                len(do_sistema) == 1 and do_sistema[0]["autor"]["id"] is None,
                str(do_sistema)[:140])
 
+        # ------------------------------------------- armazenamento no R2
+        # O destino de produção dos anexos é o R2, não o Supabase — regra da empresa em
+        # `meuPlano/skills/onde-mora-cada-coisa.md`: "arquivo que alguém baixa → R2",
+        # porque o critério é EGRESS e o Storage do Supabase já foi suspenso por cota.
+        #
+        # Sem rede: um cliente de mentira no lugar do boto3. O que se verifica é o
+        # ROTEAMENTO — que gravar, assinar e apagar param no R2 e não no Supabase —, que é
+        # onde um `if` a menos passaria despercebido até a primeira foto sumir.
+        from app import arquivos as arqs, config as cfg
+
+        chamadas = {}
+
+        class _R2Falso:
+            def put_object(self, **kw):
+                chamadas["put"] = kw
+
+            def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803
+                chamadas["url"] = (op, Params, ExpiresIn)
+                return f"https://r2.exemplo/{Params['Key']}?assinada=1"
+
+            def delete_object(self, **kw):
+                chamadas["del"] = kw
+
+        storage_antes, r2_antes = cfg.STORAGE, arqs._r2
+        try:
+            cfg.STORAGE = "r2"
+            cfg.R2_BUCKET = "talksolar"
+            arqs._r2 = _R2Falso()
+
+            guardado = arqs.guardar(1, b"conteudo do anexo", "foto.png", "image/png")
+            checar("anexo vai para o R2 (e não para o Supabase)",
+                   chamadas.get("put", {}).get("Bucket") == "talksolar"
+                   and chamadas["put"]["Key"] == guardado["caminho"],
+                   str(chamadas.get("put"))[:140])
+
+            endereco = arqs.url(guardado["caminho"])
+            checar("a URL do anexo é PRÉ-ASSINADA e expira em 1 h",
+                   chamadas.get("url", (None, None, None))[2] == 3600
+                   and "assinada=1" in (endereco or ""),
+                   f"{chamadas.get('url')} -> {endereco}")
+
+            arqs.apagar(guardado["caminho"])
+            checar("apagar o anexo apaga no R2",
+                   chamadas.get("del", {}).get("Key") == guardado["caminho"],
+                   str(chamadas.get("del"))[:140])
+        finally:
+            cfg.STORAGE, arqs._r2 = storage_antes, r2_antes
+
         # ---------------------------------------------------- saúde
         r = c.get("/saude")
         checar("/saude diz o que falta configurar (não só 'ok')",

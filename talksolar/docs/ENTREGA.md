@@ -53,7 +53,8 @@ Três sistemas com login próprio **não podem virar quatro**: duplicar identida
 | **Teste de contrato** ponta a ponta | ✅ **32/32**, com um sistema falso — não depende de nada no ar |
 | **Integração de referência (meuPlano)** | ✅ `integracoes/meuplano/talk.py.exemplo` — receptor **corrigido** (INT-1), copiável |
 | **App de PC** (Electron) | ✅ bandeja, notificação nativa, colar imagem, citar — `npm test` **12/12** |
-| Railway | ⚠ `railway.json` + `Procfile` existem, mas fora do padrão do repositório — ver §3.2 |
+| Railway | ✅ `Dockerfile` + `railway.json` alinhados ao padrão do repositório (11/09/2026) |
+| **Anexos no R2** | ✅ terceiro destino em `app/arquivos.py`, com URL pré-assinada de 1 h — ver §3.2 |
 
 ### Rodar agora, na sua máquina
 
@@ -104,21 +105,19 @@ Do lado do meuPlano, o que fica é só o router de integração
 
 Serviço **novo**, separado (sobe e cai sem afetar nada). Root Directory = `talksolar/server`.
 
-O `railway.json` que veio do meuPlano manda:
+**As três divergências apontadas aqui foram resolvidas em 11/09/2026** — `server/Dockerfile`
+existe e o `railway.json` aponta para ele:
 
-```
-alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
+1. ~~`builder: NIXPACKS`~~ → **DOCKERFILE**, como `bff`, `painel` e `portal`. O `Procfile`
+   saiu junto: com o Dockerfile mandando, ele era uma segunda fonte de verdade sobre como o
+   serviço sobe.
+2. ~~`startCommand` sem `exec`~~ → o `CMD` do Dockerfile tem `exec` antes do uvicorn, com o
+   comentário do `bff/Dockerfile` explicando a armadilha. Numa conversa em tempo real, cortar
+   requisição em voo a cada deploy é mensagem que some no meio do caminho.
+3. ~~`healthcheckPath` divergente~~ → **não havia divergência a acertar**. Os três serviços do
+   repositório já usam três caminhos diferentes (`bff` → `/health`, `painel` → `/`, `portal` →
+   `/saude`); `/saude` é o mesmo do portal, e aqui ele carrega informação de verdade.
 
-> ⚠ **Três coisas nele fogem do padrão deste repositório**, e vale acertar antes de subir:
->
-> 1. `builder: NIXPACKS` — os outros três serviços (`bff`, `painel`, `portal`) usam
->    **Dockerfile**.
-> 2. o `startCommand` **não tem `exec`** antes do `uvicorn`: sem ele o shell continua sendo o
->    PID 1 e o uvicorn é morto sem encerrar as requisições em voo. O `bff/Dockerfile` documenta
->    essa mesma armadilha e a resolve com `exec` — copie de lá.
-> 3. `healthcheckPath: "/saude"` — os outros usam `/health`. Alinhe um dos dois lados.
->
 > E o ajuste que **não** mora em arquivo nenhum: no painel do Railway, além do Root Directory,
 > defina **`railwayConfigFile = talksolar/server/railway.json`** (esse caminho é relativo à raiz
 > do repositório, ao contrário do `dockerfilePath`). Sem ele o builder cai no Railpack e ignora
@@ -128,15 +127,24 @@ Variáveis (o modelo está em `server/.env.exemplo`):
 
 | Variável | O quê |
 |---|---|
-| `DATABASE_URL` | O Postgres do **Supabase do Gestão Solar** — use o pooler `:6543` |
+| `DATABASE_URL` | O **mesmo** Postgres que o BFF do Gestão Solar usa — copie a URL dele, porta inclusive |
 | `TALK_JWT_SECRET` | `python -c "import secrets;print(secrets.token_urlsafe(48))"` |
-| `TALK_STORAGE` | `supabase` |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | do projeto do Gestão Solar |
-| `TALK_BUCKET` | `talksolar` (**crie o bucket**) |
+| `TALK_STORAGE` | `r2` |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | do Cloudflare R2 |
+| `R2_BUCKET` | `talksolar` (**crie o bucket**) |
+| `R2_PUBLIC_BASE_URL` | **deixe vazia** — é o que faz as URLs saírem pré-assinadas (1 h) |
 | `TALK_CORS` | os domínios que abrem a Talk Solar pelo navegador |
 
+> ⚠ **O destino dos anexos mudou de Supabase para R2** (11/09/2026), e não por gosto: a regra
+> da empresa é *"linha de tabela → Supabase; arquivo que alguém baixa → R2"*
+> (`meuPlano/skills/onde-mora-cada-coisa.md`). O critério é **egress** — o Supabase cobra banda
+> de saída e já suspendeu o Storage por cota (HTTP 402, `exceed_egress_quota`); o R2 não cobra.
+> Anexo de conversa é o caso extremo dessa régua: foto que todo mundo baixa ao rolar a tela,
+> todo dia. `supabase` continua implementado, para quem já tiver acervo lá.
+>
 > ⚠ **Não deixe `TALK_STORAGE=local` no Railway**: o disco do contêiner é efêmero e os anexos
-> somem a cada deploy. O `/saude` avisa isso — abra depois de subir.
+> somem a cada deploy. O `/saude` avisa isso — e agora avisa também `r2` sem credencial e
+> `supabase` como dívida.
 
 `GET /saude` responde o que ainda falta configurar. Um `/saude` que só diz "ok" serve para o
 balanceador e para mais ninguém.

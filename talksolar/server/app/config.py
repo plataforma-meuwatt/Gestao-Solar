@@ -28,13 +28,35 @@ JWT_SECRET = os.getenv("TALK_JWT_SECRET") or "desenvolvimento-nao-use-em-produca
 JWT_HORAS = int(os.getenv("TALK_JWT_HORAS") or 12)
 SESSAO_DIAS = int(os.getenv("TALK_SESSAO_DIAS") or 90)
 
-#: Storage dos anexos. `local` grava em disco (bom para desenvolver); `supabase` usa o Storage
-#: do projeto do Gestão Solar. O código de quem chama é o mesmo nos dois.
+#: Storage dos anexos: `r2` (produção), `supabase` (legado) ou `local` (desenvolvimento).
+#: O código de quem chama é o mesmo nos três.
+#:
+#: **`r2` é o destino certo**, e a regra não é desta caixa — é da empresa, escrita em
+#: `meuPlano/skills/onde-mora-cada-coisa.md`: *"linha de tabela → Supabase; arquivo que
+#: alguém baixa → R2"*. O critério é EGRESS, não tamanho: o Supabase cobra banda de saída e
+#: já suspendeu o Storage por cota (HTTP 402, `exceed_egress_quota`); o R2 não cobra egress.
+#: Anexo de conversa é o caso extremo dessa régua — uma foto numa conversa de equipe é
+#: baixada por todo mundo que rola a tela, todo dia.
+#:
+#: `supabase` continua aqui porque era o destino declarado quando este projeto foi entregue
+#: (04/09/2026) e a migração da empresa saiu depois. Serve a quem já tiver anexos lá.
 STORAGE = os.getenv("TALK_STORAGE") or "local"
 STORAGE_DIR = os.getenv("TALK_STORAGE_DIR") or str(Path(__file__).resolve().parents[1] / "arquivos")
+
 SUPABASE_URL = os.getenv("SUPABASE_URL") or ""
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or ""
 SUPABASE_BUCKET = os.getenv("TALK_BUCKET") or "talksolar"
+
+#: R2 (Cloudflare, S3-compatível). Mesmos nomes de variável do meuPlano, de propósito: quem
+#: administra as duas coisas não deve ter de aprender dois vocabulários para o mesmo balde.
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID") or ""
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID") or ""
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY") or ""
+R2_BUCKET = os.getenv("R2_BUCKET") or "talksolar"
+#: Vazia de propósito: sem ela as URLs saem PRÉ-ASSINADAS e expiram em uma hora. Uma foto de
+#: conversa interna atrás de link público eterno é vazamento — e conversa de equipe é
+#: justamente onde se manda o que não se manda por e-mail.
+R2_PUBLIC_BASE_URL = (os.getenv("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 
 #: Quem pode abrir o app pelo navegador. `*` em desenvolvimento; em produção, a lista.
 CORS = [x.strip() for x in (os.getenv("TALK_CORS") or "*").split(",") if x.strip()]
@@ -83,6 +105,12 @@ def checar_producao() -> list[str]:
         faltas.append("DATABASE_URL não definida (usando SQLite local)")
     if STORAGE == "local":
         faltas.append("TALK_STORAGE=local — os anexos somem a cada deploy do Railway")
+    if STORAGE == "r2" and not all((R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET)):
+        faltas.append("TALK_STORAGE=r2 mas falta R2_ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET")
+    if STORAGE == "supabase":
+        # Não é erro — é dívida. A empresa decidiu em 11/09/2026 que arquivo baixado mora no
+        # R2, e o Storage do Supabase já foi suspenso por cota de egress uma vez.
+        faltas.append("TALK_STORAGE=supabase — o destino da empresa é o R2 (egress); ver skills/onde-mora-cada-coisa.md")
     if CORS == ["*"]:
         faltas.append("TALK_CORS aberto para qualquer origem")
     return faltas
