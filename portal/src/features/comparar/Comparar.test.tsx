@@ -932,13 +932,13 @@ describe('os dois comparativos no menu e nas rotas', () => {
 
   it('aparecem nas três larguras — barra, trilho e gaveta', async () => {
     const { container } = abrir('/usinas/7/energia')
-    // O trilho (w-16, só ícone) e a barra (w-56, com rótulo) são desenhados juntos: quem os
+    // O trilho (w-16, só ícone) e a barra (w-[238px], com rótulo) são desenhados juntos: quem os
     // esconde é o CSS por largura, e no jsdom os dois estão no documento.
     await waitFor(() => expect(container.querySelectorAll('nav').length).toBeGreaterThanOrEqual(2))
 
     const navs = Array.from(container.querySelectorAll('nav'))
     const trilho = navs.find((n) => n.className.includes('w-16'))!
-    const barra = navs.find((n) => n.className.includes('w-56'))!
+    const barra = navs.find((n) => n.className.includes('w-[238px]'))!
     for (const lugar of [trilho, barra]) {
       expect(within(lugar as HTMLElement).getByLabelText('Geração')).toBeTruthy()
       expect(within(lugar as HTMLElement).getByLabelText('Manutenção das usinas')).toBeTruthy()
@@ -960,7 +960,7 @@ describe('os dois comparativos no menu e nas rotas', () => {
     await waitFor(() => expect(container.querySelectorAll('nav').length).toBeGreaterThanOrEqual(2))
 
     const barra = Array.from(container.querySelectorAll('nav')).find((n) =>
-      n.className.includes('w-56'),
+      n.className.includes('w-[238px]'),
     )!
     const rotulos = Array.from(barra.querySelectorAll('a')).map((a) => a.getAttribute('aria-label'))
     expect(rotulos.indexOf('Comparar usinas')).toBeLessThan(rotulos.indexOf('Painel'))

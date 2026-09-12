@@ -109,9 +109,16 @@ function Link({
       title={rotulo}
       aria-label={rotulo}
       className={({ isActive }) =>
-        `flex items-center gap-3 rounded-campo px-3 py-2 text-sm transition ${
+        `flex items-center gap-3 rounded-campo px-3 py-[9px] text-[14.5px] transition ${
           soIcone ? 'justify-center' : ''
-        } ${isActive ? 'bg-superficie-alta font-medium text-forte' : 'text-fraco hover:text-corpo'}`
+        } ${
+          isActive
+            // O item ativo em ÂMBAR, como no meuWatt: o cinza-claro de antes era quase a
+            // mesma coisa que o hover, e numa lista de dez itens o cliente não achava onde
+            // estava sem ler todos.
+            ? 'bg-ambar/14 font-semibold text-ambar-texto'
+            : 'text-fraco hover:bg-superficie hover:text-corpo'
+        }`
       }
     >
       <Icone size={18} aria-hidden />
@@ -185,7 +192,7 @@ export function Layout() {
       */}
       <div className={soIcone ? 'mb-3' : 'mb-4'}>
         {soIcone ? null : (
-          <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">
+          <p className="rotulo-secao px-3 pb-2">
             Comparar usinas
           </p>
         )}
@@ -212,7 +219,7 @@ export function Layout() {
       {atual ? (
         <>
           {soIcone ? null : (
-            <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-rotulo">Esta usina</p>
+            <p className="rotulo-secao px-3 pb-2">Esta usina</p>
           )}
           {GRUPOS.map((grupo, i) => {
             // Só as seções DA USINA: as de carteira já saíram no bloco acima.
@@ -235,7 +242,7 @@ export function Layout() {
                     </div>
                   ) : null
                 ) : grupo.nome ? (
-                  <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-rotulo">
+                  <p className="rotulo-secao px-3 pb-1">
                     {grupo.nome}
                   </p>
                 ) : null}
@@ -267,19 +274,25 @@ export function Layout() {
   )
 
   return (
-    <div className="flex min-h-screen flex-col bg-fundo">
-      {/* halo radial azul no topo — a assinatura visual herdada do rebrand da marca */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-x-0 top-0 h-72"
-        style={{
-          background:
-            'radial-gradient(60% 100% at 50% 0%, rgba(64,110,255,0.20) 0%, rgba(64,110,255,0) 100%)',
-        }}
-      />
+    /*
+      O CASCO, na mesma construção do meuWatt (`mw-fe/src/App.tsx`): altura da JANELA, nada
+      rola por fora, e quem rola é o `<main>`. Antes era `min-h-screen` com a página inteira
+      rolando: a barra do topo e o trilho subiam junto com o conteúdo, e numa tabela de
+      dezessete usinas o cliente perdia de vista o seletor de usina e o menu justamente
+      enquanto procurava a linha. Aqui os dois ficam parados, como no produto vizinho.
 
-      <header className="relative z-20 border-b border-borda bg-fundo/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 px-4 py-3 sm:px-6">
+      E o halo não é desenhado aqui. Ele é do `body` (`index.css`), com a receita do meuWatt.
+      Havia um segundo, nesta div, somando-se ao primeiro num azul mais claro que nenhum dos
+      dois pretendia.
+    */
+    <div className="flex h-dvh flex-col overflow-hidden bg-fundo">
+      {/*
+        A barra do topo atravessa a tela inteira, sem contêiner central — é o que o meuWatt
+        faz, e é o que faz o trilho da esquerda encostar na borda. Altura fixa de 60px e
+        `backdrop-blur`: o halo passa por baixo dela em vez de ser cortado por uma faixa opaca.
+      */}
+      <header className="relative z-20 h-[60px] shrink-0 border-b border-borda bg-topbar backdrop-blur-[18px]">
+        <div className="flex h-full w-full items-center gap-3 px-4 lg:px-5">
           <button
             type="button"
             onClick={() => setGaveta(true)}
@@ -336,24 +349,34 @@ export function Layout() {
         </div>
       </header>
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1">
-        {/* trilho de ícones: entre 768 px e 1024 px o rótulo não cabe */}
-        <nav className="hidden w-16 shrink-0 border-r border-borda px-2 py-6 md:block lg:hidden">
+      <div className="relative z-10 flex min-h-0 flex-1">
+        {/*
+          O TRILHO COLADO NA BORDA. Ele estava dentro do `max-w-[1400px]` centrado: num
+          monitor de 1920 px sobravam 260 px de fundo vazio à esquerda dele, e o menu
+          flutuava no meio da tela em vez de ancorar a página. Agora encosta, como no
+          meuWatt — e ganha fundo próprio (`bg-trilho`), que é o que separa a navegação do
+          conteúdo sem precisar de uma linha grossa.
+
+          A largura é a do meuWatt: 238 px na barra com rótulo. As três larguras continuam:
+          trilho de ícones entre 768 e 1024, gaveta abaixo de 768.
+        */}
+        <nav className="hidden w-16 shrink-0 overflow-y-auto border-r border-borda bg-trilho px-2 py-5 md:block lg:hidden">
           {navegacao(true)}
         </nav>
 
-        <nav className="hidden w-56 shrink-0 border-r border-borda py-6 pl-6 pr-3 lg:block">
+        <nav className="hidden w-[238px] shrink-0 overflow-y-auto border-r border-borda bg-trilho px-3 py-5 lg:block">
           {navegacao(false)}
         </nav>
 
-        <main className="min-w-0 flex-1">
+        {/* Quem rola é aqui dentro — ver o comentário do casco. */}
+        <main className="min-w-0 flex-1 overflow-y-auto">
           <LimiteDeErro chave={local.pathname}>
             <Outlet />
           </LimiteDeErro>
         </main>
       </div>
 
-      <footer className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-t border-borda px-6 py-3 text-xs text-fraco">
+      <footer className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-borda bg-topbar px-5 py-2.5 text-xs text-fraco">
         <span className="truncate">
           {usuario?.nome ?? ''}
           {usuario?.empresa ? ` · ${usuario.empresa}` : ''}

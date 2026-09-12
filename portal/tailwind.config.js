@@ -15,6 +15,13 @@ export default {
         // Fundo de modal, drawer e popover: opaco o bastante para o texto de trás não
         // atravessar, e um pouco mais claro que o fundo para a caixa se destacar.
         painel: 'rgba(9,14,38,0.97)',
+        // O CROMO — a barra do topo e o trilho da esquerda. Os valores são os MESMOS do
+        // meuWatt (`--color-topbar-bg` e `--color-sidebar-bg` do `mw-fe/src/index.css`),
+        // e isso é deliberado: o cliente vai e volta entre os dois produtos na mesma
+        // reunião, e o casco é a primeira coisa que diz "é a mesma família". Os dois são
+        // translúcidos e contam com o `backdrop-blur` por baixo.
+        topbar: 'rgba(6,14,44,0.5)',
+        trilho: 'rgba(4,10,34,0.5)',
         borda: 'rgba(255,255,255,0.08)',
         'borda-fraca': 'rgba(255,255,255,0.06)',
         'borda-forte': 'rgba(255,255,255,0.12)',

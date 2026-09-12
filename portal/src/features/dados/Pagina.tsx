@@ -1050,7 +1050,7 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
         REGRA 0 proíbe — e numa tela cujo produto final é uma planilha de medições, três
         valores fabricados seriam confundidos com a amostra real do arquivo.
       */}
-      <div className="sticky bottom-2 z-10 rounded-card border border-ambar/28 bg-painel px-5 py-4 shadow-xl">
+      <div className="sticky bottom-2 z-10 rounded-card border border-ambar/28 bg-painel px-5 py-4 shadow-xl backdrop-blur-[18px]">
         <div className="flex flex-wrap items-end justify-between gap-5">
           <div className="min-w-0 flex-1">
             {impede ? (
@@ -1060,7 +1060,10 @@ function Conteudo({ usinaId, opcoes }: { usinaId: number; opcoes: OpcoesDeDados 
                 <div className="rotulo-secao">O arquivo que vai sair</div>
                 <div className="mt-2 flex flex-wrap items-baseline gap-x-5 gap-y-1">
                   <span className="mono text-[34px] font-semibold leading-none text-forte">
-                    ≈ {inteiro(conta.linhas)}
+                    {/* O "≈" fica pequeno e colado: a 34px ele vira um glifo solto que
+                        disputa com o número, e o que se lê é o número. */}
+                    <span className="mr-1 align-[0.18em] text-[16px] font-normal text-fraco">≈</span>
+                    {inteiro(conta.linhas)}
                     <span className="ml-2 text-[15px] font-normal text-fraco">linhas</span>
                   </span>
                   {/* Uma largura POR ABA, e não uma soma. Somar dava "37 colunas" num caderno

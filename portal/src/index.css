@@ -52,13 +52,22 @@
   #root {
     @apply h-full;
   }
+  /* O halo do topo é o MESMO do meuWatt (`--app-halo` do `mw-fe/src/index.css`), copiado
+     valor a valor. Era um azul-royal claro e alto (`rgba(64,110,255,.16)` numa elipse de
+     60rem); o do meuWatt é um navy profundo, mais baixo e mais largo, e a diferença entre os
+     dois se via na hora ao trocar de aba — dois produtos da mesma casa com dois céus.
+
+     Ele mora SÓ aqui. O `Layout.tsx` desenhava um segundo halo por cima deste, e os dois se
+     somavam num azul mais claro do que qualquer um dos dois pretendia. */
   body {
     @apply bg-fundo text-corpo font-sans antialiased;
     background-image: radial-gradient(
-      60rem 26rem at 50% -18rem,
-      rgba(64, 110, 255, 0.16),
-      transparent 70%
+      70% 35% at 50% -12%,
+      rgba(1, 36, 126, 0.9) 0%,
+      rgba(2, 8, 30, 0.25) 60%,
+      transparent 80%
     );
+    background-repeat: no-repeat;
     background-attachment: fixed;
   }
   /* Todo número alinhado em coluna: sem isto os valores dançam ao atualizar. */
@@ -83,7 +92,7 @@
     @apply block text-xs font-medium text-rotulo mb-1.5;
   }
   .btn {
-    @apply h-11 px-4 rounded-campo font-semibold text-sm inline-flex items-center
+    @apply h-11 px-4 rounded-campo font-semibold text-[14.5px] inline-flex items-center
            justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed
            transition-colors;
   }

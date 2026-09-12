@@ -61,7 +61,14 @@ export function Pagina({
   children: ReactNode
 }) {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-6 py-6">
+    /*
+      1600 px, e não 1400. Com o trilho colado na borda (ver `shell/Layout.tsx`) o conteúdo
+      ganhou a largura que sobrava à esquerda dele, e prender a página nos 1400 antigos
+      deixava uma faixa vazia à direita — o desenho encolhia justo nos monitores em que há
+      mais espaço. O teto continua existindo: sem ele, num ultrawide a frase de leitura do
+      veredito viraria uma linha de 2000 px, que ninguém acompanha até o fim.
+    */
+    <div className="mx-auto w-full max-w-[1600px] px-6 py-7 lg:px-8">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           {rotulo ? <div className="rotulo-secao mb-2">{rotulo}</div> : null}
@@ -132,7 +139,7 @@ export function CabecalhoCard({
         <h2 className="rotulo-secao">{rotulo}</h2>
         {pergunta ? <p className="mt-1 text-sm text-fraco">{pergunta}</p> : null}
       </div>
-      {direita ? <div className="shrink-0 text-xs text-fraco">{direita}</div> : null}
+      {direita ? <div className="shrink-0 text-[12.5px] text-fraco">{direita}</div> : null}
     </div>
   )
 }
@@ -186,7 +193,9 @@ export function Kpi({
         ) : null}
       </div>
       {detalhe ? (
-        <div className={`mt-1.5 text-fraco ${veredito ? 'text-[13px]' : 'text-xs'}`}>{detalhe}</div>
+        <div className={`mt-1.5 text-fraco ${veredito ? 'text-[13px]' : 'text-[12.5px]'}`}>
+          {detalhe}
+        </div>
       ) : null}
     </div>
   )
@@ -257,7 +266,7 @@ export function Selo({ tom: valor, children }: { tom: Tom | string; children: Re
   const c = classesDoTom(valor)
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-chip border px-2 py-0.5 text-xs font-medium ${c.texto} ${c.borda} ${c.fundo}`}
+      className={`inline-flex h-6 items-center whitespace-nowrap rounded-chip border px-2.5 text-[12px] font-medium ${c.texto} ${c.borda} ${c.fundo}`}
     >
       {children}
     </span>
@@ -1445,7 +1454,8 @@ function TabelaRolavel<T>({
         `w-full` mantém o preenchimento quando sobra espaço. Quem pode ter texto longo é
         a célula, e ela se limita com `max-w` (ver a coluna "Pendência").
       */}
-      <table className="w-full min-w-max border-collapse text-sm">
+      {/* 14,5px na célula: o `text-sm` (14) do aplicativo é a medida de quem lê na mão. */}
+      <table className="w-full min-w-max border-collapse text-[14.5px]">
         {/* A largura declarada vale como pedido, não como ordem: o `min-w-max` da tabela
             continua mandando quando o conteúdo não cabe. É o que impede a coluna de nome de
             reservar a largura do aviso inteiro e empurrar os números para fora. */}
