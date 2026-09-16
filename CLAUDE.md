@@ -1,3 +1,24 @@
+> # REGRA ZERO — NUNCA CHUTE NADA
+>
+> Endereço, porta, nome de campo, nome de tabela, versão, caminho de arquivo,
+> parâmetro de API, comando de terceiro: **verifique antes de usar**. Ler o
+> código, consultar o banco, bater na URL e ver o que responde custa segundos;
+> um chute custa o tempo de quem depende do resultado, e o erro chega disfarçado
+> de "quase certo".
+>
+> O que já aconteceu por chute, neste conjunto de projetos:
+>
+> * `api.meuplano.solar` — inventado. Não existe. O login do TermoVision morria
+>   em `getaddrinfo failed` DEPOIS de a pessoa já ter autorizado no site. O
+>   endereço real (`meuplano.up.railway.app`) estava escrito no repositório.
+> * O comando do RealityScan, escrito de memória: faltava um argumento
+>   obrigatório, e a falha só aparecia no fim, após horas de reconstrução.
+> * "0 erros de tipo" repetido a tarde inteira rodando um comando que não
+>   checava arquivo nenhum. O certo era `npm run typecheck`.
+>
+> Não sabendo, a resposta é **"vou verificar"** — nunca a versão plausível.
+> Verificado, diga como verificou.
+
 # CLAUDE.md — Gestão Solar
 
 Guia para qualquer assistente de IA que trabalhe neste repositório. Descreve o que existe
@@ -573,7 +594,23 @@ que o `rg`/Grep passa batido: sendo ignorado pelo git, ele fica invisível na bu
 ### BFF, painel e portal → Railway, no push
 
 **O push para `main` dispara o deploy — mas só do que está ligado ao GitHub**, e hoje isso é
-o **back** e o **painel**, com o Root Directory de cada um. Leva ~1–2 min.
+o **back**, com o Root Directory dele. Leva ~1–2 min.
+
+⛔ **O PAINEL TAMBÉM NÃO SOBE NO PUSH.** Conferido em 16/09/2026: o commit `430f99a` mexeu em
+`painel/src/` e o serviço `front` não moveu um dedo — a lista de deploys dele parava em
+**11/09**, e a produção seguia servindo o bundle antigo. A falha é silenciosa do mesmo jeito
+do portal: o site continua no ar, com o código de semanas atrás, e o healthcheck (`/`, que
+devolve o `index.html`) declara tudo saudável. Publicar é um comando à mão:
+
+```bash
+railway redeploy --service front --environment production \
+    --project ae0386b7-5b51-44fe-bb74-d41ac885903a --from-source -y
+```
+
+`--from-source` é o que importa: sem ele o comando reimplanta a MESMA imagem, e o bundle
+antigo volta ao ar parecendo deploy novo. Conferir depois pelo ARQUIVO, nunca pelo status —
+`curl -s <painel>/ | grep -o '/assets/[^"]*\.js'` e procurar no bundle uma string que só
+existe na versão nova.
 
 ⛔ **O portal NÃO entra nesse caminho.** O serviço `appgestao` existe e está no ar, e não está
 conectado ao repositório: um push que mexe só em `portal/` **não muda nada em produção**, e a
