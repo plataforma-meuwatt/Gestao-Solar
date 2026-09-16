@@ -62,6 +62,19 @@ class User(Base):
     nome: Mapped[str] = mapped_column(String(255))
     empresa: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    #: Em E.164 (`+5516999998888`), normalizado em `core/telefone.py` — um número, um
+    #: formato. É para onde as notificações vão; sem ele não há destino.
+    telefone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Quando o gestor registrou que o cliente aceitou receber mensagens no WhatsApp. A
+    #: autorização é a cláusula do contrato; esta coluna é o registro de que ela existe.
+    #: Nulo = não recebe nada, por mais que esteja marcado na central.
+    whatsapp_aceite_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    whatsapp_aceite_por: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True
+    )
+
     perfil: Mapped[Perfil] = mapped_column(
         Enum(Perfil, native_enum=False, length=20), default=Perfil.CLIENTE
     )

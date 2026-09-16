@@ -27,7 +27,7 @@ from app.models.user import (
     User,
     UserPlantAccess,
 )
-from app.services import vinculos
+from app.services import notificacoes, vinculos
 
 
 class RegraDeNegocio(Exception):
@@ -224,11 +224,17 @@ def definir_usinas(db: Session, cliente: User, plant_link_ids: list[int]) -> Non
     }
     desejadas = set(plant_link_ids)
 
+    removidas = [pid for pid in atuais if pid not in desejadas]
     for pid, acesso in atuais.items():
         if pid not in desejadas:
             db.delete(acesso)
     for pid in desejadas - set(atuais):
         db.add(UserPlantAccess(user_id=cliente.id, plant_link_id=pid))
+
+    # Tirar a usina do cliente leva junto o que ele recebia dela. Deixar a preferência viva
+    # faria a usina reconcedida meses depois voltar avisando — sem ninguém ter marcado nada,
+    # e sem o gestor ter como ver que a linha antiga continuava lá.
+    notificacoes.limpar_usinas(db, cliente.id, removidas)
 
     db.commit()
 

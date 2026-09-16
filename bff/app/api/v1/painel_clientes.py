@@ -19,6 +19,7 @@ from app.core.apelido import normalizar as normalizar_apelido
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha, gestor_atual
+from app.core.telefone import exibir as exibir_telefone
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
@@ -205,6 +206,11 @@ class ClienteDetalhe(BaseModel):
     acesso: str
     trocar_senha: bool
     ultimo_login: datetime | None = None
+    #: Para onde vão as notificações, em formato de leitura. A central (ver
+    #: `painel_notificacoes.py`) é quem edita; aqui aparece para a ficha não precisar de
+    #: duas chamadas só para mostrar o contato.
+    telefone: str | None = None
+    whatsapp_aceite_em: datetime | None = None
     vinculos: list[VinculoOut]
     usinas: list[UsinaDoCliente]
 
@@ -232,6 +238,8 @@ def detalhe_cliente(
         acesso=svc.situacao_acesso(db, cliente),
         trocar_senha=cliente.trocar_senha,
         ultimo_login=cliente.ultimo_login,
+        telefone=exibir_telefone(cliente.telefone),
+        whatsapp_aceite_em=cliente.whatsapp_aceite_em,
         vinculos=[_vinculo_out(v) for v in cliente.vinculos],
         usinas=[
             UsinaDoCliente(

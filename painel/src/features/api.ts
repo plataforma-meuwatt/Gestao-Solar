@@ -289,6 +289,83 @@ export const permissoesDoCliente = (clienteId: number) =>
 export const definirPermissoes = (clienteId: number, permissoes: string[]) =>
   api.put(`/clientes/${clienteId}/permissoes`, { permissoes })
 
+/* ------------------------------------------------- central de notificações */
+
+/**
+ * O que o cliente recebe no WhatsApp, e de quais usinas.
+ *
+ * A matriz vem inteira — todo tipo × toda usina dele —, e não só o que está marcado: uma
+ * lista do marcado não teria como desenhar o que falta marcar. O `contato` responde a outra
+ * metade da pergunta, a que costuma ser esquecida: mesmo com tudo marcado, sem telefone e
+ * sem aceite não sai nada.
+ */
+export type UsinaMarcada = {
+  plant_link_id: number
+  nome: string
+  marcada: boolean
+}
+
+export type TipoDeNotificacao = {
+  tipo: string
+  rotulo: string
+  descricao: string
+  /** De qual produto vem o gatilho: meuWatt ou meuPlano. */
+  origem: string
+  usinas: UsinaMarcada[]
+}
+
+export type ContatoWhatsapp = {
+  telefone: string | null
+  telefone_exibicao: string | null
+  e_celular: boolean
+  aceite_em: string | null
+  aceite_por: string | null
+  apto: boolean
+  /** A frase do que falta resolver. `null` quando está apto. */
+  impedimento: string | null
+}
+
+export type CentralDeNotificacoes = {
+  cliente: string
+  contato: ContatoWhatsapp
+  tipos: TipoDeNotificacao[]
+  marcados: number
+  sem_usinas: boolean
+}
+
+export type EnvioDeNotificacao = {
+  tipo: string
+  tipo_rotulo: string
+  usina: string | null
+  destino: string | null
+  status: string
+  erro: string | null
+  criada_em: string
+}
+
+export const centralDeNotificacoes = (clienteId: number) =>
+  api.get<CentralDeNotificacoes>(`/clientes/${clienteId}/notificacoes`).then((r) => r.data)
+
+/** Telefone em texto livre — quem normaliza é o servidor, num lugar só. */
+export const salvarContatoWhatsapp = (
+  clienteId: number,
+  dados: { telefone?: string | null; aceite?: boolean },
+) =>
+  api
+    .patch<ContatoWhatsapp>(`/clientes/${clienteId}/notificacoes/contato`, dados)
+    .then((r) => r.data)
+
+/** Substituição: manda a matriz inteira, do jeito que ela deve ficar. */
+export const definirNotificacoes = (
+  clienteId: number,
+  itens: { tipo: string; plant_link_id: number }[],
+) => api.put(`/clientes/${clienteId}/notificacoes`, { itens })
+
+export const historicoDeNotificacoes = (clienteId: number) =>
+  api
+    .get<EnvioDeNotificacao[]>(`/clientes/${clienteId}/notificacoes/historico`)
+    .then((r) => r.data)
+
 /* ------------------------------------------------------------- conciliação */
 
 /**

@@ -40,6 +40,7 @@ from app.api.v1 import (
     pacotes,
     painel,
     painel_clientes,
+    painel_notificacoes,
     paradas,
     pendencias,
     plants,
@@ -136,6 +137,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
+app.include_router(painel_notificacoes.router)
 app.include_router(plants.router)
 app.include_router(paradas.router)
 app.include_router(billing.router)

@@ -41,6 +41,7 @@ import {
   type SituacaoAcesso,
   type Vinculo,
 } from '@/features/api'
+import { CartaoNotificacoes } from '@/features/clientes/Notificacoes'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
 import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
 import { mensagemDeErro } from '@/lib/api'
@@ -251,6 +252,11 @@ export function DetalheCliente() {
         </Cartao>
 
         <CartaoPermissoes clienteId={cliente.id} nome={cliente.nome} />
+
+        {/* A central de notificações fica ao lado das permissões de propósito: as duas
+            respondem "o que ele recebe". As permissões valem para o aviso no aplicativo;
+            esta vale para o WhatsApp, e é a única que pergunta DE QUAL USINA. */}
+        <CartaoNotificacoes clienteId={cliente.id} nome={cliente.nome} />
       </div>
 
       {senha ? (

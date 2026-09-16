@@ -7,6 +7,7 @@ equipamentos, cronograma e OS não são replicados — vêm por API, sempre.
 
 from app.models.billing import Invoice, Subscription
 from app.models.integracao import EstadoTeste, Integracao, Produto
+from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
 from app.models.plant import PlantLink
 from app.models.user import (
