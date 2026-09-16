@@ -153,6 +153,22 @@ dentro da própria pasta; no Railway, o serviço aponta o **Root Directory** par
 | **back** (`Gestao-Solar`) | `bff` | `bff/railway.json` | `DATABASE_URL` · `GS_JWT_SECRET` · `GS_ENCRYPTION_KEY` · `GS_CORS_ORIGENS` · `ENVIRONMENT=production` | no push | no ar |
 | **painel** (`front`) | `painel` | `painel/railway.json` | `API_URL` (o endereço público do back) | no push | no ar |
 | **portal** (`appgestao`) | `portal` | `portal/railway.json` | `API_URL` | ⛔ **à mão** | no ar |
+| **gateway** (`whatsapp`) | `whatsapp` | ⛔ não aceito mais | `DATABASE_URL` (6543) · `DATABASE_URL_MIGRACAO` (5432) · `GATEWAY_ENCRYPTION_KEY` · `WHATSAPP_CHAVE_INTERNA` · `BFF_URL` · `ENVIRONMENT=production` | ⛔ **à mão** | no ar |
+
+O **gateway** (`whatsapp/`) nasceu em 16/09/2026 e é o dono da conversa com a Meta. Três
+coisas dele fogem do padrão dos irmãos, e as três já custaram um deploy vermelho:
+
+- **`railwayConfigFile` não é mais aceito pela API.** Config as Code (`railway.json`) está
+  deprecado e a mutation `serviceInstanceUpdate` recusa o campo com todas as letras. A
+  configuração deste serviço (Root Directory, `dockerfilePath`, healthcheck, política de
+  reinício) mora no painel do Railway, gravada pela API. O `whatsapp/railway.json` continua
+  no repositório porque arquivos existentes seguem valendo **até 2026-12-01** — depois disso
+  ele é só documentação da intenção.
+- **O builder aparece como `RAILPACK` e mesmo assim o Dockerfile é usado**, porque
+  `dockerfilePath` está preenchido. O enum `Builder` da API não tem mais `DOCKERFILE`.
+- **As credenciais da Meta NÃO são variáveis de ambiente.** Token, número, segredo do app e
+  token de verificação são cadastrados em Painel → WhatsApp e vivem cifrados no banco. O que
+  está na tabela acima é só o que o serviço precisa para subir.
 
 ⛔ **O `appgestao` não está ligado ao GitHub, e o `railway up` dele tem armadilha.** Um push
 que mexe só em `portal/` não muda nada em produção, e a falha é silenciosa: o site continua

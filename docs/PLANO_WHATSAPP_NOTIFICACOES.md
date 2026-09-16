@@ -304,15 +304,46 @@ O painel não tem skeleton nem helpers de data.
 |---|---|---|---|
 | 0 | MP | Correção do PAT no assistente | gates `validate_ia_cliente.py` + `validate_assistente_pat.py`; probe em produção com PAT de cliente |
 | 1 | Meta | Token permanente (System User), 6 templates submetidos, destinatários de teste | envio manual de template aprovado |
-| 2 | GS `whatsapp/` | Gateway: envio de template, webhook, status; Railway ligado ao GitHub | pytest com payloads reais assinados (duplicado, status fora de ordem, assinatura errada); `/health`; template real chega ao celular de teste |
+| 2 ✅ | GS `whatsapp/` | Gateway: envio de template, webhook, status | **feito em 16/09/2026** — ver abaixo |
 | 3 | MW | `plant_day_closures` + job + `GET generation/closures`; correção do 500 de `breakdowns/range` | pytest no mw-api; conferir fechamento de uma usina real após o pôr do sol |
 | 4 | MP | `service_order_eventos` + helper + `GET service-orders/eventos` | pytest: START, /start, play, FINISH e close geram no máximo 1 por tipo; escopo por PAT |
 | 5 | GS `bff/` | Modelo, catálogo, telefone, motor, rotas internas com `simular`, clientes das rotas novas **no catálogo da sonda** | pytest: pessoa sem aceite, sem telefone ou sem preferência não recebe; usina fora do escopo nunca entra; `down null` e `usable=false` → silêncio; chave repetida → no-op; dia com lacuna → nada |
-| 6 | GS `painel/` | Central na ficha do cliente | `npm run check`; tela aberta de verdade (Playwright) |
+| 6 ✅ | GS `painel/` | Central na ficha do cliente | **feita e publicada em 16/09/2026**, conferida na tela |
 | 7 | Railway | Relógio ligado com `simular=true` primeiro, depois real, com o número de teste | contagens de `simular`; mensagem real de cada tipo no celular de teste |
 | 8 | Docs | CLAUDE.md do GS (pooler, central, pacote `gateway`), README com a tabela de deploy, ARQUITETURA; CLAUDE.md do MP (PAT, eventos) e do MW (closures) | leitura |
 
-Ordem de deploy: MP (0) → gateway → MW e MP (3, 4) → BFF → painel → relógio. Troca para o número real só depois da fase 7.
+Ordem de deploy: MP (0) → ~~gateway~~ → MW e MP (3, 4) → BFF → painel → relógio. Troca para
+o número real só depois da fase 7.
+
+### O que a fase 2 entregou, e no que ela saiu do plano
+
+No ar em `https://whatsapp-production-2201.up.railway.app` (serviço `whatsapp`, Root
+Directory `whatsapp`). Provado por probe: `/health` responde
+`{"status":"ok","ambiente":"production"}`, `/interno/credenciais` dá **401** sem a chave e
+200 com ela, e o webhook responde **503 com a frase** enquanto não houver credencial. 51
+testes no gateway, 11 no BFF, 965 na suíte do BFF.
+
+**A diferença que vale registrar: as credenciais da Meta NÃO ficaram em variável de
+ambiente.** O plano previa `WHATSAPP_ACCESS_TOKEN`, `META_APP_SECRET` e
+`WHATSAPP_VERIFY_TOKEN` no Railway; elas passaram a ser cadastradas em **Painel → WhatsApp**
+(só administrador) e vivem cifradas com Fernet no banco do gateway, pelo mesmo motivo que
+tirou as pontes do meuWatt e do meuPlano do `.env`: quem configura é o gestor, e ele precisa
+testar — digitar, ver se responde, corrigir. Com segredo em ambiente, cada tentativa custa
+um redeploy. Gravar testa contra a Graph antes de persistir, e a credencial anterior
+sobrevive à recusa.
+
+Peças novas que o plano não tinha: `bff/app/clients/whatsapp.py`,
+`/api/painel/whatsapp/*` (estado, gravar, testar, remover, histórico),
+`/api/v1/interno/whatsapp/evento` (o gateway avisa que chegou mensagem; o BFF só registra
+nesta fase) e a tela `painel/src/features/whatsapp/Whatsapp.tsx`.
+
+**O que ficou pendente da fase 2:**
+
+- **O serviço não sobe no push** — a API de projeto não cria o gatilho ("Bad Access"; exige
+  token de conta). Publicar é `railway redeploy --service whatsapp … --from-source -y`.
+  Ligar o repositório no dashboard apaga esta pendência.
+- **Template real no celular** depende da fase 1: ainda não há token permanente nem template
+  aprovado. O caminho de envio está pronto e testado contra a Graph simulada.
 
 ## Verificação ponta a ponta (fim da fase 7)
 

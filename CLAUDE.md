@@ -92,6 +92,8 @@ Gestao Solar/            ← o repositório Git é aqui, na raiz
 ├── painel/       FRONT — React + Vite servido por nginx. O gestor (time interno)
 ├── portal/       FRONT — React + Vite servido por nginx. O cliente, no navegador
 ├── app/          APP   — Expo / React Native. O dono da usina, no celular
+├── whatsapp/     BACK  — FastAPI. Gateway do WhatsApp: recebe da Meta e envia pela Meta.
+│                 O pacote Python chama-se `gateway`, NUNCA `app` (ver §6)
 │                 próprios. Chegou do repositório do meuPlano em 04/09/2026
 ├── dev.ps1       sobe back + painel + portal (e, sob demanda, o aplicativo)
 └── docs/         ARQUITETURA · CONTRATO_API · TELAS · DECISAO_IDENTIDADE · PROMPT_DESIGNER
@@ -611,6 +613,30 @@ railway redeploy --service front --environment production \
 antigo volta ao ar parecendo deploy novo. Conferir depois pelo ARQUIVO, nunca pelo status —
 `curl -s <painel>/ | grep -o '/assets/[^"]*\.js'` e procurar no bundle uma string que só
 existe na versão nova.
+
+⛔ **O GATEWAY DO WHATSAPP TAMBÉM NÃO SOBE NO PUSH.** O serviço `whatsapp` foi criado pela
+API em 16/09/2026 apontando para este repositório, mas **sem gatilho de push** — a API de
+projeto não cria o gatilho, e a mutation que o criaria exige token de conta. Mesma armadilha
+silenciosa do portal: um push que mexe só em `whatsapp/` deixa a produção com o código
+antigo, e o `/health` responde 200 o tempo todo. Publicar é à mão:
+
+```bash
+railway redeploy --service whatsapp --environment production \
+    --project ae0386b7-5b51-44fe-bb74-d41ac885903a --from-source -y
+```
+
+E conferir por PROBE, nunca pelo status: `curl <gateway>/health` deve trazer
+`{"status":"ok","ambiente":"production"}`, e `GET /interno/credenciais` sem cabeçalho deve
+dar **401** — se der 200, a porta interna está aberta e isso é grave.
+
+⛔ **DOIS SERVIÇOS NO MESMO BANCO PRECISAM DE `version_table` PRÓPRIA.** O gateway divide o
+Supabase com o BFF, e o Alembic grava a revisão atual em `alembic_version` — uma tabela só,
+no schema `public`. O primeiro deploy do gateway morreu em `Can't locate revision identified
+by 'c41d9b6e7a05'`, e a mensagem engana: parece migration corrompida, e é a cadeia do BFF
+que ele encontrou lá. Se tivesse conseguido escrever, o próximo `alembic upgrade` do BFF
+veria a revisão DELE como desconhecida — e aí quem para de subir é o serviço que atende o
+aplicativo. O gateway usa `alembic_version_gateway` (`whatsapp/alembic/env.py`); serviço
+novo neste banco nasce com a sua.
 
 ⛔ **O portal NÃO entra nesse caminho.** O serviço `appgestao` existe e está no ar, e não está
 conectado ao repositório: um push que mexe só em `portal/` **não muda nada em produção**, e a
