@@ -58,9 +58,13 @@ def _erro(exc: gateway.GatewayIndisponivel) -> HTTPException:
 async def ler(_: User = Depends(administrador_atual)) -> dict:
     """O que está configurado hoje. Nenhum segredo sai daqui."""
     try:
-        return await gateway.estado()
+        estado = await gateway.estado()
+        # Vai junto porque a tela manda cadastrar este endereço na Meta, e quem está nela
+        # não tem por que saber o domínio do gateway no Railway.
+        estado["webhook_url"] = gateway.url_do_webhook()
     except gateway.GatewayIndisponivel as exc:
         raise _erro(exc) from exc
+    return estado
 
 
 @router.put("", response_model=ResultadoOut)

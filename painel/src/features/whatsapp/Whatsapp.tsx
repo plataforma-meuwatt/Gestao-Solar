@@ -203,7 +203,14 @@ export function Whatsapp() {
           <li>Cole aqui o token, o Phone Number ID e o segredo do app.</li>
           <li>
             Escolha um token de verificação qualquer, cole aqui e depois no painel da Meta, em
-            Webhooks, junto do endereço do gateway terminado em <span className="mono">/webhook</span>.
+            Webhooks, junto deste endereço:
+            {data?.webhook_url ? (
+              <code className="mono block mt-1.5 rounded-campo border border-borda bg-fundo px-3 py-2 text-forte break-all">
+                {data.webhook_url}
+              </code>
+            ) : (
+              <span className="text-fraco"> (o endereço aparece aqui quando o gateway estiver configurado)</span>
+            )}
           </li>
           <li>Assine o campo <span className="mono">messages</span> para receber as mensagens.</li>
         </ol>

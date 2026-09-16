@@ -70,6 +70,16 @@ async def _req(metodo: str, caminho: str, **kw: Any) -> Any:
 # ── credenciais (a tela de administração do WhatsApp) ───────────────────────
 
 
+def url_do_webhook() -> str:
+    """O endereço que vai no cadastro do webhook, no painel da Meta.
+
+    Mora aqui porque é o cliente quem sabe onde o gateway está. A tela precisa dele para
+    copiar: errar esse campo não dá erro nenhum, só silêncio — a Meta entrega em outro lugar
+    e as mensagens dos clientes somem.
+    """
+    return f"{_base()}/webhook"
+
+
 async def estado() -> dict[str, Any]:
     return await _req("GET", "/interno/credenciais")
 

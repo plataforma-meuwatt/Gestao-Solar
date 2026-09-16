@@ -313,6 +313,8 @@ export type CredenciaisWhatsapp = {
   atualizada_em?: string | null
   atualizada_por?: string | null
   cifragem_disponivel: boolean
+  /** O endereço a cadastrar no webhook da Meta. Vem do servidor: a tela não o monta. */
+  webhook_url?: string | null
 }
 
 export type ResultadoWhatsapp = { ok: boolean; detalhe: string }
