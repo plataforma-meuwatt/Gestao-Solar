@@ -10,6 +10,7 @@ import { ListaClientes } from '@/features/clientes/Lista'
 import { NovoCliente } from '@/features/clientes/Novo'
 import { Rotas } from '@/features/rotas/Rotas'
 import { Usinas } from '@/features/usinas/Usinas'
+import { Whatsapp } from '@/features/whatsapp/Whatsapp'
 import { aoPerderSessao } from '@/lib/api'
 import { Layout, SoAdministrador } from '@/shell/Layout'
 import { useAuth } from '@/store/auth'
@@ -60,6 +61,14 @@ export function App() {
               element={
                 <SoAdministrador>
                   <Rotas />
+                </SoAdministrador>
+              }
+            />
+            <Route
+              path="/whatsapp"
+              element={
+                <SoAdministrador>
+                  <Whatsapp />
                 </SoAdministrador>
               }
             />

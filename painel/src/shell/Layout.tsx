@@ -12,6 +12,7 @@
 
 import {
   LogOut,
+  MessageCircle,
   Route,
   Stethoscope,
   Sun,
@@ -52,6 +53,9 @@ const MENU: ItemMenu[] = [
   // Sonda das rotas dos produtos: diagnóstico do SISTEMA, não de cliente nenhum. O acesso
   // aos produtos saiu daqui e foi para dentro de Equipe — ver `features/conexoes`.
   { para: '/rotas', rotulo: 'Rotas', icone: Route, soAdministrador: true, grupo: 'Sistema' },
+  // O número da empresa, não o de um cliente: quem abre esta tela configura por onde TODAS
+  // as notificações saem. Por isso Sistema, e por isso só administrador.
+  { para: '/whatsapp', rotulo: 'WhatsApp', icone: MessageCircle, soAdministrador: true },
 ]
 
 class LimiteDeErro extends React.Component<

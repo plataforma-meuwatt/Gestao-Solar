@@ -289,6 +289,63 @@ export const permissoesDoCliente = (clienteId: number) =>
 export const definirPermissoes = (clienteId: number, permissoes: string[]) =>
   api.put(`/clientes/${clienteId}/permissoes`, { permissoes })
 
+/* ------------------------------------------- administração do WhatsApp */
+
+/**
+ * As credenciais da Meta, cadastradas na tela e guardadas pelo gateway.
+ *
+ * O BFF não guarda nada disso: ele repassa ao gateway, que cifra. Nenhum segredo volta por
+ * estas rotas — o que chega é o prefixo do token, o estado e a data do último teste.
+ */
+export type CredenciaisWhatsapp = {
+  configurada: boolean
+  envio_pronto: boolean
+  webhook_pronto: boolean
+  phone_number_id?: string | null
+  waba_id?: string | null
+  app_id?: string | null
+  numero_exibicao?: string | null
+  token_prefixo?: string | null
+  token_gravado_em?: string | null
+  estado: string
+  detalhe?: string | null
+  testada_em?: string | null
+  atualizada_em?: string | null
+  atualizada_por?: string | null
+  cifragem_disponivel: boolean
+}
+
+export type ResultadoWhatsapp = { ok: boolean; detalhe: string }
+
+export type EventoWhatsapp = {
+  evento: string
+  ocorrido_em: string
+  ator?: string | null
+  token_prefixo?: string | null
+  detalhe?: string | null
+}
+
+export const credenciaisWhatsapp = () =>
+  api.get<CredenciaisWhatsapp>('/whatsapp').then((r) => r.data)
+
+/** Campo de segredo vazio significa "não mexer": quem só corrigiu o WABA não tem o token. */
+export const salvarCredenciaisWhatsapp = (dados: {
+  phone_number_id: string
+  waba_id?: string | null
+  app_id?: string | null
+  token?: string | null
+  app_secret?: string | null
+  verify_token?: string | null
+}) => api.put<ResultadoWhatsapp>('/whatsapp', dados).then((r) => r.data)
+
+export const testarCredenciaisWhatsapp = () =>
+  api.post<ResultadoWhatsapp>('/whatsapp/testar').then((r) => r.data)
+
+export const removerCredenciaisWhatsapp = () => api.delete('/whatsapp')
+
+export const eventosWhatsapp = (limite = 30) =>
+  api.get<EventoWhatsapp[]>('/whatsapp/eventos', { params: { limite } }).then((r) => r.data)
+
 /* ------------------------------------------------- central de notificações */
 
 /**

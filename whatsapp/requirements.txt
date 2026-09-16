@@ -1,0 +1,19 @@
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+sqlalchemy==2.0.43
+alembic==1.16.5
+psycopg2-binary==2.9.10
+pydantic==2.11.9
+pydantic-settings==2.11.0
+httpx==0.28.1
+
+# Fernet: as credenciais da Meta são cadastradas na tela e ficam cifradas no banco.
+cryptography==45.0.7
+
+# Testes
+pytest==8.4.2
+pytest-asyncio==1.2.0
+
+# Base de fusos IANA. A imagem `python:slim` não a traz, e a janela de 24 h e a hora da
+# mensagem são contadas em UTC contra o relógio de quem lê — sem tzdata, `ZoneInfo` falha.
+tzdata>=2024.1

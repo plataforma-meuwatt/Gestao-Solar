@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     # possível alcançar o endereço" antes mesmo de o gestor ter chance de suspeitar da URL.
     meuplano_api_url: str = "https://meuplano.up.railway.app"
 
+    # ── gateway de WhatsApp ─────────────────────────────────────────────────
+    # O serviço que fala com a Meta (`whatsapp/`). O BFF não conhece o token da Meta: ele
+    # repassa ao gateway, que cifra e guarda. Vazio = a tela de administração do WhatsApp
+    # diz que o gateway não está configurado neste ambiente, em vez de falhar no meio.
+    whatsapp_gateway_url: str = ""
+    #: A chave da porta interna, a MESMA dos dois lados. É ela que separa o BFF do resto do
+    #: mundo na hora de mandar mensagem — e o gateway do resto do mundo na hora de avisar.
+    whatsapp_chave_interna: str = ""
+
     environment: str = "development"
 
     @property

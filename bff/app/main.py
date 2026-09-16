@@ -38,9 +38,11 @@ from app.api.v1 import (
     permissoes,
     notifications,
     pacotes,
+    interno_whatsapp,
     painel,
     painel_clientes,
     painel_notificacoes,
+    painel_whatsapp,
     paradas,
     pendencias,
     plants,
@@ -138,6 +140,8 @@ app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
 app.include_router(painel_notificacoes.router)
+app.include_router(painel_whatsapp.router)
+app.include_router(interno_whatsapp.router)
 app.include_router(plants.router)
 app.include_router(paradas.router)
 app.include_router(billing.router)
