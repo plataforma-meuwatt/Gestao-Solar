@@ -33,6 +33,19 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+#: A tabela de versão é PRÓPRIA do gateway, e isto não é preciosismo.
+#:
+#: O gateway divide o banco com o BFF, e o Alembic grava a revisão atual em
+#: `alembic_version` — uma tabela só, no schema `public`. Com o nome padrão, as duas cadeias
+#: de migration disputam a mesma linha: o primeiro deploy do gateway achou lá a revisão
+#: `c41d9b6e7a05`, que é da central de notificações do BFF, e morreu em
+#: `Can't locate revision identified by 'c41d9b6e7a05'` — mensagem que parece migration
+#: corrompida e é, na verdade, a cadeia errada. Pior: se o gateway conseguisse escrever ali,
+#: o próximo `alembic upgrade` do BFF veria a revisão DELE como desconhecida.
+#:
+#: Cada serviço com a sua tabela, as duas histórias seguem lado a lado sem se ver.
+VERSION_TABLE = "alembic_version_gateway"
+
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -40,6 +53,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table=VERSION_TABLE,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -56,6 +70,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             render_as_batch=connection.dialect.name == "sqlite",
+            version_table=VERSION_TABLE,
         )
         with context.begin_transaction():
             context.run_migrations()
