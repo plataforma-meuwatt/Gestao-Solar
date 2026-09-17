@@ -152,3 +152,21 @@ curl -s -o /dev/null -w "%{http_code}\n" $G/interno/credenciais   # 401 — se d
 Para abrir uma **tela** do painel sem a senha do dono, há um caminho com Playwright descrito no
 `CLAUDE.md` §6 (sessão injetada no `localStorage` antes do primeiro render, chave
 `gs_painel_sessao`, no formato `{token, nome, apelido, perfil}`).
+
+---
+
+## 7. A máquina Linux (`srvclaude`) — conferido em 17/09/2026
+
+O trabalho também roda num servidor Ubuntu 24.04 (`srvclaude`), com o repositório em
+`/root/DEVV/Gestao Solar/Gestao-Solar`. Os caminhos `C:\Dev\...` deste guia e do `CLAUDE.md`
+não existem lá. O que muda:
+
+- **Não há `.env.txt`.** Os valores dele estão comentados no bloco **[5]** do `.env` da raiz
+  (`# Expo: …`, `# Token Railway: …`). O comando do `CLAUDE.md` §9 não acha nada lá; use:
+  `export EXPO_TOKEN=$(sed -n 's/^# Expo:[[:space:]]*//p' .env | tr -d '\r')`.
+- **Credenciais testadas e válidas:** `gh` logado como `prnmarchesini` (push funciona),
+  `railway whoami` → conta (enxerga os cinco serviços depois do `railway link`), `EXPO_TOKEN`
+  autentica no `eas-cli`, e as quatro `DATABASE_URL` (a do `bff/.env` e as três do cofre)
+  conectam no Supabase.
+- **Falta instalar:** `bff/venv` não existe, `eas` só por `npx eas-cli@latest`, sem `psql`.
+  O `dev.ps1` é PowerShell e não roda lá — suba cada parte à mão.
