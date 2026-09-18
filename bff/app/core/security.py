@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.user import User
+from app.services import areas_painel
 
 ALGORITMO = "HS256"
 _bearer = HTTPBearer(auto_error=False)
@@ -160,3 +161,36 @@ def administrador_atual(gestor: User = Depends(gestor_atual)) -> User:
             "Esta área é restrita a administradores.",
         )
     return gestor
+
+
+def exige_area(chave: str):
+    """Guarda de uma área do painel — o que substituiu "administrador vê tudo o que é
+    sensível, atendimento vê o resto".
+
+    O administrador passa sempre, por perfil e sem linha no banco (ver
+    `services/areas_painel`). Quem é atendimento passa se o acesso estiver concedido na
+    tela de Usuários do sistema.
+
+    **403 e não 404**: aqui a existência da tela não é segredo — ela está no menu de
+    quem tem acesso e no manual. O que se protege é o conteúdo, e dizer "você não tem
+    esta área" é o que faz a pessoa pedir o acesso a quem administra em vez de abrir
+    chamado achando que o painel quebrou.
+    """
+    if chave not in areas_painel.CHAVES:
+        # Erra na importação do módulo, não na requisição: uma área digitada errado numa
+        # rota seria uma porta que ninguém abre — nem o administrador —, e o sintoma
+        # chegaria como "a tela sumiu para todo mundo".
+        raise ValueError(f"Área desconhecida no catálogo do painel: {chave!r}")
+
+    def guarda(
+        gestor: User = Depends(gestor_atual), db: Session = Depends(get_db)
+    ) -> User:
+        if not areas_painel.pode(db, gestor, chave):
+            rotulo = areas_painel.area(chave).rotulo
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Seu acesso não inclui “{rotulo}”. Peça a quem administra o painel.",
+            )
+        return gestor
+
+    return guarda

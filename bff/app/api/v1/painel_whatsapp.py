@@ -9,8 +9,10 @@ redeploy.
 O BFF não guarda nada disso: ele repassa ao gateway, que cifra e guarda no banco dele. O
 token não volta por rota nenhuma — o que a tela recebe é o prefixo, o estado e a data.
 
-**Só administrador.** Quem tem esta tela manda mensagem em nome da empresa para qualquer
-cliente, e configura a porta por onde a Meta entrega. É a mesma régua de Conexões.
+**Área `whatsapp`.** Quem tem esta tela manda mensagem em nome da empresa para qualquer
+cliente, e configura a porta por onde a Meta entrega. É a mesma régua de Conexões: o
+administrador abre sempre, e quem é atendimento só se o acesso tiver sido concedido em
+Usuários do sistema.
 """
 
 from datetime import datetime
@@ -19,10 +21,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.clients import whatsapp as gateway
-from app.core.security import administrador_atual
+from app.core.security import exige_area
 from app.models.user import User
 
 router = APIRouter(prefix="/api/painel/whatsapp", tags=["painel · whatsapp"])
+
+#: A guarda desta tela inteira, montada uma vez: toda rota daqui exige a mesma área.
+EXIGE_WHATSAPP = exige_area("whatsapp")
 
 
 class CredenciaisIn(BaseModel):
@@ -55,7 +60,7 @@ def _erro(exc: gateway.GatewayIndisponivel) -> HTTPException:
 
 
 @router.get("")
-async def ler(_: User = Depends(administrador_atual)) -> dict:
+async def ler(_: User = Depends(EXIGE_WHATSAPP)) -> dict:
     """O que está configurado hoje. Nenhum segredo sai daqui."""
     try:
         estado = await gateway.estado()
@@ -69,7 +74,7 @@ async def ler(_: User = Depends(administrador_atual)) -> dict:
 
 @router.put("", response_model=ResultadoOut)
 async def salvar(
-    corpo: CredenciaisIn, gestor: User = Depends(administrador_atual)
+    corpo: CredenciaisIn, gestor: User = Depends(EXIGE_WHATSAPP)
 ) -> ResultadoOut:
     """Grava as credenciais — o gateway testa contra a Meta antes de aceitar.
 
@@ -86,7 +91,7 @@ async def salvar(
 
 
 @router.post("/testar", response_model=ResultadoOut)
-async def testar(gestor: User = Depends(administrador_atual)) -> ResultadoOut:
+async def testar(gestor: User = Depends(EXIGE_WHATSAPP)) -> ResultadoOut:
     """Reexercita o que está gravado — o token pode ter sido revogado do outro lado."""
     try:
         r = await gateway.testar_credenciais(gestor.identificacao)
@@ -96,7 +101,7 @@ async def testar(gestor: User = Depends(administrador_atual)) -> ResultadoOut:
 
 
 @router.delete("", status_code=204)
-async def remover(gestor: User = Depends(administrador_atual)) -> None:
+async def remover(gestor: User = Depends(EXIGE_WHATSAPP)) -> None:
     """Apaga os segredos do gateway. O app continua existindo na Meta — revogar é lá."""
     try:
         await gateway.remover_credenciais(gestor.identificacao)
@@ -105,7 +110,7 @@ async def remover(gestor: User = Depends(administrador_atual)) -> None:
 
 
 @router.get("/eventos", response_model=list[EventoOut])
-async def eventos(limite: int = 30, _: User = Depends(administrador_atual)) -> list[EventoOut]:
+async def eventos(limite: int = 30, _: User = Depends(EXIGE_WHATSAPP)) -> list[EventoOut]:
     """O histórico da configuração: quem gravou, quando, e o que o teste respondeu."""
     try:
         return [EventoOut(**e) for e in await gateway.eventos(limite)]

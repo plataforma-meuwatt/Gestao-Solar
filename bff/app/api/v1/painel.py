@@ -2,8 +2,11 @@
 
 A gestão de clientes vive em `painel_clientes.py`.
 
-Tudo aqui exige `gestor_atual` — sessão de escopo `painel`, perfil que abre o painel. O
-que mexe em credencial de serviço sobe para `administrador_atual`.
+Tudo aqui exige uma sessão de escopo `painel`, e cada rota exige a ÁREA da tela que a
+usa (`core/security.exige_area`, catálogo em `services/areas_painel`): as pontes com os
+produtos ficam em `conexoes`, a sonda em `rotas`, o inventário em `usinas`. Administrador
+passa em todas por perfil; atendimento, só no que o administrador marcou em Usuários do
+sistema.
 """
 
 from datetime import UTC, datetime
@@ -16,17 +19,23 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import (
-    administrador_atual,
     conferir_senha,
     criar_token_painel,
+    exige_area,
     gestor_atual,
 )
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import conciliacao, integracoes, sonda, vinculos
+from app.services import areas_painel, conciliacao, integracoes, sonda, vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
+
+#: As guardas deste arquivo, montadas uma vez. `conexoes` guarda a credencial com que o
+#: painel lê os dois produtos; `rotas`, a sonda; `usinas`, o inventário e a conciliação.
+EXIGE_CONEXOES = exige_area("conexoes")
+EXIGE_ROTAS = exige_area("rotas")
+EXIGE_USINAS = exige_area("usinas")
 
 
 # ----------------------------------------------------------------------- entrada
@@ -43,6 +52,10 @@ class EntrarOut(BaseModel):
     nome: str
     apelido: str
     perfil: str
+    #: As áreas que esta conta abre — já resolvidas (administrador vem com todas). É o que
+    #: a barra lateral usa para montar o menu, e o que decide para onde o painel manda
+    #: quem entra: sem isto, todo mundo cairia em Clientes, inclusive quem não a tem.
+    areas: list[str] = []
 
 
 @router.post("/entrar", response_model=EntrarOut)
@@ -67,7 +80,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     db.commit()
 
     token, expira = criar_token_painel(usuario.id)
-    # O perfil vai na resposta para a barra lateral esconder o que atendimento não abre.
+    # Perfil e áreas vão na resposta para a barra lateral esconder o que a conta não abre.
     # É conforto de interface, não segurança: o backend recusa de qualquer forma.
     return EntrarOut(
         token=token,
@@ -75,6 +88,31 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
         nome=usuario.nome,
         apelido=usuario.apelido,
         perfil=usuario.perfil.value,
+        areas=sorted(areas_painel.efetivas(db, usuario)),
+    )
+
+
+class EuOut(BaseModel):
+    nome: str
+    apelido: str
+    perfil: str
+    areas: list[str]
+
+
+@router.get("/eu", response_model=EuOut)
+def eu(db: Session = Depends(get_db), gestor: User = Depends(gestor_atual)) -> EuOut:
+    """Quem sou eu e o que abro, AGORA.
+
+    Existe porque a sessão dura oito horas e o acesso muda no meio delas: sem esta rota,
+    quem perdesse a área de WhatsApp continuaria vendo o item no menu até sair e entrar de
+    novo — clicaria, tomaria 403 e leria isso como defeito do painel. A barra lateral
+    consulta esta rota ao abrir, e o que ela responde manda no menu.
+    """
+    return EuOut(
+        nome=gestor.nome,
+        apelido=gestor.apelido,
+        perfil=gestor.perfil.value,
+        areas=sorted(areas_painel.efetivas(db, gestor)),
     )
 
 
@@ -146,7 +184,7 @@ def _integracao_out(produto: Produto, integracao) -> IntegracaoOut:
 
 @router.get("/integracoes", response_model=list[IntegracaoOut])
 def listar_integracoes(
-    db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    db: Session = Depends(get_db), _: User = Depends(EXIGE_CONEXOES)
 ) -> list[IntegracaoOut]:
     return [_integracao_out(p, i) for p, i in integracoes.listar(db).items()]
 
@@ -156,7 +194,7 @@ def salvar_integracao(
     produto: Produto,
     body: IntegracaoIn,
     db: Session = Depends(get_db),
-    usuario: User = Depends(administrador_atual),
+    usuario: User = Depends(EXIGE_CONEXOES),
 ) -> IntegracaoOut:
     """Caminho ANTIGO, por conta de serviço. Mantido para não quebrar o que já está
     gravado; a tela oferece o token."""
@@ -185,7 +223,7 @@ class TesteOut(BaseModel):
 async def testar_integracao(
     produto: Produto,
     db: Session = Depends(get_db),
-    usuario: User = Depends(administrador_atual),
+    usuario: User = Depends(EXIGE_CONEXOES),
 ) -> TesteOut:
     resultado = await integracoes.testar(db, produto, ator_email=usuario.identificacao)
     return TesteOut(
@@ -202,7 +240,7 @@ async def conectar_por_token(
     produto: Produto,
     body: TokenIn,
     db: Session = Depends(get_db),
-    usuario: User = Depends(administrador_atual),
+    usuario: User = Depends(EXIGE_CONEXOES),
 ) -> TesteOut:
     """Cola um token pessoal e conecta.
 
@@ -226,7 +264,7 @@ async def conectar_por_token(
 def desconectar_token(
     produto: Produto,
     db: Session = Depends(get_db),
-    usuario: User = Depends(administrador_atual),
+    usuario: User = Depends(EXIGE_CONEXOES),
 ) -> IntegracaoOut:
     """Para de usar o token deste lado. NÃO o revoga no produto de origem — só quem o
     emitiu pode fazer isso, lá. A tela avisa, porque a diferença importa."""
@@ -259,7 +297,7 @@ class VarreduraOut(BaseModel):
 
 @router.get("/integracoes/{produto}/rotas", response_model=VarreduraOut)
 def listar_rotas(
-    produto: Produto, _: User = Depends(gestor_atual)
+    produto: Produto, _: User = Depends(EXIGE_ROTAS)
 ) -> VarreduraOut:
     """O catálogo, sem bater em nada.
 
@@ -291,7 +329,7 @@ def listar_rotas(
 async def sondar_rotas(
     produto: Produto,
     db: Session = Depends(get_db),
-    usuario: User = Depends(administrador_atual),
+    usuario: User = Depends(EXIGE_ROTAS),
 ) -> VarreduraOut:
     """Exercita o catálogo inteiro com o token gravado.
 
@@ -327,7 +365,7 @@ async def sondar_rotas(
 def historico_integracao(
     produto: Produto,
     db: Session = Depends(get_db),
-    _: User = Depends(administrador_atual),
+    _: User = Depends(EXIGE_CONEXOES),
 ) -> list[EventoOut]:
     """O que já aconteceu com esta ponte. Responde "desde quando parou?", que o estado
     atual sozinho não responde."""
@@ -361,7 +399,7 @@ class UsinaOut(BaseModel):
 
 @router.get("/usinas", response_model=list[UsinaOut])
 def listar_usinas(
-    db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
 ) -> list[UsinaOut]:
     """As usinas que o Gestão Solar conhece, e de quem é cada uma.
 
@@ -479,7 +517,7 @@ def _linha_out(linha: conciliacao.Linha) -> LinhaConciliacao:
 async def carregar_conciliacao(
     cliente_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_USINAS),
 ) -> ConciliacaoOut:
     """As usinas DAQUELE CLIENTE nos dois produtos, para casar uma com a outra.
 
@@ -578,7 +616,7 @@ def _conflito(db: Session, campo, valor, exceto_id: int | None) -> PlantLink | N
 
 @router.put("/conciliacao/usina", response_model=LinhaConciliacao)
 def salvar_usina(
-    body: UsinaIn, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    body: UsinaIn, db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
 ) -> LinhaConciliacao:
     """Cria ou atualiza uma usina do inventário — casando, descasando ou só ligando no app.
 
@@ -643,7 +681,7 @@ def salvar_usina(
 
 @router.delete("/conciliacao/usina/{plant_link_id}", status_code=204)
 def remover_usina(
-    plant_link_id: int, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    plant_link_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
 ) -> None:
     """Tira a usina do Gestão Solar de vez.
 

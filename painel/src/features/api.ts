@@ -187,14 +187,38 @@ export type Diagnostico = {
   manutencao?: BlocoDiagnostico
 }
 
+export type Perfil = 'atendimento' | 'administrador'
+
+/** Uma pessoa do staff: quem entra no painel com apelido e senha. */
 export type Membro = {
   id: number
   nome: string
   apelido: string
   email: string | null
-  perfil: 'atendimento' | 'administrador'
+  perfil: Perfil
   ativo: boolean
   ultimo_login: string | null
+  /** O que está GRAVADO. Administrador vem com a lista vazia e abre tudo pelo perfil —
+   *  a tela desenha as caixinhas dele marcadas e desligadas, em vez de fingir que dá
+   *  para desmarcar. */
+  areas: string[]
+}
+
+/** Uma tela do painel que se concede a alguém. O catálogo vem do BFF. */
+export type Area = {
+  chave: string
+  rotulo: string
+  descricao: string
+  /** `Operação` ou `Sistema` — o mesmo agrupamento do menu. */
+  grupo: string
+}
+
+/** Quem sou eu e o que abro AGORA — o acesso muda no meio da sessão de 8 horas. */
+export type Eu = {
+  nome: string
+  apelido: string
+  perfil: Perfil
+  areas: string[]
 }
 
 /* --------------------------------------------------------------- clientes */
@@ -526,19 +550,25 @@ export const sondarRotas = (produto: Produto) =>
 export const carregarDiagnostico = (clienteId: number) =>
   api.get<Diagnostico>(`/clientes/${clienteId}/diagnostico`).then((r) => r.data)
 
-/* ----------------------------------------------------------------- equipe */
+/* ---------------------------------------------- usuários do sistema (staff) */
 
-export const listarEquipe = () => api.get<Membro[]>('/equipe').then((r) => r.data)
+export const meuAcesso = () => api.get<Eu>('/eu').then((r) => r.data)
 
-export const criarMembro = (dados: {
+export const catalogoDeAreas = () => api.get<Area[]>('/areas').then((r) => r.data)
+
+export const listarUsuarios = () => api.get<Membro[]>('/usuarios').then((r) => r.data)
+
+export const criarUsuario = (dados: {
   nome: string
   apelido: string
   email?: string | null
-  perfil: 'atendimento' | 'administrador'
+  perfil: Perfil
   senha: string
-}) => api.post<Membro>('/equipe', dados).then((r) => r.data)
+  areas: string[]
+}) => api.post<Membro>('/usuarios', dados).then((r) => r.data)
 
-export const editarMembro = (
+/** `areas` é a lista COMPLETA: o que não vier é revogado. Omitir não mexe em acesso. */
+export const editarUsuario = (
   id: number,
-  dados: { perfil?: 'atendimento' | 'administrador'; ativo?: boolean },
-) => api.patch<Membro>(`/equipe/${id}`, dados).then((r) => r.data)
+  dados: { perfil?: Perfil; ativo?: boolean; areas?: string[] },
+) => api.patch<Membro>(`/usuarios/${id}`, dados).then((r) => r.data)

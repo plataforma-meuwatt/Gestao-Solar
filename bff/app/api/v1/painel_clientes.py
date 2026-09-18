@@ -1,4 +1,6 @@
-"""Gestão de clientes, equipe e diagnóstico.
+"""Gestão de clientes e diagnóstico.
+
+Quem opera o painel — o staff — está em `painel_usuarios.py`; aqui só o cliente.
 
 O caminho que o gestor percorre: cadastra o cliente, vincula as contas dele nos dois
 produtos, escolhe as usinas, copia a senha provisória e confere no diagnóstico que o dado
@@ -14,11 +16,9 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.apelido import ApelidoInvalido
-from app.core.apelido import normalizar as normalizar_apelido
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
-from app.core.security import administrador_atual, gerar_hash_senha, gestor_atual
+from app.core.security import exige_area
 from app.core.telefone import exibir as exibir_telefone
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
@@ -27,6 +27,12 @@ from app.services import clientes as svc
 from app.services import vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel · clientes"])
+
+#: As duas guardas deste arquivo. O diagnóstico é área própria porque é a tela que se
+#: concede a quem só confere se o dado chega — sem deixar essa pessoa cadastrar cliente,
+#: gerar senha ou conceder usina.
+EXIGE_CLIENTES = exige_area("clientes")
+EXIGE_DIAGNOSTICO = exige_area("diagnostico")
 
 
 def _cliente(db: Session, cliente_id: int) -> User:
@@ -94,7 +100,7 @@ class ClienteResumo(BaseModel):
 
 @router.get("/clientes", response_model=list[ClienteResumo])
 def listar_clientes(
-    db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    db: Session = Depends(get_db), _: User = Depends(EXIGE_CLIENTES)
 ) -> list[ClienteResumo]:
     lista = db.scalars(
         select(User).where(User.perfil == Perfil.CLIENTE).order_by(User.nome)
@@ -147,7 +153,7 @@ class ClienteCriadoOut(BaseModel):
 def criar_cliente(
     body: ClienteIn,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_CLIENTES),
 ) -> ClienteCriadoOut:
     try:
         criado = svc.criar(
@@ -178,7 +184,7 @@ class SenhaOut(BaseModel):
 def regenerar_senha(
     cliente_id: int,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_CLIENTES),
 ) -> SenhaOut:
     cliente = _cliente(db, cliente_id)
     return SenhaOut(senha_provisoria=svc.regenerar_senha(db, cliente, gestor))
@@ -217,7 +223,7 @@ class ClienteDetalhe(BaseModel):
 
 @router.get("/clientes/{cliente_id}", response_model=ClienteDetalhe)
 def detalhe_cliente(
-    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_CLIENTES)
 ) -> ClienteDetalhe:
     cliente = _cliente(db, cliente_id)
 
@@ -266,7 +272,7 @@ def editar_cliente(
     cliente_id: int,
     body: ClientePatch,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_CLIENTES),
 ) -> ClienteResumo:
     cliente = _cliente(db, cliente_id)
     if body.nome is not None:
@@ -323,7 +329,7 @@ async def conectar_produto(
     produto: Produto,
     body: ConectarIn,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_CLIENTES),
 ) -> ConexaoOut:
     """Conecta a conta deste cliente no produto com o token dele.
 
@@ -352,7 +358,7 @@ async def testar_conexao(
     cliente_id: int,
     produto: Produto,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_CLIENTES),
 ) -> ConexaoOut:
     """Reexercita o token já gravado.
 
@@ -376,7 +382,7 @@ def desvincular_produto(
     cliente_id: int,
     produto: Produto,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_CLIENTES),
 ) -> None:
     """Apaga o vínculo e o token junto.
 
@@ -400,7 +406,7 @@ class UsinaSugeridaOut(BaseModel):
 
 @router.get("/clientes/{cliente_id}/usinas-sugeridas", response_model=list[UsinaSugeridaOut])
 async def sugerir_usinas(
-    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_CLIENTES)
 ) -> list[UsinaSugeridaOut]:
     cliente = _cliente(db, cliente_id)
     return [
@@ -424,7 +430,7 @@ def definir_usinas(
     cliente_id: int,
     body: UsinasIn,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_CLIENTES),
 ) -> None:
     try:
         svc.definir_usinas(db, _cliente(db, cliente_id), body.plant_link_ids)
@@ -452,7 +458,7 @@ class DiagnosticoOut(BaseModel):
 
 @router.get("/clientes/{cliente_id}/diagnostico", response_model=DiagnosticoOut)
 async def diagnostico(
-    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(gestor_atual)
+    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_DIAGNOSTICO)
 ) -> DiagnosticoOut:
     """Responde "o dado está chegando certo dos dois lados?" sem precisar abrir o app.
 
@@ -626,139 +632,4 @@ async def _diagnostico_manutencao(db: Session, cliente_gs: User, usinas: list[Pl
             "publicado para o cliente."
         ),
         itens=itens,
-    )
-
-
-# ------------------------------------------------------------------- equipe
-
-
-class MembroOut(BaseModel):
-    id: int
-    nome: str
-    apelido: str
-    email: str | None = None
-    perfil: str
-    ativo: bool
-    ultimo_login: datetime | None = None
-
-
-@router.get("/equipe", response_model=list[MembroOut])
-def listar_equipe(
-    db: Session = Depends(get_db), _: User = Depends(administrador_atual)
-) -> list[MembroOut]:
-    lista = db.scalars(
-        select(User).where(User.perfil != Perfil.CLIENTE).order_by(User.nome)
-    ).all()
-    return [
-        MembroOut(
-            id=m.id,
-            nome=m.nome,
-            apelido=m.apelido,
-            email=m.email,
-            perfil=m.perfil.value,
-            ativo=m.ativo,
-            ultimo_login=m.ultimo_login,
-        )
-        for m in lista
-    ]
-
-
-class MembroIn(BaseModel):
-    nome: str = Field(min_length=2)
-    apelido: str = Field(min_length=3)
-    email: EmailStr | None = None
-    perfil: Perfil = Perfil.ATENDIMENTO
-    senha: str = Field(min_length=8)
-
-
-@router.post("/equipe", response_model=MembroOut, status_code=201)
-def criar_membro(
-    body: MembroIn,
-    db: Session = Depends(get_db),
-    _: User = Depends(administrador_atual),
-) -> MembroOut:
-    if body.perfil is Perfil.CLIENTE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Use a tela de clientes para criar um cliente."
-        )
-    try:
-        apelido = normalizar_apelido(body.apelido)
-    except ApelidoInvalido as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-    if db.scalar(select(User).where(User.apelido == apelido)) is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, f"O apelido “{apelido}” já está em uso."
-        )
-
-    membro = User(
-        apelido=apelido,
-        email=str(body.email).strip().lower() if body.email else None,
-        nome=body.nome.strip(),
-        perfil=body.perfil,
-        senha_hash=gerar_hash_senha(body.senha),
-    )
-    db.add(membro)
-    db.commit()
-    db.refresh(membro)
-    return MembroOut(
-        id=membro.id,
-        nome=membro.nome,
-        apelido=membro.apelido,
-        email=membro.email,
-        perfil=membro.perfil.value,
-        ativo=membro.ativo,
-    )
-
-
-class MembroPatch(BaseModel):
-    perfil: Perfil | None = None
-    ativo: bool | None = None
-
-
-@router.patch("/equipe/{membro_id}", response_model=MembroOut)
-def editar_membro(
-    membro_id: int,
-    body: MembroPatch,
-    db: Session = Depends(get_db),
-    admin: User = Depends(administrador_atual),
-) -> MembroOut:
-    membro = db.get(User, membro_id)
-    if membro is None or membro.perfil is Perfil.CLIENTE:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Membro não encontrado")
-
-    # Rebaixar ou desativar a si mesmo tranca o painel para fora — e se for o último
-    # administrador, tranca para todo mundo.
-    if membro.id == admin.id and (body.ativo is False or body.perfil is Perfil.ATENDIMENTO):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Você não pode remover o próprio acesso de administrador.",
-        )
-
-    if body.perfil is not None:
-        membro.perfil = body.perfil
-    if body.ativo is not None:
-        membro.ativo = body.ativo
-
-    restantes = db.scalar(
-        select(User).where(
-            User.perfil == Perfil.ADMINISTRADOR, User.ativo, User.id != membro.id
-        )
-    )
-    if restantes is None and membro.perfil is not Perfil.ADMINISTRADOR:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Precisa sobrar ao menos um administrador ativo.",
-        )
-
-    db.commit()
-    db.refresh(membro)
-    return MembroOut(
-        id=membro.id,
-        nome=membro.nome,
-        apelido=membro.apelido,
-        email=membro.email,
-        perfil=membro.perfil.value,
-        ativo=membro.ativo,
-        ultimo_login=membro.ultimo_login,
     )

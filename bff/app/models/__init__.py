@@ -5,6 +5,7 @@ vínculo entre a usina do meuWatt e a do meuPlano, e as assinaturas/mensalidades
 equipamentos, cronograma e OS não são replicados — vêm por API, sempre.
 """
 
+from app.models.acesso_painel import AcessoPainel
 from app.models.billing import Invoice, Subscription
 from app.models.integracao import EstadoTeste, Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
@@ -26,6 +27,7 @@ __all__ = [
     "SenhaProvisoria",
     "PlantLink",
     "Permissao",
+    "AcessoPainel",
     "Dispositivo",
     "AvisoEnviado",
     "Subscription",

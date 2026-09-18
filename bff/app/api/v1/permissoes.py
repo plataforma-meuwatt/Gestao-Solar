@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import gestor_atual, usuario_atual
+from app.core.security import exige_area, usuario_atual
 from app.models.permissao import Dispositivo, Permissao
 from app.models.user import User
 from app.services import permissoes as catalogo
@@ -125,9 +125,13 @@ def esquecer_dispositivo(
 
 # ── painel ──────────────────────────────────────────────────────────────────
 
+#: O que o CLIENTE recebe no celular faz parte de cuidar do cliente, e por isso é a área
+#: `clientes` — quem cadastra é quem decide o que ele recebe.
+EXIGE_CLIENTES = exige_area("clientes")
+
 
 @router.get("/api/painel/permissoes/catalogo", response_model=list[ItemOut])
-def listar_catalogo(_: User = Depends(gestor_atual)) -> list[ItemOut]:
+def listar_catalogo(_: User = Depends(EXIGE_CLIENTES)) -> list[ItemOut]:
     """Tudo que pode ser concedido. É a fonte da tela do painel."""
     return [
         ItemOut(
@@ -145,7 +149,7 @@ def listar_catalogo(_: User = Depends(gestor_atual)) -> list[ItemOut]:
 def permissoes_do_cliente(
     cliente_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_CLIENTES),
 ) -> list[ItemOut]:
     """O catálogo inteiro, marcando o que este cliente já tem.
 
@@ -176,7 +180,7 @@ def definir_permissoes(
     cliente_id: int,
     corpo: PermissoesIn,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_CLIENTES),
 ) -> None:
     """Substitui as permissões do cliente pela lista enviada."""
     cliente = db.get(User, cliente_id)

@@ -261,6 +261,32 @@ Três consequências:
 - A senha provisória é entregue com o apelido, nunca com o e-mail: mandar o e-mail junto
   convida o cliente a tentar entrar com ele, que é exatamente o que não funciona.
 
+### Tela nova do painel nasce com uma ÁREA, nos dois lados
+
+Quem do staff abre qual tela é `gs_painel_acessos`, uma linha por par (pessoa, área). O
+catálogo mora em `bff/app/services/areas_painel.py`, a guarda é `exige_area` em
+`core/security.py`, e quem concede é Painel → **Usuários do sistema** (só administrador).
+
+Ao criar tela de painel, três lugares mudam juntos, e faltar um é silencioso:
+
+- a **área no catálogo** do BFF — sem ela, `exige_area` estoura na importação, que é
+  deliberado: uma área digitada errada seria uma porta que nem o administrador abre;
+- a **guarda em cada rota** daquela tela (`Depends(EXIGE_X)`), no lugar de `gestor_atual`;
+- o **item do menu** com a mesma chave, em `painel/src/shell/Layout.tsx`, e o `SoArea` na
+  rota do `App.tsx`. Área no servidor sem item no menu é acesso concedido que não aparece.
+
+Duas regras do desenho, que não devem ser "simplificadas":
+
+- **Administrador abre tudo por perfil, e não tem linha gravada.** Se ele dependesse de
+  concessão, um clique errado trancaria o painel para todo mundo e a saída seria linha de
+  comando.
+- **Usuários do sistema não é uma área concedível.** Continua em `administrador_atual`.
+  Conceder "mexer em quem administra" a quem não administra é conceder tudo: a pessoa se
+  promove a administrador no primeiro clique.
+
+O front é conforto — esconde o que a conta não abre e explica o que falta. Quem decide é o
+servidor, que confere a área a cada requisição.
+
 ### Toda rota de upstream entra no catálogo da sonda
 
 `bff/app/services/sonda.py` lista as rotas do meuWatt e do meuPlano de que este sistema

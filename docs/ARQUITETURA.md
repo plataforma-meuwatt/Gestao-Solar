@@ -85,6 +85,7 @@ gs_integracoes         produto (meuwatt|meuplano, ÚNICO), base_url, ativa,
 gs_users               apelido (ÚNICO), email, nome, senha_hash, trocar_senha,
                        perfil: cliente | atendimento | administrador
                        nivel_acesso (espelho do meuPlano), ativo
+gs_painel_acessos      user_id, area                ← que telas do painel o staff abre
 gs_vinculos_produto    gs_user_id, produto, usuario_remoto_id/_email/_nome
 gs_user_plant_access   user_id, plant_link_id       ← o escopo, dado pelo gestor
 gs_senhas_provisorias  registro de que o acesso foi entregue — nunca a senha
@@ -97,6 +98,13 @@ ambiente exigiria um redeploy por tentativa.
 **O token vale exatamente o que a conta de quem o gerou vale.** Se aquela pessoa não enxerga
 uma usina no produto de origem, o Gestão Solar também não. É o teto de tudo o que o sistema
 consegue ler.
+
+**Quem do staff abre qual tela é a terceira camada, e vive em `gs_painel_acessos`.** O
+perfil diz se a conta entra no painel; a área diz o que ela vê lá dentro — Clientes,
+Usinas, Diagnóstico, Notificações, Rotas, Conexões, WhatsApp. Administrador abre todas por
+perfil e não tem linha gravada, para um acesso revogado por engano nunca trancar o painel
+para todo mundo. O catálogo está em `bff/app/services/areas_painel.py` e a guarda é
+`exige_area` (`core/security.py`); a tela que concede é Painel → Usuários do sistema.
 
 **O recorte do cliente é outro, e é do gestor.** Dentro daquele teto, quem decide o que cada
 cliente vê é `gs_user_plant_access`, concedida em Painel → Clientes. Duas camadas, nesta

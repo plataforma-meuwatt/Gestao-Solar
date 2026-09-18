@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import gestor_atual
+from app.core.security import exige_area
 from app.core.telefone import TelefoneInvalido
 from app.core.telefone import e_celular, exibir
 from app.core.telefone import normalizar as normalizar_telefone
@@ -25,6 +25,10 @@ from app.models.user import Perfil, User
 from app.services import notificacoes as svc
 
 router = APIRouter(prefix="/api/painel", tags=["painel · notificações"])
+
+#: A central é do CLIENTE — contato, aceite e o que ele recebe. O número da empresa, por
+#: onde tudo isso sai, é outra área (`whatsapp`) e outra tela.
+EXIGE_NOTIFICACOES = exige_area("notificacoes")
 
 
 def _cliente(db: Session, cliente_id: int) -> User:
@@ -109,7 +113,7 @@ class EnvioOut(BaseModel):
 
 
 @router.get("/notificacoes/catalogo", response_model=list[TipoOut])
-def catalogo(_: User = Depends(gestor_atual)) -> list[TipoOut]:
+def catalogo(_: User = Depends(EXIGE_NOTIFICACOES)) -> list[TipoOut]:
     """Os tipos que existem, sem cliente nenhum — é o que a tela usa para explicar."""
     return [
         TipoOut(tipo=t.tipo, rotulo=t.rotulo, descricao=t.descricao, origem=t.origem)
@@ -121,7 +125,7 @@ def catalogo(_: User = Depends(gestor_atual)) -> list[TipoOut]:
 def central_do_cliente(
     cliente_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_NOTIFICACOES),
 ) -> CentralOut:
     """A matriz inteira: todo tipo × toda usina do cliente, marcando o que está ligado.
 
@@ -172,7 +176,7 @@ def historico(
     cliente_id: int,
     limite: int = 50,
     db: Session = Depends(get_db),
-    _: User = Depends(gestor_atual),
+    _: User = Depends(EXIGE_NOTIFICACOES),
 ) -> list[EnvioOut]:
     """O que já saiu para este cliente. Vazio enquanto o envio não existir."""
     cliente = _cliente(db, cliente_id)
@@ -198,7 +202,7 @@ def salvar_contato(
     cliente_id: int,
     corpo: ContatoIn,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_NOTIFICACOES),
 ) -> ContatoOut:
     """Telefone e aceite — as duas coisas sem as quais nada sai.
 
@@ -237,7 +241,7 @@ def definir_preferencias(
     cliente_id: int,
     corpo: PreferenciasIn,
     db: Session = Depends(get_db),
-    gestor: User = Depends(gestor_atual),
+    gestor: User = Depends(EXIGE_NOTIFICACOES),
 ) -> None:
     """Substitui a matriz do cliente pelo que a tela enviou."""
     cliente = _cliente(db, cliente_id)

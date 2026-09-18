@@ -74,8 +74,8 @@ const APOIO =
 /**
  * `embutido` desenha só o conteúdo, sem o cabeçalho de página.
  *
- * É assim que ele aparece dentro de Equipe. A rota própria saiu do menu porque ela
- * disputava atenção com "Clientes" e era lida como se fosse a conexão de alguém — quem
+ * É assim que ele aparece dentro de Usuários do sistema. A rota própria saiu do menu
+ * porque ela disputava atenção com "Clientes" e era lida como se fosse a conexão de alguém — quem
  * abria via sempre os mesmos dois cartões, independentemente do cliente escolhido. Aqui
  * embaixo das pessoas, ao lado de quem administra o painel, ela diz o que é.
  */

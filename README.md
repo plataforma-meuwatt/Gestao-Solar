@@ -96,13 +96,20 @@ atendida por ele. São dois papéis com poderes diferentes, logo duas contas —
 e-mail como chave a segunda seria recusada como duplicada. Detalhes em
 [`bff/app/core/apelido.py`](bff/app/core/apelido.py).
 
-A primeira conta nasce pela linha de comando; daí em diante, pela tela de Equipe:
+A primeira conta nasce pela linha de comando; daí em diante, pela tela de Usuários do
+sistema:
 
 ```powershell
 cd bff
 $env:PYTHONPATH = "$PWD"
 .\venv\Scripts\python.exe scripts\criar_gestor.py meu.apelido "Meu Nome"
 ```
+
+**O perfil diz se a conta entra no painel; as áreas dizem o que ela abre lá dentro.**
+Administrador abre todas as telas e é o único que mexe em Usuários do sistema. Quem é
+atendimento abre só o que estiver marcado ali — dá para ter alguém que cuida de clientes e
+não enxerga o WhatsApp da empresa nem os tokens dos produtos. Catálogo em
+[`bff/app/services/areas_painel.py`](bff/app/services/areas_painel.py).
 
 ## O caminho de um cliente novo
 
