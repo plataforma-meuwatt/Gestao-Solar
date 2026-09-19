@@ -27,9 +27,11 @@ import {
   Kpi,
   Num,
   StatusChip,
+  Trocavel,
 } from '@/components/base'
 import { Tela } from '@/components/Tela'
 import { useInicio, type InicioOut } from '@/features/inicio'
+import type { Frescor } from '@/lib/cache'
 import { dataPorExtenso, energia, hora, inteiro, moeda, numero, potencia } from '@/lib/format'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tipo, TOQUE_MIN } from '@/theme/tokens'
@@ -41,7 +43,7 @@ function iniciaisDe(nome: string | undefined): string {
 }
 
 export default function Inicio() {
-  const { dados, carregando, erro, offlineDesde, recarregar } = useInicio()
+  const { dados, carregando, erro, frescor, recarregar } = useInicio()
   const usuario = useAuth((s) => s.usuario)
 
   return (
@@ -53,7 +55,7 @@ export default function Inicio() {
         temAviso: Boolean(dados?.atencao),
         onPress: () => router.push('/perfil'),
       }}
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {carregando ? (
@@ -68,13 +70,13 @@ export default function Inicio() {
       ) : !dados ? (
         <EstadoVazio titulo="Sem dados" descricao="Não há nada para mostrar ainda." />
       ) : (
-        <Conteudo dados={dados} />
+        <Conteudo dados={dados} frescor={frescor} />
       )}
     </Tela>
   )
 }
 
-function Conteudo({ dados: d }: { dados: InicioOut }) {
+function Conteudo({ dados: d, frescor }: { dados: InicioOut; frescor: Frescor }) {
   if (d.usinas === 0) {
     return (
       <EstadoVazio
@@ -85,6 +87,18 @@ function Conteudo({ dados: d }: { dados: InicioOut }) {
   }
 
   const parcial = d.usinas_com_dado < d.usinas
+
+  /*
+   * Potência de agora vinda de um cache velho não é desenhada.
+   *
+   * O carimbo resolve o número que erra por pouco — a leitura de dez minutos atrás ainda
+   * descreve o céu de agora. Não resolve a de ontem à noite: 0 kW às 22h é verdade sobre
+   * ontem e mentira sobre esta manhã, e quem abre o app com pressa lê o número, não a
+   * faixa. Enquanto a resposta não chega, o esqueleto diz a única coisa certa — ainda
+   * não sabemos. O que não estraga (quantas usinas, capacidade instalada, financeiro)
+   * continua na tela.
+   */
+  const semLeituraDeAgora = frescor.vencido
 
   return (
     <>
@@ -99,13 +113,24 @@ function Conteudo({ dados: d }: { dados: InicioOut }) {
           </Text>
         </View>
 
-        <View style={estilos.linhaPotencia}>
-          <Kpi valor={potencia(d.potencia_agora_kw)} tamanho="grande" />
-        </View>
+        <Trocavel chave={semLeituraDeAgora ? 'esperando' : d.atualizado_em}>
+          <View style={estilos.linhaPotencia}>
+            {semLeituraDeAgora ? (
+              <Esqueleto altura={40} largura="55%" forte />
+            ) : (
+              <Kpi valor={potencia(d.potencia_agora_kw)} tamanho="grande" />
+            )}
+          </View>
+        </Trocavel>
 
         {/* A barra só aparece quando há capacidade para comparar. Sem ela, uma barra
             vazia diria "não está gerando nada", que é diferente de "não sabemos". */}
-        {d.pct_capacidade !== null ? (
+        {semLeituraDeAgora ? (
+          <Text style={estilos.parcial}>
+            A leitura na tela é de <Num style={estilos.legendaNum}>{frescor.hora}</Num> e já
+            não descreve agora. Buscando a atual…
+          </Text>
+        ) : d.pct_capacidade !== null ? (
           <>
             <View style={estilos.barra}>
               <Barra pct={d.pct_capacidade} />

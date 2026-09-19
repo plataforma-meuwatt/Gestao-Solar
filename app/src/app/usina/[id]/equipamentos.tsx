@@ -53,7 +53,7 @@ const TIPOS = ['Tudo', 'Inversores', 'Temperatura', 'Proteção', 'Estação']
 export default function Equipamentos() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const [tipo_, setTipo] = useState(0)
-  const { dados, carregando, erro, offlineDesde, recarregar } = useEquipamentos(id)
+  const { dados, carregando, erro, frescor, recarregar } = useEquipamentos(id)
 
   return (
     <Tela
@@ -72,7 +72,7 @@ export default function Equipamentos() {
         ) : undefined
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {carregando ? (

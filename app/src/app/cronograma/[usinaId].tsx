@@ -98,7 +98,7 @@ function anoDe(yyyyMm: string): string {
 
 export default function Cronograma() {
   const { usinaId } = useLocalSearchParams<{ usinaId: string }>()
-  const { dados: c, carregando, erro, offlineDesde, recarregar } = useCronograma(usinaId)
+  const { dados: c, carregando, erro, frescor, recarregar } = useCronograma(usinaId)
 
   return (
     <Tela
@@ -118,7 +118,7 @@ export default function Cronograma() {
         ) : undefined
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
     >
       {carregando && !c ? (
         <Card>

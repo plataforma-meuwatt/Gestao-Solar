@@ -359,10 +359,35 @@ Exceções: tags informativas read-only e botões de ação.
 Ponto de milhar, vírgula decimal (`13.800`, `29,87`). Use os helpers de
 `app/src/lib/format.ts`. Não exiba número cru.
 
-### Offline primeiro nas leituras
+### Offline primeiro nas leituras — e a tela sempre diz de quando é o número
 
 Usina tem sinal ruim. Toda tela de leitura passa por `fetchWithCache`: mostra o cache
 imediatamente e atualiza quando a rede responde. `401`/`403` nunca é mascarado pelo cache.
+
+**Cache na tela sem carimbo é o mesmo defeito da REGRA 0, com outra roupa.** O carimbo de
+horário só aparecia quando a rede FALHAVA; no caminho comum — rede lenta, que é o da
+usina — a tela desenhava o número antigo sem marca nenhuma e o trocava quando a resposta
+chegava. Quem abria o app lia potência de dez minutos atrás como a de agora e via o valor
+saltar sozinho três segundos depois. Medido em 19/09/2026: `GET /api/v1/home` leva 2–3 s
+contra a produção, e o piso é o `monitoring/current` do meuWatt (1,4–2,5 s por usina, já
+em paralelo). Não existe versão disso que abra instantânea com dado fresco — o que dá
+para fazer é não mentir no intervalo.
+
+Três peças, e as três moram em `app/src/lib/cache.ts` e `components/base.tsx`:
+
+- **`frescor`** sai de toda leitura e vai para `Tela` — `origem` (rede · cache · vazio),
+  `hora`, `idadeMs`, `vencido`, `atualizando`, `offline`;
+- **`FaixaFrescor`** desenha a faixa fina do alto: "Dados de 16:17 · atualizando…",
+  "Sem conexão — mostrando dados de 16:17" ou "Atualizado agora", que dura dois segundos.
+  O terceiro estado existe para a troca ter causa visível;
+- **`vencido` esconde o número perecível.** Passado `validadeMs` (15 min por padrão), a
+  potência de agora e a energia de hoje viram esqueleto: carimbar não basta quando o
+  número descreve outro dia, porque quem abre com pressa lê o valor e não a faixa. O que
+  é registro — fatura, OS, cronograma, relatório — passa `validadeMs: Infinity` e nunca
+  some.
+
+Tela de leitura nova nasce passando `frescor={frescor}` para a `Tela`. Sem isso ela volta
+a apresentar cache como se fosse leitura ao vivo, que é exatamente o defeito acima.
 
 ### PDF é sempre in-app
 
@@ -375,7 +400,8 @@ Seis tons, definidos em `app/src/theme/tokens.ts`. Não invente cor de status no
 
 ### Toda tela desenha os quatro estados
 
-Carregando (skeleton, nunca spinner solto), vazio, erro, offline com selo de horário.
+Carregando (skeleton, nunca spinner solto), vazio, erro, e a faixa de frescor dizendo de
+quando é o que está na tela — ver acima.
 
 ---
 

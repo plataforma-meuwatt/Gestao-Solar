@@ -130,17 +130,57 @@ export async function limparCache(): Promise<void> {
 const ehSessao = (erro: unknown) =>
   axios.isAxiosError(erro) && (erro.response?.status === 401 || erro.response?.status === 403)
 
+/**
+ * Quão velho é o que está desenhado — e se a tela ainda espera algo melhor.
+ *
+ * Existe porque o carimbo de horário só aparecia **quando a rede falhava**. No caminho
+ * comum, que é rede lenta e não rede morta, a tela desenhava o número de dez minutos
+ * atrás sem marca nenhuma e o trocava quando a resposta chegava: quem abria o app lia
+ * potência antiga como se fosse a de agora, e via o valor saltar do nada três segundos
+ * depois. Carimbar só no erro é carimbar no caso menos frequente.
+ */
+export type Frescor = {
+  /** `rede` = acabou de responder · `cache` = veio do disco · `vazio` = não há o que dizer. */
+  origem: 'rede' | 'cache' | 'vazio'
+  /** `HH:MM` de quando o que está na tela foi lido. Ausente quando veio da rede. */
+  hora: string | undefined
+  /** Idade do que está na tela. Zero quando é resposta de rede. */
+  idadeMs: number
+  /**
+   * O que está na tela passou da validade dos números instantâneos.
+   *
+   * Potência "agora" de ontem à noite é mentira mesmo carimbada: a tela esconde o número
+   * perecível e mostra o esqueleto, em vez de pedir que a pessoa leia o carimbo antes de
+   * acreditar no valor. O que não estraga — nome da usina, fatura, cronograma — continua
+   * aparecendo, e por isso a validade é por leitura (`validadeMs`), não global.
+   */
+  vencido: boolean
+  /** A rede está buscando agora. */
+  atualizando: boolean
+  /** A rede falhou e o que sobrou é o disco. */
+  offline: boolean
+}
+
 export type Leitura<T> = {
   dados: T | null
   /** Só enquanto não há absolutamente nada para desenhar — o skeleton. */
   carregando: boolean
   /** Preenchido quando não há nem cache nem resposta. Com cache na tela, vira a faixa. */
   erro: string | null
-  /** `HH:MM` da gravação, quando o que está na tela é cache. Alimenta `Tela.offlineDesde`. */
-  offlineDesde: string | undefined
+  /** De quando é o que está na tela, e o que ainda está a caminho. Alimenta `Tela.frescor`. */
+  frescor: Frescor
   atualizando: boolean
   recarregar: () => void
 }
+
+/**
+ * Quanto tempo um número instantâneo continua valendo.
+ *
+ * Quinze minutos é o intervalo em que a potência de uma usina ainda descreve o que está
+ * acontecendo: dentro dele o valor antigo erra por pouco e vale mais que um vazio; fora
+ * dele já é outro céu. Leitura que não estraga passa `validadeMs: Infinity`.
+ */
+export const VALIDADE_PADRAO_MS = 15 * 60_000
 
 /**
  * A leitura de uma tela, cache primeiro.
@@ -157,6 +197,11 @@ export function fetchWithCache<T>(
     caminho?: string
     ativo?: boolean
     queryKey?: QueryKey
+    /**
+     * Por quanto tempo o cache desta leitura ainda descreve a realidade. Ver
+     * `VALIDADE_PADRAO_MS`; `Infinity` para o que não estraga (cadastro, fatura, ficha).
+     */
+    validadeMs?: number
     /**
      * Prazo em milissegundos, quando o padrão de 12 s não serve.
      *
@@ -213,12 +258,27 @@ export function fetchWithCache<T>(
   const dados = daRede ? (consulta.data as T) : (doDisco?.dados ?? null)
   const mostrandoCache = !daRede && doDisco != null
 
+  // A idade é calculada a cada render, e não guardada: o que importa é a idade no
+  // instante em que a tela desenha. Um relógio próprio custaria um render por segundo
+  // para adiantar em nada — a rede responde ou falha antes de qualquer minuto virar.
+  const validadeMs = opcoes.validadeMs ?? VALIDADE_PADRAO_MS
+  const idadeMs = mostrandoCache ? Date.now() - new Date(doDisco.gravadoEm).getTime() : 0
+
+  const frescor: Frescor = {
+    origem: daRede ? 'rede' : mostrandoCache ? 'cache' : 'vazio',
+    hora: mostrandoCache ? hora(doDisco.gravadoEm) : undefined,
+    idadeMs,
+    vencido: mostrandoCache && idadeMs > validadeMs,
+    atualizando: consulta.isFetching,
+    offline: mostrandoCache && consulta.error != null,
+  }
+
   return {
     dados,
     // Enquanto o disco não respondeu não é vazio nem erro: ainda não se sabe.
     carregando: ativo && dados === null && (doDisco === undefined || consulta.isPending),
     erro: dados === null && consulta.error ? mensagemDeErro(consulta.error) : null,
-    offlineDesde: mostrandoCache && consulta.error ? hora(doDisco.gravadoEm) : undefined,
+    frescor,
     atualizando: consulta.isFetching,
     recarregar: () => void consulta.refetch(),
   }

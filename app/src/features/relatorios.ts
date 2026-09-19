@@ -120,7 +120,11 @@ export type RelatoriosOut = {
 }
 
 export function useRelatorios(): Leitura<RelatoriosOut> {
-  return fetchWithCache<RelatoriosOut>('documents')
+  return fetchWithCache<RelatoriosOut>('documents', {
+    // Documento, fatura e ficha não estragam com o tempo: o que foi emitido continua
+    // valendo, e esconder um número desses por idade de cache seria esconder o correto.
+    validadeMs: Infinity,
+  })
 }
 
 /**

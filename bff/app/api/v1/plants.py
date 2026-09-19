@@ -423,12 +423,26 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
     O monitoramento e a geração diária são duas chamadas porque são duas rotas no
     upstream; uma pode responder e a outra não, e perder as duas por causa de uma seria
     desperdiçar dado que já chegou.
+
+    **As duas partem juntas.** Em série, o custo da usina era a soma das duas — e a de
+    tempo real sozinha leva de 1,4 a 2,5 s contra a produção. Medido em 19/09/2026 com
+    seis usinas: 3,3 s em série, 2,5 s em paralelo, que é o tempo da mais lenta e o piso
+    do que o meuWatt consegue responder. Elas não dependem uma da outra — só o
+    aproveitamento do resultado depende, e esse continua na ordem de sempre, abaixo.
     """
     saida: dict[str, Any] = {}
     erros: list[str] = []
 
+    resp_agora, resp_diario = await asyncio.gather(
+        cliente.monitoramento_atual(link.mw_plant_slug),
+        cliente.geracao_diaria(link.mw_plant_slug, dia),
+        return_exceptions=True,
+    )
+
     try:
-        agora = await cliente.monitoramento_atual(link.mw_plant_slug)
+        if isinstance(resp_agora, BaseException):
+            raise resp_agora
+        agora = resp_agora
         saida["potencia_kw"] = _potencia_da_usina(agora)
         saida["sem_comunicacao"] = _sem_comunicacao(agora)
         # Quando o dado foi MEDIDO — e a fonte é o inversor, não o envelope.
@@ -474,7 +488,9 @@ async def _dados_meuwatt(cliente, link: PlantLink, dia: date) -> dict[str, Any]:
         erros.append(f"tempo real indisponível ({type(exc).__name__})")
 
     try:
-        diario = await cliente.geracao_diaria(link.mw_plant_slug, dia)
+        if isinstance(resp_diario, BaseException):
+            raise resp_diario
+        diario = resp_diario
         # `or` mataria o zero: `total_generation_kwh` é obrigatório no schema, e uma usina
         # que de fato gerou 0 kWh viraria "não sabemos". Aqui zero é informação.
         # A energia do dia NÃO vem daqui — ver `_energia_de_hoje`. O relatório diário só

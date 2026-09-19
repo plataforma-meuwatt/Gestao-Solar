@@ -45,7 +45,7 @@ import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function Usinas() {
-  const { dados, carregando, erro, offlineDesde, recarregar } = useUsinas()
+  const { dados, carregando, erro, frescor, recarregar } = useUsinas()
   const usuario = useAuth((s) => s.usuario)
 
   const lista = dados?.usinas ?? []
@@ -75,7 +75,7 @@ export default function Usinas() {
         temAviso: Boolean(dados?.aviso),
         onPress: () => router.push('/perfil'),
       }}
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {/* Uma usina não se compara com ninguém — o bloco seria uma linha solitária com um
@@ -100,7 +100,9 @@ export default function Usinas() {
           }
         />
       ) : (
-        lista.map((u) => <CardUsina key={u.id} usina={u} />)
+        lista.map((u) => (
+          <CardUsina key={u.id} usina={u} semLeituraDeAgora={frescor.vencido} hora={frescor.hora} />
+        ))
       )}
     </Tela>
   )
@@ -273,7 +275,21 @@ function LinhaComparativo({
 
 /* ------------------------------------------------------------------- lista */
 
-function CardUsina({ usina }: { usina: Usina }) {
+/**
+ * `semLeituraDeAgora` desenha o esqueleto no lugar da potência quando o que está na tela
+ * é cache vencido — mesma régua da tela inicial, e pela mesma razão: potência de ontem
+ * não descreve hoje, e o carimbo sozinho não impede alguém de ler o número e acreditar.
+ * Nome, cidade e capacidade continuam, porque cadastro não estraga.
+ */
+function CardUsina({
+  usina,
+  semLeituraDeAgora,
+  hora,
+}: {
+  usina: Usina
+  semLeituraDeAgora: boolean
+  hora: string | undefined
+}) {
   const semDados = usina.potencia_kw === null
   // `potencia()` escolhe kW ou MW pela ordem de grandeza e formata em pt-BR; o design
   // pede o número grande e a unidade pequena ao lado, daí a separação.
@@ -291,7 +307,9 @@ function CardUsina({ usina }: { usina: Usina }) {
         </View>
 
         <View style={estilos.linhaPotencia}>
-          {semDados ? (
+          {semLeituraDeAgora ? (
+            <Esqueleto altura={30} largura="45%" forte />
+          ) : semDados ? (
             <Num style={[estilos.potencia, { color: tons.semDados }]}>—</Num>
           ) : (
             <>
@@ -308,7 +326,7 @@ function CardUsina({ usina }: { usina: Usina }) {
 
         {/* Sem percentual, NENHUMA barra. Uma barra vazia se lê como "não está gerando
             nada", que é uma afirmação — e aqui não se sabe. Mesma regra da tela inicial. */}
-        {usina.pct_capacidade !== null ? (
+        {semLeituraDeAgora ? null : usina.pct_capacidade !== null ? (
           <View style={estilos.barra}>
             <Barra pct={usina.pct_capacidade} />
           </View>
@@ -317,7 +335,9 @@ function CardUsina({ usina }: { usina: Usina }) {
         <View style={estilos.rodape}>
           <Text style={tipo.legenda}>{local || '—'}</Text>
           <Text style={tipo.legenda} numberOfLines={1}>
-            {usina.energia_hoje_kwh !== null ? (
+            {semLeituraDeAgora ? (
+              `leitura de ${hora ?? '—'}, buscando a atual…`
+            ) : usina.energia_hoje_kwh !== null ? (
               <>
                 hoje <Num style={estilos.energia}>{energia(usina.energia_hoje_kwh)}</Num>
               </>

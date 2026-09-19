@@ -29,7 +29,7 @@ const GRUPOS = ['Tudo', 'Ação', 'Sistema'] as const
 
 export default function Notificacoes() {
   const [seg, setSeg] = useState(0)
-  const { dados, carregando, erro, offlineDesde, atualizando, recarregar } = useNotificacoes()
+  const { dados, carregando, erro, frescor, atualizando, recarregar } = useNotificacoes()
 
   const todas = dados?.notificacoes ?? []
   const lista = todas.filter((n) =>
@@ -41,7 +41,7 @@ export default function Notificacoes() {
       titulo="Notificações"
       subtitulo={dados && dados.acoes > 0 ? `${dados.acoes} pedem atenção` : undefined}
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       semRolagem
     >
       <View style={estilos.filtro}>

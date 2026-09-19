@@ -22,7 +22,8 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { FaixaOffline, Halo } from '@/components/base'
+import { FaixaFrescor, Halo } from '@/components/base'
+import type { Frescor } from '@/lib/cache'
 import {
   ALTURA_TAB_BAR,
   CABECALHO,
@@ -39,7 +40,7 @@ export function Tela({
   subtitulo,
   voltar,
   avatar,
-  offlineDesde,
+  frescor,
   semRolagem,
   paraTabBar,
   children,
@@ -51,8 +52,15 @@ export function Tela({
   voltar?: boolean
   /** Abas raiz: iniciais do usuário no canto superior esquerdo. */
   avatar?: { iniciais: string; temAviso?: boolean; onPress?: () => void }
-  /** Preenchido quando a tela está mostrando cache; mostra a faixa cinza no topo. */
-  offlineDesde?: string
+  /**
+   * De quando é o que a tela está mostrando. Desenha a faixa fina no alto: "dados de
+   * 20:14 · atualizando…", "sem conexão" ou "atualizado agora".
+   *
+   * Vem direto de `fetchWithCache`. Toda tela de leitura passa a sua — sem isso, a
+   * pessoa lê número velho achando que é o de agora, que é o defeito que esta faixa
+   * existe para não ter.
+   */
+  frescor?: Frescor
   /** Para telas cujo conteúdo já rola por conta própria (lista virtualizada, chat). */
   semRolagem?: boolean
   /** Reserva o espaço da barra de abas no fim do conteúdo. */
@@ -158,7 +166,7 @@ export function Tela({
   return (
     <View style={[estilos.raiz, { paddingTop: insets.top }]}>
       <Halo />
-      {offlineDesde ? <FaixaOffline desde={offlineDesde} /> : null}
+      {frescor ? <FaixaFrescor frescor={frescor} /> : null}
 
       {/*
        * `corpo` é o contexto de posicionamento do cabeçalho sobreposto. Sem ele o

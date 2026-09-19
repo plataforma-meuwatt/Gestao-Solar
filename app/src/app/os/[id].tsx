@@ -26,7 +26,7 @@ import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function OrdemDeServico() {
   const { id } = useLocalSearchParams<{ id: string }>()
-  const { dados: o, carregando, erro, offlineDesde, recarregar } = useOrdem(id)
+  const { dados: o, carregando, erro, frescor, recarregar } = useOrdem(id)
 
   const contrato = rotuloDoContrato(o?.contrato_numero)
 
@@ -44,7 +44,7 @@ export default function OrdemDeServico() {
       titulo={o ? `OS ${o.id}` : 'Ordem de serviço'}
       subtitulo={o ? <Text style={tipo.secundario}>{o.usina}</Text> : undefined}
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
     >
       {carregando && !o ? (
         <>

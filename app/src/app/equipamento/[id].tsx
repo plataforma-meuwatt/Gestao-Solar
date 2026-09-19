@@ -38,7 +38,7 @@ import { cores, espaco, fontes, tipo, tons } from '@/theme/tokens'
 
 export default function Equipamento() {
   const { id, usina } = useLocalSearchParams<{ id: string; usina?: string }>()
-  const { dados: e, carregando, erro, offlineDesde, recarregar } = useEquipamento(usina, id)
+  const { dados: e, carregando, erro, frescor, recarregar } = useEquipamento(usina, id)
   const [dia, setDia] = useState(hojeIso())
   const strings = useCurvaStrings(usina, id, dia, true)
 
@@ -79,7 +79,7 @@ export default function Equipamento() {
         </Text>
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {e.ignorado ? (

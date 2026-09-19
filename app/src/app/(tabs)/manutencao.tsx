@@ -72,7 +72,7 @@ function dataDaOrdem(o: Ordem): string | null {
 export default function Manutencao() {
   const usuario = useAuth((s) => s.usuario)
   const [usina, setUsina] = useState<string | null>(null)
-  const { dados, carregando, erro, offlineDesde, recarregar } = useOrdens()
+  const { dados, carregando, erro, frescor, recarregar } = useOrdens()
   // Só o CONTADOR: a lista mora na tela própria. O cartão precisa dizer quantas são, senão
   // é um botão que promete algo sem dizer se há o que ver atrás dele.
   const { dados: pend } = usePendencias()
@@ -140,7 +140,7 @@ export default function Manutencao() {
         ) : undefined
       }
       avatar={{ iniciais: iniciaisDe(usuario?.nome), onPress: () => router.push('/perfil') }}
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {carregando && !dados ? (

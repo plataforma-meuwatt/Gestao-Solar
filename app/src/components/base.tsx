@@ -8,8 +8,9 @@
  * Nenhum valor literal aqui — tudo vem de `theme/tokens.ts`.
  */
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -20,6 +21,7 @@ import {
 } from 'react-native'
 import Svg, { Circle, Defs, Line, Path, RadialGradient, Rect, Stop } from 'react-native-svg'
 
+import type { Frescor } from '@/lib/cache'
 import {
   ambarAlpha,
   chipDoTom,
@@ -425,15 +427,112 @@ export function FaixaAtencao({
 }
 
 /** Faixa de offline, logo abaixo da barra de status. */
-export function FaixaOffline({ desde }: { desde: string }) {
+/**
+ * De quando é o que está na tela — a faixa fina no alto de toda leitura.
+ *
+ * Substituiu a `FaixaOffline`, que só aparecia quando a rede falhava. O caso comum não é
+ * rede morta, é rede lenta: a usina responde em dois ou três segundos, e nesse intervalo
+ * a tela mostrava número velho sem dizer que era velho, trocando-o de repente quando a
+ * resposta chegava. Três estados, e cada um diz uma coisa diferente:
+ *
+ * - **atualizando** — o que você lê é de `HH:MM` e há resposta a caminho;
+ * - **sem conexão** — a rede falhou e isto é o que havia no aparelho;
+ * - **atualizado agora** — a resposta chegou; aparece por dois segundos e some.
+ *
+ * O terceiro existe para a troca ter causa visível. Sem ele o número salta sozinho, e
+ * quem está olhando não sabe se leu errado antes ou se o valor mudou de verdade.
+ */
+export function FaixaFrescor({ frescor }: { frescor: Frescor }) {
+  const [confirmando, setConfirmando] = useState(false)
+  const jaMostrouCache = useRef(false)
+
+  if (frescor.origem === 'cache') jaMostrouCache.current = true
+
+  // Só confirma se ANTES havia cache na tela: numa abertura sem cache nenhum, o dado
+  // chega pela primeira vez e não substituiu nada — anunciar "atualizado agora" ali
+  // seria ruído por um evento que ninguém viu acontecer.
+  const trocou = frescor.origem === 'rede' && jaMostrouCache.current
+  useEffect(() => {
+    if (!trocou) return
+    setConfirmando(true)
+    const t = setTimeout(() => setConfirmando(false), 2000)
+    return () => clearTimeout(t)
+  }, [trocou])
+
+  if (frescor.origem === 'vazio') return null
+  if (frescor.origem === 'rede' && !confirmando) return null
+
+  const tom: Tom = frescor.offline ? 'semDados' : frescor.origem === 'rede' ? 'ok' : 'alerta'
+  const texto =
+    frescor.origem === 'rede' ? (
+      'Atualizado agora'
+    ) : frescor.offline ? (
+      <>
+        Sem conexão — mostrando dados de <Num style={estilos.faixaFrescorHora}>{frescor.hora}</Num>
+      </>
+    ) : (
+      <>
+        Dados de <Num style={estilos.faixaFrescorHora}>{frescor.hora}</Num>
+        {frescor.atualizando ? ' · atualizando…' : ''}
+      </>
+    )
+
   return (
-    <View style={estilos.faixaOffline}>
-      <View style={estilos.faixaOfflinePonto} />
-      <Text style={estilos.faixaOfflineTexto}>
-        Sem conexão — mostrando dados de <Num style={estilos.faixaOfflineHora}>{desde}</Num>
-      </Text>
+    <View
+      style={[
+        estilos.faixaFrescor,
+        { backgroundColor: tomAlpha(tom, 0.12), borderColor: tomAlpha(tom, 0.33) },
+      ]}
+    >
+      {frescor.atualizando && frescor.origem === 'cache' ? (
+        <Pulsando>
+          <View style={[estilos.faixaFrescorPonto, { backgroundColor: tons[tom] }]} />
+        </Pulsando>
+      ) : (
+        <View style={[estilos.faixaFrescorPonto, { backgroundColor: tons[tom] }]} />
+      )}
+      <Text style={[estilos.faixaFrescorTexto, { color: tons[tom] }]}>{texto}</Text>
     </View>
   )
+}
+
+/** Pisca devagar enquanto há busca em curso. Anima opacidade, que roda no driver nativo. */
+function Pulsando({ children }: { children: ReactNode }) {
+  const v = useRef(new Animated.Value(1)).current
+  useEffect(() => {
+    const laco = Animated.loop(
+      Animated.sequence([
+        Animated.timing(v, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    )
+    laco.start()
+    return () => laco.stop()
+  }, [v])
+  return <Animated.View style={{ opacity: v }}>{children}</Animated.View>
+}
+
+/**
+ * O conteúdo que acabou de ser substituído, aparecendo com um fade curto.
+ *
+ * O salto seco do número — 412,8 virando 438,1 sem aviso — é o que faz a atualização
+ * parecer defeito. Duzentos e cinquenta milissegundos bastam para o olho registrar que
+ * algo mudou ali, e são curtos demais para atrapalhar quem já estava lendo.
+ */
+export function Trocavel({ chave, children }: { chave: unknown; children: ReactNode }) {
+  const v = useRef(new Animated.Value(1)).current
+  const primeira = useRef(true)
+
+  useEffect(() => {
+    if (primeira.current) {
+      primeira.current = false
+      return
+    }
+    v.setValue(0.35)
+    Animated.timing(v, { toValue: 1, duration: 250, useNativeDriver: true }).start()
+  }, [chave, v])
+
+  return <Animated.View style={{ opacity: v }}>{children}</Animated.View>
 }
 
 /* ------------------------------------------------------------- skeletons */
@@ -679,20 +778,18 @@ const estilos = StyleSheet.create({
   faixaTitulo: { fontFamily: fontes.uiSemi, fontSize: 14.5 },
   faixaDetalhe: { fontFamily: fontes.ui, fontSize: 12, color: cores.textoRotulo, marginTop: 2 },
 
-  faixaOffline: {
+  faixaFrescor: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: espaco.sm,
     paddingHorizontal: espaco.md,
     paddingVertical: 9,
-    backgroundColor: tomAlpha('semDados', 0.12),
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: tomAlpha('semDados', 0.33),
   },
-  faixaOfflinePonto: { width: 8, height: 8, borderRadius: 4, backgroundColor: tons.semDados },
-  faixaOfflineTexto: { fontFamily: fontes.uiMedio, fontSize: 12.5, color: tons.semDados },
-  faixaOfflineHora: { fontSize: 12.5, color: tons.semDados },
+  faixaFrescorPonto: { width: 8, height: 8, borderRadius: 4 },
+  faixaFrescorTexto: { fontFamily: fontes.uiMedio, fontSize: 12.5 },
+  faixaFrescorHora: { fontSize: 12.5 },
 
   vazio: {
     flex: 1,

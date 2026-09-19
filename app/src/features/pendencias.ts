@@ -88,6 +88,8 @@ export type PendenciasOut = {
 export function usePendencias(usinaId?: number): Leitura<PendenciasOut> {
   const chave = usinaId ? `manutencao/pendencias-${usinaId}` : 'manutencao/pendencias'
   return fetchWithCache<PendenciasOut>(chave, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: usinaId
       ? `/api/v1/manutencao/pendencias?usina_id=${usinaId}`
       : '/api/v1/manutencao/pendencias',

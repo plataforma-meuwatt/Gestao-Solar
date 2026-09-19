@@ -778,7 +778,10 @@ describe('a aba, o arquivo e a rota', () => {
     // Ela é o caminho do BFF sem `/api/v1/` e vira nome de arquivo em disco. Trocá-la para
     // acompanhar o rótulo órfã o `u{id}__documents.json` de todo celular já instalado.
     const modulo = fonte('src/features/relatorios.ts')
-    assert.match(modulo, /fetchWithCache<RelatoriosOut>\('documents'\)/)
+    // A régua é a CHAVE, não a forma da chamada: a leitura ganhou opções (`validadeMs`)
+    // e a linha deixou de caber numa só. Casar a chamada inteira transformava um
+    // acréscimo legítimo em teste vermelho, sem que a chave tivesse mudado.
+    assert.match(modulo, /fetchWithCache<RelatoriosOut>\(\s*'documents'/)
     assert.match(urlDoArquivo(36, 'resumo'), /\/api\/v1\/documents\/36\/file\?tipo=resumo$/)
 
     // O nome do arquivo em disco, pela MESMA régua de `lib/cache.ts` — é ele que precisa

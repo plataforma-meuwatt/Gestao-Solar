@@ -64,7 +64,7 @@ function iniciaisDe(nome: string | undefined): string {
 }
 
 export default function Relatorios() {
-  const { dados, carregando, erro, offlineDesde, recarregar } = useRelatorios()
+  const { dados, carregando, erro, frescor, recarregar } = useRelatorios()
   const usuario = useAuth((s) => s.usuario)
   const [usinaEscolhida, setUsina] = useState<string | null>(null)
   const [gavetaEscolhida, setGaveta] = useState<string | null>(null)
@@ -81,7 +81,7 @@ export default function Relatorios() {
       titulo="Relatórios"
       subtitulo={lista.length > 0 ? subtituloDaAba(rec) : undefined}
       avatar={{ iniciais: iniciaisDe(usuario?.nome), onPress: () => router.push('/perfil') }}
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
       {carregando ? (

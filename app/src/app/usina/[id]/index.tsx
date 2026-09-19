@@ -53,7 +53,7 @@ export default function UsinaDetalhe() {
   const [referencia, setReferencia] = useState(hojeIso())
   const ehHoje = referencia === hojeIso()
 
-  const { dados: u, carregando, erro, offlineDesde, recarregar } = useUsina(id)
+  const { dados: u, carregando, erro, frescor, recarregar } = useUsina(id)
   // Cada hook só dispara quando seu recorte está visível: abrir a usina não deve
   // disparar três chamadas para o usuário ver uma.
   const mes = useGeracao(id, 'mes', recorte === 1, referencia)
@@ -113,9 +113,12 @@ export default function UsinaDetalhe() {
         </Text>
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
       paraTabBar
     >
+      {/* Cache vencido esconde o que é instantâneo — potência de agora e energia de hoje
+          —, pela mesma razão das outras duas telas: o número antigo descreve outro dia, e
+          o carimbo no alto não impede ninguém de ler o valor e acreditar nele. */}
       {parados > 0 ? (
         <FaixaAtencao
           tom="parado"
@@ -142,9 +145,13 @@ export default function UsinaDetalhe() {
         <View style={estilos.topo}>
           <StatusChip tom={u.tom} texto={u.situacao} />
           <View style={estilos.espacador} />
-          <Text style={tipo.legenda}>
-            agora <Num style={estilos.agora}>{potencia(u.potencia_kw)}</Num>
-          </Text>
+          {frescor.vencido ? (
+            <Esqueleto altura={13} largura={92} />
+          ) : (
+            <Text style={tipo.legenda}>
+              agora <Num style={estilos.agora}>{potencia(u.potencia_kw)}</Num>
+            </Text>
+          )}
         </View>
 
         <Segmentado opcoes={RECORTES} ativo={recorte} onEscolher={setRecorte} />
@@ -168,6 +175,9 @@ export default function UsinaDetalhe() {
             {ehHoje ? (
               <>
                 <View style={estilos.espacoKpi}>
+                  {frescor.vencido ? (
+                    <Esqueleto altura={38} largura="50%" forte />
+                  ) : (
                   <Kpi
                     valor={u.energia_hoje_kwh !== null ? energia(u.energia_hoje_kwh) : '—'}
                     tamanho="grande"
@@ -180,8 +190,9 @@ export default function UsinaDetalhe() {
                       ) : undefined
                     }
                   />
+                  )}
                 </View>
-                {u.pct_capacidade !== null ? (
+                {frescor.vencido ? null : u.pct_capacidade !== null ? (
                   <Text style={tipo.legenda}>
                     <Num style={estilos.previsto}>{u.pct_capacidade}%</Num> da capacidade
                     instalada neste momento

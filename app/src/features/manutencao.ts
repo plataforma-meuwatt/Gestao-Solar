@@ -220,6 +220,8 @@ export function useOrdens(usinaId?: number): Leitura<OrdensOut> {
   // mostraria o cache da anterior por um instante — e no modo offline, para sempre.
   const chave = usinaId ? `manutencao/ordens-${usinaId}` : 'manutencao/ordens'
   return fetchWithCache<OrdensOut>(chave, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: usinaId ? `/api/v1/manutencao/ordens?usina_id=${usinaId}` : '/api/v1/manutencao/ordens',
   })
 }
@@ -227,6 +229,8 @@ export function useOrdens(usinaId?: number): Leitura<OrdensOut> {
 export function useOrdem(id: string | number | undefined): Leitura<Ordem> {
   // Sem `id` a consulta fica desligada, senão a rota viraria `/ordens/undefined`.
   return fetchWithCache<Ordem>(`manutencao/ordem-${id ?? ''}`, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: `/api/v1/manutencao/ordens/${id ?? ''}`,
     ativo: Boolean(id),
   })
@@ -312,6 +316,8 @@ export function useFicha(
   tarefaId: string | number | undefined,
 ): Leitura<Ficha> {
   return fetchWithCache<Ficha>(`manutencao/ordem-${osId ?? ''}-ficha-${tarefaId ?? ''}`, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: `/api/v1/manutencao/ordens/${osId ?? ''}/tarefas/${tarefaId ?? ''}/ficha`,
     ativo: Boolean(osId && tarefaId),
     // A leitura mais cara do aplicativo: uma ficha coletiva de vinte inversores é montada
@@ -328,6 +334,8 @@ export function useTarefa(
   tarefaId: string | number | undefined,
 ): Leitura<Tarefa> {
   return fetchWithCache<Tarefa>(`manutencao/ordem-${osId ?? ''}-tarefa-${tarefaId ?? ''}`, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: `/api/v1/manutencao/ordens/${osId ?? ''}/tarefas/${tarefaId ?? ''}`,
     ativo: Boolean(osId && tarefaId),
   })
@@ -335,6 +343,8 @@ export function useTarefa(
 
 export function useCronograma(usinaId: string | number | undefined): Leitura<CronogramaOut> {
   return fetchWithCache<CronogramaOut>(`manutencao/cronograma-${usinaId ?? ''}`, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: `/api/v1/manutencao/cronograma?usina_id=${usinaId ?? ''}`,
     ativo: Boolean(usinaId),
   })

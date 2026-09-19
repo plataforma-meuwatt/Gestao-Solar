@@ -223,6 +223,8 @@ export type GradeDoAnoOut = {
  */
 export function useGradeDoAno(ano: number): Leitura<GradeDoAnoOut> {
   return fetchWithCache<GradeDoAnoOut>(`relatorios/ano-${ano}`, {
+    // Ordem, cronograma e pendência são registro, não medição: não vencem com o tempo.
+    validadeMs: Infinity,
     caminho: `/api/v1/relatorios/ano?ano=${ano}`,
     prazoMs: 45000,
   })

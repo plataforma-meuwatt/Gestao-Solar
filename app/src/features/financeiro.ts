@@ -51,11 +51,20 @@ export type FinanceiroOut = {
 }
 
 export function useFinanceiro(): Leitura<FinanceiroOut> {
-  return fetchWithCache<FinanceiroOut>('billing')
+  return fetchWithCache<FinanceiroOut>('billing', {
+    // Documento, fatura e ficha não estragam com o tempo: o que foi emitido continua
+    // valendo, e esconder um número desses por idade de cache seria esconder o correto.
+    validadeMs: Infinity,
+  })
 }
 
 export function useFatura(id: string | undefined): Leitura<Fatura> {
-  return fetchWithCache<Fatura>(`billing/invoices/${id ?? ''}`, { ativo: Boolean(id) })
+  return fetchWithCache<Fatura>(`billing/invoices/${id ?? ''}`, {
+    ativo: Boolean(id),
+    // Documento, fatura e ficha não estragam com o tempo: o que foi emitido continua
+    // valendo, e esconder um número desses por idade de cache seria esconder o correto.
+    validadeMs: Infinity,
+  })
 }
 
 /** `2026-08` → `agosto de 2026`. O servidor manda a competência crua, de propósito. */

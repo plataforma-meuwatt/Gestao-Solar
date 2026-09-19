@@ -151,7 +151,7 @@ export default function RelatoriosDoAno() {
   const [usina, setUsina] = useState<string | null>(null)
   const [aberto, setAberto] = useState<Aberto | null>(null)
 
-  const { dados, carregando, erro, offlineDesde, recarregar } = useGradeDoAno(ano)
+  const { dados, carregando, erro, frescor, recarregar } = useGradeDoAno(ano)
 
   const usinas = dados?.usinas ?? []
   // Grampeia: uma usina guardada que saiu do escopo deixaria a tela vazia para sempre.
@@ -172,7 +172,7 @@ export default function RelatoriosDoAno() {
           : undefined
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
     >
       {carregando && !dados ? (
         <Card>

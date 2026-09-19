@@ -56,7 +56,7 @@ function mesPorExtenso(yyyyMm: string | null): string | null {
 
 export default function TarefaDaOrdem() {
   const { id, os } = useLocalSearchParams<{ id: string; os: string }>()
-  const { dados: t, carregando, erro, offlineDesde, recarregar } = useTarefa(os, id)
+  const { dados: t, carregando, erro, frescor, recarregar } = useTarefa(os, id)
   // A ficha é mais cara que o cabeçalho: a tela abre com o que já tem e as respostas
   // chegam em seguida, em vez de tudo esperar tudo.
   const { dados: ficha, carregando: carregandoFicha, erro: erroFicha } = useFicha(os, id)
@@ -66,7 +66,7 @@ export default function TarefaDaOrdem() {
       titulo="Tarefa"
       subtitulo={t ? <Text style={tipo.secundario}>{t.grupo ?? 'Ordem de serviço'}</Text> : undefined}
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
     >
       {carregando && !t ? (
         <Card>

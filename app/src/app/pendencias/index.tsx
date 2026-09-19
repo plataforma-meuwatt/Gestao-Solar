@@ -56,7 +56,7 @@ import { dataPorExtenso, inteiro } from '@/lib/format'
 import { cores, espaco, fontes, tipo } from '@/theme/tokens'
 
 export default function Pendencias() {
-  const { dados, carregando, erro, offlineDesde, recarregar } = usePendencias()
+  const { dados, carregando, erro, frescor, recarregar } = usePendencias()
 
   const [usina, setUsina] = useState<string | null>(null)
   const [situacao, setSituacao] = useState<ChaveSituacao>(SITUACAO_INICIAL)
@@ -114,7 +114,7 @@ export default function Pendencias() {
         ) : undefined
       }
       voltar
-      offlineDesde={offlineDesde}
+      frescor={frescor}
     >
       {carregando && !dados ? (
         <>
