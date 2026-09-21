@@ -1,0 +1,129 @@
+<!doctype html>
+<!--
+  Política de privacidade do Gestão Solar.
+
+  Mora no painel, e não no aplicativo, por um motivo prático: é a única parte do sistema
+  que precisa ser PÚBLICA, e o painel já é servido por nginx num endereço estável. A Meta
+  exige esta URL para publicar o app do WhatsApp — sem ela o app não sai do modo de
+  desenvolvimento, e em desenvolvimento a Meta não entrega mensagem real.
+
+  É HTML puro, fora do bundle do React, para continuar abrindo mesmo que o painel quebre.
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Política de Privacidade · Gestão Solar</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; background: #02061a; color: #c9d1e4;
+        font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+      h1 { color: #fff; font-size: 1.9rem; line-height: 1.2; margin: 0 0 .4rem; }
+      h2 { color: #fff; font-size: 1.15rem; margin: 2.2rem 0 .6rem; }
+      p, li { margin: .6rem 0; }
+      ul { padding-left: 1.2rem; }
+      a { color: #f5b301; }
+      .marca { font-weight: 700; color: #fff; }
+      .marca span { color: #f5b301; }
+      .data { color: #7c88a3; font-size: .85rem; }
+      hr { border: 0; border-top: 1px solid #1c2440; margin: 2.5rem 0; }
+      .contato { background: #0b1228; border: 1px solid #1c2440; border-radius: 10px; padding: 1rem 1.2rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="marca">Gestão <span>Solar</span></p>
+      <h1>Política de Privacidade</h1>
+      <p class="data">Atualizada em 21 de setembro de 2026.</p>
+
+      <p>
+        O <strong>Gestão Solar</strong> é o aplicativo com que o proprietário de usina solar
+        acompanha a geração e a manutenção das suas usinas. Ele é operado pela
+        <strong>meuWatt</strong>, que também mantém as plataformas meuWatt (monitoramento) e
+        meuPlano (manutenção), de onde vêm os dados exibidos.
+      </p>
+
+      <h2>Que dados tratamos</h2>
+      <ul>
+        <li><strong>Cadastro:</strong> nome, apelido de acesso, e-mail e telefone.</li>
+        <li><strong>Usinas:</strong> identificação, localização, capacidade, geração, estado
+          dos equipamentos, ordens de serviço e cronogramas de manutenção.</li>
+        <li><strong>Financeiro:</strong> mensalidades e faturas do contrato de operação e
+          manutenção, quando houver.</li>
+        <li><strong>Uso do aplicativo:</strong> registro técnico de acessos e de envio de
+          notificações, para diagnóstico e segurança.</li>
+      </ul>
+      <p>
+        Não coletamos localização do aparelho, contatos, fotos nem dados de pagamento por
+        cartão.
+      </p>
+
+      <h2>De onde vêm esses dados</h2>
+      <p>
+        Do cadastro feito pela nossa equipe a pedido do cliente, e das plataformas meuWatt e
+        meuPlano, onde as usinas já são monitoradas e mantidas.
+      </p>
+
+      <h2>Para que usamos</h2>
+      <ul>
+        <li>dar acesso ao aplicativo e ao portal, e mostrar apenas as usinas do titular;</li>
+        <li>apresentar geração, disponibilidade, manutenção e faturas;</li>
+        <li>enviar avisos — por exemplo, usina parada ou início de manutenção;</li>
+        <li>atender pedidos de suporte.</li>
+      </ul>
+
+      <h2>WhatsApp</h2>
+      <p>
+        Avisos e atendimento podem ser enviados por WhatsApp para o telefone cadastrado,
+        <strong>somente quando o cliente autoriza</strong>. A entrega é feita pela
+        infraestrutura da Meta, que trata os dados segundo as próprias políticas. Guardamos o
+        conteúdo trocado por esse canal para manter o histórico do atendimento.
+      </p>
+      <p>
+        Para parar de receber, responda <strong>SAIR</strong> na conversa ou peça pelo canal
+        de contato abaixo. Isso não cancela o acesso ao aplicativo.
+      </p>
+
+      <h2>Com quem compartilhamos</h2>
+      <p>
+        Não vendemos dados e não os cedemos para publicidade. Eles são tratados por
+        fornecedores de infraestrutura que nos prestam serviço — hospedagem, banco de dados,
+        envio de mensagens e notificações —, sempre limitados à finalidade acima. Também
+        podemos compartilhá-los quando a lei exigir.
+      </p>
+
+      <h2>Por quanto tempo guardamos</h2>
+      <p>
+        Enquanto durar a relação com o cliente e pelo prazo em que a lei exigir a guarda dos
+        registros. Encerrada a relação, os dados são apagados ou anonimizados.
+      </p>
+
+      <h2>Seus direitos</h2>
+      <p>
+        Conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018), o titular pode pedir
+        confirmação do tratamento, acesso, correção, anonimização, portabilidade, eliminação
+        e informações sobre compartilhamento, além de revogar o consentimento. Atendemos pelo
+        contato abaixo.
+      </p>
+
+      <h2>Segurança</h2>
+      <p>
+        As senhas são guardadas apenas como resumo criptográfico e as credenciais de
+        integração ficam cifradas. O acesso de cada pessoa é limitado às usinas concedidas a
+        ela.
+      </p>
+
+      <hr />
+
+      <div class="contato">
+        <p style="margin-top:0"><strong>Contato do encarregado pelos dados</strong></p>
+        <p style="margin-bottom:0">
+          meuWatt — <a href="mailto:gestao@meuwatt.com.br">gestao@meuwatt.com.br</a>
+        </p>
+      </div>
+    </main>
+  </body>
+</html>
