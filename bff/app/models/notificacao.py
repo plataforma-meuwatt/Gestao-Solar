@@ -76,12 +76,21 @@ class NotificacaoEnviada(Base):
 
     __tablename__ = "gs_notificacoes_enviadas"
     __table_args__ = (
+        # Duas travas, uma por tipo de destinatário. `NULL` nunca colide com `NULL` num
+        # índice único, então as linhas de contato (com `user_id` nulo) não disputam a
+        # trava do cliente, e vice-versa.
         UniqueConstraint("user_id", "chave", name="uq_gs_notificacao_enviada"),
+        UniqueConstraint("contato_id", "chave", name="uq_gs_notificacao_contato"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("gs_users.id", ondelete="CASCADE"), index=True
+    #: Nulo quando quem recebeu foi um CONTATO da usina, e não a conta do cliente. Os dois
+    #: nunca vêm preenchidos juntos: uma linha é de um destinatário só.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    contato_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_contatos_usina.id", ondelete="CASCADE"), index=True, nullable=True
     )
     tipo: Mapped[str] = mapped_column(String(40), index=True)
     #: `{tipo}:{usina}:{o que torna este evento único}`.

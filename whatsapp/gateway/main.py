@@ -40,6 +40,9 @@ async def _varredura() -> None:
         try:
             retomados = recebimento.varrer(db)
             avisados = await notificacao_bff.avisar_pendentes(db)
+            # A trilha de entrega do que NÓS mandamos: é o que faz o log do BFF dizer
+            # "entregue" e "lida" em vez de parar em "mandei".
+            avisados += await notificacao_bff.avisar_status_pendentes(db)
             if retomados or avisados:
                 log.info("varredura: %s evento(s) retomado(s), %s aviso(s)", retomados, avisados)
         except Exception:  # noqa: BLE001 — uma volta ruim não pode matar o laço

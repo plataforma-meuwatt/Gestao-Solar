@@ -41,7 +41,9 @@ from app.api.v1 import (
     interno_whatsapp,
     painel,
     painel_clientes,
+    painel_contatos,
     painel_notificacoes,
+    motor_notificacoes,
     painel_usuarios,
     painel_whatsapp,
     paradas,
@@ -140,7 +142,9 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
+app.include_router(painel_contatos.router)
 app.include_router(painel_notificacoes.router)
+app.include_router(motor_notificacoes.router)
 app.include_router(painel_usuarios.router)
 app.include_router(painel_whatsapp.router)
 app.include_router(interno_whatsapp.router)

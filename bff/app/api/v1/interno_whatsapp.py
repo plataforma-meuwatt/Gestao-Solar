@@ -4,11 +4,12 @@ Quem chama é o gateway, não um humano: a porta é a mesma chave interna que o 
 falar com ele, no padrão de `avisos.py` — segredo em cabeçalho, comparação de tempo
 constante, e **sem a chave configurada a rota recusa tudo**.
 
-**Nesta fase o BFF só registra.** Responder ao cliente é a frente do robô, que ainda não
-existe; e atender número desconhecido é decisão de negócio ("só cliente cadastrado recebe e
-envia"). Deixar a rota pronta agora tem um motivo prático: sem ela, o gateway tentaria
-avisar a cada volta da varredura e acumularia tentativa para sempre — e quando o robô
-chegar, o caminho já estará provado.
+São duas rotas, e elas respondem perguntas diferentes:
+
+- **`/evento`** — chegou mensagem DE um cliente. Nesta fase o BFF só registra: responder é
+  a frente do atendimento, e atender número desconhecido é decisão de negócio.
+- **`/status`** — o que aconteceu com o que NÓS mandamos: entregue, lida, falhou. Esta
+  fecha o log de notificações, que sem ela pararia em "mandei" e nunca saberia se chegou.
 """
 
 import hmac
@@ -16,8 +17,11 @@ import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.db import get_db
+from app.services import motor
 
 router = APIRouter(prefix="/api/v1/interno/whatsapp", tags=["interno · whatsapp"])
 log = logging.getLogger("gs.whatsapp")
@@ -61,3 +65,31 @@ def receber_evento(corpo: EventoIn) -> dict[str, bool]:
         corpo.id,
     )
     return {"ok": True}
+
+
+class StatusIn(BaseModel):
+    wamid: str
+    #: `enviada` · `entregue` · `lida` · `falhou`, como o gateway já normalizou.
+    status: str
+    erro_codigo: str | None = None
+    erro_detalhe: str | None = None
+    ocorrida_em: str | None = None
+
+
+@router.post("/status", status_code=202, dependencies=[Depends(_porta)])
+def receber_status(corpo: StatusIn, db: Session = Depends(get_db)) -> dict[str, bool]:
+    """A Meta disse o que aconteceu com uma mensagem nossa.
+
+    Responde 202 mesmo quando o `wamid` não casa com notificação nenhuma — e isso é comum
+    e correto: o teste enviado pela tela e o atendimento humano saem pelo mesmo número e
+    não têm linha no log de notificações. Devolver erro faria o gateway reenviar para
+    sempre um aviso que não tem dono.
+    """
+    casou = motor.registrar_status(
+        db,
+        corpo.wamid,
+        corpo.status,
+        erro=(corpo.erro_detalhe or corpo.erro_codigo),
+    )
+    log.info("whatsapp status: wamid=%s status=%s casou=%s", corpo.wamid, corpo.status, casou)
+    return {"ok": True, "atualizou": casou}

@@ -252,11 +252,66 @@ def destinatarios(db: Session, tipo: str, plant_link_id: int) -> list[User]:
     return [p for p in pessoas if apto(p)]
 
 
+@dataclass(frozen=True)
+class Destino:
+    """Quem recebe UM aviso — a conta do cliente ou um contato da usina.
+
+    O motor não precisa saber de qual dos dois se trata para montar a mensagem; precisa
+    para gravar o log na coluna certa e para aplicar a trava de repetição certa. Por isso
+    `especie` existe, e por isso `id` é o id DAQUELA tabela, não um id genérico.
+    """
+
+    especie: str  # "cliente" | "contato"
+    id: int
+    nome: str
+    telefone: str
+
+
+def destinos(db: Session, tipo: str, plant_link_id: int) -> list[Destino]:
+    """Todo mundo que deve receber este aviso desta usina — conta e contatos.
+
+    Substituiu o "manda no grupo do cliente" que a API oficial não permite. Cada pessoa
+    recebe no privado, e é isso que mantém o log por pessoa: quem recebeu, quando, se leu.
+    """
+    from app.models.contato import ContatoPreferencia, ContatoUsina
+
+    saida = [
+        Destino("cliente", c.id, c.nome, c.telefone or "")
+        for c in destinatarios(db, tipo, plant_link_id)
+    ]
+
+    contatos = db.scalars(
+        select(ContatoUsina)
+        .join(ContatoPreferencia, ContatoPreferencia.contato_id == ContatoUsina.id)
+        .where(
+            ContatoUsina.plant_link_id == plant_link_id,
+            ContatoPreferencia.tipo == tipo,
+            ContatoUsina.ativo,
+        )
+    ).all()
+    saida.extend(
+        Destino("contato", c.id, c.nome, c.telefone) for c in contatos if c.apto
+    )
+    return saida
+
+
 def ja_enviada(db: Session, user_id: int, chave: str) -> bool:
     return (
         db.scalar(
             select(NotificacaoEnviada.id).where(
                 NotificacaoEnviada.user_id == user_id,
+                NotificacaoEnviada.chave == chave,
+            )
+        )
+        is not None
+    )
+
+
+def ja_enviada_para_contato(db: Session, contato_id: int, chave: str) -> bool:
+    return (
+        db.scalar(
+            select(NotificacaoEnviada.id).where(
+                NotificacaoEnviada.contato_id == contato_id,
                 NotificacaoEnviada.chave == chave,
             )
         )
