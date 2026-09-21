@@ -372,6 +372,43 @@ export const removerCredenciaisWhatsapp = () => api.delete('/whatsapp')
 export const eventosWhatsapp = (limite = 30) =>
   api.get<EventoWhatsapp[]>('/whatsapp/eventos', { params: { limite } }).then((r) => r.data)
 
+/** Um número da conta da Meta, como ela o descreve. */
+export type NumeroWhatsapp = {
+  id: string
+  numero: string | null
+  nome: string | null
+  qualidade: string | null
+  verificado: string | null
+}
+
+/** Um modelo de mensagem. `parametros` é quantos `{{n}}` o corpo espera. */
+export type TemplateWhatsapp = {
+  nome: string
+  situacao: string
+  categoria: string | null
+  idioma: string | null
+  corpo: string | null
+  parametros: number
+}
+
+export const numerosWhatsapp = () =>
+  api.get<NumeroWhatsapp[]>('/whatsapp/numeros').then((r) => r.data)
+
+export const templatesWhatsapp = () =>
+  api.get<TemplateWhatsapp[]>('/whatsapp/templates').then((r) => r.data)
+
+export const enviarTesteWhatsapp = (dados: {
+  telefone: string
+  template: string
+  parametros: string[]
+}) =>
+  api
+    .post<{ ok: boolean; wamid: string | null; status: string; erro: string | null }>(
+      '/whatsapp/enviar-teste',
+      dados,
+    )
+    .then((r) => r.data)
+
 /* ------------------------------------------------- central de notificações */
 
 /**

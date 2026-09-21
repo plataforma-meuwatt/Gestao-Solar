@@ -100,6 +100,19 @@ async def eventos(limite: int = 30) -> list[dict[str, Any]]:
     return await _req("GET", "/interno/credenciais/eventos", params={"limite": limite}) or []
 
 
+# ── o que a conta tem ───────────────────────────────────────────────────────
+
+
+async def numeros() -> list[dict[str, Any]]:
+    """Os números da conta na Meta. A tela lista para ninguém precisar decorar ids."""
+    return await _req("GET", "/interno/numeros") or []
+
+
+async def templates() -> list[dict[str, Any]]:
+    """Os modelos de mensagem da conta, aprovados ou não."""
+    return await _req("GET", "/interno/templates") or []
+
+
 # ── envio (o motor de notificações, quando existir) ─────────────────────────
 
 

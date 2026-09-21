@@ -20,12 +20,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, History, KeyRound, Link2Off, MessageCircle, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
-import { Campo, Cartao, Carregando, Erro, Pagina, Selo, type Tom } from '@/components/base'
+import { Campo, Cartao, Carregando, Erro, Pagina, Selo, Seletor, type Tom } from '@/components/base'
 import {
   credenciaisWhatsapp,
+  enviarTesteWhatsapp,
   eventosWhatsapp,
+  numerosWhatsapp,
   removerCredenciaisWhatsapp,
   salvarCredenciaisWhatsapp,
+  templatesWhatsapp,
   testarCredenciaisWhatsapp,
   type ResultadoWhatsapp,
 } from '@/features/api'
@@ -194,6 +197,9 @@ export function Whatsapp() {
         {verHistorico ? <Historico /> : null}
       </Cartao>
 
+      {data?.configurada ? <NumerosDaConta idEmUso={data.phone_number_id} /> : null}
+      {data?.configurada ? <Modelos /> : null}
+
       <Cartao titulo="Como ligar o webhook" className="mt-4">
         <ol className="px-5 pb-5 pt-1 text-sm text-rotulo list-decimal ml-4 flex flex-col gap-1.5">
           <li>
@@ -216,6 +222,143 @@ export function Whatsapp() {
         </ol>
       </Cartao>
     </Pagina>
+  )
+}
+
+/**
+ * Os números que a conta da Meta tem.
+ *
+ * Existe por um erro real (21/09/2026): o primeiro cadastro gravou o número de TESTE no
+ * lugar do comercial, e o teste de conexão respondeu "ok" — porque enviar usa o id do
+ * número, e aquele id existia. A tela pedia três identificadores de dezesseis dígitos e
+ * não mostrava nenhum; agora ela mostra o que a conta tem, com o que está em uso marcado.
+ */
+function NumerosDaConta({ idEmUso }: { idEmUso: string | null | undefined }) {
+  const { data, isLoading, error } = useQuery({ queryKey: ['whatsapp-numeros'], queryFn: numerosWhatsapp, retry: false })
+
+  return (
+    <Cartao titulo="Números desta conta" className="mt-4">
+      <div className="px-5 pb-5 pt-1">
+        {isLoading ? <Carregando /> : null}
+        {error ? <p className="text-sm text-rotulo">{mensagemDeErro(error)}</p> : null}
+        {(data ?? []).map((n) => (
+          <div key={n.id} className="flex items-center gap-3 py-2 border-b border-borda last:border-0 flex-wrap">
+            <span className="font-semibold text-forte">{n.numero ?? '—'}</span>
+            <span className="text-sm text-rotulo">{n.nome ?? ''}</span>
+            {n.id === idEmUso ? <Selo tom="ok">em uso</Selo> : null}
+            <span className="mono text-xs text-fraco ml-auto">{n.id}</span>
+          </div>
+        ))}
+        {data && data.length === 0 ? (
+          <p className="text-sm text-rotulo">A conta não tem número nenhum.</p>
+        ) : null}
+      </div>
+    </Cartao>
+  )
+}
+
+/**
+ * Os modelos de mensagem, e o envio de prova.
+ *
+ * Fora da janela de 24 horas a Meta só aceita modelo aprovado — então esta lista é o teto
+ * do que o robô consegue dizer. Os reprovados e os pendentes aparecem junto: esconder um
+ * modelo recusado faria procurar no lugar errado por que o aviso não sai.
+ */
+function Modelos() {
+  const { data, isLoading, error } = useQuery({ queryKey: ['whatsapp-templates'], queryFn: templatesWhatsapp, retry: false })
+  const [escolhido, setEscolhido] = useState('')
+  const [telefone, setTelefone] = useState('')
+  const [parametros, setParametros] = useState('')
+  const [saida, setSaida] = useState<string | null>(null)
+
+  const modelo = (data ?? []).find((t) => t.nome === escolhido)
+
+  const enviar = useMutation({
+    mutationFn: () =>
+      enviarTesteWhatsapp({
+        telefone,
+        template: escolhido,
+        parametros: parametros ? parametros.split('|').map((p) => p.trim()) : [],
+      }),
+    onSuccess: (r) =>
+      setSaida(r.ok ? `Enviado. Identificação da mensagem: ${r.wamid}` : `Recusado: ${r.erro}`),
+    onError: (e) => setSaida(mensagemDeErro(e)),
+  })
+
+  const aprovados = (data ?? []).filter((t) => t.situacao === 'APPROVED')
+
+  return (
+    <Cartao titulo="Modelos de mensagem" className="mt-4">
+      <div className="px-5 pb-5 pt-1">
+        {isLoading ? <Carregando /> : null}
+        {error ? <p className="text-sm text-rotulo">{mensagemDeErro(error)}</p> : null}
+
+        {(data ?? []).map((t) => (
+          <div key={`${t.nome}-${t.idioma}`} className="py-2.5 border-b border-borda last:border-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="mono text-sm text-forte">{t.nome}</span>
+              <Selo tom={t.situacao === 'APPROVED' ? 'ok' : t.situacao === 'REJECTED' ? 'parado' : 'alerta'}>
+                {t.situacao === 'APPROVED' ? 'aprovado' : t.situacao === 'REJECTED' ? 'reprovado' : 'em análise'}
+              </Selo>
+              <span className="text-xs text-fraco">
+                {t.categoria} · {t.idioma}
+                {t.parametros > 0 ? ` · ${t.parametros} parâmetro(s)` : ''}
+              </span>
+            </div>
+            {t.corpo ? <p className="text-xs text-rotulo mt-1 whitespace-pre-wrap">{t.corpo}</p> : null}
+          </div>
+        ))}
+
+        {data && data.length === 0 ? (
+          <p className="text-sm text-rotulo">
+            Nenhum modelo nesta conta. Sem modelo aprovado, nenhum aviso sai — crie em
+            Gerenciador do WhatsApp → Modelos de mensagem.
+          </p>
+        ) : null}
+
+        {aprovados.length > 0 ? (
+          <div className="mt-4 rounded-campo bg-superficie p-4">
+            <p className="text-sm font-semibold text-forte mb-3">Enviar um teste</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Seletor rotulo="Modelo" value={escolhido} onChange={(e) => setEscolhido(e.target.value)}>
+                <option value="">escolha…</option>
+                {aprovados.map((t) => (
+                  <option key={t.nome} value={t.nome}>
+                    {t.nome}
+                  </option>
+                ))}
+              </Seletor>
+              <Campo
+                rotulo="Telefone"
+                value={telefone}
+                onChange={(e) => setTelefone(e.target.value)}
+                placeholder="+55 17 99999-0000"
+                nota="Com DDI e DDD."
+              />
+            </div>
+            {modelo && modelo.parametros > 0 ? (
+              <Campo
+                rotulo={`Parâmetros (${modelo.parametros}, separados por |)`}
+                value={parametros}
+                onChange={(e) => setParametros(e.target.value)}
+                placeholder="Usina Tietê | 14:12"
+              />
+            ) : null}
+            <button
+              onClick={() => {
+                setSaida(null)
+                enviar.mutate()
+              }}
+              className="btn-primario mt-3"
+              disabled={!escolhido || !telefone || enviar.isPending}
+            >
+              {enviar.isPending ? 'Enviando…' : 'Enviar teste'}
+            </button>
+            {saida ? <p className="text-sm text-corpo mt-3">{saida}</p> : null}
+          </div>
+        ) : null}
+      </div>
+    </Cartao>
   )
 }
 

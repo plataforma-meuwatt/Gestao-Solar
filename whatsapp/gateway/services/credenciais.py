@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from gateway.core import cripto
 from gateway.core.config import get_settings
+from gateway.meta import graph
 from gateway.models.credencial import ESCOPO_PADRAO, Credencial, CredencialEvento
 
 TIMEOUT_S = 15.0
@@ -49,10 +50,17 @@ class Credenciais:
     token: str | None
     app_secret: str | None
     verify_token: str | None
+    #: Só a listagem precisa dele: enviar usa o `phone_number_id`. É por isso que o WABA
+    #: errado passou despercebido no primeiro cadastro — o teste de envio dizia "ok".
+    waba_id: str | None = None
 
     @property
     def envio_pronto(self) -> bool:
         return bool(self.token and self.phone_number_id)
+
+    @property
+    def listagem_pronta(self) -> bool:
+        return bool(self.token and self.waba_id)
 
 
 @dataclass
@@ -107,6 +115,7 @@ def em_uso(db: Session) -> Credenciais:
         valor = Credenciais(None, None, None, None)
     else:
         valor = Credenciais(
+            waba_id=linha.waba_id,
             phone_number_id=linha.phone_number_id,
             token=cripto.decifrar(linha.token_cifrado) if linha.token_cifrado else None,
             app_secret=(
@@ -321,3 +330,42 @@ def remover(db: Session, *, ator: str | None = None) -> None:
     registrar(db, "removida", ator=ator, token_prefixo=prefixo)
     db.commit()
     invalidar_cache()
+
+
+# ── o que a conta tem ───────────────────────────────────────────────────────
+
+
+class ListagemIndisponivel(RuntimeError):
+    """Falta token ou WABA — a tela precisa da frase, não de um 500."""
+
+
+async def numeros(db: Session) -> list[dict[str, Any]]:
+    """Os números da conta, para a tela deixar de pedir identificadores de cabeça.
+
+    Existe por um episódio concreto (21/09/2026): configurar o gateway virou uma caça a
+    três identificadores de dezesseis dígitos, em três telas diferentes do Gerenciador —
+    e o primeiro cadastro foi feito com o número de TESTE e um WABA que nem era o do
+    número. Nada acusou: o teste de envio respondeu "ok", porque enviar não usa o WABA.
+    """
+    cred = em_uso(db)
+    if not cred.listagem_pronta:
+        raise ListagemIndisponivel(
+            "Para listar os números, grave o token e o WABA ID."
+        )
+    itens, erro = await graph.listar_numeros(token=cred.token, waba_id=cred.waba_id)
+    if erro:
+        raise ListagemIndisponivel(erro)
+    return itens
+
+
+async def templates(db: Session) -> list[dict[str, Any]]:
+    """Os modelos da conta, aprovados ou não — ver `graph.listar_templates`."""
+    cred = em_uso(db)
+    if not cred.listagem_pronta:
+        raise ListagemIndisponivel(
+            "Para listar os modelos, grave o token e o WABA ID."
+        )
+    itens, erro = await graph.listar_templates(token=cred.token, waba_id=cred.waba_id)
+    if erro:
+        raise ListagemIndisponivel(erro)
+    return itens

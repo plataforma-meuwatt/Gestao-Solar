@@ -114,6 +114,27 @@ def historico(limite: int = 30, db: Session = Depends(get_db)) -> list[EventoOut
     ]
 
 
+# ── o que a conta tem ───────────────────────────────────────────────────────
+
+
+@router.get("/numeros", dependencies=[Depends(_porta)])
+async def numeros(db: Session = Depends(get_db)) -> list[dict]:
+    """Os números da conta, com o id que vai no campo do painel."""
+    try:
+        return await svc.numeros(db)
+    except svc.ListagemIndisponivel as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+
+@router.get("/templates", dependencies=[Depends(_porta)])
+async def templates(db: Session = Depends(get_db)) -> list[dict]:
+    """Os modelos de mensagem, aprovados ou não."""
+    try:
+        return await svc.templates(db)
+    except svc.ListagemIndisponivel as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+
 # ── envio ───────────────────────────────────────────────────────────────────
 
 
