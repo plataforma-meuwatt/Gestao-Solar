@@ -193,3 +193,31 @@ def editar(
     db.commit()
     db.refresh(membro)
     return _membro_out(db, membro)
+
+
+class SenhaIn(BaseModel):
+    senha: str = Field(min_length=8)
+
+
+@router.put("/usuarios/{membro_id}/senha", status_code=204)
+def redefinir_senha(
+    membro_id: int,
+    body: SenhaIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(administrador_atual),
+) -> None:
+    """Quem administra define a senha nova, do mesmo jeito que definiu a primeira.
+
+    Não é a senha provisória do cliente (`POST /clientes/{id}/senha`): o painel não tem
+    tela de troca de senha para o staff, então uma senha sorteada seria a senha dele para
+    sempre. Aqui o administrador combina a senha com a pessoa, como no cadastro.
+
+    Sessões já abertas continuam valendo até expirar — o token do painel não é
+    revogável. Para tirar alguém de dentro agora, desative a conta.
+    """
+    membro = db.get(User, membro_id)
+    if membro is None or membro.perfil is Perfil.CLIENTE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado")
+
+    membro.senha_hash = gerar_hash_senha(body.senha)
+    db.commit()

@@ -11,7 +11,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, UserPlus } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, KeyRound, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 import { Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor } from '@/components/base'
@@ -21,6 +21,7 @@ import {
   criarUsuario,
   editarUsuario,
   listarUsuarios,
+  redefinirSenhaUsuario,
   type Area,
   type Membro,
 } from '@/features/api'
@@ -29,6 +30,7 @@ import { mensagemDeErro } from '@/lib/api'
 export function Usuarios() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
+  const [senhaDe, setSenhaDe] = useState<Membro | null>(null)
   const [erro, setErro] = useState('')
 
   const { data, isLoading } = useQuery({ queryKey: ['usuarios'], queryFn: listarUsuarios })
@@ -70,6 +72,7 @@ export function Usuarios() {
             primeiro={i === 0}
             salvando={editar.isPending}
             aoMudar={(dados) => editar.mutate({ id: m.id, dados })}
+            aoRedefinirSenha={() => setSenhaDe(m)}
           />
         ))}
       </Cartao>
@@ -77,6 +80,7 @@ export function Usuarios() {
       <Conexoes embutido />
 
       {novo ? <ModalNovoUsuario areas={areas ?? []} aoFechar={() => setNovo(false)} /> : null}
+      {senhaDe ? <ModalRedefinirSenha membro={senhaDe} aoFechar={() => setSenhaDe(null)} /> : null}
     </Pagina>
   )
 }
@@ -87,12 +91,14 @@ function LinhaMembro({
   primeiro,
   salvando,
   aoMudar,
+  aoRedefinirSenha,
 }: {
   membro: Membro
   areas: Area[]
   primeiro: boolean
   salvando: boolean
   aoMudar: (dados: { perfil?: Membro['perfil']; ativo?: boolean; areas?: string[] }) => void
+  aoRedefinirSenha: () => void
 }) {
   const [aberto, setAberto] = useState(false)
   const ehAdmin = membro.perfil === 'administrador'
@@ -127,6 +133,15 @@ function LinhaMembro({
           <option value="atendimento">Atendimento</option>
           <option value="administrador">Administrador</option>
         </select>
+
+        <button
+          onClick={aoRedefinirSenha}
+          className="btn-fantasma"
+          title={`Definir uma senha nova para ${membro.nome}`}
+        >
+          <KeyRound size={13} />
+          Redefinir senha
+        </button>
 
         <button
           onClick={() => aoMudar({ ativo: !membro.ativo })}
@@ -366,6 +381,98 @@ function ModalNovoUsuario({ areas, aoFechar }: { areas: Area[]; aoFechar: () => 
         <div className="flex gap-2">
           <button type="submit" className="btn-primario" disabled={criar.isPending}>
             {criar.isPending ? 'Criando…' : 'Criar usuário'}
+          </button>
+          <button type="button" onClick={aoFechar} className="btn-secundario">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/**
+ * O administrador define a senha nova, como definiu a primeira no cadastro.
+ *
+ * Não reaproveita a senha provisória dos clientes: o painel não tem tela de troca para o
+ * staff, e uma senha sorteada ficaria sendo a senha da pessoa para sempre.
+ */
+function ModalRedefinirSenha({ membro, aoFechar }: { membro: Membro; aoFechar: () => void }) {
+  const [senha, setSenha] = useState('')
+  const [confirmacao, setConfirmacao] = useState('')
+  const [erro, setErro] = useState('')
+
+  const redefinir = useMutation({
+    mutationFn: () => redefinirSenhaUsuario(membro.id, senha),
+    onError: (e) => setErro(mensagemDeErro(e)),
+  })
+
+  if (redefinir.isSuccess) {
+    return (
+      <Modal titulo="Senha redefinida" aoFechar={aoFechar}>
+        <p className="flex items-start gap-2 text-sm text-ok">
+          <Check size={15} className="shrink-0 mt-0.5" />
+          <span>
+            A senha de <strong>{membro.nome}</strong> foi trocada. A anterior já não entra.
+          </span>
+        </p>
+        <p className="text-sm text-rotulo mt-3">
+          Passe a senha nova para a pessoa junto com o apelido{' '}
+          <span className="mono text-forte">{membro.apelido}</span>. Sessões já abertas
+          continuam valendo até expirar; para tirar alguém de dentro agora, desative a conta.
+        </p>
+        <button onClick={aoFechar} className="btn-secundario w-full mt-4">
+          Fechar
+        </button>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal titulo={`Redefinir senha de ${membro.nome}`} aoFechar={aoFechar}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (senha !== confirmacao) {
+            setErro('As senhas não conferem.')
+            return
+          }
+          setErro('')
+          redefinir.mutate()
+        }}
+        className="flex flex-col gap-4"
+      >
+        {erro ? <Erro>{erro}</Erro> : null}
+
+        <p className="text-sm text-rotulo">
+          A senha atual de <span className="mono text-forte">{membro.apelido}</span> deixa de
+          funcionar assim que você salvar.
+        </p>
+
+        <Campo
+          rotulo="Senha nova"
+          type="password"
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+          nota="Mínimo de 8 caracteres. Combine com a pessoa."
+          autoComplete="new-password"
+          minLength={8}
+          required
+          autoFocus
+        />
+        <Campo
+          rotulo="Confirme a senha"
+          type="password"
+          value={confirmacao}
+          onChange={(e) => setConfirmacao(e.target.value)}
+          autoComplete="new-password"
+          minLength={8}
+          required
+        />
+
+        <div className="flex gap-2">
+          <button type="submit" className="btn-primario" disabled={redefinir.isPending}>
+            {redefinir.isPending ? 'Salvando…' : 'Redefinir senha'}
           </button>
           <button type="button" onClick={aoFechar} className="btn-secundario">
             Cancelar

@@ -609,3 +609,8 @@ export const editarUsuario = (
   id: number,
   dados: { perfil?: Perfil; ativo?: boolean; areas?: string[] },
 ) => api.patch<Membro>(`/usuarios/${id}`, dados).then((r) => r.data)
+
+/** O administrador define a senha nova. Não é a provisória do cliente: o staff não tem
+ *  tela de troca, então o que for definido aqui é a senha dele. */
+export const redefinirSenhaUsuario = (id: number, senha: string) =>
+  api.put<void>(`/usuarios/${id}/senha`, { senha }).then(() => undefined)
