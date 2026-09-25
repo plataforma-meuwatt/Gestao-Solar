@@ -189,6 +189,21 @@ export function LeitorPdf({
     })
   }, [])
 
+  // Recusa do motor ao abrir a página (arquivo bloqueado, memória, motor sem suporte). O
+  // que o WebView escreveu vai junto: é o que separa "bloqueado" de "não terminou".
+  function falhouAoCarregar(descricao: string | undefined) {
+    setEstado((atual) =>
+      atual.fase === 'erro'
+        ? atual
+        : {
+            fase: 'erro',
+            mensagem: `O leitor não abriu o documento neste aparelho${
+              descricao ? ` (${descricao})` : ''
+            }. Abra em outro aplicativo.`,
+          },
+    )
+  }
+
   async function abrirLaFora() {
     setErroExterno(null)
     const uri = pdfUri.current
@@ -231,10 +246,20 @@ export function LeitorPdf({
           containerStyle={estilos.pagina}
           originWhitelist={['file://', 'about:blank']}
           onMessage={receber}
-          // Nada de rede, nada de arquivo vizinho: tudo o que a página precisa está dentro
-          // dela. Um leitor de documento não tem por que alcançar o disco nem a internet.
+          // O silêncio era indistinguível de desenho lento, e foi por isso que o defeito
+          // acima passou: o WebView recusava o arquivo e ninguém escutava a recusa.
+          onError={(e) => falhouAoCarregar(e.nativeEvent.description)}
+          onHttpError={(e) => falhouAoCarregar(`HTTP ${e.nativeEvent.statusCode}`)}
+          // `allowFileAccess` governa o `file://` DA PRÓPRIA PÁGINA, não o que ela alcança
+          // depois de aberta. Com ele em `false` — o padrão do react-native-webview e o que
+          // estava escrito aqui — o WebView do Android recusa o arquivo do `source` e não
+          // carrega nada: sem página não há script, sem script não há recado, e a tela
+          // ficava em "Desenhando a primeira página…" para sempre, em TODO PDF do app.
+          //
+          // O confinamento continua nas duas linhas abaixo: a página não lê arquivo vizinho
+          // nem alcança outra origem. Tudo de que ela precisa já está dentro dela.
           javaScriptEnabled
-          allowFileAccess={false}
+          allowFileAccess
           allowFileAccessFromFileURLs={false}
           allowUniversalAccessFromFileURLs={false}
           setSupportMultipleWindows={false}

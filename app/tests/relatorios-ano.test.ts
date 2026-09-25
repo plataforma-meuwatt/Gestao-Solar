@@ -1,5 +1,5 @@
 /**
- * O que este arquivo guarda — a grade do ano (`/relatorios/ano`) e a tela que a desenha.
+ * O que este arquivo guarda — a grade do ano e a ABA que a desenha (`(tabs)/relatorios`).
  *
  * Cada teste diz, na primeira linha, qual defeito ele impede de voltar. Os dados dos
  * cenários **foram medidos** contra a carteira real do usuário 2 em 05/09/2026 (7 usinas,
@@ -798,7 +798,7 @@ describe('o pacote anuncia o que traz antes do primeiro byte', () => {
 /* ═══════════════════════════════════════════════════════════════════════════ fonte ══ */
 
 describe('fonte — o que não pode voltar a existir na tela do ano', () => {
-  const tela = semComentarios(readFileSync(join(RAIZ, 'app', 'relatorios', 'ano.tsx'), 'utf8'))
+  const tela = semComentarios(readFileSync(join(RAIZ, 'app', '(tabs)', 'relatorios.tsx'), 'utf8'))
   const modulo = semComentarios(readFileSync(join(RAIZ, 'features', 'relatorios-ano.ts'), 'utf8'))
 
   /** Guarda: a tela divide `cumprido_ate_hoje` por `previsto_ate_hoje` e inventa o terceiro

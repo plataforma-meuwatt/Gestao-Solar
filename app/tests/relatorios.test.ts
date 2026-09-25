@@ -807,7 +807,7 @@ describe('a aba, o arquivo e a rota', () => {
     // Ele vivia em dois arquivos com duas entradas cada. Duas cópias é o mesmo que duas
     // respostas, e foi assim que o Resumo saiu como nome de arquivo numa tela e como
     // "Documento" na outra.
-    const suspeitos = ['src/app/(tabs)/relatorios.tsx', 'src/app/documentos.tsx']
+    const suspeitos = ['src/app/relatorios/acervo.tsx', 'src/app/documentos.tsx']
     for (const alvo of suspeitos) {
       const texto = fonte(alvo)
       assert.equal(
@@ -818,13 +818,13 @@ describe('a aba, o arquivo e a rota', () => {
     }
   })
 
-  test('o defeito nomeado: a aba desenha o cartão de manutenção, e o toque vai para o PDF dele', () => {
+  test('o defeito nomeado: o acervo desenha o cartão de manutenção, e o toque vai para o PDF dele', () => {
     // Um cartão que não abre nada é pior do que cartão nenhum: ele promete um documento. O
     // destino é a MESMA rota do fechamento de geração (`/relatorio/{id}`) — quem escolhe o
     // endereço do PDF é `urlDoArquivo`, pelo `tipo`, para não nascer uma segunda cópia do
     // caminho do arquivo (já houve duas, com o mesmo defeito nas duas).
-    const tela = fonte('src/app/(tabs)/relatorios.tsx')
-    assert.match(tela, /ehCartaoMensal\(item\)/, 'a aba não separa as duas famílias')
+    const tela = fonte('src/app/relatorios/acervo.tsx')
+    assert.match(tela, /ehCartaoMensal\(item\)/, 'o acervo não separa as duas famílias')
     assert.match(tela, /<CardMensal key=\{item\.id\}/, 'o cartão de manutenção não é desenhado')
     assert.match(tela, /\/relatorio\/\$\{peca\.id\}\?tipo=/, 'o toque do mensal não leva ao PDF')
     // A composição é do SERVIDOR: uma leitura, uma chave de cache, um arquivo em disco.
@@ -835,7 +835,7 @@ describe('a aba, o arquivo e a rota', () => {
   test('o defeito nomeado: as duas pontes falham separado, cada aviso dizendo de qual família é', () => {
     // Foi juntar os dois motivos num campo só que obrigou o app a arrancar o prefixo
     // "Manutenção:" com expressão regular e a mostrar a frase nas duas abas.
-    const tela = fonte('src/app/(tabs)/relatorios.tsx')
+    const tela = fonte('src/app/relatorios/acervo.tsx')
     // O motivo do mensal precisa ser DESENHADO, não só lido: uma asserção que aceitasse
     // qualquer menção ao campo passaria com o `<Text>` apagado, porque `vazioDaLista` o cita
     // na mesma tela — e o dono ficaria com a lista de uma família e nenhuma palavra sobre a
@@ -850,16 +850,32 @@ describe('a aba, o arquivo e a rota', () => {
     )
   })
 
-  test('a aba leva à grade do ano, e a grade não é uma sexta aba', () => {
-    const tela = fonte('src/app/(tabs)/relatorios.tsx')
-    assert.match(tela, /['"]\/relatorios\/ano['"]/)
+  test('a ABA é a grade do ano, e o acervo é a tela empurrada', () => {
+    // A ordem foi invertida a pedido do dono (25/09/2026): quem toca no ícone quer a
+    // grade. O acervo continua inteiro, atrás da linha no fim dela — e nenhum dos dois
+    // virou uma sexta aba.
+    const aba = fonte('src/app/(tabs)/relatorios.tsx')
+    assert.match(aba, /useGradeDoAno\(ano\)/, 'a aba deixou de ser a grade do ano')
+    assert.match(aba, /['"]\/relatorios\/acervo['"]/, 'a aba não leva mais ao acervo')
+    assert.ok(existsSync(join(APP, 'src/app/relatorios/acervo.tsx')))
+    assert.equal(existsSync(join(APP, 'src/app/relatorios/ano.tsx')), false)
     assert.equal(existsSync(join(APP, 'src/app/(tabs)/ano.tsx')), false)
+    assert.equal(existsSync(join(APP, 'src/app/(tabs)/acervo.tsx')), false)
+  })
+
+  test('a aba raiz leva o avatar, e o acervo empurrado leva a seta', () => {
+    // `Tela` põe um OU outro no mesmo canto. Trocar a tela de lugar sem trocar isto deixa
+    // a aba sem saída para o perfil, ou o acervo sem volta.
+    assert.match(fonte('src/app/(tabs)/relatorios.tsx'), /avatar=\{\{ iniciais:/)
+    const acervo = fonte('src/app/relatorios/acervo.tsx')
+    assert.match(acervo, /^\s*voltar$/m)
+    assert.equal(/avatar=\{\{/.test(acervo), false)
   })
 
   test('a aba abre o PDF em um toque, pela rota nova', () => {
     // O degrau intersticial existia porque a WebView não renderizava PDF — nunca por
     // necessidade. E o destino é `/relatorio/{id}`, não o endereço antigo.
-    const tela = fonte('src/app/(tabs)/relatorios.tsx')
+    const tela = fonte('src/app/relatorios/acervo.tsx')
     assert.match(tela, /\/relatorio\/\$\{r\.id\}\?tipo=\$\{a\.tipo\}/)
     assert.equal(/push\(`\/documento\//.test(tela), false)
   })

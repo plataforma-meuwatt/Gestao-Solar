@@ -328,3 +328,24 @@ test('as duas peças do pdf.js estão inteiras e do tamanho medido na geração'
     ).version,
   )
 })
+
+/* ------------------------------------------------- o WebView que abre a página */
+
+test('o WebView pode abrir o arquivo da própria página, e diz quando não abre', () => {
+  /**
+   * Defeito guardado, e ele custou TODO PDF do aplicativo (25/09/2026): `allowFileAccess`
+   * governa o `file://` do `source`, não só o que a página alcança depois de aberta. Com
+   * ele em `false` — o padrão do react-native-webview — o Android recusa o arquivo, nenhum
+   * script roda, nenhum recado chega, e a tela fica em "Desenhando a primeira página…" até
+   * o relógio de segurança. O confinamento de verdade são as outras duas linhas, que
+   * continuam desligadas.
+   */
+  const leitor = readFileSync(join(RAIZ, 'components', 'LeitorPdf.tsx'), 'utf8')
+  assert.doesNotMatch(leitor, /allowFileAccess=\{false\}/)
+  assert.match(leitor, /^\s*allowFileAccess$/m)
+  assert.match(leitor, /allowFileAccessFromFileURLs=\{false\}/)
+  assert.match(leitor, /allowUniversalAccessFromFileURLs=\{false\}/)
+  // E a recusa do motor vira frase: foi o silêncio que deixou o defeito passar.
+  assert.match(leitor, /onError=\{/)
+  assert.match(leitor, /onHttpError=\{/)
+})
