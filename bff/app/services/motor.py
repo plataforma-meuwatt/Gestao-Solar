@@ -31,6 +31,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from sqlalchemy import select
@@ -43,10 +44,12 @@ from app.models.notificacao import NotificacaoEnviada
 from app.models.plant import PlantLink
 from app.models.user import User
 from app.services import avisos as svc_avisos
+from app.services import integracoes
 from app.services import notificacoes as catalogo
 from app.services import vinculos
 
 log = logging.getLogger("gs.motor")
+BRT = ZoneInfo("America/Sao_Paulo")
 
 #: O modelo aprovado na Meta para cada tipo do catálogo.
 #:
@@ -207,6 +210,71 @@ async def _coletar_parada(db: Session, rel: Relatorio) -> list[Evento]:
                     # depois de voltar, é evento novo e avisa de novo.
                     chave=f"parada:{link.id}:{equipamento}:{desde or ''}",
                     parametros=[link.nome, nome, hora],
+                )
+            )
+    eventos.extend(await _coletar_parada_micro(db, rel))
+    return eventos
+
+
+def _hora_brt(iso: Any) -> str:
+    """Início da parada em Brasília: "14:12" hoje, "13/09 14:12" em outro dia — a parada de
+    ontem avisada com a hora só faria o dono procurar o problema no dia errado."""
+    if not isinstance(iso, str):
+        return "—"
+    try:
+        inicio = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(BRT)
+    except ValueError:
+        return "—"
+    hoje = datetime.now(BRT).date()
+    return inicio.strftime("%H:%M" if inicio.date() == hoje else "%d/%m %H:%M")
+
+
+async def _coletar_parada_micro(db: Session, rel: Relatorio) -> list[Evento]:
+    """Micro usina parada, pelos alertas do MICRO do meuWatt (`GET /micro/alerts`).
+
+    A usina daqui aponta para uma micro usina por `mw_micro_plant_id` — usinas que vêm dos
+    portais dos fabricantes (Solis, Canadian) e que o monitoramento do meuWatt não conhece.
+    Quem decide "parou" é o verificador do meuWatt (de dia, persistindo 20 min, fecha só com
+    leitura boa); daqui se lê o que ele confirmou e se entrega pelo mesmo tipo "parada" —
+    mesmo template, mesmas pessoas que marcaram o aviso para a usina.
+
+    **A exceção à regra do motor, e por quê:** tudo o mais é lido com o token de um cliente
+    (`_leitor`), e este não pode ser: o MICRO não é escopado por usina no meuWatt — só
+    administrador o lê —, então nenhum token de cliente o enxerga. Lê-se com a credencial de
+    serviço, uma chamada por volta para todas as usinas. Ponte sem credencial ou conta sem
+    acesso vira aviso no relatório e silêncio no WhatsApp — nunca "parou" sem saber.
+    """
+    links = [l for l in _usinas_com_interesse(db, "parada").values() if l.mw_micro_plant_id]
+    if not links:
+        return []
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        alertas = await cliente.micro_alertas()
+    except Exception as exc:  # noqa: BLE001 — MICRO fora não derruba o aviso das outras usinas
+        rel.avisos.append(f"MICRO: alertas de micro usina indisponíveis ({exc}).")
+        return []
+
+    por_micro: dict[int, list[PlantLink]] = {}
+    for link in links:
+        por_micro.setdefault(link.mw_micro_plant_id, []).append(link)
+
+    eventos: list[Evento] = []
+    for alerta in alertas:
+        episodio = alerta.get("key") or alerta.get("id")
+        if episodio is None:
+            continue
+        estacao = str(alerta.get("station_name") or "Estação")
+        motivo = str(alerta.get("kind_label") or "parada").lower()
+        for link in por_micro.get(alerta.get("plant_id"), []):
+            eventos.append(
+                Evento(
+                    tipo="parada",
+                    plant_link_id=link.id,
+                    # A chave do EPISÓDIO no meuWatt é estável: a mesma parada nunca avisa
+                    # duas vezes, e uma parada nova da mesma estação, depois de resolvida,
+                    # tem outra chave e avisa de novo.
+                    chave=f"parada:{episodio}",
+                    parametros=[link.nome, f"{estacao} ({motivo})", _hora_brt(alerta.get("started_at"))],
                 )
             )
     return eventos

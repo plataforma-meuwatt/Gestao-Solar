@@ -206,6 +206,8 @@ class Linha:
     par_provavel_mw: str | None = None
     par_provavel_nome: str | None = None
     par_provavel_motivos: list[str] = field(default_factory=list)
+    #: A micro usina do MICRO casada com esta (só existe em usina já trazida para cá).
+    mw_micro_plant_id: int | None = None
 
     @property
     def origem(self) -> str:
@@ -265,6 +267,7 @@ def montar(
                 no_app=bool(link.ativo),
                 # Uma usina já casada não precisa de sugestão; uma só-meuWatt ainda precisa.
                 candidatos=[] if link.mp_usina_id else sugestoes.get(link.mw_plant_slug, []),
+                mw_micro_plant_id=getattr(link, "mw_micro_plant_id", None),
             )
         )
 

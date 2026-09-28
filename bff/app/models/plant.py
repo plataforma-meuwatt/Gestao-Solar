@@ -24,6 +24,11 @@ class PlantLink(Base):
     # Identificadores nos upstreams. O meuWatt endereça por slug; o meuPlano por id int.
     mw_plant_slug: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     mp_usina_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # A micro usina do MICRO (meuWatt `GET /micro/plants`, id numérico) — usina que vem dos
+    # portais dos fabricantes (Solis, Canadian) e não é uma usina do monitoramento do
+    # meuWatt. Opcional e ADICIONAL: por ela o motor avisa "usina parada"; as telas do
+    # aplicativo continuam lendo pelo `mw_plant_slug`/`mp_usina_id`.
+    mw_micro_plant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Denormalizado para a lista de usinas carregar sem depender dos dois upstreams.
     nome: Mapped[str] = mapped_column(String(255))

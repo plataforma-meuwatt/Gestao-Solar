@@ -197,6 +197,15 @@ MEUWATT: list[Rota] = [
                             "10 vagas por minuto do limite (que é por IP: todo o portal "
                             "sai pelo mesmo endereço) e até 37,9 s do worker único do "
                             "meuWatt. A tela exercita sob demanda, com a seleção real."),
+    # MICRO — micro usinas dos portais dos fabricantes. Lidas com a credencial de serviço
+    # (o MICRO só é legível por administrador no meuWatt): se a conta de serviço não for
+    # admin lá, as duas ficam vermelhas com 403 e o aviso de parada das micro usinas para.
+    Rota("mw.micro_plants", "GET", "/micro/plants",
+         "Micro usinas para casar no vínculo (Painel → Usinas)", essencial=False,
+         params={"live": "false"}, campos_exigidos=("plants[].id", "plants[].name")),
+    Rota("mw.micro_alerts", "GET", "/micro/alerts",
+         "Aviso de usina parada das micro usinas (motor, tipo parada)", essencial=False,
+         params={"active": "true"}),
     Rota("mw.users", "GET", "/admin/users",
          "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
     Rota("mw.user_plants", "GET", "/admin/user-plants",

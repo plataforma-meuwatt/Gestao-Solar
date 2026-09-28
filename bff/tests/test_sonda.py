@@ -109,6 +109,12 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/admin/users").respond(200, json=[{"id": 1, "email": "a@b.com"}])
     mock.get(f"{BASE}/admin/user-plants").respond(200, json=[{"user_id": 1, "plant_id": 1}])
     mock.get(f"{BASE}/reports/portal").respond(200, json=PORTAL_COMO_HOJE)
+    # MICRO: a forma medida em 28/09/2026 — envelope `{plants, errors}` no catálogo e lista
+    # na raiz nos alertas (vazia é o normal: nenhuma micro usina parada).
+    mock.get(f"{BASE}/micro/plants").respond(
+        200, json={"plants": [{"id": 1, "name": "UFV Sitio", "stations": []}], "errors": []}
+    )
+    mock.get(f"{BASE}/micro/alerts").respond(200, json=[])
 
 
 @respx.mock
@@ -145,6 +151,9 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
     # O portal não depende do slug — ele é exercitado mesmo sem usina nenhuma, e responde
     # o acervo vazio, que é o estado coerente com esta conta.
     respx.mock.get(f"{BASE}/reports/portal").respond(200, json={"plants": [], "reports": []})
+    # O MICRO também não depende de slug: catálogo vazio e nenhum alerta, coerente com a conta.
+    respx.mock.get(f"{BASE}/micro/plants").respond(200, json={"plants": [], "errors": []})
+    respx.mock.get(f"{BASE}/micro/alerts").respond(200, json=[])
 
     v = await sonda.varrer(db, Produto.MEUWATT)
 

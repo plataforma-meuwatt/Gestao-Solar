@@ -22,9 +22,11 @@ import { Aviso, Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/componen
 import {
   listarClientes,
   carregarConciliacao,
+  carregarMicroUsinas,
   salvarUsina,
   type Conciliacao,
   type LinhaUsina,
+  type MicroUsina,
   type OrigemUsina,
 } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
@@ -69,6 +71,15 @@ export function Usinas() {
     queryKey: ['conciliacao', clienteId],
     queryFn: () => carregarConciliacao(clienteId as number),
     enabled: clienteId !== '',
+  })
+
+  // As micro usinas não são de cliente nenhum no meuWatt (só administrador lê o MICRO):
+  // a lista é a mesma para qualquer cliente escolhido, então carrega uma vez só.
+  const { data: micro } = useQuery({
+    queryKey: ['micro-usinas'],
+    queryFn: carregarMicroUsinas,
+    enabled: clienteId !== '',
+    staleTime: 5 * 60_000,
   })
 
   const salvar = useMutation({
@@ -140,6 +151,11 @@ export function Usinas() {
           <Aviso>{data.aviso}</Aviso>
         </div>
       ) : null}
+      {micro?.aviso ? (
+        <div className="mb-4">
+          <Aviso>{micro.aviso}</Aviso>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <Cartao>
@@ -183,6 +199,7 @@ export function Usinas() {
                       key={linha.chave}
                       linha={linha}
                       dados={data}
+                      micro={micro?.usinas ?? []}
                       primeira={i === 0}
                       salvando={salvar.isPending}
                       aoSalvar={(mudanca) =>
@@ -195,6 +212,7 @@ export function Usinas() {
                           uf: linha.uf,
                           kwp: linha.kwp,
                           no_app: linha.no_app,
+                          mw_micro_plant_id: linha.mw_micro_plant_id,
                           ...mudanca,
                         })
                       }
@@ -222,17 +240,29 @@ export function Usinas() {
 function LinhaDeUsina({
   linha,
   dados,
+  micro,
   primeira,
   salvando,
   aoSalvar,
 }: {
   linha: LinhaUsina
   dados: Conciliacao
+  micro: MicroUsina[]
   primeira: boolean
   salvando: boolean
   aoSalvar: (mudanca: Partial<Parameters<typeof salvarUsina>[0]>) => void
 }) {
   const sugestao = linha.candidatos[0]
+
+  // Mesma regra do seletor do meuPlano: as micro usinas livres, mais a desta linha.
+  const microLivres = useMemo(() => {
+    const tomadas = new Set(
+      dados.linhas
+        .filter((l) => l.mw_micro_plant_id !== null && l.chave !== linha.chave)
+        .map((l) => l.mw_micro_plant_id),
+    )
+    return micro.filter((u) => !tomadas.has(u.id))
+  }, [dados, micro, linha.chave])
 
   // As usinas do meuPlano que ainda não pertencem a ninguém, mais a desta linha — sem
   // isso, o seletor abriria sem a opção que já está escolhida.
@@ -313,6 +343,37 @@ function LinhaDeUsina({
               usar “{sugestao.nome}” ({sugestao.motivos.join(', ')})
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* A micro usina só se casa com uma usina que já está no Gestão Solar: é o vínculo
+          dela que recebe o aviso de parada. As telas do app seguem lendo meuWatt/meuPlano. */}
+      {linha.plant_link_id !== null && (micro.length > 0 || linha.mw_micro_plant_id !== null) ? (
+        <div className="mt-3 flex items-center gap-3 flex-wrap">
+          <label className="text-xs text-rotulo" htmlFor={`micro-${linha.chave}`}>
+            Micro usina (MICRO do meuWatt)
+          </label>
+          <select
+            id={`micro-${linha.chave}`}
+            className="campo h-9 text-sm max-w-xs"
+            value={linha.mw_micro_plant_id ?? ''}
+            disabled={salvando}
+            onChange={(e) =>
+              aoSalvar({ mw_micro_plant_id: e.target.value ? Number(e.target.value) : null })
+            }
+          >
+            <option value="">— sem micro usina —</option>
+            {microLivres.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.nome}
+                {u.estacoes.length > 1 ? ` (${u.estacoes.join(' + ')})` : ''}
+              </option>
+            ))}
+            {linha.mw_micro_plant_id !== null && !micro.some((u) => u.id === linha.mw_micro_plant_id) ? (
+              <option value={linha.mw_micro_plant_id}>micro usina {linha.mw_micro_plant_id}</option>
+            ) : null}
+          </select>
+          <span className="text-xs text-fraco">o aviso de usina parada dela chega por aqui</span>
         </div>
       ) : null}
 

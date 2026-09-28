@@ -480,6 +480,9 @@ class LinhaConciliacao(BaseModel):
     par_provavel_mw: str | None = None
     par_provavel_nome: str | None = None
     par_provavel_motivos: list[str] = []
+    #: A micro usina do MICRO (meuWatt) casada com esta — o que faz o aviso de parada dela
+    #: chegar. O nome vem de `GET /conciliacao/micro-usinas`, que a tela já carrega.
+    mw_micro_plant_id: int | None = None
 
 
 class ConciliacaoOut(BaseModel):
@@ -510,6 +513,7 @@ def _linha_out(linha: conciliacao.Linha) -> LinhaConciliacao:
         par_provavel_mw=linha.par_provavel_mw,
         par_provavel_nome=linha.par_provavel_nome,
         par_provavel_motivos=linha.par_provavel_motivos,
+        mw_micro_plant_id=linha.mw_micro_plant_id,
     )
 
 
@@ -601,6 +605,10 @@ class UsinaIn(BaseModel):
     #: Se ela entra no aplicativo. Desligada, continua existindo aqui com os vínculos e as
     #: concessões intactos — o gestor pode religá-la sem refazer nada.
     no_app: bool = True
+    #: A micro usina do MICRO. Diferente dos outros campos, só muda quando VEM na
+    #: requisição: `null` explícito descasa, ausente mantém. Um painel publicado antes deste
+    #: campo não o manda — e cada "Ligar/Desligar" dele apagaria o vínculo em silêncio.
+    mw_micro_plant_id: int | None = None
 
 
 def _conflito(db: Session, campo, valor, exceto_id: int | None) -> PlantLink | None:
@@ -636,9 +644,11 @@ def salvar_usina(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
 
     alvo = link.id if link else None
+    muda_micro = "mw_micro_plant_id" in body.model_fields_set
     for campo, valor, produto in (
         (PlantLink.mw_plant_slug, body.mw_slug, "meuWatt"),
         (PlantLink.mp_usina_id, body.mp_usina_id, "meuPlano"),
+        (PlantLink.mw_micro_plant_id, body.mw_micro_plant_id if muda_micro else None, "MICRO"),
     ):
         outro = _conflito(db, campo, valor, alvo)
         if outro is not None:
@@ -659,6 +669,8 @@ def salvar_usina(
     link.uf = body.uf
     link.kwp = body.kwp
     link.ativo = body.no_app
+    if muda_micro:
+        link.mw_micro_plant_id = body.mw_micro_plant_id
     db.commit()
     db.refresh(link)
 
@@ -676,6 +688,50 @@ def salvar_usina(
         origem=("ambos" if link.mw_plant_slug and link.mp_usina_id
                 else "meuwatt" if link.mw_plant_slug else "meuplano"),
         no_app=link.ativo,
+        mw_micro_plant_id=link.mw_micro_plant_id,
+    )
+
+
+class MicroUsinaOut(BaseModel):
+    id: int
+    nome: str
+    kwp: float | None = None
+    #: As estações dos portais que formam a usina ("UFV Sitio Solis + UFV Sitio Canadian").
+    estacoes: list[str] = []
+
+
+class MicroUsinasOut(BaseModel):
+    usinas: list[MicroUsinaOut]
+    aviso: str | None = None
+
+
+@router.get("/conciliacao/micro-usinas", response_model=MicroUsinasOut)
+async def micro_usinas(
+    db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
+) -> MicroUsinasOut:
+    """As micro usinas do MICRO do meuWatt, para casar com uma usina daqui.
+
+    Lidas com a credencial de SERVIÇO — a única forma, porque o MICRO não é escopado por
+    usina lá (só administrador lê) — e é o mesmo caso do catálogo da conciliação: a lista
+    de tudo o que existe, para o gestor decidir de quem é. Ponte fora ou conta de serviço
+    sem acesso vira `aviso`, com a lista vazia: a tela de Usinas abre do mesmo jeito.
+    """
+    try:
+        cliente = await integracoes.cliente_meuwatt(db)
+        brutas = await cliente.micro_usinas()
+    except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo com a ponte fora
+        return MicroUsinasOut(usinas=[], aviso=f"MICRO do meuWatt: {exc}")
+    return MicroUsinasOut(
+        usinas=[
+            MicroUsinaOut(
+                id=int(u["id"]),
+                nome=str(u.get("name") or u["id"]),
+                kwp=u.get("capacity_kwp"),
+                estacoes=[str(e.get("name")) for e in u.get("stations") or [] if isinstance(e, dict)],
+            )
+            for u in brutas
+            if u.get("id") is not None
+        ]
     )
 
 

@@ -166,6 +166,9 @@ export type LinhaUsina = {
   par_provavel_mw: string | null
   par_provavel_nome: string | null
   par_provavel_motivos: string[]
+  /** A micro usina do MICRO do meuWatt casada com esta — é por ela que chega o aviso de
+   *  parada de uma usina que vem dos portais dos fabricantes (Solis, Canadian…). */
+  mw_micro_plant_id: number | null
 }
 
 export type Conciliacao = {
@@ -513,7 +516,26 @@ export const salvarUsina = (dados: {
   uf?: string | null
   kwp?: number | null
   no_app?: boolean
+  mw_micro_plant_id?: number | null
 }) => api.put<LinhaUsina>('/conciliacao/usina', dados).then((r) => r.data)
+
+/** Uma micro usina do MICRO do meuWatt — usina que vem dos portais dos fabricantes. */
+export type MicroUsina = {
+  id: number
+  nome: string
+  kwp: number | null
+  /** As estações dos portais que a formam ("UFV Sitio Solis", "UFV Sitio Canadian"). */
+  estacoes: string[]
+}
+
+/**
+ * As micro usinas, para casar com uma usina daqui. Lidas com a credencial de SERVIÇO: o
+ * MICRO só é legível por administrador no meuWatt. Ponte fora vira `aviso` com a lista vazia.
+ */
+export const carregarMicroUsinas = () =>
+  api
+    .get<{ usinas: MicroUsina[]; aviso: string | null }>('/conciliacao/micro-usinas')
+    .then((r) => r.data)
 
 /** Tira a usina do Gestão Solar. Recusado enquanto algum cliente a tiver concedida. */
 export const removerUsina = (plantLinkId: number) =>

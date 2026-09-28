@@ -1065,6 +1065,27 @@ dois vínculos apontando para a mesma usina de um produto misturariam dados de d
 
 Desligar (`no_app: false`) preserva vínculos e concessões — o gestor religa sem refazer nada.
 
+**Micro usina (MICRO do meuWatt).** A linha carrega `mw_micro_plant_id` — a micro usina do
+MICRO casada com ela (usinas que vêm dos portais dos fabricantes: Solis, Canadian, TSUN…).
+É por esse vínculo que o motor avisa **usina parada** dela (tipo `parada`, mesmo template e
+mesmas pessoas); as telas do app continuam lendo por `mw_slug`/`mp_usina_id`. No `PUT`, e só
+para este campo, **ausente mantém** e `null` explícito descasa: um painel publicado antes do
+campo manda o estado inteiro sem ele, e cada "Ligar/Desligar" apagaria o vínculo em silêncio.
+`409` se outra linha já tiver aquela micro usina.
+
+### `GET /conciliacao/micro-usinas`
+
+```json
+{ "usinas": [ { "id": 1, "nome": "UFV Sitio", "kwp": 124.32,
+                "estacoes": ["UFV Sitio Canadian", "UFV Sitio Solis"] } ],
+  "aviso": null }
+```
+
+As micro usinas do MICRO, para o seletor da linha. Lidas com a **credencial de serviço**
+(Painel → Conexões): o MICRO só é legível por administrador no meuWatt, então nenhum token
+de cliente o enxerga — mesmo caso do catálogo da conciliação. Ponte fora, ou conta de
+serviço sem acesso de administrador lá, vira `aviso` com a lista vazia.
+
 ### `DELETE /conciliacao/usina/{plant_link_id}`
 
 `204`. Tira a usina do Gestão Solar de vez. `409` enquanto algum cliente a tiver

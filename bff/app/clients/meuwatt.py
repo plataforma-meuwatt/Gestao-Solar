@@ -268,6 +268,30 @@ class MeuWattClient:
             offset += limit
         return todos
 
+    async def micro_usinas(self) -> list[dict[str, Any]]:
+        """As micro usinas do MICRO — usinas que vêm dos portais dos fabricantes (Solis,
+        Canadian) e que o monitoramento do meuWatt não conhece. Só o cadastro
+        (`live=false`: o meuWatt não vai aos portais), para o gestor casar no vínculo.
+
+        Credencial de SERVIÇO, e não do cliente: o MICRO não é escopado por usina no meuWatt
+        — só administrador o lê —, então nenhum token de cliente o enxerga. É o mesmo caso
+        do catálogo de usinas da conciliação (ver `services/vinculos.py`).
+        """
+        dados = await self._get("/micro/plants", live="false")
+        plantas = dados.get("plants") if isinstance(dados, dict) else None
+        return [p for p in plantas or [] if isinstance(p, dict)]
+
+    async def micro_alertas(self) -> list[dict[str, Any]]:
+        """Alertas ATIVOS de micro usina parada (`/micro/alerts?active=true`).
+
+        Cada um é um episódio da estação de um portal: `key` é estável por episódio (a mesma
+        parada nunca muda de chave; uma parada nova depois de resolvida tem outra) e
+        `plant_id` é o id da micro usina — o que casa com `PlantLink.mw_micro_plant_id`.
+        Credencial de serviço pelo mesmo motivo de `micro_usinas`.
+        """
+        dados = await self._get("/micro/alerts", active="true")
+        return [a for a in dados if isinstance(a, dict)] if isinstance(dados, list) else []
+
     async def paradas(
         self, slug: str, inicio: date, fim: date, timeout: float | None = None
     ) -> dict[str, Any]:

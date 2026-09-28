@@ -348,6 +348,14 @@ Duas regras que não devem ser "simplificadas":
   a mesma; esconder uma delas seria decidir no lugar de quem decide. O que se oferece é o
   apontamento (`par_provavel_*`) e o botão que casa as duas.
 
+**E a micro usina, que não é um quarto formato.** `PlantLink.mw_micro_plant_id` casa uma
+usina daqui (que existe no meuWatt e/ou no meuPlano) com uma micro usina do MICRO do
+meuWatt — usinas dos portais dos fabricantes (Solis, Canadian, TSUN). Serve a UMA coisa: o
+motor avisar **usina parada** dela (`motor._coletar_parada_micro`, tipo `parada`). É a
+segunda leitura com credencial de serviço, e pelo mesmo motivo do catálogo: o MICRO só é
+legível por administrador no meuWatt, nenhum token de cliente o enxerga. Se a conta de
+serviço não for admin lá, a sonda pinta `mw.micro_*` de vermelho e o aviso cala.
+
 ### Nada de "chips" para selecionar opção
 
 Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tudo é lista
