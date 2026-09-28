@@ -54,6 +54,7 @@ from app.api.v1 import (
     relatorio,
     relatorios_ano,
     resumo,
+    sessao,
 )
 from app.clients import http as http_upstream
 from app.core.config import get_settings
@@ -142,6 +143,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(sessao.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
 app.include_router(painel_empresas.router)

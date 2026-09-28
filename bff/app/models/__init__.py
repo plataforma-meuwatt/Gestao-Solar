@@ -11,6 +11,7 @@ from app.models.contato import ContatoPreferencia, ContatoUsina
 from app.models.empresa import Empresa
 from app.models.integracao import EstadoTeste, Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
+from app.models.pessoa import Pessoa
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
 from app.models.plant import PlantLink
 from app.models.user import (
@@ -23,6 +24,7 @@ from app.models.user import (
 
 __all__ = [
     "Empresa",
+    "Pessoa",
     "User",
     "Perfil",
     "UserPlantAccess",

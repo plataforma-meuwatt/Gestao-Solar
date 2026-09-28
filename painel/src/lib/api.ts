@@ -28,6 +28,9 @@ declare global {
  */
 const base = (window.__GS_API__ ?? '').replace(/\/$/, '')
 
+/** Onde está a API. Exposta porque a rota de troca de papel não vive sob nenhum portão. */
+export const baseDaApi = () => base
+
 export const api = axios.create({ baseURL: `${base}/api/painel`, timeout: 30000 })
 
 /**
@@ -51,7 +54,8 @@ export function aoPerderSessao(cb: () => void) {
   aoPerder = cb
 }
 
-for (const cliente of [api, apiEmpresa]) {
+/** O mesmo tratamento para todo cliente: manda o token, e 401 derruba a sessão. */
+export function aplicarInterceptores(cliente: typeof api) {
   cliente.interceptors.request.use((config) => {
     if (token) config.headers.Authorization = `Bearer ${token}`
     return config
@@ -65,6 +69,9 @@ for (const cliente of [api, apiEmpresa]) {
     },
   )
 }
+
+aplicarInterceptores(api)
+aplicarInterceptores(apiEmpresa)
 
 /** Mensagem pronta para a tela. O BFF sempre responde `detail`. */
 export function mensagemDeErro(erro: unknown): string {

@@ -374,6 +374,12 @@ esquecido ao mexer em qualquer consulta é isto:
   sessão. Parâmetro de empresa numa rota de empresa é a definição de vazamento.
 - **Autenticar é uma coisa só:** `POST /api/painel/entrar` emite o token do portão certo
   conforme o perfil. Não nasce uma segunda porta de login.
+- **Uma conta é um PAPEL; a pessoa é o agrupamento.** `gs_pessoas` junta as contas do mesmo
+  humano (gestor da plataforma, gerente da O&M, dono de usina) só para a troca de papel
+  sem sair e entrar — ela **não carrega poder**, e nenhuma guarda a consulta. A sessão
+  continua sendo de uma conta, com um perfil e um escopo. **Descer é livre; subir para a
+  plataforma pede a senha**: sem isso, uma sessão de app roubada viraria sessão de
+  administrador sem ninguém saber nenhuma senha (`services/pessoas.py`).
 - **A empresa daqui não é um terceiro cadastro: é o VÍNCULO.** O meuWatt tem
   `enterprises` e o meuPlano tem `tenants`, independentes um do outro — dá para contratar
   só a manutenção. `gs_empresas.mw_enterprise_id` e `.mp_tenant_id` dizem que as duas são

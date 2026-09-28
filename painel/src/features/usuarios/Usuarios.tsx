@@ -11,12 +11,15 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, KeyRound, UserPlus } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, KeyRound, UserPlus, Users } from 'lucide-react'
 import { useState } from 'react'
 
-import { Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor } from '@/components/base'
+import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor } from '@/components/base'
 import { Conexoes } from '@/features/conexoes/Conexoes'
 import {
+  desagruparConta,
+  contasParaAgrupar,
+  agruparContas,
   catalogoDeAreas,
   criarUsuario,
   editarUsuario,
@@ -31,6 +34,7 @@ export function Usuarios() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
   const [senhaDe, setSenhaDe] = useState<Membro | null>(null)
+  const [agrupando, setAgrupando] = useState(false)
   const [erro, setErro] = useState('')
 
   const { data, isLoading } = useQuery({ queryKey: ['usuarios'], queryFn: listarUsuarios })
@@ -54,10 +58,16 @@ export function Usuarios() {
       titulo="Usuários do sistema"
       apoio="Quem entra no painel, e o que cada um abre. Administrador abre todas as telas e é o único que mexe nesta lista; as demais contas abrem só o que estiver marcado."
       acao={
-        <button onClick={() => setNovo(true)} className="btn-primario">
-          <UserPlus size={16} />
-          Novo usuário
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setAgrupando(true)} className="botao-secundario">
+            <Users size={15} />
+            Mesma pessoa
+          </button>
+          <button onClick={() => setNovo(true)} className="btn-primario">
+            <UserPlus size={16} />
+            Novo usuário
+          </button>
+        </div>
       }
     >
       {erro ? <Erro className="mb-4">{erro}</Erro> : null}
@@ -81,7 +91,8 @@ export function Usuarios() {
 
       {novo ? <ModalNovoUsuario areas={areas ?? []} aoFechar={() => setNovo(false)} /> : null}
       {senhaDe ? <ModalRedefinirSenha membro={senhaDe} aoFechar={() => setSenhaDe(null)} /> : null}
-    </Pagina>
+          {agrupando ? <MesmaPessoa aoFechar={() => setAgrupando(false)} /> : null}
+</Pagina>
   )
 }
 
@@ -479,6 +490,138 @@ function ModalRedefinirSenha({ membro, aoFechar }: { membro: Membro; aoFechar: (
           </button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+
+/**
+ * Quais contas são do mesmo humano.
+ *
+ * Uma conta é um PAPEL: quem administra a plataforma também pode ser gerente de uma
+ * empresa e dono de uma usina, e hoje isso são três contas. Agrupá-las não funde poder
+ * nenhum — cada sessão continua valendo para um portão só. O que muda é que a pessoa
+ * troca de papel sem sair e entrar de novo.
+ *
+ * **Por que só administrador:** agrupar é abrir um caminho de troca entre contas. Quem
+ * pudesse fazê-lo juntaria a própria conta à de alguém com mais poder — e a subida ainda
+ * pede senha, mas a porta não deveria nem existir.
+ */
+function MesmaPessoa({ aoFechar }: { aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['contas-para-agrupar'],
+    queryFn: contasParaAgrupar,
+  })
+  const [nome, setNome] = useState('')
+  const [marcados, setMarcados] = useState<string[]>([])
+
+  const agrupar = useMutation({
+    mutationFn: () => agruparContas({ nome, apelidos: marcados }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contas-para-agrupar'] })
+      qc.invalidateQueries({ queryKey: ['papeis'] })
+      aoFechar()
+    },
+  })
+
+  const desagrupar = useMutation({
+    mutationFn: (apelido: string) => desagruparConta(apelido),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contas-para-agrupar'] })
+      qc.invalidateQueries({ queryKey: ['papeis'] })
+    },
+  })
+
+  const PAPEL: Record<string, string> = {
+    administrador: 'Plataforma · administrador',
+    atendimento: 'Plataforma · atendimento',
+    gestor_empresa: 'Gerente da empresa',
+    cliente: 'Dono de usina',
+  }
+
+  return (
+    <Modal titulo="Contas da mesma pessoa" aoFechar={aoFechar} largura="max-w-2xl">
+      {isLoading ? (
+        <Carregando />
+      ) : error ? (
+        <Erro>{mensagemDeErro(error)}</Erro>
+      ) : (
+        <div className="grid gap-4">
+          <Aviso>
+            Agrupar não junta poderes: cada sessão continua valendo para um portão só. O que
+            muda é poder trocar de papel sem sair e entrar de novo — e entrar como gestor da
+            plataforma continua pedindo a senha daquela conta.
+          </Aviso>
+
+          <Campo
+            rotulo="Nome da pessoa"
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            placeholder="Renan Marquezini"
+            nota="Só para identificar o grupo. O nome que aparece em cada tela continua sendo o da conta."
+          />
+
+          <div>
+            <p className="rotulo-campo">Contas</p>
+            <ul className="mt-2 grid gap-1 max-h-72 overflow-y-auto pr-1">
+              {(data ?? []).map((c) => (
+                <li key={c.apelido}>
+                  <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo hover:bg-superficie cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={marcados.includes(c.apelido)}
+                      onChange={() =>
+                        setMarcados((m) =>
+                          m.includes(c.apelido)
+                            ? m.filter((x) => x !== c.apelido)
+                            : [...m, c.apelido],
+                        )
+                      }
+                    />
+                    <span className="text-sm text-forte">{c.apelido}</span>
+                    <span className="text-xs text-fraco">
+                      {PAPEL[c.perfil] ?? c.perfil}
+                      {c.empresa ? ` · ${c.empresa}` : ''}
+                    </span>
+                    {c.pessoa_nome ? (
+                      <span className="text-xs text-rotulo ml-auto flex items-center gap-2">
+                        {c.pessoa_nome}
+                        <button
+                          type="button"
+                          className="btn-fantasma"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            desagrupar.mutate(c.apelido)
+                          }}
+                        >
+                          tirar
+                        </button>
+                      </span>
+                    ) : null}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {agrupar.error ? <Erro>{mensagemDeErro(agrupar.error)}</Erro> : null}
+          {desagrupar.error ? <Erro>{mensagemDeErro(desagrupar.error)}</Erro> : null}
+
+          <div className="flex justify-end gap-2">
+            <button className="botao-secundario" onClick={aoFechar}>
+              Fechar
+            </button>
+            <button
+              className="botao"
+              onClick={() => agrupar.mutate()}
+              disabled={marcados.length < 2 || !nome.trim() || agrupar.isPending}
+            >
+              {agrupar.isPending ? 'Agrupando…' : 'Agrupar'}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }

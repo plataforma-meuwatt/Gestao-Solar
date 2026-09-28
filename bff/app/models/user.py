@@ -70,6 +70,13 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     nome: Mapped[str] = mapped_column(String(255))
 
+    #: O humano dono desta conta. Contas irmãs (mesma pessoa, papéis diferentes) dividem
+    #: a mesma linha em `gs_pessoas`, e é isso que permite trocar de papel sem sair e
+    #: entrar de novo. **Não carrega poder**: a autorização continua sendo da conta.
+    pessoa_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_pessoas.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
     #: A empresa de O&M a que esta conta pertence. **Nulo = conta da plataforma** (staff),
     #: e nunca "todas as empresas": quem decide o alcance é o perfil, e a leitura acontece
     #: num lugar só (`services/empresas.no_escopo`).

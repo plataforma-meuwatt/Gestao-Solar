@@ -388,3 +388,125 @@ def test_empresa_so_num_produto_e_legitima(db, duas_empresas, administrador):
     a, _b = duas_empresas
     so_meuplano = salvar_vinculos(a.id, VinculoIn(mp_tenant_id=3), db=db, _gestor=administrador)
     assert so_meuplano.mp_tenant_id == 3 and so_meuplano.mw_enterprise_id is None
+
+
+# ------------------------------------------------------ os papéis de uma pessoa
+
+
+@pytest.fixture
+def com_tres_papeis(db, duas_empresas, administrador):
+    """O caso do dono: a mesma pessoa administra a plataforma, gerencia a O&M e é dona de
+    uma usina. Três contas, um humano."""
+    from app.models.pessoa import Pessoa
+
+    a, _b = duas_empresas
+    pessoa = Pessoa(nome="Renan")
+    db.add(pessoa)
+    db.flush()
+    gerente = User(
+        apelido="renan.om",
+        nome="Renan (O&M)",
+        perfil=Perfil.GESTOR_EMPRESA,
+        empresa_id=a.id,
+        pessoa_id=pessoa.id,
+        senha_hash=gerar_hash_senha("om-12345"),
+    )
+    cliente = User(
+        apelido="renan.dono",
+        nome="Renan (usina)",
+        perfil=Perfil.CLIENTE,
+        empresa_id=a.id,
+        pessoa_id=pessoa.id,
+        senha_hash=gerar_hash_senha("dono-12345"),
+    )
+    administrador.pessoa_id = pessoa.id
+    db.add_all([gerente, cliente])
+    db.commit()
+    return administrador, gerente, cliente
+
+
+def test_descer_de_papel_nao_pede_senha(db, com_tres_papeis):
+    """O conforto que motivou tudo: provada a senha de uma conta, as irmãs de alcance
+    menor ficam a um clique."""
+    from app.services import pessoas
+
+    admin, gerente, cliente = com_tres_papeis
+    assert pessoas.trocar(db, admin, "renan.om", None).id == gerente.id
+    assert pessoas.trocar(db, admin, "renan.dono", None).id == cliente.id
+
+
+def test_subir_para_a_plataforma_sempre_pede_a_senha(db, com_tres_papeis):
+    """Defeito guardado, e é o caro: sem esta regra, uma sessão de aplicativo roubada —
+    celular emprestado, token copiado — viraria sessão de administrador sem ninguém
+    precisar saber nenhuma senha."""
+    from app.services import pessoas
+
+    admin, _gerente, cliente = com_tres_papeis
+
+    with pytest.raises(HTTPException) as erro:
+        pessoas.trocar(db, cliente, admin.apelido, None)
+    assert erro.value.status_code == 401
+    assert "senha" in erro.value.detail.lower()
+
+    with pytest.raises(HTTPException):
+        pessoas.trocar(db, cliente, admin.apelido, "senha-errada")
+
+    assert pessoas.trocar(db, cliente, admin.apelido, "admin-1234").id == admin.id
+
+
+def test_nao_se_troca_para_conta_de_outra_pessoa(db, com_tres_papeis, carteiras):
+    """404 e não 403: dizer "existe, mas não é sua" confirmaria o apelido a quem está
+    tentando descobrir apelidos."""
+    from app.services import pessoas
+
+    _admin, gerente, _cliente = com_tres_papeis
+    with pytest.raises(HTTPException) as erro:
+        pessoas.trocar(db, gerente, "gerente.a", None)
+    assert erro.value.status_code == 404
+
+
+def test_cada_papel_sai_com_o_token_do_portao_dele(db, com_tres_papeis):
+    """A troca não funde papéis: ela entrega a sessão do OUTRO portão, e o token continua
+    sendo recusado nos demais."""
+    from app.services import pessoas
+
+    admin, gerente, cliente = com_tres_papeis
+
+    t_admin = _cred(pessoas.emitir(admin)[0])
+    t_gerente = _cred(pessoas.emitir(gerente)[0])
+    t_cliente = _cred(pessoas.emitir(cliente)[0])
+
+    assert gestor_atual(cred=t_admin, db=db).id == admin.id
+    assert gestor_empresa_atual(cred=t_gerente, db=db).id == gerente.id
+    assert usuario_atual(cred=t_cliente, db=db).id == cliente.id
+
+    with pytest.raises(HTTPException):
+        gestor_atual(cred=t_gerente, db=db)
+    with pytest.raises(HTTPException):
+        usuario_atual(cred=t_admin, db=db)
+
+
+def test_sem_agrupamento_a_pessoa_tem_um_papel_so(db, administrador):
+    """Inventar irmãs por semelhança de nome ou de e-mail seria adivinhar identidade — e
+    errar aqui abre a conta de alguém para outra pessoa."""
+    from app.services import pessoas
+
+    assert [c.id for c in pessoas.contas_da_pessoa(db, administrador)] == [administrador.id]
+    with pytest.raises(HTTPException) as erro:
+        pessoas.trocar(db, administrador, "quem.for", None)
+    assert erro.value.status_code == 404
+
+
+def test_agrupar_contas_de_pessoas_diferentes_e_recusado(db, com_tres_papeis, carteiras):
+    """Fundir dois humanos num só faria a conta de um virar alcançável pela senha do
+    outro — exatamente o que este módulo não pode permitir por engano."""
+    from app.services import pessoas
+
+    _admin, gerente, _cliente = com_tres_papeis
+    outro = db.scalar(select(User).where(User.apelido == "gerente.a"))
+    outro.pessoa_id = 999  # já agrupado noutra pessoa
+    db.flush()
+
+    with pytest.raises(HTTPException) as erro:
+        pessoas.agrupar(db, [gerente, outro], "Mistura")
+    assert erro.value.status_code == 409

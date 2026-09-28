@@ -176,9 +176,35 @@ Três consequências, e a terceira é a que protege:
    ordens e faturas do concorrente. A conta é feita na hora, e não depende de alguém
    lembrar de configurar a segunda empresa antes de cadastrá-la.
 
+### 3.7 A mesma pessoa em vários papéis
+
+Pedido do dono: fazer parte da O&M **e** instalar o app para ver as usinas como cliente.
+
+Isso já era possível — contas separadas, uma por papel, que é o motivo de o login ser por
+apelido e não por e-mail. O que faltava era o conforto: sair, lembrar do outro apelido,
+entrar de novo.
+
+`gs_pessoas` agrupa as contas de um humano, e `/api/sessao/trocar` emite a sessão do outro
+papel. **Por fora é uma identidade; por dentro continuam contas por papel** — e isso não é
+meio-termo, é o que preserva tudo o que está acima: cada sessão vale para um portão só, a
+faixa consegue dizer em qual você está, e nenhuma guarda precisou mudar.
+
+**A regra que não pode ser afrouxada: descer é livre, subir pede senha.** Trocar para uma
+conta de empresa ou de cliente é um clique; trocar para uma conta da PLATAFORMA exige a
+senha dela, sempre. Sem isso, o roubo de uma sessão do aplicativo — celular emprestado,
+token copiado de um cache — viraria uma sessão de administrador sem que o ladrão
+precisasse saber nenhuma senha. O conforto de não redigitar não vale transformar a conta
+mais fraca na chave da mais forte.
+
+Agrupar é de **administrador** (Usuários do sistema → *Mesma pessoa*): abrir um caminho de
+troca entre contas é o tipo de poder que, concedido, deixa alguém juntar a própria conta à
+de quem tem mais.
+
 ## 4. O que muda no banco
 
 ```
+gs_pessoas             (id, nome)  ← agrupa as contas de um humano (§3.7)
+gs_users.pessoa_id     → FK nullable
 gs_empresas            (id, nome, documento?, ativa, criada_em,
                         mw_enterprise_id?, mp_tenant_id?)  ← o vínculo (§3.5b)
 gs_users.empresa_id    → FK nullable. NULL = plataforma

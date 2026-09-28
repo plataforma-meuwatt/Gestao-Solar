@@ -18,6 +18,7 @@
 import {
   Building2,
   Link2,
+  Repeat,
   ShieldCheck,
   LogOut,
   MessageCircle,
@@ -32,7 +33,8 @@ import { useQuery } from '@tanstack/react-query'
 import React from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
-import { meuAcesso } from '@/features/api'
+import { meuAcesso, meusPapeis, trocarDePapel } from '@/features/api'
+import { mensagemDeErro } from '@/lib/api'
 import { useAuth, type Escopo, type Perfil } from '@/store/auth'
 
 type ItemMenu = {
@@ -134,6 +136,131 @@ export function primeiraTela(
   return item?.para ?? null
 }
 
+/**
+ * O seletor de papel, na ponta da faixa.
+ *
+ * Só aparece quando a pessoa tem mais de um papel — um botão que não faz nada é pior do
+ * que botão nenhum, porque promete uma função que não existe para aquela conta.
+ *
+ * **Trocar para a plataforma pede a senha, e isso não é esquecimento do desenho.** Descer
+ * é livre; subir não. Sem essa regra, uma sessão de aplicativo roubada viraria sessão de
+ * administrador sem ninguém precisar saber nenhuma senha.
+ *
+ * O papel de CLIENTE aparece na lista mas não é clicável aqui: a sessão dele vale para o
+ * aplicativo e para o portal, que são outras telas. Escondê-lo faria a pessoa procurar o
+ * que existe; mostrá-lo sem dizer onde usar faria clicar e nada acontecer.
+ */
+function TrocarPapel() {
+  const assumir = useAuth((s) => s.assumir)
+  const [aberto, setAberto] = React.useState(false)
+  const [pedindoSenha, setPedindoSenha] = React.useState<string | null>(null)
+  const [senha, setSenha] = React.useState('')
+  const [erro, setErro] = React.useState<string | null>(null)
+
+  const { data } = useQuery({ queryKey: ['papeis'], queryFn: meusPapeis, retry: false })
+  const papeis = data ?? []
+
+  if (papeis.length < 2) return null
+
+  async function trocar(apelido: string, comSenha?: string) {
+    setErro(null)
+    try {
+      const nova = await trocarDePapel(apelido, comSenha)
+      assumir({
+        token: nova.token,
+        nome: nova.nome,
+        apelido: nova.apelido,
+        perfil: nova.perfil as Perfil,
+        escopo: nova.escopo === 'cliente' ? 'painel' : nova.escopo,
+        empresa: nova.empresa,
+      })
+      // Recarrega a casca inteira: menu, áreas e consultas são de outro papel, e
+      // reaproveitar o que está em memória mostraria a tela de um com o dado do outro.
+      window.location.assign('/')
+    } catch (e) {
+      setErro(mensagemDeErro(e))
+    }
+  }
+
+  return (
+    <div className="ml-auto relative">
+      <button
+        onClick={() => setAberto((v) => !v)}
+        className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-campo
+                   border border-current/30 hover:bg-white/5"
+      >
+        <Repeat size={13} />
+        Trocar papel
+      </button>
+
+      {aberto ? (
+        <div
+          className="absolute right-0 mt-2 w-80 rounded-card border border-borda bg-fundo
+                     shadow-xl p-2 z-20 text-corpo"
+        >
+          {papeis.map((p) => {
+            const ehCliente = p.escopo === 'cliente'
+            return (
+              <div key={p.apelido} className="px-2.5 py-2 rounded-campo">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm text-forte truncate">
+                      {p.escopo === 'painel'
+                        ? 'Plataforma'
+                        : p.escopo === 'empresa'
+                          ? `Empresa · ${p.empresa ?? 'sem nome'}`
+                          : 'Dono de usina'}
+                    </p>
+                    <p className="text-[11px] text-fraco truncate">{p.apelido}</p>
+                  </div>
+                  {p.atual ? (
+                    <span className="text-[11px] text-ok shrink-0">atual</span>
+                  ) : ehCliente ? (
+                    <span className="text-[11px] text-fraco shrink-0">no app</span>
+                  ) : (
+                    <button
+                      className="btn-fantasma shrink-0"
+                      onClick={() =>
+                        p.exige_senha ? setPedindoSenha(p.apelido) : void trocar(p.apelido)
+                      }
+                    >
+                      Entrar
+                    </button>
+                  )}
+                </div>
+
+                {pedindoSenha === p.apelido ? (
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="password"
+                      className="campo h-9 text-sm"
+                      placeholder="senha desta conta"
+                      value={senha}
+                      onChange={(e) => setSenha(e.target.value)}
+                      autoFocus
+                    />
+                    <button
+                      className="botao-secundario shrink-0"
+                      onClick={() => void trocar(p.apelido, senha)}
+                    >
+                      Entrar
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+
+          {erro ? <p className="text-xs text-parado px-2.5 py-1">{erro}</p> : null}
+          <p className="text-[11px] text-fraco px-2.5 pt-2 border-t border-borda mt-1">
+            Entrar como gestor da plataforma pede a senha daquela conta.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** Como cada perfil se chama na tela. */
 const PAPEL: Record<Perfil, string> = {
   administrador: 'Administrador do sistema',
@@ -185,6 +312,7 @@ function FaixaDePapel({
             ? 'administrador do sistema — você vê todas as empresas'
             : 'atendimento — você vê todas as empresas'}
       </span>
+      <TrocarPapel />
     </div>
   )
 }

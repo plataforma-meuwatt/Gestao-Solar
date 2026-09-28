@@ -25,8 +25,10 @@ from app.core.apelido import ApelidoInvalido
 from app.core.apelido import normalizar as normalizar_apelido
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha
+from app.models.empresa import Empresa
+from app.models.pessoa import Pessoa
 from app.models.user import Perfil, User
-from app.services import areas_painel
+from app.services import areas_painel, pessoas
 
 router = APIRouter(prefix="/api/painel", tags=["painel · usuários do sistema"])
 
@@ -229,4 +231,96 @@ def redefinir_senha(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado")
 
     membro.senha_hash = gerar_hash_senha(body.senha)
+    db.commit()
+
+
+# --------------------------------------------------------------------- pessoas
+
+
+class ContaParaAgrupar(BaseModel):
+    id: int
+    apelido: str
+    nome: str
+    perfil: str
+    empresa: str | None = None
+    pessoa_id: int | None = None
+    pessoa_nome: str | None = None
+
+
+@router.get("/pessoas/contas", response_model=list[ContaParaAgrupar])
+def contas_para_agrupar(
+    db: Session = Depends(get_db), _admin: User = Depends(administrador_atual)
+) -> list[ContaParaAgrupar]:
+    """TODAS as contas do sistema, para dizer quais são do mesmo humano.
+
+    Inclui cliente, gerente e staff na mesma lista de propósito: o agrupamento existe
+    justamente para atravessar os três — quem administra a plataforma também é dono de
+    usina, e é essa a combinação que não se resolvia sem sair e entrar de novo.
+    """
+    empresas = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    pessoas_nome = {p.id: p.nome for p in db.scalars(select(Pessoa)).all()}
+    return [
+        ContaParaAgrupar(
+            id=u.id,
+            apelido=u.apelido,
+            nome=u.nome,
+            perfil=u.perfil.value,
+            empresa=empresas.get(u.empresa_id) if u.empresa_id else None,
+            pessoa_id=u.pessoa_id,
+            pessoa_nome=pessoas_nome.get(u.pessoa_id) if u.pessoa_id else None,
+        )
+        for u in db.scalars(select(User).order_by(User.nome)).all()
+    ]
+
+
+class AgruparIn(BaseModel):
+    nome: str = Field(min_length=2)
+    #: Os apelidos que são do mesmo humano. Dois ou mais — agrupar uma conta sozinha não
+    #: muda nada e só criaria linha órfã em `gs_pessoas`.
+    apelidos: list[str] = Field(min_length=2)
+
+
+class PessoaOut(BaseModel):
+    id: int
+    nome: str
+    contas: list[str]
+
+
+@router.post("/pessoas", response_model=PessoaOut, status_code=201)
+def agrupar_contas(
+    body: AgruparIn, db: Session = Depends(get_db), _admin: User = Depends(administrador_atual)
+) -> PessoaOut:
+    """Diz que estas contas são da mesma pessoa.
+
+    Só administrador: agrupar é conceder um caminho de troca entre contas, e quem puder
+    fazê-lo junta a própria conta à de alguém com mais poder. Por isso não é área
+    concedível — é a mesma régua de Usuários do sistema.
+    """
+    apelidos = [a.strip().lower() for a in body.apelidos if a and a.strip()]
+    contas = list(db.scalars(select(User).where(User.apelido.in_(apelidos))).all())
+    if len(contas) != len(set(apelidos)):
+        achados = {c.apelido for c in contas}
+        faltando = sorted(set(apelidos) - achados)
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"Não achei: {', '.join(faltando)}."
+        )
+
+    pessoa = pessoas.agrupar(db, contas, body.nome)
+    db.commit()
+    return PessoaOut(id=pessoa.id, nome=pessoa.nome, contas=sorted(c.apelido for c in contas))
+
+
+@router.delete("/pessoas/{apelido}", status_code=204)
+def desagrupar(
+    apelido: str, db: Session = Depends(get_db), _admin: User = Depends(administrador_atual)
+) -> None:
+    """Tira esta conta do grupo. As outras continuam juntas.
+
+    Existe porque agrupar errado é o tipo de engano que precisa ser desfeito na hora: a
+    conta agrupada por engano fica alcançável pela senha de outra pessoa.
+    """
+    conta = db.scalar(select(User).where(User.apelido == apelido.strip().lower()))
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    conta.pessoa_id = None
     db.commit()

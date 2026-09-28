@@ -5,7 +5,9 @@
  * espalhá-las esconderia o contrato, que é justamente o que precisa ficar visível.
  */
 
-import { api, apiEmpresa } from '@/lib/api'
+import axios from 'axios'
+
+import { api, apiEmpresa, aplicarInterceptores, baseDaApi } from '@/lib/api'
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -798,3 +800,56 @@ export const salvarVinculos = (
   id: number,
   dados: { mw_enterprise_id?: number | null; mp_tenant_id?: number | null },
 ) => api.put<Empresa>(`/empresas/${id}/vinculos`, dados).then((r) => r.data)
+
+/* ------------------------------------------------ os papéis de uma pessoa */
+
+export type Papel = {
+  apelido: string
+  nome: string
+  escopo: 'painel' | 'empresa' | 'cliente'
+  perfil: string
+  empresa: string | null
+  atual: boolean
+  /** Trocar para este papel exige a senha dele — vale para as contas da plataforma. */
+  exige_senha: boolean
+}
+
+export type TrocaDePapel = {
+  token: string
+  expira_em: string
+  apelido: string
+  nome: string
+  escopo: 'painel' | 'empresa' | 'cliente'
+  perfil: string
+  empresa: string | null
+}
+
+/** A rota atravessa os três portões, então mora fora do prefixo do painel. */
+const sessao = axios.create({ baseURL: `${baseDaApi()}/api/sessao`, timeout: 30000 })
+aplicarInterceptores(sessao)
+
+export const meusPapeis = () => sessao.get<Papel[]>('/papeis').then((r) => r.data)
+
+export const trocarDePapel = (apelido: string, senha?: string) =>
+  sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null }).then((r) => r.data)
+
+/* ------------------------------------------- agrupar contas (administrador) */
+
+export type ContaParaAgrupar = {
+  id: number
+  apelido: string
+  nome: string
+  perfil: string
+  empresa: string | null
+  pessoa_id: number | null
+  pessoa_nome: string | null
+}
+
+export const contasParaAgrupar = () =>
+  api.get<ContaParaAgrupar[]>('/pessoas/contas').then((r) => r.data)
+
+export const agruparContas = (dados: { nome: string; apelidos: string[] }) =>
+  api.post<{ id: number; nome: string; contas: string[] }>('/pessoas', dados).then((r) => r.data)
+
+export const desagruparConta = (apelido: string) =>
+  api.delete<void>(`/pessoas/${apelido}`).then(() => undefined)

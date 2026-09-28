@@ -45,6 +45,15 @@ type Estado = Omit<Sessao, 'token' | 'perfil'> & {
   entrar: (apelido: string, senha: string) => Promise<void>
   sair: () => void
   atualizar: (dados: { nome: string; perfil: Perfil; areas: string[] }) => void
+  /** Assume outro papel da mesma pessoa, com a sessão que o servidor acabou de emitir. */
+  assumir: (dados: {
+    token: string
+    nome: string
+    apelido: string
+    perfil: Perfil
+    escopo: Escopo
+    empresa: string | null
+  }) => void
   ehAdministrador: () => boolean
   /** A sessão é do gerente da empresa de O&M — o outro portão, o outro menu. */
   ehEmpresa: () => boolean
@@ -113,6 +122,24 @@ export const useAuth = create<Estado>((set, get) => ({
     localStorage.removeItem(CHAVE)
     definirToken(null)
     set({ token: null, nome: '', apelido: '', perfil: null, areas: [], escopo: 'painel', empresa: null })
+  },
+
+  // A sessão do OUTRO papel da mesma pessoa. O token já vem do portão certo; aqui só se
+  // troca o que está guardado — e as áreas vêm vazias porque quem manda é o servidor, que
+  // as devolve em `GET /eu` na primeira volta da casca.
+  assumir: (dados) => {
+    const sessao: Sessao = {
+      token: dados.token,
+      nome: dados.nome,
+      apelido: dados.apelido,
+      perfil: dados.perfil,
+      areas: [],
+      escopo: dados.escopo,
+      empresa: dados.empresa,
+    }
+    gravar(sessao)
+    definirToken(sessao.token)
+    set(sessao)
   },
 
   atualizar: ({ nome, perfil, areas }) => {
