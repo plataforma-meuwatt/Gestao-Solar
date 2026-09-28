@@ -761,3 +761,11 @@ export const conectarEmpresa = (produto: Produto, dados: { base_url: string; tok
 
 export const desconectarEmpresa = (produto: Produto) =>
   apiEmpresa.delete<void>(`/conexoes/${produto}/token`).then(() => undefined)
+
+export type GerenteCriado = { id: number; nome: string; apelido: string; senha: string }
+
+/** A senha aparece UMA vez. Não é guardada em texto: quem perder, redefine. */
+export const criarGerente = (
+  empresaId: number,
+  dados: { nome: string; apelido: string; email?: string | null },
+) => api.post<GerenteCriado>(`/empresas/${empresaId}/gerente`, dados).then((r) => r.data)

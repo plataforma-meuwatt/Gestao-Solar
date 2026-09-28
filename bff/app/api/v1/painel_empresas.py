@@ -10,13 +10,14 @@ junto o que alguém ainda precisa auditar, e a chave estrangeira é `RESTRICT` j
 para o banco recusar a tentativa em vez de arrastar o resto.
 """
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import exige_area
+from app.core.apelido import ApelidoInvalido, normalizar as normalizar_apelido
+from app.core.security import exige_area, gerar_hash_senha, gerar_senha_provisoria
 from app.models.empresa import Empresa
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User
@@ -204,3 +205,65 @@ def salvar_carteira(
 
     db.commit()
     return carteira(empresa_id, db=db, _gestor=_gestor)
+
+
+# -------------------------------------------------------------------- gerente
+
+
+class GerenteIn(BaseModel):
+    nome: str = Field(min_length=2)
+    apelido: str = Field(min_length=3)
+    email: EmailStr | None = None
+
+
+class GerenteOut(BaseModel):
+    id: int
+    nome: str
+    apelido: str
+    #: A senha provisória, mostrada UMA vez. Não é guardada em texto e não há como
+    #: recuperá-la: quem perder, redefine. É o mesmo desenho da senha do cliente.
+    senha: str
+
+
+@router.post("/empresas/{empresa_id}/gerente", response_model=GerenteOut, status_code=201)
+def criar_gerente(
+    empresa_id: int,
+    body: GerenteIn,
+    db: Session = Depends(get_db),
+    _gestor: User = Depends(EXIGE_EMPRESAS),
+) -> GerenteOut:
+    """Cria o gerente DESTA empresa.
+
+    O gerente nasce aqui, e não na tela de Usuários do sistema, porque lá ele nasceria sem
+    empresa — e uma conta de inquilino sem vínculo não entra em lugar nenhum
+    (`gestor_empresa_atual` a recusa). Seria uma conta que parece pronta e não abre nada.
+    Aqui o vínculo é obrigatório por construção: a empresa é o caminho da rota.
+
+    A senha sai na resposta e some depois: é entregue ao gerente junto com o **apelido**,
+    que é o que autentica. Mandar o e-mail junto convidaria a tentar entrar com ele, que é
+    exatamente o que não funciona.
+    """
+    empresa = svc.por_id(db, empresa_id)
+
+    try:
+        apelido = normalizar_apelido(body.apelido)
+    except ApelidoInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    if db.scalar(select(User).where(User.apelido == apelido)) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"O apelido “{apelido}” já está em uso.")
+
+    senha = gerar_senha_provisoria()
+    gerente = User(
+        apelido=apelido,
+        email=str(body.email).strip().lower() if body.email else None,
+        nome=body.nome.strip(),
+        perfil=Perfil.GESTOR_EMPRESA,
+        empresa_id=empresa.id,
+        senha_hash=gerar_hash_senha(senha),
+    )
+    db.add(gerente)
+    db.commit()
+    db.refresh(gerente)
+
+    return GerenteOut(id=gerente.id, nome=gerente.nome, apelido=gerente.apelido, senha=senha)

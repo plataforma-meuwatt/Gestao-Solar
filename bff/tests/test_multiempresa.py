@@ -297,3 +297,44 @@ def test_com_duas_empresas_o_atalho_da_plataforma_e_recusado(db, duas_empresas):
     b.ativa = False
     db.commit()
     assert integracoes.obter(db, Produto.MEUWATT, a.id) is not None
+
+
+# ---------------------------------------------------------------- o gerente
+
+
+def test_o_gerente_nasce_dentro_da_empresa_e_ja_entra(db, duas_empresas, administrador):
+    """Defeito guardado: a fundação inteira ficar sem porta de entrada. A tela de Usuários
+    do sistema só cria staff da plataforma, então sem esta rota não havia como existir um
+    `gestor_empresa` — e o portão dele nunca seria usado por ninguém."""
+    from app.api.v1.painel import EntrarIn, entrar
+    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+
+    a, _b = duas_empresas
+    criado = criar_gerente(
+        a.id, GerenteIn(nome="Maria Gerente", apelido="maria.om"), db=db, _gestor=administrador
+    )
+    assert criado.apelido == "maria.om" and criado.senha
+
+    # A senha entregue funciona, e a sessão sai no portão da empresa certa.
+    sessao = entrar(EntrarIn(apelido="maria.om", senha=criado.senha), db=db)
+    assert sessao.escopo == "empresa" and sessao.empresa_id == a.id
+
+
+def test_a_tela_da_plataforma_recusa_criar_gerente_sem_empresa(db, administrador):
+    """Um gerente criado na tela de Usuários do sistema nasceria sem empresa — uma conta
+    que parece pronta e que `gestor_empresa_atual` recusa. A rota diz onde criar."""
+    from app.api.v1.painel_usuarios import MembroIn, criar
+
+    with pytest.raises(HTTPException) as erro:
+        criar(
+            MembroIn(
+                nome="Sem Empresa",
+                apelido="sem.empresa",
+                perfil=Perfil.GESTOR_EMPRESA,
+                senha="senha-12345",
+            ),
+            db=db,
+            admin=administrador,
+        )
+    assert erro.value.status_code == 400
+    assert "Empresas de O&M" in erro.value.detail

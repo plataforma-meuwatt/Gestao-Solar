@@ -19,10 +19,12 @@ import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } fr
 import {
   carteiraDaEmpresa,
   criarEmpresa,
+  criarGerente,
   editarEmpresa,
   listarEmpresas,
   salvarCarteira,
   type Empresa,
+  type GerenteCriado,
   type ItemDaCarteira,
 } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
@@ -32,6 +34,7 @@ export function Empresas() {
   const { data, isLoading, error } = useQuery({ queryKey: ['empresas'], queryFn: listarEmpresas })
   const [novaAberta, setNovaAberta] = useState(false)
   const [carteiraDe, setCarteiraDe] = useState<Empresa | null>(null)
+  const [gerenteDe, setGerenteDe] = useState<Empresa | null>(null)
 
   const alternar = useMutation({
     mutationFn: ({ id, ativa }: { id: number; ativa: boolean }) => editarEmpresa(id, { ativa }),
@@ -67,6 +70,7 @@ export function Empresas() {
               ocupado={alternar.isPending}
               aoAlternar={() => alternar.mutate({ id: e.id, ativa: !e.ativa })}
               aoAbrirCarteira={() => setCarteiraDe(e)}
+              aoAbrirGerente={() => setGerenteDe(e)}
             />
           ))}
         </div>
@@ -75,6 +79,9 @@ export function Empresas() {
       {novaAberta ? <Nova aoFechar={() => setNovaAberta(false)} /> : null}
       {carteiraDe ? (
         <CarteiraModal empresa={carteiraDe} aoFechar={() => setCarteiraDe(null)} />
+      ) : null}
+      {gerenteDe ? (
+        <NovoGerente empresa={gerenteDe} aoFechar={() => setGerenteDe(null)} />
       ) : null}
     </Pagina>
   )
@@ -85,11 +92,13 @@ function Linha({
   ocupado,
   aoAlternar,
   aoAbrirCarteira,
+  aoAbrirGerente,
 }: {
   empresa: Empresa
   ocupado: boolean
   aoAlternar: () => void
   aoAbrirCarteira: () => void
+  aoAbrirGerente: () => void
 }) {
   return (
     <Cartao>
@@ -115,6 +124,9 @@ function Linha({
 
         <div className="flex items-center gap-3">
           <Selo tom={empresa.ativa ? 'ok' : 'sem-dados'}>{empresa.ativa ? 'Ativa' : 'Desligada'}</Selo>
+          <button className="botao-secundario" onClick={aoAbrirGerente}>
+            Novo gerente
+          </button>
           <button className="botao-secundario" onClick={aoAbrirCarteira}>
             Usinas e clientes
           </button>
@@ -325,4 +337,122 @@ function Coluna({
       </ul>
     </div>
   )
+}
+
+
+/**
+ * O gerente da empresa nasce aqui — e não na tela de Usuários do sistema.
+ *
+ * Lá ele nasceria sem empresa, e uma conta de inquilino sem vínculo não entra em lugar
+ * nenhum: seria uma conta que parece pronta e não abre nada. Aqui a empresa é o caminho
+ * da rota, então o vínculo é obrigatório por construção.
+ *
+ * A senha aparece UMA vez e some. Ela é entregue junto com o **apelido**, que é o que
+ * autentica — mandar o e-mail junto convidaria a tentar entrar com ele, que é exatamente
+ * o que não funciona.
+ */
+function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [nome, setNome] = useState('')
+  const [apelido, setApelido] = useState('')
+  const [email, setEmail] = useState('')
+  const [criado, setCriado] = useState<GerenteCriado | null>(null)
+
+  const criar = useMutation({
+    mutationFn: () => criarGerente(empresa.id, { nome, apelido, email: email || null }),
+    onSuccess: (r) => {
+      setCriado(r)
+      qc.invalidateQueries({ queryKey: ['empresas'] })
+    },
+  })
+
+  // O apelido sugerido a partir do nome, enquanto ninguém o editou à mão. O servidor
+  // normaliza e decide — isto é só conforto de digitação.
+  function aoDigitarNome(valor: string) {
+    const sugestaoAnterior = sugerir(nome)
+    setNome(valor)
+    if (!apelido || apelido === sugestaoAnterior) setApelido(sugerir(valor))
+  }
+
+  if (criado) {
+    return (
+      <Modal titulo="Gerente criado" aoFechar={aoFechar}>
+        <div className="grid gap-4">
+          <Aviso>
+            Anote agora: a senha não é guardada em texto e não dá para vê-la de novo. Quem
+            perder, redefine.
+          </Aviso>
+          <Cartao>
+            <p className="text-sm text-rotulo">Entra com o apelido</p>
+            <p className="text-forte font-semibold text-lg mt-1">{criado.apelido}</p>
+            <p className="text-sm text-rotulo mt-4">Senha provisória</p>
+            <p className="text-forte font-semibold text-lg mt-1 font-mono">{criado.senha}</p>
+          </Cartao>
+          <div className="flex justify-end">
+            <button className="botao" onClick={aoFechar}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal titulo={`Novo gerente · ${empresa.nome}`} aoFechar={aoFechar}>
+      <div className="grid gap-4">
+        <Aviso>
+          O gerente abre a área da empresa — usinas, clientes, usuários e as conexões dela.
+          Não abre nada da plataforma.
+        </Aviso>
+
+        <Campo
+          rotulo="Nome"
+          value={nome}
+          onChange={(e) => aoDigitarNome(e.target.value)}
+          placeholder="Maria Silva"
+        />
+        <Campo
+          rotulo="Apelido (é com ele que entra)"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value)}
+          placeholder="maria.silva"
+        />
+        <Campo
+          rotulo="E-mail (opcional)"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          nota="Contato apenas. Quem autentica é o apelido."
+        />
+
+        {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
+
+        <div className="flex justify-end gap-2">
+          <button className="botao-secundario" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="botao"
+            onClick={() => criar.mutate()}
+            disabled={!nome.trim() || !apelido.trim() || criar.isPending}
+          >
+            {criar.isPending ? 'Criando…' : 'Criar gerente'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** A mesma régua do apelido do cliente: sem acento, sem espaço, minúsculo. */
+function sugerir(nome: string): string {
+  const limpo = nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+  const partes = limpo.split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return ''
+  if (partes.length === 1) return partes[0].replace(/[^a-z0-9._-]/g, '')
+  return `${partes[0]}.${partes[partes.length - 1]}`.replace(/[^a-z0-9._-]/g, '')
 }

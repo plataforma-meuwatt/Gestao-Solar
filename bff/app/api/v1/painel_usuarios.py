@@ -109,6 +109,15 @@ def criar(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Use a tela de clientes para criar um cliente."
         )
+    if body.perfil is Perfil.GESTOR_EMPRESA:
+        # Esta tela é do staff da PLATAFORMA, e um gerente sem empresa não entra em lugar
+        # nenhum: `gestor_empresa_atual` o recusa. Criá-lo aqui produziria uma conta que
+        # parece pronta e não abre nada — por isso o caminho é a tela da empresa, onde o
+        # vínculo é obrigatório por construção.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "O gerente de uma empresa de O&M é criado dentro da empresa, em Empresas de O&M.",
+        )
     try:
         apelido = normalizar_apelido(body.apelido)
     except ApelidoInvalido as exc:
