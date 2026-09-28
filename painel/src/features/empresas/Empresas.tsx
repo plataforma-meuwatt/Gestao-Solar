@@ -53,7 +53,7 @@ export function Empresas() {
       titulo="Empresas de O&M"
       apoio="Cada empresa é um inquilino: os usuários, as usinas e as conexões dela não aparecem para nenhuma outra."
       acao={
-        <button className="botao" onClick={() => setNovaAberta(true)}>
+        <button className="btn-primario" onClick={() => setNovaAberta(true)}>
           Cadastrar empresa
         </button>
       }
@@ -152,19 +152,19 @@ function Linha({
 
         <div className="flex items-center gap-3">
           <Selo tom={empresa.ativa ? 'ok' : 'sem-dados'}>{empresa.ativa ? 'Ativa' : 'Desligada'}</Selo>
-          <button className="botao-secundario" onClick={aoAbrirVinculo}>
+          <button className="btn-secundario" onClick={aoAbrirVinculo}>
             Vínculos
           </button>
-          <button className="botao-secundario" onClick={aoAbrirUsuarios}>
+          <button className="btn-secundario" onClick={aoAbrirUsuarios}>
             Usuários
           </button>
-          <button className="botao-secundario" onClick={aoAbrirGerente}>
+          <button className="btn-secundario" onClick={aoAbrirGerente}>
             Novo gerente
           </button>
-          <button className="botao-secundario" onClick={aoAbrirCarteira}>
+          <button className="btn-secundario" onClick={aoAbrirCarteira}>
             Usinas e clientes
           </button>
-          <button className="botao-secundario" onClick={aoAlternar} disabled={ocupado}>
+          <button className="btn-secundario" onClick={aoAlternar} disabled={ocupado}>
             <Power size={14} className="inline mr-1.5" />
             {empresa.ativa ? 'Desligar' : 'Religar'}
           </button>
@@ -227,11 +227,11 @@ function Nova({ aoFechar }: { aoFechar: () => void }) {
         {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
 
         <div className="flex justify-end gap-2">
-          <button className="botao-secundario" onClick={aoFechar}>
+          <button className="btn-secundario" onClick={aoFechar}>
             Cancelar
           </button>
           <button
-            className="botao"
+            className="btn-primario"
             onClick={() => criar.mutate()}
             disabled={!nome.trim() || criar.isPending}
           >
@@ -315,10 +315,10 @@ function CarteiraModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () =
           {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
 
           <div className="flex justify-end gap-2">
-            <button className="botao-secundario" onClick={aoFechar}>
+            <button className="btn-secundario" onClick={aoFechar}>
               Cancelar
             </button>
-            <button className="botao" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
+            <button className="btn-primario" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
               {salvar.isPending ? 'Salvando…' : 'Salvar'}
             </button>
           </div>
@@ -440,7 +440,7 @@ function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
             <p className="text-forte font-semibold text-lg mt-1 font-mono">{criado.senha}</p>
           </Cartao>
           <div className="flex justify-end">
-            <button className="botao" onClick={aoFechar}>
+            <button className="btn-primario" onClick={aoFechar}>
               Fechar
             </button>
           </div>
@@ -497,12 +497,21 @@ function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
 
         {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
 
+        {/* Botão travado sem explicação faz a pessoa clicar de novo achando que quebrou —
+            foi o que aconteceu com os campos vazios e o exemplo em cinza parecendo texto
+            preenchido. A frase diz o que falta. */}
+        {!nome.trim() || !apelido.trim() ? (
+          <p className="text-xs text-rotulo">
+            Preencha nome e apelido para criar. O texto em cinza é só um exemplo.
+          </p>
+        ) : null}
+
         <div className="flex justify-end gap-2">
-          <button className="botao-secundario" onClick={aoFechar}>
+          <button className="btn-secundario" onClick={aoFechar}>
             Cancelar
           </button>
           <button
-            className="botao"
+            className="btn-primario"
             onClick={() => criar.mutate()}
             disabled={!nome.trim() || !apelido.trim() || criar.isPending}
           >
@@ -592,10 +601,10 @@ function VinculoModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () =>
           {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
 
           <div className="flex justify-end gap-2">
-            <button className="botao-secundario" onClick={aoFechar}>
+            <button className="btn-secundario" onClick={aoFechar}>
               Cancelar
             </button>
-            <button className="botao" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
+            <button className="btn-primario" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
               {salvar.isPending ? 'Salvando…' : 'Salvar'}
             </button>
           </div>
@@ -767,7 +776,7 @@ function UsuariosModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () =
                     autoFocus
                   />
                   <button
-                    className="botao-secundario shrink-0"
+                    className="btn-secundario shrink-0"
                     disabled={senha.length < 8 || editar.isPending}
                     onClick={() => editar.mutate({ id: u.id, dados: { senha } })}
                   >

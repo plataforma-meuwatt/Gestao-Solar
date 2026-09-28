@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/classes.mjs",
     "preview": "vite preview",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "classes": "node scripts/classes.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",

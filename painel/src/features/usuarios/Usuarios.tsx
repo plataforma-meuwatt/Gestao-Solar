@@ -59,7 +59,7 @@ export function Usuarios() {
       apoio="Quem entra no painel, e o que cada um abre. Administrador abre todas as telas e é o único que mexe nesta lista; as demais contas abrem só o que estiver marcado."
       acao={
         <div className="flex gap-2">
-          <button onClick={() => setAgrupando(true)} className="botao-secundario">
+          <button onClick={() => setAgrupando(true)} className="btn-secundario">
             <Users size={15} />
             Mesma pessoa
           </button>
@@ -609,11 +609,11 @@ function MesmaPessoa({ aoFechar }: { aoFechar: () => void }) {
           {desagrupar.error ? <Erro>{mensagemDeErro(desagrupar.error)}</Erro> : null}
 
           <div className="flex justify-end gap-2">
-            <button className="botao-secundario" onClick={aoFechar}>
+            <button className="btn-secundario" onClick={aoFechar}>
               Fechar
             </button>
             <button
-              className="botao"
+              className="btn-primario"
               onClick={() => agrupar.mutate()}
               disabled={marcados.length < 2 || !nome.trim() || agrupar.isPending}
             >

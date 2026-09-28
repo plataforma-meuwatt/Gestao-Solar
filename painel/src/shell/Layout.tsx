@@ -240,7 +240,7 @@ function TrocarPapel() {
                       autoFocus
                     />
                     <button
-                      className="botao-secundario shrink-0"
+                      className="btn-secundario shrink-0"
                       onClick={() => void trocar(p.apelido, senha)}
                     >
                       Entrar

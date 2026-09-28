@@ -142,11 +142,11 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
           {conectar.error ? <Erro>{mensagemDeErro(conectar.error)}</Erro> : null}
 
           <div className="flex justify-end gap-2">
-            <button className="botao-secundario" onClick={() => setAbrindo(false)}>
+            <button className="btn-secundario" onClick={() => setAbrindo(false)}>
               Cancelar
             </button>
             <button
-              className="botao"
+              className="btn-primario"
               onClick={() => conectar.mutate()}
               disabled={!token.trim() || conectar.isPending}
             >
@@ -156,12 +156,12 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
         </div>
       ) : (
         <div className="flex gap-2 mt-4">
-          <button className="botao-secundario" onClick={() => setAbrindo(true)}>
+          <button className="btn-secundario" onClick={() => setAbrindo(true)}>
             {ligada ? 'Trocar o token' : 'Conectar'}
           </button>
           {ligada ? (
             <button
-              className="botao-secundario"
+              className="btn-secundario"
               onClick={() => desconectar.mutate()}
               disabled={desconectar.isPending}
             >
