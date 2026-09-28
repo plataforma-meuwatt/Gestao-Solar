@@ -60,7 +60,7 @@ disponíveis eram todas piores:
 | Um e-mail falso para a segunda conta | Um identificador que não alcança ninguém, e que alguém vai tentar usar para recuperar senha |
 | `renan+gestor@…` | Funciona, mas é um truque de provedor: nem todo servidor de e-mail o aceita, e ninguém dita "mais" ao telefone |
 | Uma conta só, com os dois poderes | Apaga a distinção que motiva tudo: o dono de usina passaria a enxergar a tela de Conexões |
-| **Apelido como identidade** ✔ | `renanmarquezini` e `renan.marquezini` são duas contas óbvias, ditáveis, e o e-mail continua sendo o mesmo nas duas |
+| **Apelido como identidade** ✔ | `renanmarquezini` e `renan.marquezini` foram duas contas óbvias, ditáveis, com o mesmo e-mail nas duas (o par foi desfeito em 28/09/2026; a regra vale para dois clientes que compartilham e-mail) |
 
 Três consequências que o código carrega:
 

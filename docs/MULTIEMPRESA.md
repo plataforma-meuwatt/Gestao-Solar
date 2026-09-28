@@ -39,9 +39,9 @@ Três camadas, e a régua que resolve a confusão do WhatsApp:
 ### 3.1 Um usuário pertence a UMA empresa
 
 Não N:N. O caso "a mesma pessoa trabalha em duas O&M" se resolve com **duas contas**, que
-é exatamente o precedente que este projeto já tem e já documentou: `renanmarquezini` (gestor
-do sistema) e `renan.marquezini` (dono de usina) são o mesmo humano, o mesmo e-mail, dois
-papéis — e é por isso que quem autentica é o **apelido**, não o e-mail
+é exatamente o precedente que este projeto já teve e documentou: `renanmarquezini` (gestor
+do sistema) e `renan.marquezini` (dono de usina) eram o mesmo humano, o mesmo e-mail, dois
+papéis — par desfeito em 28/09/2026, quando o dono preferiu uma conta só — e é por isso que quem autentica é o **apelido**, não o e-mail
 (ver [DECISAO_IDENTIDADE.md](DECISAO_IDENTIDADE.md)).
 
 Uma tabela de vínculo N:N custaria um `join` em toda consulta e um seletor de "empresa

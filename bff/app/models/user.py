@@ -83,8 +83,8 @@ class User(Base):
     #:
     #: Uma conta pertence a UMA empresa. "A mesma pessoa em duas O&M" se resolve com duas
     #: contas — o mesmo motivo pelo qual quem autentica é o apelido e não o e-mail, e o
-    #: precedente já está no banco: `renanmarquezini` (gestor) e `renan.marquezini`
-    #: (cliente) são o mesmo humano.
+    #: precedente foi `renanmarquezini` (gestor) e `renan.marquezini` (cliente), o mesmo
+    #: humano — par desfeito em 28/09/2026, quando o dono passou a usar uma conta só.
     empresa_id: Mapped[int | None] = mapped_column(
         ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True, nullable=True
     )

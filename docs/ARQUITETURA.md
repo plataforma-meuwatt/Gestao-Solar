@@ -69,7 +69,7 @@ branca**, com o erro só no console do navegador.
 **A conta é do Gestão Solar, e quem entra é o apelido.** `gs_users.apelido` é único; o
 e-mail é contato, opcional e não único, e serve para achar a conta da pessoa nos dois
 produtos. O motivo está no `bff/app/core/apelido.py`: a mesma pessoa pode ter duas contas
-aqui, com poderes diferentes (`renanmarquezini`, gestor; `renan.marquezini`, dono de
+aqui, com poderes diferentes (foi o caso de `renanmarquezini`, gestor, e `renan.marquezini`, dono de
 usina) — com o e-mail como chave, a segunda seria recusada como duplicada.
 
 **A ponte com cada produto é uma só, e é do sistema, não do cliente.** Alguém gera um

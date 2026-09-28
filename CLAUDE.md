@@ -248,9 +248,12 @@ A identidade de uma conta é o `apelido` (`gs_users.apelido`, único). O e-mail 
 opcional, não único — e serve para achar a conta da pessoa no meuWatt e no meuPlano.
 
 O motivo é concreto e não deve ser desfeito por parecer estranho: **a mesma pessoa pode
-ter duas contas aqui**, com poderes diferentes. `renanmarquezini` é o gestor do sistema;
-`renan.marquezini` é o dono de usina que ele atende. Mesmo humano, mesmo e-mail, dois
-papéis. Com o e-mail como chave, a segunda conta seria recusada como duplicada.
+ter duas contas aqui**, com poderes diferentes — foi assim que `renanmarquezini` (gestor
+do sistema) e `renan.marquezini` (dono de usina) conviveram até 28/09/2026, quando o dono
+juntou tudo numa conta só. A regra não caiu com o exemplo: dois clientes DIFERENTES podem
+compartilhar o mesmo e-mail (sócios, casal, o contador de dois), e com o e-mail como chave
+o segundo seria recusado como duplicado. Quem precisa de papéis separados hoje tem o
+agrupamento de `gs_pessoas` — ver [`docs/MULTIEMPRESA.md`](docs/MULTIEMPRESA.md) §3.7.
 
 Três consequências:
 
