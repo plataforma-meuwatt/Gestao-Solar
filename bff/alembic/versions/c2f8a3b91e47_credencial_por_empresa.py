@@ -40,12 +40,26 @@ def upgrade() -> None:
         op.drop_constraint("gs_integracoes_produto_key", "gs_integracoes", type_="unique")
     else:
         inspetor = sa.inspect(op.get_bind())
-        for indice in inspetor.get_indexes("gs_integracoes"):
-            if indice.get("unique") and indice.get("column_names") == ["produto"]:
-                op.drop_index(indice["name"], table_name="gs_integracoes")
+
+        # A CONSTRAINT primeiro, e o índice só se não for dela. No Postgres um `UNIQUE` de
+        # coluna é as duas coisas ao mesmo tempo — aparece em `get_indexes` e em
+        # `get_unique_constraints` com o mesmo nome —, e `DROP INDEX` é recusado com
+        # "cannot drop index ... because constraint ... requires it". Foi assim que o
+        # deploy de 28/09/2026 falhou; nada chegou a ser aplicado, porque as migrations
+        # rodam numa transação só. Derrubar a constraint leva o índice junto.
+        de_constraint: set[str] = set()
         for restricao in inspetor.get_unique_constraints("gs_integracoes"):
             if restricao.get("column_names") == ["produto"]:
                 op.drop_constraint(restricao["name"], "gs_integracoes", type_="unique")
+                de_constraint.add(restricao["name"])
+
+        for indice in inspetor.get_indexes("gs_integracoes"):
+            if (
+                indice.get("unique")
+                and indice.get("column_names") == ["produto"]
+                and indice["name"] not in de_constraint
+            ):
+                op.drop_index(indice["name"], table_name="gs_integracoes")
 
     op.create_index("ix_gs_integracoes_produto", "gs_integracoes", ["produto"])
     op.create_index(
