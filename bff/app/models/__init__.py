@@ -8,6 +8,7 @@ equipamentos, cronograma e OS não são replicados — vêm por API, sempre.
 from app.models.acesso_painel import AcessoPainel
 from app.models.billing import Invoice, Subscription
 from app.models.contato import ContatoPreferencia, ContatoUsina
+from app.models.empresa import Empresa
 from app.models.integracao import EstadoTeste, Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
@@ -21,6 +22,7 @@ from app.models.user import (
 )
 
 __all__ = [
+    "Empresa",
     "User",
     "Perfil",
     "UserPlantAccess",

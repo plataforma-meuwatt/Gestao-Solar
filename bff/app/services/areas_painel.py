@@ -78,6 +78,15 @@ CATALOGO: list[Area] = [
         grupo="Operação",
     ),
     Area(
+        chave="empresas",
+        rotulo="Empresas de O&M",
+        descricao=(
+            "Cadastrar e desligar as empresas que operam dentro da plataforma. Quem abre "
+            "isto vê a lista inteira — nenhuma empresa sabe que as outras existem."
+        ),
+        grupo="Sistema",
+    ),
+    Area(
         chave="rotas",
         rotulo="Rotas",
         descricao="A sonda que exercita as rotas do meuWatt e do meuPlano.",

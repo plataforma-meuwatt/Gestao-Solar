@@ -10,7 +10,7 @@ app esconde a aba correspondente.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -31,6 +31,12 @@ class PlantLink(Base):
     mw_micro_plant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Denormalizado para a lista de usinas carregar sem depender dos dois upstreams.
+    #: De qual empresa de O&M é esta usina. Nulo só existe durante a migração; usina sem
+    #: dono é usina que toda empresa enxerga.
+    empresa_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+
     nome: Mapped[str] = mapped_column(String(255))
     cidade: Mapped[str | None] = mapped_column(String(120), nullable=True)
     uf: Mapped[str | None] = mapped_column(String(2), nullable=True)

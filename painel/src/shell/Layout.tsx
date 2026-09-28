@@ -16,6 +16,7 @@
  */
 
 import {
+  Building2,
   LogOut,
   MessageCircle,
   Route,
@@ -87,10 +88,41 @@ const MENU: ItemMenu[] = [
     area: 'whatsapp',
     grupo: 'Sistema',
   },
+  // Quem abre isto vê a lista INTEIRA de empresas — nenhuma delas sabe que as outras
+  // existem. Por isso Sistema, e por isso área própria.
+  {
+    para: '/empresas',
+    rotulo: 'Empresas de O&M',
+    icone: Building2,
+    area: 'empresas',
+    grupo: 'Sistema',
+  },
+]
+
+/**
+ * O menu do OUTRO portão: o gerente da empresa de O&M.
+ *
+ * Lista separada, e não os mesmos itens escondidos por perfil. Com uma lista só, cada
+ * tela nova da plataforma nasceria visível para o inquilino até alguém lembrar de
+ * escondê-la — e o esquecimento seria descoberto pelo cliente, não por nós. Aqui o
+ * padrão é o contrário: o que não está nesta lista não existe para ele.
+ *
+ * Não há áreas: elas são o catálogo do painel da plataforma. O que o gerente abre é o
+ * que o portão `/api/empresa/*` serve, e quem confere é o servidor a cada requisição.
+ */
+const MENU_EMPRESA: ItemMenu[] = [
+  { para: '/minha-empresa/usinas', rotulo: 'Usinas', icone: Sun },
+  { para: '/minha-empresa/clientes', rotulo: 'Clientes', icone: Users },
+  { para: '/minha-empresa/usuarios', rotulo: 'Usuários', icone: UsersRound },
 ]
 
 /** Onde pousa quem entra: a primeira tela que a conta abre, na ordem do menu. */
-export function primeiraTela(pode: (a: string) => boolean, ehAdmin: boolean): string | null {
+export function primeiraTela(
+  pode: (a: string) => boolean,
+  ehAdmin: boolean,
+  ehEmpresa = false,
+): string | null {
+  if (ehEmpresa) return MENU_EMPRESA[0].para
   const item = MENU.find((i) =>
     i.soAdministrador ? ehAdmin : i.area !== undefined && pode(i.area),
   )
@@ -135,7 +167,8 @@ class LimiteDeErro extends React.Component<
 }
 
 export function Layout() {
-  const { token, nome, perfil, sair, ehAdministrador, pode, atualizar } = useAuth()
+  const { token, nome, perfil, empresa, sair, ehAdministrador, ehEmpresa, pode, atualizar } =
+    useAuth()
   const local = useLocation()
 
   // A verdade do acesso é do servidor, e ela muda no meio da sessão. Falha de rede aqui
@@ -143,7 +176,7 @@ export function Layout() {
   const { data: eu } = useQuery({
     queryKey: ['eu'],
     queryFn: meuAcesso,
-    enabled: Boolean(token),
+    enabled: Boolean(token) && !ehEmpresa(),
     retry: false,
   })
   React.useEffect(() => {
@@ -152,9 +185,11 @@ export function Layout() {
 
   if (!token) return <Navigate to="/entrar" replace state={{ de: local.pathname }} />
 
-  const itens = MENU.filter((i) =>
-    i.soAdministrador ? ehAdministrador() : i.area !== undefined && pode(i.area),
-  )
+  const itens = ehEmpresa()
+    ? MENU_EMPRESA
+    : MENU.filter((i) =>
+        i.soAdministrador ? ehAdministrador() : i.area !== undefined && pode(i.area),
+      )
 
   return (
     <div className="flex h-full">
@@ -163,7 +198,12 @@ export function Layout() {
           <p className="text-lg font-bold text-forte leading-none">
             Gestão <span className="text-ambar">Solar</span>
           </p>
-          <p className="text-[11px] text-fraco mt-1">painel</p>
+          {/* De qual empresa é esta sessão, sempre visível. Não é enfeite: quem opera
+              duas contas cadastra o cliente na empresa errada e ninguém descobre no
+              mesmo dia. */}
+          <p className="text-[11px] text-fraco mt-1 truncate" title={empresa ?? undefined}>
+            {ehEmpresa() ? (empresa ?? 'empresa') : 'painel'}
+          </p>
         </div>
 
         <ul className="px-2.5 flex flex-col gap-0.5">
@@ -214,6 +254,20 @@ export function Layout() {
 export function SoAdministrador({ children }: { children: React.ReactNode }) {
   const ehAdmin = useAuth((s) => s.perfil === 'administrador')
   if (!ehAdmin) return <SemAcesso />
+  return <>{children}</>
+}
+
+/**
+ * Guarda das telas do outro portão.
+ *
+ * Diferente de `SoArea`, que é conforto: aqui a sessão errada não é falta de permissão,
+ * é o cliente HTTP errado. Uma sessão de painel nestas telas chamaria `/api/empresa/*`
+ * com o token do painel e levaria 403 do servidor — a tela diz isso em vez de desenhar
+ * cartões vazios e deixar a pessoa achando que a empresa não tem nada.
+ */
+export function SoEmpresa({ children }: { children: React.ReactNode }) {
+  const ehEmpresa = useAuth((s) => s.escopo === 'empresa')
+  if (!ehEmpresa) return <SemAcesso />
   return <>{children}</>
 }
 

@@ -5,7 +5,7 @@
  * espalhá-las esconderia o contrato, que é justamente o que precisa ficar visível.
  */
 
-import { api } from '@/lib/api'
+import { api, apiEmpresa } from '@/lib/api'
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -636,3 +636,95 @@ export const editarUsuario = (
  *  tela de troca, então o que for definido aqui é a senha dele. */
 export const redefinirSenhaUsuario = (id: number, senha: string) =>
   api.put<void>(`/usuarios/${id}/senha`, { senha }).then(() => undefined)
+
+/* --------------------------------------------------- empresas (a plataforma) */
+
+export type Empresa = {
+  id: number
+  nome: string
+  documento: string | null
+  ativa: boolean
+  usuarios: number
+  usinas: number
+}
+
+export const listarEmpresas = () => api.get<Empresa[]>('/empresas').then((r) => r.data)
+
+export const criarEmpresa = (dados: { nome: string; documento?: string | null }) =>
+  api.post<Empresa>('/empresas', dados).then((r) => r.data)
+
+export const editarEmpresa = (
+  id: number,
+  dados: { nome?: string; documento?: string | null; ativa?: boolean },
+) => api.patch<Empresa>(`/empresas/${id}`, dados).then((r) => r.data)
+
+/* ------------------------------------------ o portão do gerente da empresa */
+
+/**
+ * As chamadas do OUTRO portão, e por isso no outro cliente (`apiEmpresa`).
+ *
+ * Nenhuma delas manda `empresa_id`: o recorte sai da sessão, no servidor. Um parâmetro de
+ * empresa aqui seria a porta para ler a carteira do concorrente trocando um número.
+ */
+
+export type EuNaEmpresa = {
+  nome: string
+  apelido: string
+  empresa: string
+  empresa_id: number
+}
+
+export type UsinaDaEmpresa = {
+  id: number
+  nome: string
+  cidade: string | null
+  uf: string | null
+  kwp: number | null
+  ativo: boolean
+  clientes: number
+}
+
+export type ClienteDaEmpresa = {
+  id: number
+  nome: string
+  apelido: string
+  email: string | null
+  ativo: boolean
+  usinas: number
+}
+
+export type UsuarioDaEmpresa = {
+  id: number
+  nome: string
+  apelido: string
+  perfil: string
+  ativo: boolean
+}
+
+export const euNaEmpresa = () => apiEmpresa.get<EuNaEmpresa>('/eu').then((r) => r.data)
+
+export const usinasDaEmpresa = () =>
+  apiEmpresa.get<UsinaDaEmpresa[]>('/usinas').then((r) => r.data)
+
+export const clientesDaEmpresa = () =>
+  apiEmpresa.get<ClienteDaEmpresa[]>('/clientes').then((r) => r.data)
+
+export const usuariosDaEmpresa = () =>
+  apiEmpresa.get<UsuarioDaEmpresa[]>('/usuarios').then((r) => r.data)
+
+export type ItemDaCarteira = {
+  id: number
+  nome: string
+  detalhe: string | null
+  empresa_id: number | null
+  empresa_nome: string | null
+}
+
+export type Carteira = { usinas: ItemDaCarteira[]; clientes: ItemDaCarteira[] }
+
+export const carteiraDaEmpresa = (id: number) =>
+  api.get<Carteira>(`/empresas/${id}/carteira`).then((r) => r.data)
+
+/** As listas COMPLETAS: o que sair delas fica sem dono. */
+export const salvarCarteira = (id: number, dados: { usinas: number[]; clientes: number[] }) =>
+  api.put<Carteira>(`/empresas/${id}/carteira`, dados).then((r) => r.data)

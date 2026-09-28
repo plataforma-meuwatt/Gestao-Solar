@@ -21,7 +21,7 @@ mostra o prefixo do token, de quem ele é, e o resultado do último teste.
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -46,6 +46,16 @@ class Integracao(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     produto: Mapped[Produto] = mapped_column(
         Enum(Produto, native_enum=False, length=20), unique=True
+    )
+
+    #: De qual empresa é esta credencial. **Nulo = da plataforma**, que é o caso de hoje:
+    #: um token de serviço lê o meuWatt e o meuPlano para todo mundo.
+    #:
+    #: A coluna entra sem uso de propósito. A pergunta "cada O&M usa a conta dela nos
+    #: produtos, ou a da plataforma?" ainda não tem resposta, e com ela as duas cabem;
+    #: sem ela, a segunda resposta vira migração no meio do caminho.
+    empresa_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True, nullable=True
     )
 
     base_url: Mapped[str] = mapped_column(String(500))

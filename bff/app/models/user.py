@@ -40,11 +40,20 @@ class Perfil(StrEnum):
     cliente e diagnóstico. `administrador` faz tudo, inclusive mexer nas pontes com os
     produtos e na própria equipe — é a conta que, se comprometida, dá acesso às
     credenciais de serviço dos dois sistemas.
+
+    Os perfis estão em dois LADOS, e é essa separação que sustenta o multiempresa:
+    `atendimento` e `administrador` são da **plataforma** e não pertencem a empresa
+    nenhuma; `gestor_empresa` e `cliente` pertencem a uma.
     """
 
     CLIENTE = "cliente"
     ATENDIMENTO = "atendimento"
     ADMINISTRADOR = "administrador"
+    #: O gerente da empresa de O&M. Opera a empresa dele — usinas, clientes e as conexões
+    #: de WhatsApp dela — e não abre o painel da plataforma. Não existe um segundo papel
+    #: de empresa: quem mexe é o gerente, e um perfil sem ninguém para ocupá-lo é código
+    #: que envelhece sem uso.
+    GESTOR_EMPRESA = "gestor_empresa"
 
 
 class User(Base):
@@ -60,6 +69,21 @@ class User(Base):
     #: próprio, e duas contas da mesma pessoa podem compartilhar o mesmo.
     email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     nome: Mapped[str] = mapped_column(String(255))
+
+    #: A empresa de O&M a que esta conta pertence. **Nulo = conta da plataforma** (staff),
+    #: e nunca "todas as empresas": quem decide o alcance é o perfil, e a leitura acontece
+    #: num lugar só (`services/empresas.no_escopo`).
+    #:
+    #: Uma conta pertence a UMA empresa. "A mesma pessoa em duas O&M" se resolve com duas
+    #: contas — o mesmo motivo pelo qual quem autentica é o apelido e não o e-mail, e o
+    #: precedente já está no banco: `renanmarquezini` (gestor) e `renan.marquezini`
+    #: (cliente) são o mesmo humano.
+    empresa_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+
+    #: O nome da empresa como texto, de antes de `gs_empresas` existir. Mantido só
+    #: enquanto a migração é conferida; a fonte é `empresa_id`.
     empresa: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     #: Em E.164 (`+5516999998888`), normalizado em `core/telefone.py` — um número, um
@@ -120,6 +144,11 @@ class User(Base):
     @property
     def e_administrador(self) -> bool:
         return self.perfil is Perfil.ADMINISTRADOR
+
+    @property
+    def abre_empresa(self) -> bool:
+        """Entra pelo portão `/api/empresa/*` — o gerente da O&M, e só ele."""
+        return self.perfil is Perfil.GESTOR_EMPRESA
 
 
 class VinculoProduto(Base):

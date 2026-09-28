@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.security import (
     conferir_senha,
+    criar_token_empresa,
     criar_token_painel,
     exige_area,
     gestor_atual,
@@ -27,7 +28,7 @@ from app.core.security import (
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import areas_painel, conciliacao, integracoes, sonda, vinculos
+from app.services import areas_painel, conciliacao, empresas, integracoes, sonda, vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
 
@@ -52,6 +53,15 @@ class EntrarOut(BaseModel):
     nome: str
     apelido: str
     perfil: str
+    #: Qual portão esta sessão abre: `painel` (plataforma) ou `empresa` (gerente da O&M).
+    #: É o que o front usa para escolher o prefixo das chamadas e montar o menu — e é
+    #: informação, não permissão: quem decide é o servidor, a cada requisição.
+    escopo: str = "painel"
+    #: O nome da empresa, quando a sessão é de empresa. Fica fixo no topo da tela: sem
+    #: ele, quem opera duas contas cadastra o cliente na empresa errada e ninguém
+    #: descobre no mesmo dia.
+    empresa: str | None = None
+    empresa_id: int | None = None
     #: As áreas que esta conta abre — já resolvidas (administrador vem com todas). É o que
     #: a barra lateral usa para montar o menu, e o que decide para onde o painel manda
     #: quem entra: sem isto, todo mundo cairia em Clientes, inclusive quem não a tem.
@@ -66,18 +76,43 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     procurado = (body.apelido or "").strip().lower()
     usuario = db.scalar(select(User).where(User.apelido == procurado))
 
-    # Mensagem única para conta inexistente, senha errada e perfil sem acesso ao painel:
-    # quem tenta adivinhar não aprende qual das três aconteceu.
+    # Mensagem única para conta inexistente, senha errada e perfil sem acesso a lugar
+    # nenhum: quem tenta adivinhar não aprende qual das três aconteceu.
     if (
         usuario is None
         or not usuario.ativo
-        or not usuario.abre_painel
+        or not (usuario.abre_painel or usuario.abre_empresa)
         or not conferir_senha(body.senha, usuario.senha_hash)
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
 
+    # AUTENTICAR é uma coisa só; AUTORIZAR é que tem três portões. Por isso a porta de
+    # entrada é única e o que muda é o token que sai dela: o gerente da O&M recebe uma
+    # sessão de `escopo=empresa`, que `gestor_atual` recusa em toda rota de painel.
+    empresa = None
+    if usuario.abre_empresa:
+        empresa = empresas.por_id(db, empresas.empresa_exigida(usuario))
+        if not empresa.ativa:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Esta empresa está desativada na plataforma. Fale com quem a administra.",
+            )
+
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
+
+    if empresa is not None:
+        token, expira = criar_token_empresa(usuario.id)
+        return EntrarOut(
+            token=token,
+            expira_em=expira,
+            nome=usuario.nome,
+            apelido=usuario.apelido,
+            perfil=usuario.perfil.value,
+            escopo="empresa",
+            empresa=empresa.nome,
+            empresa_id=empresa.id,
+        )
 
     token, expira = criar_token_painel(usuario.id)
     # Perfil e áreas vão na resposta para a barra lateral esconder o que a conta não abre.

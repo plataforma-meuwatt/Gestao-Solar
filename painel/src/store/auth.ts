@@ -20,7 +20,13 @@ import { api, definirToken } from '@/lib/api'
 
 const CHAVE = 'gs_painel_sessao'
 
-export type Perfil = 'atendimento' | 'administrador'
+export type Perfil = 'atendimento' | 'administrador' | 'gestor_empresa'
+
+/**
+ * Qual portão esta sessão abre. Quem manda é o servidor — o campo vem do login e é
+ * repetido em `GET /eu`; aqui ele só escolhe o menu e o cliente HTTP.
+ */
+export type Escopo = 'painel' | 'empresa'
 
 type Sessao = {
   token: string
@@ -28,6 +34,9 @@ type Sessao = {
   apelido: string
   perfil: Perfil
   areas: string[]
+  escopo: Escopo
+  /** O nome da empresa, quando a sessão é de empresa. Fica fixo no topo da tela. */
+  empresa: string | null
 }
 
 type Estado = Omit<Sessao, 'token' | 'perfil'> & {
@@ -37,7 +46,9 @@ type Estado = Omit<Sessao, 'token' | 'perfil'> & {
   sair: () => void
   atualizar: (dados: { nome: string; perfil: Perfil; areas: string[] }) => void
   ehAdministrador: () => boolean
-  /** Abre esta tela? Administrador abre tudo, aqui e no servidor. */
+  /** A sessão é do gerente da empresa de O&M — o outro portão, o outro menu. */
+  ehEmpresa: () => boolean
+  /** Abre esta tela do painel da plataforma? Administrador abre tudo, aqui e no servidor. */
   pode: (area: string) => boolean
 }
 
@@ -48,7 +59,9 @@ function ler(): Sessao | null {
     const s = JSON.parse(bruto) as Sessao
     // Sessão gravada antes das áreas existirem não tem o campo. Ler `undefined` como
     // lista vazia evita o `map` de um `undefined` na primeira renderização do menu.
-    return { ...s, areas: s.areas ?? [] }
+    // Sessão gravada antes do multiempresa não tem escopo: ler como `painel` mantém
+    // quem já estava logado exatamente onde estava.
+    return { ...s, areas: s.areas ?? [], escopo: s.escopo ?? 'painel', empresa: s.empresa ?? null }
   } catch {
     return null
   }
@@ -67,14 +80,20 @@ export const useAuth = create<Estado>((set, get) => ({
   apelido: inicial?.apelido ?? '',
   perfil: inicial?.perfil ?? null,
   areas: inicial?.areas ?? [],
+  escopo: inicial?.escopo ?? 'painel',
+  empresa: inicial?.empresa ?? null,
 
   entrar: async (apelido, senha) => {
+    // Uma porta de login para os dois portões: o servidor confere a senha e devolve o
+    // token JÁ marcado com o escopo do perfil. O front não escolhe nada aqui.
     const { data } = await api.post<{
       token: string
       nome: string
       apelido: string
       perfil: Perfil
       areas: string[]
+      escopo?: Escopo
+      empresa?: string | null
     }>('/entrar', { apelido, senha })
     const sessao: Sessao = {
       token: data.token,
@@ -82,6 +101,8 @@ export const useAuth = create<Estado>((set, get) => ({
       apelido: data.apelido,
       perfil: data.perfil,
       areas: data.areas ?? [],
+      escopo: data.escopo ?? 'painel',
+      empresa: data.empresa ?? null,
     }
     gravar(sessao)
     definirToken(sessao.token)
@@ -91,18 +112,33 @@ export const useAuth = create<Estado>((set, get) => ({
   sair: () => {
     localStorage.removeItem(CHAVE)
     definirToken(null)
-    set({ token: null, nome: '', apelido: '', perfil: null, areas: [] })
+    set({ token: null, nome: '', apelido: '', perfil: null, areas: [], escopo: 'painel', empresa: null })
   },
 
   atualizar: ({ nome, perfil, areas }) => {
     const token = get().token
     if (!token) return
-    const sessao: Sessao = { token, nome, apelido: get().apelido, perfil, areas }
+    const sessao: Sessao = {
+      token,
+      nome,
+      apelido: get().apelido,
+      perfil,
+      areas,
+      escopo: get().escopo,
+      empresa: get().empresa,
+    }
     gravar(sessao)
     set(sessao)
   },
 
   ehAdministrador: () => get().perfil === 'administrador',
 
-  pode: (area) => get().perfil === 'administrador' || get().areas.includes(area),
+  ehEmpresa: () => get().escopo === 'empresa',
+
+  // As ÁREAS são do painel da plataforma. Numa sessão de empresa elas não existem, e
+  // responder `true` aqui abriria itens de menu que o servidor recusa — a pessoa clicaria
+  // e leria 403 como defeito. O menu da empresa é outro, montado por escopo.
+  pode: (area) =>
+    get().escopo === 'painel' &&
+    (get().perfil === 'administrador' || get().areas.includes(area)),
 }))

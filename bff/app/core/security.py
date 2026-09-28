@@ -126,6 +126,60 @@ def criar_token_painel(user_id: int) -> tuple[str, datetime]:
     return token, expira
 
 
+def criar_token_empresa(user_id: int) -> tuple[str, datetime]:
+    """Sessão do gerente da empresa de O&M, marcada com `escopo=empresa`.
+
+    Um portão novo, e não um perfil a mais dentro do painel: o prefixo da rota passa a
+    dizer de quem ela é, e o token de um portão é recusado nos outros — `usuario_atual`
+    já recusa qualquer claim `escopo`, e `gestor_atual` exige o valor `painel`.
+    """
+    s = get_settings()
+    expira = datetime.now(UTC) + timedelta(hours=s.gs_painel_sessao_horas)
+    token = jwt.encode(
+        {"sub": str(user_id), "escopo": "empresa", "exp": expira},
+        s.gs_jwt_secret,
+        algorithm=ALGORITMO,
+    )
+    return token, expira
+
+
+def gestor_empresa_atual(
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> User:
+    """Guarda de `/api/empresa/*`.
+
+    Exige quatro coisas, e a última é a que importa no multiempresa: token válido, escopo
+    de empresa, conta que ainda é gerente — e **empresa vinculada**. Uma conta de inquilino
+    sem `empresa_id` não entra: se entrasse, todo filtro montado a partir dela viraria
+    "sem filtro", que é o vazamento silencioso que este desenho existe para não ter.
+    """
+    if cred is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Não autenticado")
+    try:
+        dados = jwt.decode(
+            cred.credentials, get_settings().gs_jwt_secret, algorithms=[ALGORITMO]
+        )
+        if dados.get("escopo") != "empresa":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Esta sessão não abre a área da empresa"
+            )
+        user_id = int(dados["sub"])
+    except (JWTError, KeyError, ValueError) as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
+
+    usuario = db.get(User, user_id)
+    if usuario is None or not usuario.ativo or not usuario.abre_empresa:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à empresa")
+    if usuario.empresa_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Esta conta não está ligada a nenhuma empresa. Peça a quem administra a "
+            "plataforma para vinculá-la.",
+        )
+    return usuario
+
+
 def gestor_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),

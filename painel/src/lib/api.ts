@@ -30,6 +30,16 @@ const base = (window.__GS_API__ ?? '').replace(/\/$/, '')
 
 export const api = axios.create({ baseURL: `${base}/api/painel`, timeout: 30000 })
 
+/**
+ * O outro portão: as rotas do gerente da empresa de O&M.
+ *
+ * Dois clientes e não um com o prefixo variável, porque o prefixo NÃO é detalhe de
+ * chamada — ele é o portão, e o token de um não vale no outro. Com um cliente só, uma
+ * tela de plataforma chamaria `/api/empresa/*` sem nada quebrar em desenvolvimento (onde
+ * a mesma pessoa tem as duas sessões) e tomaria 403 na casa do cliente.
+ */
+export const apiEmpresa = axios.create({ baseURL: `${base}/api/empresa`, timeout: 30000 })
+
 let token: string | null = null
 let aoPerder: (() => void) | null = null
 
@@ -41,18 +51,20 @@ export function aoPerderSessao(cb: () => void) {
   aoPerder = cb
 }
 
-api.interceptors.request.use((config) => {
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
+for (const cliente of [api, apiEmpresa]) {
+  cliente.interceptors.request.use((config) => {
+    if (token) config.headers.Authorization = `Bearer ${token}`
+    return config
+  })
 
-api.interceptors.response.use(
-  (r) => r,
-  (erro) => {
-    if (erro?.response?.status === 401) aoPerder?.()
-    return Promise.reject(erro)
-  },
-)
+  cliente.interceptors.response.use(
+    (r) => r,
+    (erro) => {
+      if (erro?.response?.status === 401) aoPerder?.()
+      return Promise.reject(erro)
+    },
+  )
+}
 
 /** Mensagem pronta para a tela. O BFF sempre responde `detail`. */
 export function mensagemDeErro(erro: unknown): string {

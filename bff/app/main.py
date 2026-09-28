@@ -29,6 +29,7 @@ from app.api.v1 import (
     billing,
     carteira,
     documents,
+    empresa,
     energia,
     equipamentos,
     exportacao,
@@ -42,6 +43,7 @@ from app.api.v1 import (
     painel,
     painel_clientes,
     painel_contatos,
+    painel_empresas,
     painel_notificacoes,
     motor_notificacoes,
     painel_usuarios,
@@ -142,12 +144,14 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(painel.router)
 app.include_router(painel_clientes.router)
+app.include_router(painel_empresas.router)
 app.include_router(painel_contatos.router)
 app.include_router(painel_notificacoes.router)
 app.include_router(motor_notificacoes.router)
 app.include_router(painel_usuarios.router)
 app.include_router(painel_whatsapp.router)
 app.include_router(interno_whatsapp.router)
+app.include_router(empresa.router)
 app.include_router(plants.router)
 app.include_router(paradas.router)
 app.include_router(billing.router)

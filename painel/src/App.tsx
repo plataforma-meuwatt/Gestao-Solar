@@ -3,7 +3,13 @@ import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-d
 
 import { Conexoes } from '@/features/conexoes/Conexoes'
 import { Diagnostico } from '@/features/diagnostico/Diagnostico'
+import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
+import {
+  ClientesDaEmpresa,
+  UsinasDaEmpresa,
+  UsuariosDaEmpresa,
+} from '@/features/empresa/MinhaEmpresa'
 import { Usuarios } from '@/features/usuarios/Usuarios'
 import { DetalheCliente } from '@/features/clientes/Detalhe'
 import { ListaClientes } from '@/features/clientes/Lista'
@@ -12,7 +18,7 @@ import { Rotas } from '@/features/rotas/Rotas'
 import { Usinas } from '@/features/usinas/Usinas'
 import { Whatsapp } from '@/features/whatsapp/Whatsapp'
 import { aoPerderSessao } from '@/lib/api'
-import { Layout, SoAdministrador, SoArea, primeiraTela } from '@/shell/Layout'
+import { Layout, SoAdministrador, SoArea, SoEmpresa, primeiraTela } from '@/shell/Layout'
 import { useAuth } from '@/store/auth'
 
 const qc = new QueryClient({
@@ -39,8 +45,8 @@ aoPerderSessao(() => useAuth.getState().sair())
  * lê que falta acesso em vez de rodar entre redirecionamentos.
  */
 function Pouso() {
-  const { pode, ehAdministrador } = useAuth()
-  const destino = primeiraTela(pode, ehAdministrador())
+  const { pode, ehAdministrador, ehEmpresa } = useAuth()
+  const destino = primeiraTela(pode, ehAdministrador(), ehEmpresa())
   if (destino) return <Navigate to={destino} replace />
   return (
     <div className="cartao p-8 max-w-lg">
@@ -129,6 +135,42 @@ export function App() {
                 <SoArea area="whatsapp">
                   <Whatsapp />
                 </SoArea>
+              }
+            />
+            <Route
+              path="/empresas"
+              element={
+                <SoArea area="empresas">
+                  <Empresas />
+                </SoArea>
+              }
+            />
+
+            {/* O outro portão. `SoEmpresa` não é conforto como as áreas: uma sessão de
+                painel aqui chamaria `/api/empresa/*` e tomaria 403 — a tela diz isso em
+                vez de desenhar cartões vazios. */}
+            <Route
+              path="/minha-empresa/usinas"
+              element={
+                <SoEmpresa>
+                  <UsinasDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/clientes"
+              element={
+                <SoEmpresa>
+                  <ClientesDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/usuarios"
+              element={
+                <SoEmpresa>
+                  <UsuariosDaEmpresa />
+                </SoEmpresa>
               }
             />
             <Route

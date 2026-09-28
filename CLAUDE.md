@@ -356,6 +356,25 @@ segunda leitura com credencial de serviço, e pelo mesmo motivo do catálogo: o 
 legível por administrador no meuWatt, nenhum token de cliente o enxerga. Se a conta de
 serviço não for admin lá, a sonda pinta `mw.micro_*` de vermelho e o aviso cala.
 
+### A empresa de O&M é o inquilino, e o recorte tem UM dono
+
+Desde 28/09/2026 o sistema é multiempresa. O desenho inteiro — camadas, portões, migração
+e os perigos — está em [`docs/MULTIEMPRESA.md`](docs/MULTIEMPRESA.md); o que não pode ser
+esquecido ao mexer em qualquer consulta é isto:
+
+- **Toda consulta que toca dado de empresa passa por `services/empresas.no_escopo`.** Uma
+  que esqueça funciona perfeitamente em desenvolvimento, onde só existe uma empresa, e
+  entrega o dado do vizinho no dia em que entra a segunda. Não dá erro, não dá log.
+- **`empresa_id` nulo é conta da PLATAFORMA, nunca "todas as empresas".** Quem decide o
+  alcance é o perfil, e o nulo é lido num lugar só — o mesmo módulo.
+- **O prefixo diz de quem é a rota:** `/api/painel/*` é da plataforma, `/api/empresa/*` é
+  do gerente da O&M, `/api/v1/*` é do dono de usina. O token de um portão é recusado nos
+  outros, e a claim `escopo` é testada por PRESENÇA — portão novo nasce recusado.
+- **Nenhuma rota de `/api/empresa/*` aceita `empresa_id` de quem chama.** O recorte sai da
+  sessão. Parâmetro de empresa numa rota de empresa é a definição de vazamento.
+- **Autenticar é uma coisa só:** `POST /api/painel/entrar` emite o token do portão certo
+  conforme o perfil. Não nasce uma segunda porta de login.
+
 ### Nada de "chips" para selecionar opção
 
 Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tudo é lista
