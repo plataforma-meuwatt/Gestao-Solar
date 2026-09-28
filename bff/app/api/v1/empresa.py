@@ -21,16 +21,21 @@ portão separado erra fechado: rota nova aqui já nasce com o recorte, e `gestor
 recusa esta sessão em qualquer rota de painel.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
+from pydantic import Field
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import gestor_empresa_atual
+from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
 from app.services import empresas as svc
+from app.services import integracoes
 
 router = APIRouter(prefix="/api/empresa", tags=["empresa · O&M"])
 
@@ -188,3 +193,120 @@ def listar_usuarios(
         )
         for u in usuarios
     ]
+
+
+# --------------------------------------------------------------------- conexões
+
+
+class ConexaoOut(BaseModel):
+    """A conta da EMPRESA no produto — não a de um cliente dela, e não a da plataforma."""
+
+    produto: str
+    configurada: bool
+    base_url: str | None = None
+    estado: str
+    detalhe: str | None = None
+    testada_em: datetime | None = None
+    usinas_visiveis: int | None = None
+    token_prefixo: str | None = None
+    token_dono_nome: str | None = None
+    token_dono_email: str | None = None
+    token_gravado_em: datetime | None = None
+    #: `false` quando o que responde por este produto ainda é a credencial da PLATAFORMA.
+    #: A tela diz isso em letras claras: enquanto for assim, o que a empresa lê depende de
+    #: uma conta que não é dela, e entra mais de uma empresa no sistema o acesso para.
+    propria: bool = False
+
+
+def _conexao_out(produto: Produto, integracao, empresa_id: int) -> ConexaoOut:
+    if integracao is None:
+        return ConexaoOut(produto=produto.value, configurada=False, estado="nunca")
+    return ConexaoOut(
+        produto=produto.value,
+        configurada=True,
+        base_url=integracao.base_url,
+        estado=integracao.estado.value,
+        detalhe=integracao.detalhe_teste,
+        testada_em=integracao.testada_em,
+        usinas_visiveis=integracao.usinas_visiveis,
+        token_prefixo=integracao.token_prefixo,
+        token_dono_nome=integracao.token_dono_nome,
+        token_dono_email=integracao.token_dono_email,
+        token_gravado_em=integracao.token_gravado_em,
+        propria=integracao.empresa_id == empresa_id,
+    )
+
+
+@router.get("/conexoes", response_model=list[ConexaoOut])
+def listar_conexoes(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> list[ConexaoOut]:
+    """O estado das duas contas da empresa. Sempre as duas, inclusive a não configurada."""
+    empresa_id = svc.empresa_exigida(gerente)
+    return [
+        _conexao_out(p, integracoes.obter(db, p, empresa_id), empresa_id) for p in Produto
+    ]
+
+
+class TokenIn(BaseModel):
+    base_url: str = Field(min_length=4)
+    #: Sem `min_length` apertado: quem valida é `core/tokens_produto`, que sabe dizer POR
+    #: QUE o token está errado — melhor resposta do que um 422 do Pydantic.
+    token: str = Field(min_length=1)
+
+
+class TesteOut(BaseModel):
+    ok: bool
+    detalhe: str
+    usinas_visiveis: int | None = None
+    dono_nome: str | None = None
+    dono_email: str | None = None
+
+
+@router.put("/conexoes/{produto}/token", response_model=TesteOut)
+async def conectar(
+    produto: Produto,
+    body: TokenIn,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> TesteOut:
+    """O gerente cola o token gerado na conta da empresa dele, naquele produto.
+
+    O token é verificado ANTES de gravar: não servindo, a conexão anterior continua de pé.
+    E ele vale exatamente o que a conta que o gerou vale lá — se aquela conta não enxerga
+    uma usina no meuWatt, aqui também não, e a resposta diz quantas ela alcançou.
+    """
+    resultado = await integracoes.salvar_token(
+        db,
+        produto,
+        body.base_url,
+        body.token,
+        ator_email=gerente.identificacao,
+        empresa_id=svc.empresa_exigida(gerente),
+    )
+    return TesteOut(
+        ok=resultado.ok,
+        detalhe=resultado.detalhe,
+        usinas_visiveis=resultado.usinas,
+        dono_nome=resultado.dono_nome,
+        dono_email=resultado.dono_email,
+    )
+
+
+@router.delete("/conexoes/{produto}/token", status_code=204)
+def desconectar(
+    produto: Produto,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> None:
+    """Desconecta deste lado.
+
+    **Não revoga nada no produto de origem**: o token continua válido lá, e é lá que a
+    porta se fecha. A diferença importa o bastante para a tela dizê-la.
+    """
+    integracoes.remover_token(
+        db,
+        produto,
+        ator_email=gerente.identificacao,
+        empresa_id=svc.empresa_exigida(gerente),
+    )

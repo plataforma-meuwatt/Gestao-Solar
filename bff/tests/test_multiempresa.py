@@ -245,3 +245,55 @@ def test_tirar_da_carteira_deixa_sem_dono(db, carteiras, administrador):
     )
     da_a = [u for u in depois.usinas if u.nome == "Usina da A"]
     assert da_a and da_a[0].empresa_id is None
+
+
+# ------------------------------------------------------- credencial por empresa
+
+
+def test_a_credencial_da_empresa_nao_sobrescreve_a_da_plataforma(db, duas_empresas):
+    """Defeito guardado: `salvar_token` usar o atalho de `obter`, achar a linha da
+    plataforma e gravar o token da empresa em cima dela. A plataforma perderia a
+    credencial com que monta o catálogo, e ninguém ligaria uma coisa à outra."""
+    from app.models.integracao import Integracao, Produto
+    from app.services import integracoes
+
+    a, b = duas_empresas
+    # Uma empresa ativa: é o cenário da migração, em que o atalho para a credencial da
+    # plataforma ainda é legítimo (a trava dele tem teste próprio, logo abaixo).
+    b.ativa = False
+    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br"))
+    db.commit()
+
+    # A leitura da empresa, sem linha própria, cai na da plataforma — o atalho da migração.
+    assert integracoes.obter(db, Produto.MEUWATT, a.id).empresa_id is None
+
+    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br", empresa_id=a.id))
+    db.commit()
+
+    da_empresa = integracoes.obter(db, Produto.MEUWATT, a.id)
+    da_plataforma = integracoes.obter(db, Produto.MEUWATT)
+    assert da_empresa.empresa_id == a.id
+    assert da_plataforma.empresa_id is None
+    assert da_empresa.id != da_plataforma.id
+
+
+def test_com_duas_empresas_o_atalho_da_plataforma_e_recusado(db, duas_empresas):
+    """A trava que se arma sozinha. Com UMA empresa, a credencial da plataforma é a dela e
+    o atalho é correto. Com DUAS, ela é de uma das duas — e usá-la para a outra devolveria
+    a carteira do concorrente. A recusa é ruidosa de propósito: parar é melhor do que
+    responder dado errado."""
+    from app.models.integracao import Integracao, Produto
+    from app.services import integracoes
+
+    a, b = duas_empresas
+    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br"))
+    db.commit()
+
+    with pytest.raises(RuntimeError) as erro:
+        integracoes.obter(db, Produto.MEUWATT, a.id)
+    assert "conexão dela" in str(erro.value)
+
+    # Desligar uma delas devolve o sistema ao caso de uma empresa só, e o atalho volta.
+    b.ativa = False
+    db.commit()
+    assert integracoes.obter(db, Produto.MEUWATT, a.id) is not None

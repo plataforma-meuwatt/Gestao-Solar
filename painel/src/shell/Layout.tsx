@@ -17,6 +17,7 @@
 
 import {
   Building2,
+  Link2,
   LogOut,
   MessageCircle,
   Route,
@@ -114,6 +115,9 @@ const MENU_EMPRESA: ItemMenu[] = [
   { para: '/minha-empresa/usinas', rotulo: 'Usinas', icone: Sun },
   { para: '/minha-empresa/clientes', rotulo: 'Clientes', icone: Users },
   { para: '/minha-empresa/usuarios', rotulo: 'Usuários', icone: UsersRound },
+  // As contas da empresa nos produtos. Fica por último porque é configuração, não o dia
+  // a dia — mas é o primeiro lugar aonde ir quando as listas acima vierem vazias.
+  { para: '/minha-empresa/conexoes', rotulo: 'Conexões', icone: Link2 },
 ]
 
 /** Onde pousa quem entra: a primeira tela que a conta abre, na ordem do menu. */

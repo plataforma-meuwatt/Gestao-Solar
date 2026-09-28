@@ -728,3 +728,36 @@ export const carteiraDaEmpresa = (id: number) =>
 /** As listas COMPLETAS: o que sair delas fica sem dono. */
 export const salvarCarteira = (id: number, dados: { usinas: number[]; clientes: number[] }) =>
   api.put<Carteira>(`/empresas/${id}/carteira`, dados).then((r) => r.data)
+
+export type ConexaoDaEmpresa = {
+  produto: Produto
+  configurada: boolean
+  base_url: string | null
+  estado: string
+  detalhe: string | null
+  testada_em: string | null
+  usinas_visiveis: number | null
+  token_prefixo: string | null
+  token_dono_nome: string | null
+  token_dono_email: string | null
+  token_gravado_em: string | null
+  /** `false` = quem responde por este produto ainda é a credencial da PLATAFORMA. */
+  propria: boolean
+}
+
+export type TesteDaConexao = {
+  ok: boolean
+  detalhe: string
+  usinas_visiveis: number | null
+  dono_nome: string | null
+  dono_email: string | null
+}
+
+export const conexoesDaEmpresa = () =>
+  apiEmpresa.get<ConexaoDaEmpresa[]>('/conexoes').then((r) => r.data)
+
+export const conectarEmpresa = (produto: Produto, dados: { base_url: string; token: string }) =>
+  apiEmpresa.put<TesteDaConexao>(`/conexoes/${produto}/token`, dados).then((r) => r.data)
+
+export const desconectarEmpresa = (produto: Produto) =>
+  apiEmpresa.delete<void>(`/conexoes/${produto}/token`).then(() => undefined)

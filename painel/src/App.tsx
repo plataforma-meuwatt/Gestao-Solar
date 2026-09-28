@@ -5,6 +5,7 @@ import { Conexoes } from '@/features/conexoes/Conexoes'
 import { Diagnostico } from '@/features/diagnostico/Diagnostico'
 import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
+import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import {
   ClientesDaEmpresa,
   UsinasDaEmpresa,
@@ -170,6 +171,14 @@ export function App() {
               element={
                 <SoEmpresa>
                   <UsuariosDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/conexoes"
+              element={
+                <SoEmpresa>
+                  <ConexoesDaEmpresa />
                 </SoEmpresa>
               }
             />

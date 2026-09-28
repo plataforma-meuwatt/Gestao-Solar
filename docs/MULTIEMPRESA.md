@@ -127,6 +127,35 @@ não no bundle. No front ela aparece como:
 - o menu com os itens daquele lado, e nada mais;
 - quando a plataforma estiver olhando uma empresa, uma **faixa dizendo isso** — ver §6.
 
+### 3.6 Cada empresa tem a conta DELA no meuWatt e no meuPlano
+
+Decisão do dono, 28/09/2026. O que isso significa no código é menos do que parece, porque
+metade já era assim:
+
+- **O token com que se lê os dados de um cliente já é do próprio cliente** (`gs_user_product_links`,
+  via `vinculos.cliente_*`). Nada muda aí: a conciliação e as telas já leem com a régua que
+  cada produto aplica no site dele.
+- **O que era da plataforma é a credencial de SERVIÇO** (`gs_integracoes`): o catálogo de
+  micro usinas, a sonda, o motor de paradas. É ela que passa a ter dono.
+
+Três consequências, e a terceira é a que protege:
+
+1. `gs_integracoes` ganhou `empresa_id`, e a unicidade virou **dois índices parciais** —
+   um por (produto, empresa) e um por produto entre as linhas de plataforma. Um
+   `UNIQUE (produto, empresa_id)` sozinho não serviria: no Postgres dois `NULL` não
+   colidem, então ele deixaria passar duas credenciais de plataforma para o mesmo produto
+   e o sistema escolheria uma por ordem de `id`, em silêncio.
+2. O gerente conecta a conta dele em **Conexões**, no portão da empresa. O token vale o que
+   aquela conta vale lá — a resposta diz quantas usinas ele alcançou, porque credencial
+   aceita que não enxerga nada abre a plataforma vazia sem erro nenhum.
+3. **A trava que se arma sozinha.** Enquanto a empresa não tiver a conta dela, a leitura
+   cai na credencial da plataforma — é o que permite migrar sem parar nada. No dia em que
+   existir **mais de uma empresa ativa**, esse atalho passa a ser recusado com uma frase
+   que diz o que fazer. Com uma empresa, a credencial da plataforma é a dela e o atalho é
+   correto; com duas, ela é de uma das duas, e usá-la para a outra devolveria usinas,
+   ordens e faturas do concorrente. A conta é feita na hora, e não depende de alguém
+   lembrar de configurar a segunda empresa antes de cadastrá-la.
+
 ## 4. O que muda no banco
 
 ```
@@ -134,13 +163,13 @@ gs_empresas            (id, nome, documento?, ativa, criada_em)
 gs_users.empresa_id    → FK nullable. NULL = plataforma
 gs_plant_links.empresa_id  → de quem é a usina
 gs_integracoes.empresa_id  → FK nullable. NULL = credencial da plataforma
+                           + dois índices parciais no lugar do único por produto
 gs_whatsapp_contas     (id, empresa_id, phone_number_id, waba_id, token cifrado, estado, sincronizado_em)
 ```
 
-`gs_integracoes.empresa_id` entra **agora**, mesmo que hoje só exista a linha da plataforma:
-a coluna nula custa nada e cobre a pergunta que vai aparecer — *cada O&M usa a conta dela no
-meuWatt e no meuPlano, ou a da Splendor?* Com a coluna, as duas respostas cabem. Sem ela, a
-segunda resposta é uma migração no meio do caminho.
+`gs_integracoes.empresa_id` foi respondido no mesmo dia: **cada O&M usa a conta dela**. Ver
+§3.6 — a coluna existe, a unicidade mudou (migration `c2f8a3b91e47`) e a tela de Conexões do
+gerente grava a credencial da empresa sem tocar na da plataforma.
 
 `gs_whatsapp_contas.phone_number_id` é a **chave de roteamento** do webhook da Meta: é por
 ele que se descobre de qual empresa é a mensagem que chegou. Nunca pelo
@@ -196,8 +225,10 @@ não uma cláusula copiada: uma cópia esquecida não dá erro, dá dado do vizi
 - perfil `gestor_empresa`, portão `/api/empresa/*` (`eu`, `usinas`, `clientes`,
   `usuarios`) e a guarda `gestor_empresa_atual`, que recusa conta sem empresa;
 - login único emitindo o token do portão certo (§3.4);
-- painel: **Empresas de O&M** para a plataforma (cadastrar, desligar, religar) e as três
-  telas do gerente, com o menu montado por escopo e o nome da empresa fixo no alto.
+- credencial de serviço por empresa, com a trava de §3.6 (migration `c2f8a3b91e47`);
+- painel: **Empresas de O&M** para a plataforma (cadastrar, desligar, religar e atribuir
+  usinas e clientes) e quatro telas do gerente — Usinas, Clientes, Usuários e **Conexões** —,
+  com o menu montado por escopo e o nome da empresa fixo no alto.
 
 **Falta, e nesta ordem:**
 

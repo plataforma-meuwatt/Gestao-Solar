@@ -22,13 +22,14 @@ token não verificado troca um problema visível por um invisível.
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.clients.meuplano import MeuPlanoClient
 from app.clients.meuwatt import MeuWattClient
 from app.core.cripto import SegredoInvalido, cifrar, decifrar
 from app.core.tokens_produto import NOME, TokenInvalido, prefixo_visivel, validar
+from app.models.empresa import Empresa
 from app.models.integracao import EstadoTeste, Integracao, IntegracaoEvento, Produto
 
 
@@ -50,8 +51,53 @@ class ResultadoTeste:
         self.dono_email = dono_email
 
 
-def obter(db: Session, produto: Produto) -> Integracao | None:
-    return db.scalar(select(Integracao).where(Integracao.produto == produto))
+def obter(db: Session, produto: Produto, empresa_id: int | None = None) -> Integracao | None:
+    """A credencial com que se lê este produto, para esta empresa.
+
+    **Cada empresa de O&M tem a conta dela no meuWatt e no meuPlano** — decisão do dono,
+    28/09/2026. A linha com `empresa_id` nulo é a da plataforma, que é a única que existia
+    antes disso e continua sendo a que o painel usa para montar o catálogo de usinas.
+
+    Enquanto a empresa não tiver a dela, cai na da plataforma — e é isso que mantém o
+    sistema funcionando durante a migração. Esse atalho é travado por
+    `_conferir_atalho_da_plataforma`: no dia em que existir mais de uma empresa ativa, ele
+    passa a ser recusado com uma frase que diz o que fazer. Servir a credencial da
+    plataforma para a segunda empresa não seria um erro de configuração — seria entregar a
+    carteira de um cliente a outro, sem nada na tela indicando isso.
+    """
+    if empresa_id is not None:
+        da_empresa = db.scalar(
+            select(Integracao).where(
+                Integracao.produto == produto, Integracao.empresa_id == empresa_id
+            )
+        )
+        if da_empresa is not None:
+            return da_empresa
+        _conferir_atalho_da_plataforma(db, produto)
+
+    return db.scalar(
+        select(Integracao).where(
+            Integracao.produto == produto, Integracao.empresa_id.is_(None)
+        )
+    )
+
+
+def _conferir_atalho_da_plataforma(db: Session, produto: Produto) -> None:
+    """A trava que se arma sozinha no dia em que o atalho vira vazamento.
+
+    Com UMA empresa no sistema, a credencial da plataforma é a dela: o atalho é correto e
+    é o que permite migrar sem parar nada. Com DUAS, ela é de uma das duas — e usá-la para
+    a outra devolveria usinas, ordens e faturas do concorrente. A conta é feita aqui, na
+    hora, em vez de depender de alguém lembrar de configurar a segunda antes de cadastrá-la.
+    """
+    quantas = db.scalar(select(func.count()).select_from(Empresa).where(Empresa.ativa)) or 0
+    if quantas > 1:
+        raise RuntimeError(
+            f"Esta empresa ainda não tem a conexão dela com o {produto.value}. "
+            "Com mais de uma empresa na plataforma, a credencial da plataforma não pode "
+            "ser usada em nome de nenhuma delas — conecte a conta da empresa em "
+            "Conexões."
+        )
 
 
 def listar(db: Session) -> dict[Produto, Integracao | None]:
@@ -121,9 +167,14 @@ def _exigir_credencial(integracao, produto_nome: str) -> None:
         )
 
 
-async def cliente_meuwatt(db: Session) -> MeuWattClient:
-    """Cliente já autenticado com o que estiver gravado — token, de preferência."""
-    integracao = obter(db, Produto.MEUWATT)
+async def cliente_meuwatt(db: Session, empresa_id: int | None = None) -> MeuWattClient:
+    """Cliente já autenticado com o que estiver gravado — token, de preferência.
+
+    `empresa_id` diz em nome de QUEM se lê. Omitir significa "a credencial da plataforma",
+    que é o certo para o catálogo de usinas e a sonda, e é o atalho travado de `obter`
+    para todo o resto enquanto a migração não termina.
+    """
+    integracao = obter(db, Produto.MEUWATT, empresa_id)
     if integracao is None or not integracao.ativa:
         raise RuntimeError("A ponte com o meuWatt não está configurada.")
     _exigir_credencial(integracao, "meuWatt")
@@ -151,15 +202,24 @@ async def cliente_meuwatt(db: Session) -> MeuWattClient:
 #: alguém esquecer de chamar.
 _clientes_meuplano: dict[tuple, MeuPlanoClient] = {}
 
+#: Quantos clientes do meuPlano ficam guardados ao mesmo tempo (um por empresa, mais as
+#: trocas de credencial). Estourado o teto, o dicionário é esvaziado inteiro — o próximo
+#: acesso de cada empresa refaz o login, que é barato perto de guardar sem limite.
+#: ponytail: limpeza total em vez de LRU; com dezenas de empresas isso basta, e um LRU só
+#: se justifica quando a reconstrução doer.
+TETO_DE_CLIENTES_GUARDADOS = 64
 
-async def cliente_meuplano(db: Session) -> MeuPlanoClient:
-    integracao = obter(db, Produto.MEUPLANO)
+
+async def cliente_meuplano(db: Session, empresa_id: int | None = None) -> MeuPlanoClient:
+    integracao = obter(db, Produto.MEUPLANO, empresa_id)
     if integracao is None or not integracao.ativa:
         raise RuntimeError("A ponte com o meuPlano não está configurada.")
     _exigir_credencial(integracao, "meuPlano")
 
-    chave = (integracao.base_url, integracao.token_cifrado, integracao.usuario_servico,
-             integracao.senha_cifrada)
+    # A empresa entra na chave: sem ela, o primeiro cliente guardado atenderia as duas, e
+    # a segunda empresa leria o meuPlano com a sessão da primeira.
+    chave = (integracao.empresa_id, integracao.base_url, integracao.token_cifrado,
+             integracao.usuario_servico, integracao.senha_cifrada)
     guardado = _clientes_meuplano.get(chave)
     if guardado is not None:
         return guardado
@@ -174,8 +234,12 @@ async def cliente_meuplano(db: Session) -> MeuPlanoClient:
             usuario=integracao.usuario_servico,
             senha=decifrar(integracao.senha_cifrada),
         )
-    # Um por configuração; trocar a credencial troca a chave. O dicionário não cresce.
-    _clientes_meuplano.clear()
+    # Um por (empresa, configuração). Trocar a credencial de uma empresa troca a chave
+    # dela e abandona o cliente velho; as outras seguem com os seus, que é o ponto de a
+    # empresa estar na chave. O teto existe para o dicionário não virar vazamento de
+    # memória num sistema com muitas empresas.
+    if len(_clientes_meuplano) >= TETO_DE_CLIENTES_GUARDADOS:
+        _clientes_meuplano.clear()
     _clientes_meuplano[chave] = cliente
     return cliente
 
@@ -330,12 +394,17 @@ async def salvar_token(
     base_url: str,
     token: str,
     ator_email: str | None = None,
+    empresa_id: int | None = None,
 ) -> ResultadoTeste:
     """Verifica o token contra o produto e só então grava.
 
     Verificar antes de gravar é o ponto: se o token não serve, a conexão anterior — que
     podia estar funcionando — continua de pé. Gravar primeiro e testar depois deixaria o
     gestor com as duas coisas quebradas e nenhuma forma de voltar.
+
+    `empresa_id` diz de QUEM é esta conexão. Cada empresa de O&M tem a conta dela no
+    meuWatt e no meuPlano, e o token vale exatamente o que aquela conta vale lá: a linha
+    da empresa nunca substitui a da plataforma, e vice-versa.
     """
     try:
         endereco = normalizar_endereco(base_url)
@@ -369,9 +438,18 @@ async def salvar_token(
         db.commit()
         return resultado
 
-    integracao = obter(db, produto)
+    # A linha EXATA desta empresa — nunca o atalho de `obter`, que cairia na linha da
+    # plataforma e a sobrescreveria com o token da empresa.
+    integracao = db.scalar(
+        select(Integracao).where(
+            Integracao.produto == produto,
+            Integracao.empresa_id == empresa_id
+            if empresa_id is not None
+            else Integracao.empresa_id.is_(None),
+        )
+    )
     if integracao is None:
-        integracao = Integracao(produto=produto, base_url=endereco)
+        integracao = Integracao(produto=produto, base_url=endereco, empresa_id=empresa_id)
         db.add(integracao)
 
     anterior = integracao.token_prefixo
@@ -404,12 +482,26 @@ async def salvar_token(
     return resultado
 
 
-def remover_token(db: Session, produto: Produto, ator_email: str | None = None) -> None:
+def remover_token(
+    db: Session,
+    produto: Produto,
+    ator_email: str | None = None,
+    empresa_id: int | None = None,
+) -> None:
     """Desconecta deste lado. Não revoga nada no produto de origem — quem emitiu o token
     continua com ele válido lá, e é lá que ele deve ser revogado de verdade. A tela diz
     isso, porque a diferença importa: remover aqui não fecha a porta, só para de usá-la.
     """
-    integracao = obter(db, produto)
+    # A linha exata, como em `salvar_token`: desconectar a empresa não pode apagar a
+    # credencial da plataforma por causa do atalho de `obter`.
+    integracao = db.scalar(
+        select(Integracao).where(
+            Integracao.produto == produto,
+            Integracao.empresa_id == empresa_id
+            if empresa_id is not None
+            else Integracao.empresa_id.is_(None),
+        )
+    )
     if integracao is None:
         return
     prefixo = integracao.token_prefixo

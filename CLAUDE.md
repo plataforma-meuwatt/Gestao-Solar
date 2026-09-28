@@ -374,6 +374,11 @@ esquecido ao mexer em qualquer consulta é isto:
   sessão. Parâmetro de empresa numa rota de empresa é a definição de vazamento.
 - **Autenticar é uma coisa só:** `POST /api/painel/entrar` emite o token do portão certo
   conforme o perfil. Não nasce uma segunda porta de login.
+- **Cada empresa tem a conta DELA no meuWatt e no meuPlano.** `integracoes.obter` recebe a
+  empresa; sem a credencial dela, cai na da plataforma — e esse atalho é **recusado
+  sozinho** quando houver mais de uma empresa ativa, porque servir a credencial da
+  plataforma à segunda empresa é entregar a carteira da primeira. O token de cada
+  CLIENTE já era dele e não mudou.
 
 ### Nada de "chips" para selecionar opção
 

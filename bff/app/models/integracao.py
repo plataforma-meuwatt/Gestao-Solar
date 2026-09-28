@@ -21,7 +21,18 @@ mostra o prefixo do token, de quem ele é, e o resultado do último teste.
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -43,9 +54,34 @@ class Integracao(Base):
 
     __tablename__ = "gs_integracoes"
 
+    # Dois índices, e não um `UniqueConstraint(produto, empresa_id)`: no Postgres dois
+    # NULL não colidem, então o único composto deixaria passar DUAS linhas de plataforma
+    # para o mesmo produto — que é exatamente a ambiguidade que ele deveria impedir.
+    __table_args__ = (
+        Index(
+            "uq_gs_integracao_empresa",
+            "produto",
+            "empresa_id",
+            unique=True,
+            postgresql_where=text("empresa_id IS NOT NULL"),
+            sqlite_where=text("empresa_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_gs_integracao_plataforma",
+            "produto",
+            unique=True,
+            postgresql_where=text("empresa_id IS NULL"),
+            sqlite_where=text("empresa_id IS NULL"),
+        ),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
+    #: Uma linha por (produto, empresa) — e a unicidade mora em dois índices parciais,
+    #: declarados em `__table_args__`. O `unique=True` que estava aqui era de quando
+    #: existia UMA credencial por produto no sistema inteiro: com ele, a segunda empresa
+    #: não conseguia gravar a conta dela, e o erro chegava como violação de constraint.
     produto: Mapped[Produto] = mapped_column(
-        Enum(Produto, native_enum=False, length=20), unique=True
+        Enum(Produto, native_enum=False, length=20), index=True
     )
 
     #: De qual empresa é esta credencial. **Nulo = da plataforma**, que é o caso de hoje:

@@ -32,7 +32,7 @@ class _Fake:
 
 
 def test_meuwatt_sem_credencial_diz_o_que_falta(monkeypatch):
-    monkeypatch.setattr(integracoes, 'obter', lambda db, p: _Fake())
+    monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake())
     with pytest.raises(RuntimeError) as e:
         asyncio.run(integracoes.cliente_meuwatt(None))
     assert 'meuWatt' in str(e.value) and 'sem credencial' in str(e.value)
@@ -40,7 +40,7 @@ def test_meuwatt_sem_credencial_diz_o_que_falta(monkeypatch):
 
 
 def test_meuplano_sem_credencial_diz_o_que_falta(monkeypatch):
-    monkeypatch.setattr(integracoes, 'obter', lambda db, p: _Fake())
+    monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake())
     with pytest.raises(RuntimeError) as e:
         asyncio.run(integracoes.cliente_meuplano(None))
     assert 'meuPlano' in str(e.value) and 'sem credencial' in str(e.value)
@@ -48,7 +48,7 @@ def test_meuplano_sem_credencial_diz_o_que_falta(monkeypatch):
 
 def test_com_token_a_guarda_nao_atrapalha(monkeypatch):
     """A guarda protege de configuração pela metade — não pode barrar quem está pronto."""
-    monkeypatch.setattr(integracoes, 'obter', lambda db, p: _Fake(token='cifrado'))
+    monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake(token='cifrado'))
     monkeypatch.setattr(integracoes, 'decifrar', lambda v: 'token-em-claro')
     cli = asyncio.run(integracoes.cliente_meuwatt(None))
     assert cli is not None
