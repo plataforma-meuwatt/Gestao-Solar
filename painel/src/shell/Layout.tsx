@@ -18,6 +18,7 @@
 import {
   Building2,
   Link2,
+  ShieldCheck,
   LogOut,
   MessageCircle,
   Route,
@@ -32,7 +33,7 @@ import React from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
 import { meuAcesso } from '@/features/api'
-import { useAuth } from '@/store/auth'
+import { useAuth, type Escopo, type Perfil } from '@/store/auth'
 
 type ItemMenu = {
   para: string
@@ -133,6 +134,61 @@ export function primeiraTela(
   return item?.para ?? null
 }
 
+/** Como cada perfil se chama na tela. */
+const PAPEL: Record<Perfil, string> = {
+  administrador: 'Administrador do sistema',
+  atendimento: 'Atendimento',
+  gestor_empresa: 'Gerente da empresa',
+}
+
+/**
+ * A faixa que diz, o tempo todo, EM QUE PAPEL a sessão está.
+ *
+ * Não é enfeite e não é redundância com o menu: as duas sessões abrem o mesmo painel, no
+ * mesmo navegador, com telas de nomes parecidos ("Usinas" existe dos dois lados). Sem uma
+ * marca fixa, quem opera as duas contas cadastra o cliente na empresa errada e ninguém
+ * descobre no mesmo dia — e é justamente quem administra a plataforma que troca de conta
+ * várias vezes ao dia.
+ *
+ * Por isso ela é **larga, colorida e presa ao topo do conteúdo**, e não uma linha miúda na
+ * lateral: o que precisa ser lido sem procurar tem de estar onde o olho já está.
+ *
+ * As duas cores não são decoração — elas são o sinal. Âmbar (a cor da marca) é a
+ * plataforma, que enxerga tudo; verde é uma empresa, que enxerga só a carteira dela.
+ */
+function FaixaDePapel({
+  escopo,
+  empresa,
+  perfil,
+}: {
+  escopo: Escopo
+  empresa: string | null
+  perfil: Perfil | null
+}) {
+  const daEmpresa = escopo === 'empresa'
+  return (
+    <div
+      className={`sticky top-0 z-10 flex items-center gap-2.5 px-8 py-2.5 border-b backdrop-blur ${
+        daEmpresa
+          ? 'bg-ok/10 border-ok/30 text-ok'
+          : 'bg-ambar/10 border-ambar/30 text-ambar-texto'
+      }`}
+    >
+      {daEmpresa ? <Building2 size={15} /> : <ShieldCheck size={15} />}
+      <p className="text-sm font-semibold truncate">
+        {daEmpresa ? `Empresa · ${empresa ?? 'sem nome'}` : 'Plataforma · Gestão Solar'}
+      </p>
+      <span className="text-xs opacity-80 truncate">
+        {daEmpresa
+          ? 'você vê apenas a carteira desta empresa'
+          : perfil === 'administrador'
+            ? 'administrador do sistema — você vê todas as empresas'
+            : 'atendimento — você vê todas as empresas'}
+      </span>
+    </div>
+  )
+}
+
 class LimiteDeErro extends React.Component<
   { chaveDeReset: string; children: React.ReactNode },
   { quebrou: boolean; mensagem: string }
@@ -171,7 +227,7 @@ class LimiteDeErro extends React.Component<
 }
 
 export function Layout() {
-  const { token, nome, perfil, empresa, sair, ehAdministrador, ehEmpresa, pode, atualizar } =
+  const { token, nome, perfil, empresa, escopo, sair, ehAdministrador, ehEmpresa, pode, atualizar } =
     useAuth()
   const local = useLocation()
 
@@ -237,7 +293,10 @@ export function Layout() {
 
         <div className="mt-auto p-3 border-t border-borda">
           <p className="text-sm text-forte truncate px-1">{nome}</p>
-          <p className="text-[11px] text-fraco px-1 mb-2 capitalize">{perfil}</p>
+          {/* O papel por extenso, e não o código com `capitalize`: `gestor_empresa` viraria
+              "Gestor_empresa" na tela — código de banco lido por gente é o mesmo defeito
+              que o CLAUDE.md nomeia. */}
+          <p className="text-[11px] text-fraco px-1 mb-2">{perfil ? PAPEL[perfil] : ''}</p>
           <button onClick={sair} className="btn-fantasma w-full">
             <LogOut size={13} />
             Sair
@@ -245,10 +304,13 @@ export function Layout() {
         </div>
       </nav>
 
-      <main className="flex-1 overflow-y-auto px-8 py-7">
-        <LimiteDeErro chaveDeReset={local.pathname}>
-          <Outlet />
-        </LimiteDeErro>
+      <main className="flex-1 overflow-y-auto">
+        <FaixaDePapel escopo={escopo} empresa={empresa} perfil={perfil} />
+        <div className="px-8 py-7">
+          <LimiteDeErro chaveDeReset={local.pathname}>
+            <Outlet />
+          </LimiteDeErro>
+        </div>
       </main>
     </div>
   )

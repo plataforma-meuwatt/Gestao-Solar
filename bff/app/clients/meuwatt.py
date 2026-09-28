@@ -137,6 +137,18 @@ class MeuWattClient:
     async def usina(self, slug: str) -> dict[str, Any]:
         return await self._get(f"/plants/{slug}")
 
+    async def empresas_om(self) -> list[dict[str, Any]]:
+        """As empresas de O&M cadastradas lá (`enterprises`).
+
+        É o cadastro mais maduro dos três sistemas: a usina (`plants.enterprise_id`) e o
+        funcionário (`enterprise_employees`) já pendem dela. O Gestão Solar não a duplica
+        — ele a REFERENCIA, do mesmo jeito que `gs_plant_links` referencia a usina.
+
+        Só administrador enxerga a lista inteira; um token de escopo menor recebe o que
+        aquela conta alcança, e a tela mostra o que vier.
+        """
+        return await self._get("/enterprises")
+
     async def usuarios(self, apenas_ativos: bool = True) -> list[dict[str, Any]]:
         """Todos os usuários. Não há busca por e-mail nesta API — quem precisa filtrar,
         filtra do lado de cá."""

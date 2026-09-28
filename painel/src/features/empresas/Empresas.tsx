@@ -12,18 +12,21 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Power, Sun, Users } from 'lucide-react'
+import { Building2, Link2, Power, Sun, Users } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
   carteiraDaEmpresa,
+  catalogoDeEmpresas,
   criarEmpresa,
   criarGerente,
   editarEmpresa,
   listarEmpresas,
   salvarCarteira,
+  salvarVinculos,
   type Empresa,
+  type EmpresaDoProduto,
   type GerenteCriado,
   type ItemDaCarteira,
 } from '@/features/api'
@@ -35,6 +38,7 @@ export function Empresas() {
   const [novaAberta, setNovaAberta] = useState(false)
   const [carteiraDe, setCarteiraDe] = useState<Empresa | null>(null)
   const [gerenteDe, setGerenteDe] = useState<Empresa | null>(null)
+  const [vinculoDe, setVinculoDe] = useState<Empresa | null>(null)
 
   const alternar = useMutation({
     mutationFn: ({ id, ativa }: { id: number; ativa: boolean }) => editarEmpresa(id, { ativa }),
@@ -71,6 +75,7 @@ export function Empresas() {
               aoAlternar={() => alternar.mutate({ id: e.id, ativa: !e.ativa })}
               aoAbrirCarteira={() => setCarteiraDe(e)}
               aoAbrirGerente={() => setGerenteDe(e)}
+              aoAbrirVinculo={() => setVinculoDe(e)}
             />
           ))}
         </div>
@@ -83,6 +88,9 @@ export function Empresas() {
       {gerenteDe ? (
         <NovoGerente empresa={gerenteDe} aoFechar={() => setGerenteDe(null)} />
       ) : null}
+      {vinculoDe ? (
+        <VinculoModal empresa={vinculoDe} aoFechar={() => setVinculoDe(null)} />
+      ) : null}
     </Pagina>
   )
 }
@@ -93,12 +101,14 @@ function Linha({
   aoAlternar,
   aoAbrirCarteira,
   aoAbrirGerente,
+  aoAbrirVinculo,
 }: {
   empresa: Empresa
   ocupado: boolean
   aoAlternar: () => void
   aoAbrirCarteira: () => void
   aoAbrirGerente: () => void
+  aoAbrirVinculo: () => void
 }) {
   return (
     <Cartao>
@@ -110,7 +120,7 @@ function Linha({
             <p className="text-sm text-rotulo mt-0.5">
               {empresa.documento ?? 'sem CNPJ cadastrado'}
             </p>
-            <div className="flex items-center gap-4 mt-2 text-sm text-rotulo">
+            <div className="flex items-center gap-4 mt-2 text-sm text-rotulo flex-wrap">
               <span className="flex items-center gap-1.5">
                 <Users size={14} /> {empresa.usuarios}{' '}
                 {empresa.usuarios === 1 ? 'usuário' : 'usuários'}
@@ -118,12 +128,24 @@ function Linha({
               <span className="flex items-center gap-1.5">
                 <Sun size={14} /> {empresa.usinas} {empresa.usinas === 1 ? 'usina' : 'usinas'}
               </span>
+              <span className="flex items-center gap-1.5">
+                <Link2 size={14} />
+                {[
+                  empresa.mw_enterprise_id ? 'meuWatt' : null,
+                  empresa.mp_tenant_id ? 'meuPlano' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'sem vínculo'}
+              </span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <Selo tom={empresa.ativa ? 'ok' : 'sem-dados'}>{empresa.ativa ? 'Ativa' : 'Desligada'}</Selo>
+          <button className="botao-secundario" onClick={aoAbrirVinculo}>
+            Vínculos
+          </button>
           <button className="botao-secundario" onClick={aoAbrirGerente}>
             Novo gerente
           </button>
@@ -142,6 +164,15 @@ function Linha({
           O gerente desta empresa não entra enquanto ela estiver desligada. Usinas, clientes e
           histórico continuam guardados.
         </p>
+      ) : null}
+
+      {/* Sem nenhum dos dois vínculos a empresa é fantasma: ela aparece na lista e todas
+          as telas dela vêm vazias, porque não há upstream de onde ler. */}
+      {!empresa.mw_enterprise_id && !empresa.mp_tenant_id ? (
+        <Erro className="mt-3">
+          Esta empresa não aponta para nenhuma empresa do meuWatt nem do meuPlano. Enquanto
+          for assim, as telas dela vêm vazias — não há de onde ler.
+        </Erro>
       ) : null}
     </Cartao>
   )
@@ -455,4 +486,153 @@ function sugerir(nome: string): string {
   if (partes.length === 0) return ''
   if (partes.length === 1) return partes[0].replace(/[^a-z0-9._-]/g, '')
   return `${partes[0]}.${partes[partes.length - 1]}`.replace(/[^a-z0-9._-]/g, '')
+}
+
+
+/**
+ * De quem é esta empresa nos dois produtos.
+ *
+ * Os cadastros do meuWatt (`enterprises`) e do meuPlano (`tenants`) são independentes, e
+ * é assim de propósito: alguém pode contratar só a manutenção e nunca existir no
+ * monitoramento. Nenhum dos dois é "o certo" — quem diz que a empresa de lá e a de lá são
+ * a mesma é esta tela.
+ *
+ * As duas listas vêm inteiras, e não filtradas pelo que já foi casado: esconder o que
+ * falta casar é esconder o trabalho. O que já pertence a OUTRA empresa daqui aparece
+ * travado, com o nome de quem o tem.
+ */
+function VinculoModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['empresas', 'catalogo'],
+    queryFn: catalogoDeEmpresas,
+  })
+  const [mw, setMw] = useState<number | null>(empresa.mw_enterprise_id)
+  const [mp, setMp] = useState<number | null>(empresa.mp_tenant_id)
+
+  const salvar = useMutation({
+    mutationFn: () => salvarVinculos(empresa.id, { mw_enterprise_id: mw, mp_tenant_id: mp }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['empresas'] })
+      aoFechar()
+    },
+  })
+
+  return (
+    <Modal titulo={`Vínculos · ${empresa.nome}`} aoFechar={aoFechar} largura="max-w-3xl">
+      {isLoading ? (
+        <Carregando />
+      ) : error ? (
+        <Erro>{mensagemDeErro(error)}</Erro>
+      ) : (
+        <div className="grid gap-5">
+          <Aviso>
+            Os dois cadastros são independentes: ter só um dos lados é normal. O que não
+            pode é não ter nenhum — sem vínculo, as telas desta empresa vêm vazias.
+          </Aviso>
+
+          {(data?.avisos ?? []).map((a) => (
+            <Erro key={a}>{a}</Erro>
+          ))}
+
+          <Escolha
+            titulo="Empresa no meuWatt"
+            itens={data?.meuwatt ?? []}
+            escolhido={mw}
+            empresaId={empresa.id}
+            aoEscolher={setMw}
+          />
+          <Escolha
+            titulo="Empresa no meuPlano"
+            itens={data?.meuplano ?? []}
+            escolhido={mp}
+            empresaId={empresa.id}
+            aoEscolher={setMp}
+          />
+
+          {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+
+          <div className="flex justify-end gap-2">
+            <button className="botao-secundario" onClick={aoFechar}>
+              Cancelar
+            </button>
+            <button className="botao" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
+              {salvar.isPending ? 'Salvando…' : 'Salvar'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+function Escolha({
+  titulo,
+  itens,
+  escolhido,
+  empresaId,
+  aoEscolher,
+}: {
+  titulo: string
+  itens: EmpresaDoProduto[]
+  escolhido: number | null
+  empresaId: number
+  aoEscolher: (v: number | null) => void
+}) {
+  if (!itens.length) {
+    return (
+      <div>
+        <p className="rotulo-campo">{titulo}</p>
+        <p className="text-sm text-rotulo mt-1">
+          Nada para escolher — ou o produto não respondeu, ou não há empresa cadastrada lá.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <p className="rotulo-campo">{titulo}</p>
+      <ul className="mt-2 grid gap-1 max-h-56 overflow-y-auto pr-1">
+        <li>
+          <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo hover:bg-superficie cursor-pointer">
+            <input
+              type="radio"
+              checked={escolhido === null}
+              onChange={() => aoEscolher(null)}
+            />
+            <span className="text-sm text-rotulo">Nenhuma</span>
+          </label>
+        </li>
+        {itens.map((i) => {
+          const deOutra = i.empresa_id !== null && i.empresa_id !== empresaId
+          return (
+            <li key={i.id}>
+              <label
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-campo ${
+                  deOutra ? 'opacity-60' : 'hover:bg-superficie cursor-pointer'
+                }`}
+              >
+                <input
+                  type="radio"
+                  checked={escolhido === i.id}
+                  disabled={deOutra}
+                  onChange={() => aoEscolher(i.id)}
+                />
+                <span className="text-sm text-forte">{i.nome}</span>
+                {i.documento ? <span className="text-xs text-fraco">{i.documento}</span> : null}
+                {i.usinas !== null ? (
+                  <span className="text-xs text-fraco">
+                    {i.usinas} usina(s) · {i.pessoas} pessoa(s)
+                  </span>
+                ) : null}
+                {deOutra ? (
+                  <span className="text-xs text-rotulo ml-auto">{i.empresa_nome}</span>
+                ) : null}
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
 }

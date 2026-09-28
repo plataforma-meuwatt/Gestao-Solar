@@ -338,3 +338,53 @@ def test_a_tela_da_plataforma_recusa_criar_gerente_sem_empresa(db, administrador
         )
     assert erro.value.status_code == 400
     assert "Empresas de O&M" in erro.value.detail
+
+
+# ------------------------------------------------- o vínculo com os produtos
+
+
+def test_a_mesma_empresa_de_um_produto_nao_vincula_em_duas(db, duas_empresas, administrador):
+    """Defeito guardado: duas linhas daqui apontando para a mesma `enterprise` de lá —
+    dois inquilinos lendo a mesma carteira. O banco também recusaria, mas com uma
+    mensagem que ninguém entende; aqui a recusa diz de quem é o vínculo."""
+    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
+
+    a, b = duas_empresas
+    salvar_vinculos(a.id, VinculoIn(mw_enterprise_id=1), db=db, _gestor=administrador)
+
+    with pytest.raises(HTTPException) as erro:
+        salvar_vinculos(b.id, VinculoIn(mw_enterprise_id=1), db=db, _gestor=administrador)
+    assert erro.value.status_code == 409
+    assert a.nome in erro.value.detail
+
+
+def test_campo_ausente_mantem_o_vinculo_e_nulo_explicito_descasa(db, duas_empresas, administrador):
+    """Defeito guardado, e já custou caro em `gs_plant_links.mw_micro_plant_id`: um painel
+    publicado antes do campo não o manda, e tratar ausência como `null` apagaria o vínculo
+    em silêncio a cada edição."""
+    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
+
+    a, _b = duas_empresas
+    salvar_vinculos(
+        a.id, VinculoIn(mw_enterprise_id=1, mp_tenant_id=7), db=db, _gestor=administrador
+    )
+
+    # Só o meuPlano no corpo: o do meuWatt tem de sobreviver.
+    depois = salvar_vinculos(a.id, VinculoIn(mp_tenant_id=9), db=db, _gestor=administrador)
+    assert depois.mw_enterprise_id == 1 and depois.mp_tenant_id == 9
+
+    # `null` explícito descasa.
+    depois = salvar_vinculos(
+        a.id, VinculoIn(mw_enterprise_id=None, mp_tenant_id=9), db=db, _gestor=administrador
+    )
+    assert depois.mw_enterprise_id is None
+
+
+def test_empresa_so_num_produto_e_legitima(db, duas_empresas, administrador):
+    """Alguém pode contratar só a manutenção e nunca existir no monitoramento. Ter um dos
+    dois é normal; o que não pode é não ter nenhum — aí a empresa é fantasma."""
+    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
+
+    a, _b = duas_empresas
+    so_meuplano = salvar_vinculos(a.id, VinculoIn(mp_tenant_id=3), db=db, _gestor=administrador)
+    assert so_meuplano.mp_tenant_id == 3 and so_meuplano.mw_enterprise_id is None

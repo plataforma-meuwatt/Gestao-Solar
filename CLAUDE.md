@@ -374,6 +374,10 @@ esquecido ao mexer em qualquer consulta é isto:
   sessão. Parâmetro de empresa numa rota de empresa é a definição de vazamento.
 - **Autenticar é uma coisa só:** `POST /api/painel/entrar` emite o token do portão certo
   conforme o perfil. Não nasce uma segunda porta de login.
+- **A empresa daqui não é um terceiro cadastro: é o VÍNCULO.** O meuWatt tem
+  `enterprises` e o meuPlano tem `tenants`, independentes um do outro — dá para contratar
+  só a manutenção. `gs_empresas.mw_enterprise_id` e `.mp_tenant_id` dizem que as duas são
+  a mesma, como `gs_plant_links` faz com usina. Empresa sem nenhum dos dois é fantasma.
 - **Cada empresa tem a conta DELA no meuWatt e no meuPlano.** `integracoes.obter` recebe a
   empresa; sem a credencial dela, cai na da plataforma — e esse atalho é **recusado
   sozinho** quando houver mais de uma empresa ativa, porque servir a credencial da

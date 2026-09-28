@@ -646,6 +646,10 @@ export type Empresa = {
   ativa: boolean
   usuarios: number
   usinas: number
+  /** Para qual empresa de cada produto esta linha aponta. Sem nenhum dos dois, ela é
+   *  fantasma: aparece na lista e todas as telas dela vêm vazias. */
+  mw_enterprise_id: number | null
+  mp_tenant_id: number | null
 }
 
 export const listarEmpresas = () => api.get<Empresa[]>('/empresas').then((r) => r.data)
@@ -769,3 +773,28 @@ export const criarGerente = (
   empresaId: number,
   dados: { nome: string; apelido: string; email?: string | null },
 ) => api.post<GerenteCriado>(`/empresas/${empresaId}/gerente`, dados).then((r) => r.data)
+
+export type EmpresaDoProduto = {
+  id: number
+  nome: string
+  documento: string | null
+  usinas: number | null
+  pessoas: number | null
+  empresa_id: number | null
+  empresa_nome: string | null
+}
+
+export type CatalogoDeEmpresas = {
+  meuwatt: EmpresaDoProduto[]
+  meuplano: EmpresaDoProduto[]
+  avisos: string[]
+}
+
+export const catalogoDeEmpresas = () =>
+  api.get<CatalogoDeEmpresas>('/empresas/catalogo').then((r) => r.data)
+
+/** Campo ausente mantém o vínculo; `null` explícito descasa. */
+export const salvarVinculos = (
+  id: number,
+  dados: { mw_enterprise_id?: number | null; mp_tenant_id?: number | null },
+) => api.put<Empresa>(`/empresas/${id}/vinculos`, dados).then((r) => r.data)

@@ -127,6 +127,26 @@ não no bundle. No front ela aparece como:
 - o menu com os itens daquele lado, e nada mais;
 - quando a plataforma estiver olhando uma empresa, uma **faixa dizendo isso** — ver §6.
 
+### 3.5b A empresa daqui é o VÍNCULO, não um terceiro cadastro
+
+Os dois produtos já têm empresa, e **os dois cadastros são independentes de propósito**:
+
+| | entidade | o que pende dela |
+|---|---|---|
+| meuWatt | `enterprises` | `plants.enterprise_id`, `enterprise_employees` (4 empresas cadastradas; a SplendorOEM com 6 usinas e 20 funcionários — medido em 28/09/2026) |
+| meuPlano | `tenants` | `app_users.tenant_id`, e a empresa dona no financeiro |
+| Gestão Solar | `gs_empresas` | o inquilino: login do gerente, escopo, WhatsApp |
+
+Alguém pode contratar **só a manutenção** e nunca existir no monitoramento. Nenhum dos dois
+é "o certo", e nenhum sabe do outro. O que faltava é quem diga que aquela empresa de lá e
+aquela de lá **são a mesma, e é esta aqui** — e é isso que `gs_empresas` faz, com
+`mw_enterprise_id` e `mp_tenant_id`.
+
+É o mesmo papel de `gs_plant_links` para usina, com os mesmos três casos: nos dois
+produtos, só no meuWatt, só no meuPlano. E o mesmo **corolário do dado morto**: empresa sem
+nenhum dos dois vínculos é fantasma — aparece na lista e todas as telas dela vêm vazias,
+porque não há upstream de onde ler. A tela diz isso em vermelho, na própria linha.
+
 ### 3.6 Cada empresa tem a conta DELA no meuWatt e no meuPlano
 
 Decisão do dono, 28/09/2026. O que isso significa no código é menos do que parece, porque
@@ -159,7 +179,8 @@ Três consequências, e a terceira é a que protege:
 ## 4. O que muda no banco
 
 ```
-gs_empresas            (id, nome, documento?, ativa, criada_em)
+gs_empresas            (id, nome, documento?, ativa, criada_em,
+                        mw_enterprise_id?, mp_tenant_id?)  ← o vínculo (§3.5b)
 gs_users.empresa_id    → FK nullable. NULL = plataforma
 gs_plant_links.empresa_id  → de quem é a usina
 gs_integracoes.empresa_id  → FK nullable. NULL = credencial da plataforma

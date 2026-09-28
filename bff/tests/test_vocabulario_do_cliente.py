@@ -35,7 +35,10 @@ import pytest
 V1 = Path(__file__).resolve().parents[1] / "app" / "api" / "v1"
 
 #: Só o painel do gestor. Todo o resto de `app/api/v1` é lido por cliente.
-DO_GESTOR = {"painel.py", "painel_clientes.py"}
+# `painel_empresas.py` entrou em 28/09/2026: ali o gestor casa a empresa DAQUI com a de
+# cada produto, e o nome do produto é a informação — trocá-lo por "Monitoramento" deixaria
+# a tela pedindo para escolher entre duas listas sem dizer de onde cada uma veio.
+DO_GESTOR = {"painel.py", "painel_clientes.py", "painel_empresas.py"}
 
 #: A exceção, com o motivo — não uma lista para onde empurrar o que der trabalho.
 #:

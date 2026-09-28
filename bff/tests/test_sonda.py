@@ -106,6 +106,13 @@ def _tudo_responde(mock):
     mock.route(url__startswith=f"{BASE}/plants/porto-ferreira").respond(
         200, json={"total_generation_kwh": 120.5}
     )
+    # As empresas de O&M de lá — a forma medida em 28/09/2026, direto na produção.
+    mock.get(f"{BASE}/enterprises").respond(
+        200,
+        json=[{"id": 1, "name": "SplendorOEM", "cnpj": "09.220.001/0001-16",
+               "active": True, "third_party": False, "plants_count": 6,
+               "employees_count": 20}],
+    )
     mock.get(f"{BASE}/admin/users").respond(200, json=[{"id": 1, "email": "a@b.com"}])
     mock.get(f"{BASE}/admin/user-plants").respond(200, json=[{"user_id": 1, "plant_id": 1}])
     mock.get(f"{BASE}/reports/portal").respond(200, json=PORTAL_COMO_HOJE)
@@ -154,6 +161,9 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
     # O MICRO também não depende de slug: catálogo vazio e nenhum alerta, coerente com a conta.
     respx.mock.get(f"{BASE}/micro/plants").respond(200, json={"plants": [], "errors": []})
     respx.mock.get(f"{BASE}/micro/alerts").respond(200, json=[])
+    # Nem as empresas de O&M: elas existem antes de qualquer usina, e é justamente isso
+    # que uma conta nova enxerga primeiro.
+    respx.mock.get(f"{BASE}/enterprises").respond(200, json=[])
 
     v = await sonda.varrer(db, Produto.MEUWATT)
 

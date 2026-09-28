@@ -146,6 +146,18 @@ class MeuPlanoClient:
         e o `nivel_acesso` que decide o que o assistente pode revelar."""
         return await self._get("/api/v1/meuacesso/auth/me/session", token=token)
 
+    async def empresas_om(self) -> list[dict[str, Any]]:
+        """Os `tenants` do meuPlano — a empresa/conta de lá.
+
+        O cadastro é INDEPENDENTE do `enterprises` do meuWatt, e é assim de propósito:
+        alguém pode contratar só a manutenção e nunca existir no monitoramento. Quem diz
+        que os dois são a mesma empresa é o vínculo no Gestão Solar, não uma regra de
+        nome ou de CNPJ adivinhada.
+
+        Exige a permissão `admin.tenants.gerenciar` no token.
+        """
+        return await self._get("/api/v1/meuacesso/admin/tenants")
+
     async def usinas(self, token: str | None = None) -> list[dict[str, Any]]:
         """As usinas visíveis. Com `token` do usuário, devolve o escopo DELE — é assim que
         o teste da ponte descobre o que a conta de serviço enxerga.
