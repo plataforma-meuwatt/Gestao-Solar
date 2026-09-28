@@ -21,10 +21,12 @@ import {
   catalogoDeEmpresas,
   criarEmpresa,
   criarGerente,
+  editarUsuarioDaEmpresa,
   editarEmpresa,
   listarEmpresas,
   salvarCarteira,
   salvarVinculos,
+  usuariosDaEmpresaAdmin,
   type Empresa,
   type EmpresaDoProduto,
   type GerenteCriado,
@@ -39,6 +41,7 @@ export function Empresas() {
   const [carteiraDe, setCarteiraDe] = useState<Empresa | null>(null)
   const [gerenteDe, setGerenteDe] = useState<Empresa | null>(null)
   const [vinculoDe, setVinculoDe] = useState<Empresa | null>(null)
+  const [usuariosDe, setUsuariosDe] = useState<Empresa | null>(null)
 
   const alternar = useMutation({
     mutationFn: ({ id, ativa }: { id: number; ativa: boolean }) => editarEmpresa(id, { ativa }),
@@ -76,6 +79,7 @@ export function Empresas() {
               aoAbrirCarteira={() => setCarteiraDe(e)}
               aoAbrirGerente={() => setGerenteDe(e)}
               aoAbrirVinculo={() => setVinculoDe(e)}
+              aoAbrirUsuarios={() => setUsuariosDe(e)}
             />
           ))}
         </div>
@@ -91,6 +95,9 @@ export function Empresas() {
       {vinculoDe ? (
         <VinculoModal empresa={vinculoDe} aoFechar={() => setVinculoDe(null)} />
       ) : null}
+      {usuariosDe ? (
+        <UsuariosModal empresa={usuariosDe} aoFechar={() => setUsuariosDe(null)} />
+      ) : null}
     </Pagina>
   )
 }
@@ -102,6 +109,7 @@ function Linha({
   aoAbrirCarteira,
   aoAbrirGerente,
   aoAbrirVinculo,
+  aoAbrirUsuarios,
 }: {
   empresa: Empresa
   ocupado: boolean
@@ -109,6 +117,7 @@ function Linha({
   aoAbrirCarteira: () => void
   aoAbrirGerente: () => void
   aoAbrirVinculo: () => void
+  aoAbrirUsuarios: () => void
 }) {
   return (
     <Cartao>
@@ -145,6 +154,9 @@ function Linha({
           <Selo tom={empresa.ativa ? 'ok' : 'sem-dados'}>{empresa.ativa ? 'Ativa' : 'Desligada'}</Selo>
           <button className="botao-secundario" onClick={aoAbrirVinculo}>
             Vínculos
+          </button>
+          <button className="botao-secundario" onClick={aoAbrirUsuarios}>
+            Usuários
           </button>
           <button className="botao-secundario" onClick={aoAbrirGerente}>
             Novo gerente
@@ -387,13 +399,16 @@ function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
   const [nome, setNome] = useState('')
   const [apelido, setApelido] = useState('')
   const [email, setEmail] = useState('')
+  const [minha, setMinha] = useState(false)
   const [criado, setCriado] = useState<GerenteCriado | null>(null)
 
   const criar = useMutation({
-    mutationFn: () => criarGerente(empresa.id, { nome, apelido, email: email || null }),
+    mutationFn: () => criarGerente(empresa.id, { nome, apelido, email: email || null, minha }),
     onSuccess: (r) => {
       setCriado(r)
       qc.invalidateQueries({ queryKey: ['empresas'] })
+      // O seletor de papel muda na hora: a conta nova entrou no grupo de quem criou.
+      qc.invalidateQueries({ queryKey: ['papeis'] })
     },
   })
 
@@ -411,8 +426,13 @@ function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
         <div className="grid gap-4">
           <Aviso>
             Anote agora: a senha não é guardada em texto e não dá para vê-la de novo. Quem
-            perder, redefine.
+            perder, redefine — em “Usuários”, na própria empresa.
           </Aviso>
+          {criado.agrupada ? (
+            <p className="text-sm text-ok">
+              Esta conta entrou no seu grupo de papéis: use “Trocar papel”, no alto da tela.
+            </p>
+          ) : null}
           <Cartao>
             <p className="text-sm text-rotulo">Entra com o apelido</p>
             <p className="text-forte font-semibold text-lg mt-1">{criado.apelido}</p>
@@ -455,6 +475,25 @@ function NovoGerente({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
           onChange={(e) => setEmail(e.target.value)}
           nota="Contato apenas. Quem autentica é o apelido."
         />
+
+        {/* O caso de quem administra a plataforma E gerencia uma empresa. Marcado, a conta
+            nasce no mesmo grupo de papéis e o seletor "Trocar papel" já a mostra — sem uma
+            segunda tela para alguém esquecer. */}
+        <label className="flex items-start gap-2.5 px-3 py-2.5 rounded-campo bg-superficie cursor-pointer">
+          <input
+            type="checkbox"
+            checked={minha}
+            onChange={(e) => setMinha(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="text-sm text-forte">Esta conta é minha</span>
+            <span className="block text-xs text-fraco mt-0.5">
+              Você passa a trocar entre o painel da plataforma e esta empresa pelo botão
+              “Trocar papel”, sem sair e entrar de novo.
+            </span>
+          </span>
+        </label>
 
         {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
 
@@ -634,5 +673,117 @@ function Escolha({
         })}
       </ul>
     </div>
+  )
+}
+
+
+/**
+ * Quem é da empresa, e as duas ações que a plataforma precisa ter: desativar e redefinir
+ * a senha.
+ *
+ * Fica aqui, e não em Usuários do sistema, porque aquela tela é do staff da PLATAFORMA —
+ * misturar as duas já deixava um clique na linha errada promover o gerente de um inquilino
+ * a administrador do sistema inteiro. Cada lado se administra na casa dele.
+ */
+function UsuariosModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['empresa-usuarios', empresa.id],
+    queryFn: () => usuariosDaEmpresaAdmin(empresa.id),
+  })
+  const [senhaDe, setSenhaDe] = useState<number | null>(null)
+  const [senha, setSenha] = useState('')
+
+  const editar = useMutation({
+    mutationFn: ({ id, dados }: { id: number; dados: { ativo?: boolean; senha?: string } }) =>
+      editarUsuarioDaEmpresa(empresa.id, id, dados),
+    onSuccess: () => {
+      setSenhaDe(null)
+      setSenha('')
+      qc.invalidateQueries({ queryKey: ['empresa-usuarios', empresa.id] })
+    },
+  })
+
+  const PAPEL: Record<string, string> = {
+    gestor_empresa: 'Gerente',
+    cliente: 'Dono de usina',
+    administrador: 'Plataforma',
+    atendimento: 'Plataforma',
+  }
+
+  return (
+    <Modal titulo={`Usuários · ${empresa.nome}`} aoFechar={aoFechar} largura="max-w-2xl">
+      {isLoading ? (
+        <Carregando />
+      ) : error ? (
+        <Erro>{mensagemDeErro(error)}</Erro>
+      ) : !data?.length ? (
+        <Vazio
+          titulo="Nenhuma conta nesta empresa"
+          descricao="Crie o gerente dela em “Novo gerente”, ou traga clientes em “Usinas e clientes”."
+        />
+      ) : (
+        <div className="grid gap-2">
+          {data.map((u) => (
+            <Cartao key={u.id}>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <p className="text-forte font-semibold">
+                    {u.nome}
+                    {u.minha ? (
+                      <span className="text-xs text-ok font-normal ml-2">é você</span>
+                    ) : null}
+                  </p>
+                  <p className="text-sm text-rotulo mt-0.5">
+                    {u.apelido} · {PAPEL[u.perfil] ?? u.perfil}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Selo tom={u.ativo ? 'ok' : 'sem-dados'}>{u.ativo ? 'Ativo' : 'Inativo'}</Selo>
+                  <button
+                    className="btn-fantasma"
+                    onClick={() => setSenhaDe(senhaDe === u.id ? null : u.id)}
+                  >
+                    Redefinir senha
+                  </button>
+                  <button
+                    className="btn-fantasma"
+                    onClick={() => editar.mutate({ id: u.id, dados: { ativo: !u.ativo } })}
+                    disabled={editar.isPending}
+                  >
+                    {u.ativo ? 'Desativar' : 'Reativar'}
+                  </button>
+                </div>
+              </div>
+
+              {senhaDe === u.id ? (
+                <div className="flex gap-2 mt-3">
+                  <input
+                    className="campo h-9 text-sm"
+                    type="text"
+                    placeholder="senha nova (mínimo 8 caracteres)"
+                    value={senha}
+                    onChange={(e) => setSenha(e.target.value)}
+                    autoFocus
+                  />
+                  <button
+                    className="botao-secundario shrink-0"
+                    disabled={senha.length < 8 || editar.isPending}
+                    onClick={() => editar.mutate({ id: u.id, dados: { senha } })}
+                  >
+                    Definir
+                  </button>
+                </div>
+              ) : null}
+            </Cartao>
+          ))}
+          {editar.error ? <Erro>{mensagemDeErro(editar.error)}</Erro> : null}
+          <p className="text-xs text-fraco mt-1">
+            A senha definida aqui é a que você entrega à pessoa — junto com o apelido, que é
+            o que ela digita para entrar.
+          </p>
+        </div>
+      )}
+    </Modal>
   )
 }

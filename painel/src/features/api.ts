@@ -768,12 +768,19 @@ export const conectarEmpresa = (produto: Produto, dados: { base_url: string; tok
 export const desconectarEmpresa = (produto: Produto) =>
   apiEmpresa.delete<void>(`/conexoes/${produto}/token`).then(() => undefined)
 
-export type GerenteCriado = { id: number; nome: string; apelido: string; senha: string }
+export type GerenteCriado = {
+  id: number
+  nome: string
+  apelido: string
+  senha: string
+  /** A conta nova ficou no seu grupo de papéis — "Trocar papel" já a mostra. */
+  agrupada: boolean
+}
 
 /** A senha aparece UMA vez. Não é guardada em texto: quem perder, redefine. */
 export const criarGerente = (
   empresaId: number,
-  dados: { nome: string; apelido: string; email?: string | null },
+  dados: { nome: string; apelido: string; email?: string | null; minha?: boolean },
 ) => api.post<GerenteCriado>(`/empresas/${empresaId}/gerente`, dados).then((r) => r.data)
 
 export type EmpresaDoProduto = {
@@ -853,3 +860,25 @@ export const agruparContas = (dados: { nome: string; apelidos: string[] }) =>
 
 export const desagruparConta = (apelido: string) =>
   api.delete<void>(`/pessoas/${apelido}`).then(() => undefined)
+
+export type UsuarioDaEmpresaAdmin = {
+  id: number
+  nome: string
+  apelido: string
+  perfil: string
+  ativo: boolean
+  /** Está no MEU grupo de papéis — é a que aparece em "Trocar papel". */
+  minha: boolean
+}
+
+export const usuariosDaEmpresaAdmin = (empresaId: number) =>
+  api.get<UsuarioDaEmpresaAdmin[]>(`/empresas/${empresaId}/usuarios`).then((r) => r.data)
+
+export const editarUsuarioDaEmpresa = (
+  empresaId: number,
+  usuarioId: number,
+  dados: { ativo?: boolean; senha?: string },
+) =>
+  api
+    .patch<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/usuarios/${usuarioId}`, dados)
+    .then((r) => r.data)

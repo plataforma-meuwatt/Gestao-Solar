@@ -311,7 +311,7 @@ def test_o_gerente_nasce_dentro_da_empresa_e_ja_entra(db, duas_empresas, adminis
 
     a, _b = duas_empresas
     criado = criar_gerente(
-        a.id, GerenteIn(nome="Maria Gerente", apelido="maria.om"), db=db, _gestor=administrador
+        a.id, GerenteIn(nome="Maria Gerente", apelido="maria.om"), db=db, gestor=administrador
     )
     assert criado.apelido == "maria.om" and criado.senha
 
@@ -510,3 +510,68 @@ def test_agrupar_contas_de_pessoas_diferentes_e_recusado(db, com_tres_papeis, ca
     with pytest.raises(HTTPException) as erro:
         pessoas.agrupar(db, [gerente, outro], "Mistura")
     assert erro.value.status_code == 409
+
+
+def test_o_gerente_nao_aparece_na_tela_do_staff_da_plataforma(db, duas_empresas, administrador):
+    """Defeito guardado: o gerente de um inquilino aparecia em Usuários do sistema por
+    herança do filtro `!= CLIENTE` — misturado com quem administra a plataforma. Uma linha
+    errada ali o promoveria a administrador do sistema inteiro."""
+    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.api.v1.painel_usuarios import listar
+
+    a, _b = duas_empresas
+    criar_gerente(a.id, GerenteIn(nome="Gerente", apelido="ger.um"), db=db, gestor=administrador)
+
+    apelidos = {m.apelido for m in listar(db=db, _=administrador)}
+    assert "ger.um" not in apelidos
+    assert administrador.apelido in apelidos
+
+
+def test_editar_gerente_pela_tela_do_staff_e_recusado(db, duas_empresas, administrador):
+    """A mesma trava, do outro lado: mesmo sabendo o id, a rota do staff não mexe em conta
+    que não é da plataforma."""
+    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.api.v1.painel_usuarios import MembroPatch, editar
+
+    a, _b = duas_empresas
+    novo = criar_gerente(a.id, GerenteIn(nome="Gerente Dois", apelido="ger.dois"), db=db, gestor=administrador)
+
+    with pytest.raises(HTTPException) as erro:
+        editar(novo.id, MembroPatch(perfil=Perfil.ADMINISTRADOR), db=db, admin=administrador)  # type: ignore[arg-type]
+    assert erro.value.status_code == 404
+
+
+def test_criar_gerente_marcando_que_e_meu_ja_agrupa(db, duas_empresas, administrador):
+    """O caso do dono: administrar a plataforma e gerenciar a O&M. Marcando "é minha", a
+    conta nasce no mesmo grupo e o seletor de papel já a mostra — sem uma segunda tela para
+    alguém esquecer."""
+    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.services import pessoas
+
+    a, _b = duas_empresas
+    criado = criar_gerente(
+        a.id, GerenteIn(nome="Eu, gerente", apelido="eu.om", minha=True), db=db, gestor=administrador
+    )
+    assert criado.agrupada
+
+    db.refresh(administrador)
+    apelidos = {c.apelido for c in pessoas.contas_da_pessoa(db, administrador)}
+    assert apelidos == {administrador.apelido, "eu.om"}
+
+    # E a troca já funciona para baixo, sem senha.
+    assert pessoas.trocar(db, administrador, "eu.om", None).apelido == "eu.om"
+
+
+def test_a_empresa_so_administra_quem_e_dela(db, duas_empresas, administrador):
+    """Defeito guardado: trocar o número na barra de endereço e redefinir a senha de
+    qualquer conta do sistema a partir de uma tela de empresa."""
+    from app.api.v1.painel_empresas import GerenteIn, UsuarioPatch, criar_gerente, editar_usuario_da_empresa
+
+    a, b = duas_empresas
+    da_b = criar_gerente(b.id, GerenteIn(nome="Da B", apelido="ger.b"), db=db, gestor=administrador)
+
+    with pytest.raises(HTTPException) as erro:
+        editar_usuario_da_empresa(
+            a.id, da_b.id, UsuarioPatch(senha="outra-senha-123"), db=db, gestor=administrador
+        )
+    assert erro.value.status_code == 404

@@ -23,6 +23,7 @@ from app.models.plant import PlantLink
 from app.models.user import Perfil, User
 from app.services import empresas as svc
 from app.services import integracoes
+from app.services import pessoas
 
 router = APIRouter(prefix="/api/painel", tags=["painel · empresas"])
 
@@ -221,12 +222,19 @@ class GerenteIn(BaseModel):
     nome: str = Field(min_length=2)
     apelido: str = Field(min_length=3)
     email: EmailStr | None = None
+    #: "Esta conta é minha": agrupa a conta nova com a de quem está criando, e é o que faz
+    #: o seletor "Trocar papel" aparecer. Sem isso, quem administra a plataforma e também
+    #: gerencia uma empresa teria de sair e entrar de novo a cada troca — que é justamente
+    #: o que o agrupamento existe para evitar.
+    minha: bool = False
 
 
 class GerenteOut(BaseModel):
     id: int
     nome: str
     apelido: str
+    #: A conta nova ficou no seu grupo de papéis — o seletor "Trocar papel" já a mostra.
+    agrupada: bool = False
     #: A senha provisória, mostrada UMA vez. Não é guardada em texto e não há como
     #: recuperá-la: quem perder, redefine. É o mesmo desenho da senha do cliente.
     senha: str
@@ -237,7 +245,7 @@ def criar_gerente(
     empresa_id: int,
     body: GerenteIn,
     db: Session = Depends(get_db),
-    _gestor: User = Depends(EXIGE_EMPRESAS),
+    gestor: User = Depends(EXIGE_EMPRESAS),
 ) -> GerenteOut:
     """Cria o gerente DESTA empresa.
 
@@ -270,10 +278,24 @@ def criar_gerente(
         senha_hash=gerar_hash_senha(senha),
     )
     db.add(gerente)
+    db.flush()
+
+    if body.minha:
+        # Agrupar na hora, e não numa segunda tela: quem marca isto está dizendo "sou eu",
+        # e obrigá-lo a repetir a informação em Usuários do sistema é o tipo de passo que
+        # se esquece — a conta fica criada e o seletor de papel não aparece.
+        pessoas.agrupar(db, [gestor, gerente], gestor.nome)
+
     db.commit()
     db.refresh(gerente)
 
-    return GerenteOut(id=gerente.id, nome=gerente.nome, apelido=gerente.apelido, senha=senha)
+    return GerenteOut(
+        id=gerente.id,
+        nome=gerente.nome,
+        apelido=gerente.apelido,
+        senha=senha,
+        agrupada=body.minha,
+    )
 
 
 # ------------------------------------------------- o vínculo com os produtos
@@ -401,3 +423,91 @@ def salvar_vinculos(
 
     db.commit()
     return _saida(db, empresa)
+
+
+class UsuarioDaEmpresaOut(BaseModel):
+    id: int
+    nome: str
+    apelido: str
+    perfil: str
+    ativo: bool
+    #: Se esta conta está no MEU grupo de papéis — é a que aparece em "Trocar papel".
+    minha: bool = False
+
+
+@router.get("/empresas/{empresa_id}/usuarios", response_model=list[UsuarioDaEmpresaOut])
+def usuarios_da_empresa(
+    empresa_id: int, db: Session = Depends(get_db), gestor: User = Depends(EXIGE_EMPRESAS)
+) -> list[UsuarioDaEmpresaOut]:
+    """Quem é desta empresa — gerentes e clientes.
+
+    A plataforma gere o gerente AQUI, e não em Usuários do sistema: aquela tela é do staff
+    da plataforma, e misturar as duas coisas já deixava um clique errado promover o gerente
+    de um inquilino a administrador do sistema inteiro.
+    """
+    svc.por_id(db, empresa_id)
+    return [
+        UsuarioDaEmpresaOut(
+            id=u.id,
+            nome=u.nome,
+            apelido=u.apelido,
+            perfil=u.perfil.value,
+            ativo=u.ativo,
+            minha=gestor.pessoa_id is not None and u.pessoa_id == gestor.pessoa_id,
+        )
+        for u in db.scalars(
+            select(User).where(User.empresa_id == empresa_id).order_by(User.nome)
+        ).all()
+    ]
+
+
+class UsuarioPatch(BaseModel):
+    ativo: bool | None = None
+    #: Define uma senha nova. Some da resposta: quem a define é quem a entrega.
+    senha: str | None = None
+
+
+@router.patch("/empresas/{empresa_id}/usuarios/{usuario_id}", response_model=UsuarioDaEmpresaOut)
+def editar_usuario_da_empresa(
+    empresa_id: int,
+    usuario_id: int,
+    body: UsuarioPatch,
+    db: Session = Depends(get_db),
+    gestor: User = Depends(EXIGE_EMPRESAS),
+) -> UsuarioDaEmpresaOut:
+    """Desativa, reativa ou redefine a senha de quem é da empresa.
+
+    **Só mexe em quem é DESTA empresa** — o id vem da URL e a conta é conferida contra ele.
+    Sem essa checagem, trocar o número na barra de endereço redefiniria a senha de qualquer
+    conta do sistema a partir de uma tela de empresa.
+    """
+    svc.por_id(db, empresa_id)
+    alvo = db.get(User, usuario_id)
+    if alvo is None or alvo.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    if alvo.perfil in (Perfil.ATENDIMENTO, Perfil.ADMINISTRADOR):
+        # Conta da plataforma com empresa gravada (acontece: um administrador que também é
+        # dono de usina). Ela não se administra por aqui.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Esta é uma conta da plataforma. Administre-a em Usuários do sistema.",
+        )
+
+    if body.ativo is not None:
+        alvo.ativo = body.ativo
+    if body.senha:
+        if len(body.senha) < 8:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
+            )
+        alvo.senha_hash = gerar_hash_senha(body.senha)
+    db.commit()
+
+    return UsuarioDaEmpresaOut(
+        id=alvo.id,
+        nome=alvo.nome,
+        apelido=alvo.apelido,
+        perfil=alvo.perfil.value,
+        ativo=alvo.ativo,
+        minha=gestor.pessoa_id is not None and alvo.pessoa_id == gestor.pessoa_id,
+    )

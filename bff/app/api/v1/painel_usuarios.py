@@ -30,6 +30,10 @@ from app.models.pessoa import Pessoa
 from app.models.user import Perfil, User
 from app.services import areas_painel, pessoas
 
+#: Os perfis desta tela. Cliente tem a tela dele; gerente de empresa, a da empresa —
+#: e essa separação é a mesma dos portões: o que não é da plataforma não se administra aqui.
+DA_PLATAFORMA = (Perfil.ATENDIMENTO, Perfil.ADMINISTRADOR)
+
 router = APIRouter(prefix="/api/painel", tags=["painel · usuários do sistema"])
 
 
@@ -83,8 +87,12 @@ def _membro_out(db: Session, m: User) -> MembroOut:
 def listar(
     db: Session = Depends(get_db), _: User = Depends(administrador_atual)
 ) -> list[MembroOut]:
+    # Só o staff da PLATAFORMA. O gerente de uma empresa de O&M também não é cliente, mas
+    # não é desta lista: ele aparecia aqui por herança do `!= CLIENTE`, misturado com quem
+    # administra o sistema — e uma linha errada nesta tela o promoveria a administrador da
+    # plataforma inteira. Ele é gerido na ficha da empresa dele.
     lista = db.scalars(
-        select(User).where(User.perfil != Perfil.CLIENTE).order_by(User.nome)
+        select(User).where(User.perfil.in_(DA_PLATAFORMA)).order_by(User.nome)
     ).all()
     return [_membro_out(db, m) for m in lista]
 
@@ -168,7 +176,7 @@ def editar(
     admin: User = Depends(administrador_atual),
 ) -> MembroOut:
     membro = db.get(User, membro_id)
-    if membro is None or membro.perfil is Perfil.CLIENTE:
+    if membro is None or membro.perfil not in DA_PLATAFORMA:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado")
 
     # Rebaixar ou desativar a si mesmo tranca o painel para fora — e se for o último
@@ -227,7 +235,7 @@ def redefinir_senha(
     revogável. Para tirar alguém de dentro agora, desative a conta.
     """
     membro = db.get(User, membro_id)
-    if membro is None or membro.perfil is Perfil.CLIENTE:
+    if membro is None or membro.perfil not in DA_PLATAFORMA:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado")
 
     membro.senha_hash = gerar_hash_senha(body.senha)
