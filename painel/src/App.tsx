@@ -6,6 +6,7 @@ import { Diagnostico } from '@/features/diagnostico/Diagnostico'
 import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
+import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
 import {
   ClientesDaEmpresa,
   UsinasDaEmpresa,
@@ -179,6 +180,14 @@ export function App() {
               element={
                 <SoEmpresa>
                   <ConexoesDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/vinculos"
+              element={
+                <SoEmpresa>
+                  <VinculosDaEmpresa />
                 </SoEmpresa>
               }
             />

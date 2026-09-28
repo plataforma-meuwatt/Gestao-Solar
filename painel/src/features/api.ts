@@ -789,24 +789,44 @@ export type EmpresaDoProduto = {
   documento: string | null
   usinas: number | null
   pessoas: number | null
-  empresa_id: number | null
-  empresa_nome: string | null
+  escolhida: boolean
 }
 
 export type CatalogoDeEmpresas = {
   meuwatt: EmpresaDoProduto[]
   meuplano: EmpresaDoProduto[]
+  mw_enterprise_id: number | null
+  mp_tenant_id: number | null
   avisos: string[]
 }
 
-export const catalogoDeEmpresas = () =>
-  api.get<CatalogoDeEmpresas>('/empresas/catalogo').then((r) => r.data)
+/**
+ * O catálogo e o vínculo vivem no portão da EMPRESA, não no do painel.
+ *
+ * Quem casa a empresa é quem tem o token, e isso é o gerente: a plataforma cadastra a
+ * empresa e o usuário dela, e não tem credencial no meuWatt nem no meuPlano. Montar a
+ * lista com a credencial de serviço mostraria a carteira de quem a gerou — que não é a do
+ * inquilino.
+ */
+export const catalogoDeVinculos = () =>
+  apiEmpresa.get<CatalogoDeEmpresas>('/vinculos/catalogo').then((r) => r.data)
 
 /** Campo ausente mantém o vínculo; `null` explícito descasa. */
-export const salvarVinculos = (
-  id: number,
-  dados: { mw_enterprise_id?: number | null; mp_tenant_id?: number | null },
-) => api.put<Empresa>(`/empresas/${id}/vinculos`, dados).then((r) => r.data)
+export const salvarVinculos = (dados: {
+  mw_enterprise_id?: number | null
+  mp_tenant_id?: number | null
+}) =>
+  apiEmpresa
+    .put<{ mw_enterprise_id: number | null; mp_tenant_id: number | null }>('/vinculos', dados)
+    .then((r) => r.data)
+
+/** Contas que podem virar gerente de uma empresa (as que não são da plataforma). */
+export type ContaLivre = { apelido: string; nome: string; perfil: string; empresa: string | null }
+
+export const contasLivres = () => api.get<ContaLivre[]>('/contas-livres').then((r) => r.data)
+
+export const tornarGerente = (empresaId: number, apelido: string) =>
+  api.put<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/gerente/${apelido}`).then((r) => r.data)
 
 /* ------------------------------------------------ os papéis de uma pessoa */
 

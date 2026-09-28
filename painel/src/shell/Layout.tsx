@@ -121,6 +121,8 @@ const MENU_EMPRESA: ItemMenu[] = [
   // As contas da empresa nos produtos. Fica por último porque é configuração, não o dia
   // a dia — mas é o primeiro lugar aonde ir quando as listas acima vierem vazias.
   { para: '/minha-empresa/conexoes', rotulo: 'Conexões', icone: Link2 },
+  // Depois de Conexões de propósito: sem o token, não há o que casar aqui.
+  { para: '/minha-empresa/vinculos', rotulo: 'Vínculos', icone: Building2 },
 ]
 
 /** Onde pousa quem entra: a primeira tela que a conta abre, na ordem do menu. */

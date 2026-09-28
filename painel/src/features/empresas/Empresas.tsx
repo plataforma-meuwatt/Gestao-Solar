@@ -18,17 +18,16 @@ import { useState } from 'react'
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
   carteiraDaEmpresa,
-  catalogoDeEmpresas,
+  contasLivres,
   criarEmpresa,
   criarGerente,
   editarUsuarioDaEmpresa,
   editarEmpresa,
   listarEmpresas,
   salvarCarteira,
-  salvarVinculos,
+  tornarGerente,
   usuariosDaEmpresaAdmin,
   type Empresa,
-  type EmpresaDoProduto,
   type GerenteCriado,
   type ItemDaCarteira,
 } from '@/features/api'
@@ -40,7 +39,6 @@ export function Empresas() {
   const [novaAberta, setNovaAberta] = useState(false)
   const [carteiraDe, setCarteiraDe] = useState<Empresa | null>(null)
   const [gerenteDe, setGerenteDe] = useState<Empresa | null>(null)
-  const [vinculoDe, setVinculoDe] = useState<Empresa | null>(null)
   const [usuariosDe, setUsuariosDe] = useState<Empresa | null>(null)
 
   const alternar = useMutation({
@@ -78,7 +76,6 @@ export function Empresas() {
               aoAlternar={() => alternar.mutate({ id: e.id, ativa: !e.ativa })}
               aoAbrirCarteira={() => setCarteiraDe(e)}
               aoAbrirGerente={() => setGerenteDe(e)}
-              aoAbrirVinculo={() => setVinculoDe(e)}
               aoAbrirUsuarios={() => setUsuariosDe(e)}
             />
           ))}
@@ -91,9 +88,6 @@ export function Empresas() {
       ) : null}
       {gerenteDe ? (
         <NovoGerente empresa={gerenteDe} aoFechar={() => setGerenteDe(null)} />
-      ) : null}
-      {vinculoDe ? (
-        <VinculoModal empresa={vinculoDe} aoFechar={() => setVinculoDe(null)} />
       ) : null}
       {usuariosDe ? (
         <UsuariosModal empresa={usuariosDe} aoFechar={() => setUsuariosDe(null)} />
@@ -108,7 +102,6 @@ function Linha({
   aoAlternar,
   aoAbrirCarteira,
   aoAbrirGerente,
-  aoAbrirVinculo,
   aoAbrirUsuarios,
 }: {
   empresa: Empresa
@@ -116,7 +109,6 @@ function Linha({
   aoAlternar: () => void
   aoAbrirCarteira: () => void
   aoAbrirGerente: () => void
-  aoAbrirVinculo: () => void
   aoAbrirUsuarios: () => void
 }) {
   return (
@@ -137,6 +129,9 @@ function Linha({
               <span className="flex items-center gap-1.5">
                 <Sun size={14} /> {empresa.usinas} {empresa.usinas === 1 ? 'usina' : 'usinas'}
               </span>
+              {/* Só leitura: quem casa a empresa com a do meuWatt/meuPlano é o gerente
+                  dela, que é quem tem o token. A plataforma não tem credencial nos
+                  produtos — ver o aviso abaixo quando faltar. */}
               <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
                 {[
@@ -152,9 +147,6 @@ function Linha({
 
         <div className="flex items-center gap-3">
           <Selo tom={empresa.ativa ? 'ok' : 'sem-dados'}>{empresa.ativa ? 'Ativa' : 'Desligada'}</Selo>
-          <button className="btn-secundario" onClick={aoAbrirVinculo}>
-            Vínculos
-          </button>
           <button className="btn-secundario" onClick={aoAbrirUsuarios}>
             Usuários
           </button>
@@ -182,8 +174,9 @@ function Linha({
           as telas dela vêm vazias, porque não há upstream de onde ler. */}
       {!empresa.mw_enterprise_id && !empresa.mp_tenant_id ? (
         <Erro className="mt-3">
-          Esta empresa não aponta para nenhuma empresa do meuWatt nem do meuPlano. Enquanto
-          for assim, as telas dela vêm vazias — não há de onde ler.
+          Esta empresa ainda não aponta para nenhuma empresa do meuWatt nem do meuPlano —
+          as telas dela vêm vazias. Quem faz esse vínculo é o gerente dela, em Conexões e
+          Vínculos: é ele que tem o token dos produtos.
         </Erro>
       ) : null}
     </Cartao>
@@ -537,154 +530,6 @@ function sugerir(nome: string): string {
 }
 
 
-/**
- * De quem é esta empresa nos dois produtos.
- *
- * Os cadastros do meuWatt (`enterprises`) e do meuPlano (`tenants`) são independentes, e
- * é assim de propósito: alguém pode contratar só a manutenção e nunca existir no
- * monitoramento. Nenhum dos dois é "o certo" — quem diz que a empresa de lá e a de lá são
- * a mesma é esta tela.
- *
- * As duas listas vêm inteiras, e não filtradas pelo que já foi casado: esconder o que
- * falta casar é esconder o trabalho. O que já pertence a OUTRA empresa daqui aparece
- * travado, com o nome de quem o tem.
- */
-function VinculoModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => void }) {
-  const qc = useQueryClient()
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['empresas', 'catalogo'],
-    queryFn: catalogoDeEmpresas,
-  })
-  const [mw, setMw] = useState<number | null>(empresa.mw_enterprise_id)
-  const [mp, setMp] = useState<number | null>(empresa.mp_tenant_id)
-
-  const salvar = useMutation({
-    mutationFn: () => salvarVinculos(empresa.id, { mw_enterprise_id: mw, mp_tenant_id: mp }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['empresas'] })
-      aoFechar()
-    },
-  })
-
-  return (
-    <Modal titulo={`Vínculos · ${empresa.nome}`} aoFechar={aoFechar} largura="max-w-3xl">
-      {isLoading ? (
-        <Carregando />
-      ) : error ? (
-        <Erro>{mensagemDeErro(error)}</Erro>
-      ) : (
-        <div className="grid gap-5">
-          <Aviso>
-            Os dois cadastros são independentes: ter só um dos lados é normal. O que não
-            pode é não ter nenhum — sem vínculo, as telas desta empresa vêm vazias.
-          </Aviso>
-
-          {(data?.avisos ?? []).map((a) => (
-            <Erro key={a}>{a}</Erro>
-          ))}
-
-          <Escolha
-            titulo="Empresa no meuWatt"
-            itens={data?.meuwatt ?? []}
-            escolhido={mw}
-            empresaId={empresa.id}
-            aoEscolher={setMw}
-          />
-          <Escolha
-            titulo="Empresa no meuPlano"
-            itens={data?.meuplano ?? []}
-            escolhido={mp}
-            empresaId={empresa.id}
-            aoEscolher={setMp}
-          />
-
-          {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
-
-          <div className="flex justify-end gap-2">
-            <button className="btn-secundario" onClick={aoFechar}>
-              Cancelar
-            </button>
-            <button className="btn-primario" onClick={() => salvar.mutate()} disabled={salvar.isPending}>
-              {salvar.isPending ? 'Salvando…' : 'Salvar'}
-            </button>
-          </div>
-        </div>
-      )}
-    </Modal>
-  )
-}
-
-function Escolha({
-  titulo,
-  itens,
-  escolhido,
-  empresaId,
-  aoEscolher,
-}: {
-  titulo: string
-  itens: EmpresaDoProduto[]
-  escolhido: number | null
-  empresaId: number
-  aoEscolher: (v: number | null) => void
-}) {
-  if (!itens.length) {
-    return (
-      <div>
-        <p className="rotulo-campo">{titulo}</p>
-        <p className="text-sm text-rotulo mt-1">
-          Nada para escolher — ou o produto não respondeu, ou não há empresa cadastrada lá.
-        </p>
-      </div>
-    )
-  }
-  return (
-    <div>
-      <p className="rotulo-campo">{titulo}</p>
-      <ul className="mt-2 grid gap-1 max-h-56 overflow-y-auto pr-1">
-        <li>
-          <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo hover:bg-superficie cursor-pointer">
-            <input
-              type="radio"
-              checked={escolhido === null}
-              onChange={() => aoEscolher(null)}
-            />
-            <span className="text-sm text-rotulo">Nenhuma</span>
-          </label>
-        </li>
-        {itens.map((i) => {
-          const deOutra = i.empresa_id !== null && i.empresa_id !== empresaId
-          return (
-            <li key={i.id}>
-              <label
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-campo ${
-                  deOutra ? 'opacity-60' : 'hover:bg-superficie cursor-pointer'
-                }`}
-              >
-                <input
-                  type="radio"
-                  checked={escolhido === i.id}
-                  disabled={deOutra}
-                  onChange={() => aoEscolher(i.id)}
-                />
-                <span className="text-sm text-forte">{i.nome}</span>
-                {i.documento ? <span className="text-xs text-fraco">{i.documento}</span> : null}
-                {i.usinas !== null ? (
-                  <span className="text-xs text-fraco">
-                    {i.usinas} usina(s) · {i.pessoas} pessoa(s)
-                  </span>
-                ) : null}
-                {deOutra ? (
-                  <span className="text-xs text-rotulo ml-auto">{i.empresa_nome}</span>
-                ) : null}
-              </label>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
-  )
-}
-
 
 /**
  * Quem é da empresa, e as duas ações que a plataforma precisa ter: desativar e redefinir
@@ -791,8 +636,69 @@ function UsuariosModal({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () =
             A senha definida aqui é a que você entrega à pessoa — junto com o apelido, que é
             o que ela digita para entrar.
           </p>
+
+          <TrazerConta empresa={empresa} />
         </div>
       )}
     </Modal>
+  )
+}
+
+
+/**
+ * Trazer para a empresa uma conta que JÁ EXISTE.
+ *
+ * "Novo gerente" não serve para quem já está no sistema: a conta traz usinas concedidas,
+ * tokens de produto e histórico, e recriá-la perderia tudo. É o caso de quem já usava o
+ * Gestão Solar como cliente e passa a gerenciar a própria empresa.
+ *
+ * A sua própria conta não aparece: quem administra a plataforma e se rebaixasse a gerente
+ * perderia o painel no mesmo instante, e a saída seria outro administrador ou o banco.
+ */
+function TrazerConta({ empresa }: { empresa: Empresa }) {
+  const qc = useQueryClient()
+  const [apelido, setApelido] = useState('')
+  const { data } = useQuery({ queryKey: ['contas-livres'], queryFn: contasLivres })
+
+  const trazer = useMutation({
+    mutationFn: () => tornarGerente(empresa.id, apelido),
+    onSuccess: () => {
+      setApelido('')
+      qc.invalidateQueries({ queryKey: ['empresa-usuarios', empresa.id] })
+      qc.invalidateQueries({ queryKey: ['contas-livres'] })
+      qc.invalidateQueries({ queryKey: ['empresas'] })
+    },
+  })
+
+  return (
+    <div className="border-t border-borda pt-4 mt-2">
+      <p className="rotulo-campo">Tornar gerente uma conta que já existe</p>
+      <p className="text-xs text-fraco mt-1 mb-2">
+        Para quem já usa o sistema: a conta mantém usinas, tokens e histórico.
+      </p>
+      <div className="flex gap-2">
+        <select
+          className="campo h-9 text-sm"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value)}
+        >
+          <option value="">escolha uma conta…</option>
+          {(data ?? []).map((c) => (
+            <option key={c.apelido} value={c.apelido}>
+              {c.apelido} — {c.nome}
+              {c.empresa ? ` (hoje em ${c.empresa})` : ''}
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn-secundario shrink-0"
+          disabled={!apelido || trazer.isPending}
+          onClick={() => trazer.mutate()}
+        >
+          {trazer.isPending ? 'Trazendo…' : 'Tornar gerente'}
+        </button>
+      </div>
+      {trazer.error ? <Erro className="mt-2">{mensagemDeErro(trazer.error)}</Erro> : null}
+    </div>
   )
 }

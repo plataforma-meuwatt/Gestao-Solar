@@ -22,7 +22,6 @@ from app.models.empresa import Empresa
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User
 from app.services import empresas as svc
-from app.services import integracoes
 from app.services import pessoas
 
 router = APIRouter(prefix="/api/painel", tags=["painel · empresas"])
@@ -298,133 +297,6 @@ def criar_gerente(
     )
 
 
-# ------------------------------------------------- o vínculo com os produtos
-
-
-class EmpresaDoProduto(BaseModel):
-    """Uma empresa como o produto de origem a descreve."""
-
-    id: int
-    nome: str
-    documento: str | None = None
-    #: Quantas usinas e pessoas ela tem LÁ. Só o meuWatt responde isso hoje; serve para
-    #: reconhecer qual é qual quando dois nomes se parecem.
-    usinas: int | None = None
-    pessoas: int | None = None
-    #: A empresa daqui que já aponta para ela, se houver.
-    empresa_id: int | None = None
-    empresa_nome: str | None = None
-
-
-class CatalogoOut(BaseModel):
-    meuwatt: list[EmpresaDoProduto] = []
-    meuplano: list[EmpresaDoProduto] = []
-    #: Cada lado cai sozinho: com um produto fora, ainda dá para casar o outro. A frase é
-    #: a que o upstream escreveu — é lá que mora "token revogado".
-    avisos: list[str] = []
-
-
-@router.get("/empresas/catalogo", response_model=CatalogoOut)
-async def catalogo(
-    db: Session = Depends(get_db), _gestor: User = Depends(EXIGE_EMPRESAS)
-) -> CatalogoOut:
-    """As empresas que existem em cada produto, e qual delas já está casada aqui.
-
-    Os dois cadastros são independentes e nenhum é "o certo" — quem diz que a empresa de
-    lá e a de lá são a mesma é o vínculo daqui. Por isso as duas listas vêm inteiras, e
-    não filtradas pelo que já foi casado: esconder o que falta casar é esconder o trabalho.
-    """
-    empresas = list(db.scalars(select(Empresa)).all())
-    por_mw = {e.mw_enterprise_id: e for e in empresas if e.mw_enterprise_id is not None}
-    por_mp = {e.mp_tenant_id: e for e in empresas if e.mp_tenant_id is not None}
-
-    saida = CatalogoOut()
-
-    try:
-        cliente = await integracoes.cliente_meuwatt(db)
-        for e in await cliente.empresas_om():
-            daqui = por_mw.get(e.get("id"))
-            saida.meuwatt.append(
-                EmpresaDoProduto(
-                    id=e["id"],
-                    nome=e.get("name") or "sem nome",
-                    documento=e.get("cnpj"),
-                    usinas=e.get("plants_count"),
-                    pessoas=e.get("employees_count"),
-                    empresa_id=daqui.id if daqui else None,
-                    empresa_nome=daqui.nome if daqui else None,
-                )
-            )
-    except Exception as exc:  # noqa: BLE001 — a tela precisa abrir com um produto fora
-        saida.avisos.append(f"meuWatt: {exc}")
-
-    try:
-        cliente_mp = await integracoes.cliente_meuplano(db)
-        for t in await cliente_mp.empresas_om():
-            daqui = por_mp.get(t.get("id"))
-            saida.meuplano.append(
-                EmpresaDoProduto(
-                    id=t["id"],
-                    nome=t.get("name") or "sem nome",
-                    documento=t.get("document"),
-                    empresa_id=daqui.id if daqui else None,
-                    empresa_nome=daqui.nome if daqui else None,
-                )
-            )
-    except Exception as exc:  # noqa: BLE001
-        saida.avisos.append(f"meuPlano: {exc}")
-
-    return saida
-
-
-class VinculoIn(BaseModel):
-    """O par de identificadores. Ausente mantém; `null` explícito descasa.
-
-    A diferença importa: um painel publicado antes deste campo não o manda, e tratar
-    ausência como `null` apagaria o vínculo em silêncio a cada edição de nome — o mesmo
-    defeito que `mw_micro_plant_id` já custou em `gs_plant_links`.
-    """
-
-    mw_enterprise_id: int | None = None
-    mp_tenant_id: int | None = None
-
-
-@router.put("/empresas/{empresa_id}/vinculos", response_model=EmpresaOut)
-def salvar_vinculos(
-    empresa_id: int,
-    body: VinculoIn,
-    db: Session = Depends(get_db),
-    _gestor: User = Depends(EXIGE_EMPRESAS),
-) -> EmpresaOut:
-    """Diz que a empresa de lá e a de lá são esta aqui.
-
-    O conflito é recusado com o nome de quem já tem o vínculo: duas linhas apontando para
-    a mesma empresa de um produto seriam dois inquilinos lendo a mesma carteira, e o banco
-    também recusaria — mas com uma mensagem que ninguém entende.
-    """
-    empresa = svc.por_id(db, empresa_id)
-
-    for campo in ("mw_enterprise_id", "mp_tenant_id"):
-        if campo not in body.model_fields_set:
-            continue
-        valor = getattr(body, campo)
-        if valor is not None:
-            outra = db.scalar(
-                select(Empresa).where(
-                    getattr(Empresa, campo) == valor, Empresa.id != empresa.id
-                )
-            )
-            if outra is not None:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"Essa empresa já está vinculada a “{outra.nome}”. Desfaça lá antes.",
-                )
-        setattr(empresa, campo, valor)
-
-    db.commit()
-    return _saida(db, empresa)
-
-
 class UsuarioDaEmpresaOut(BaseModel):
     id: int
     nome: str
@@ -511,3 +383,77 @@ def editar_usuario_da_empresa(
         ativo=alvo.ativo,
         minha=gestor.pessoa_id is not None and alvo.pessoa_id == gestor.pessoa_id,
     )
+
+
+@router.put("/empresas/{empresa_id}/gerente/{apelido}", response_model=UsuarioDaEmpresaOut)
+def tornar_gerente(
+    empresa_id: int,
+    apelido: str,
+    db: Session = Depends(get_db),
+    gestor: User = Depends(EXIGE_EMPRESAS),
+) -> UsuarioDaEmpresaOut:
+    """Faz de uma conta JÁ EXISTENTE o gerente desta empresa.
+
+    Existe porque "criar gerente" não serve para quem já está no sistema: a conta traz
+    usinas concedidas, tokens de produto e histórico, e recriá-la perderia tudo isso.
+
+    **A própria conta é recusada.** Quem administra a plataforma e se rebaixasse a gerente
+    perderia o painel no mesmo instante — e a única saída seria outro administrador ou o
+    banco. O caminho certo é ter uma conta para cada papel.
+    """
+    svc.por_id(db, empresa_id)
+    conta = db.scalar(select(User).where(User.apelido == apelido.strip().lower()))
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    if conta.id == gestor.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Você perderia o painel no mesmo instante. Use uma conta separada para o "
+            "papel de gerente.",
+        )
+
+    conta.perfil = Perfil.GESTOR_EMPRESA
+    conta.empresa_id = empresa_id
+    db.commit()
+
+    return UsuarioDaEmpresaOut(
+        id=conta.id,
+        nome=conta.nome,
+        apelido=conta.apelido,
+        perfil=conta.perfil.value,
+        ativo=conta.ativo,
+        minha=gestor.pessoa_id is not None and conta.pessoa_id == gestor.pessoa_id,
+    )
+
+
+class ContaLivreOut(BaseModel):
+    apelido: str
+    nome: str
+    perfil: str
+    empresa: str | None = None
+
+
+@router.get("/contas-livres", response_model=list[ContaLivreOut])
+def contas_livres(
+    db: Session = Depends(get_db), _gestor: User = Depends(EXIGE_EMPRESAS)
+) -> list[ContaLivreOut]:
+    """Contas que podem virar gerente de uma empresa.
+
+    Mostra TODAS as que não são da plataforma, com a empresa atual ao lado quando houver:
+    esconder as que já têm empresa faria a tela mentir sobre quem existe, e mover alguém de
+    uma empresa para outra é uma decisão legítima de quem administra.
+    """
+    empresas = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    return [
+        ContaLivreOut(
+            apelido=u.apelido,
+            nome=u.nome,
+            perfil=u.perfil.value,
+            empresa=empresas.get(u.empresa_id) if u.empresa_id else None,
+        )
+        for u in db.scalars(
+            select(User)
+            .where(User.perfil.in_([Perfil.CLIENTE, Perfil.GESTOR_EMPRESA]))
+            .order_by(User.nome)
+        ).all()
+    ]

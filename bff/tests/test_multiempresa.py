@@ -343,51 +343,77 @@ def test_a_tela_da_plataforma_recusa_criar_gerente_sem_empresa(db, administrador
 # ------------------------------------------------- o vínculo com os produtos
 
 
-def test_a_mesma_empresa_de_um_produto_nao_vincula_em_duas(db, duas_empresas, administrador):
-    """Defeito guardado: duas linhas daqui apontando para a mesma `enterprise` de lá —
-    dois inquilinos lendo a mesma carteira. O banco também recusaria, mas com uma
-    mensagem que ninguém entende; aqui a recusa diz de quem é o vínculo."""
-    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
+def test_o_vinculo_e_do_gerente_e_sai_da_sessao(db, carteiras):
+    """Correção de rumo do dono, 28/09/2026: **quem casa a empresa é quem tem o token**, e
+    isso é o gerente — a plataforma cadastra a empresa e o usuário dela, e não tem
+    credencial no meuWatt nem no meuPlano. Usar a credencial de serviço para montar a lista
+    mostraria a carteira de quem a gerou, que não é a do inquilino.
 
-    a, b = duas_empresas
-    salvar_vinculos(a.id, VinculoIn(mw_enterprise_id=1), db=db, _gestor=administrador)
+    E a empresa vem da SESSÃO: uma rota de empresa que aceitasse o id de outra deixaria
+    qualquer gerente apontar a empresa do vizinho para a dele.
+    """
+    from app.api.v1.empresa import VinculoIn, salvar_vinculos
 
-    with pytest.raises(HTTPException) as erro:
-        salvar_vinculos(b.id, VinculoIn(mw_enterprise_id=1), db=db, _gestor=administrador)
-    assert erro.value.status_code == 409
-    assert a.nome in erro.value.detail
+    _a, _b, gerente = carteiras
+    depois = salvar_vinculos(VinculoIn(mw_enterprise_id=1, mp_tenant_id=7), db=db, gerente=gerente)
+    assert depois.mw_enterprise_id == 1 and depois.mp_tenant_id == 7
 
-
-def test_campo_ausente_mantem_o_vinculo_e_nulo_explicito_descasa(db, duas_empresas, administrador):
-    """Defeito guardado, e já custou caro em `gs_plant_links.mw_micro_plant_id`: um painel
-    publicado antes do campo não o manda, e tratar ausência como `null` apagaria o vínculo
-    em silêncio a cada edição."""
-    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
-
-    a, _b = duas_empresas
-    salvar_vinculos(
-        a.id, VinculoIn(mw_enterprise_id=1, mp_tenant_id=7), db=db, _gestor=administrador
-    )
-
-    # Só o meuPlano no corpo: o do meuWatt tem de sobreviver.
-    depois = salvar_vinculos(a.id, VinculoIn(mp_tenant_id=9), db=db, _gestor=administrador)
+    # Campo ausente mantém; `null` explícito descasa — a régua de `mw_micro_plant_id`.
+    depois = salvar_vinculos(VinculoIn(mp_tenant_id=9), db=db, gerente=gerente)
     assert depois.mw_enterprise_id == 1 and depois.mp_tenant_id == 9
-
-    # `null` explícito descasa.
-    depois = salvar_vinculos(
-        a.id, VinculoIn(mw_enterprise_id=None, mp_tenant_id=9), db=db, _gestor=administrador
-    )
+    depois = salvar_vinculos(VinculoIn(mw_enterprise_id=None, mp_tenant_id=9), db=db, gerente=gerente)
     assert depois.mw_enterprise_id is None
 
 
-def test_empresa_so_num_produto_e_legitima(db, duas_empresas, administrador):
-    """Alguém pode contratar só a manutenção e nunca existir no monitoramento. Ter um dos
-    dois é normal; o que não pode é não ter nenhum — aí a empresa é fantasma."""
-    from app.api.v1.painel_empresas import VinculoIn, salvar_vinculos
+def test_a_mesma_empresa_do_produto_nao_vincula_em_duas(db, carteiras, duas_empresas):
+    """Duas linhas apontando para a mesma empresa de um produto seriam dois inquilinos
+    lendo a mesma carteira. E a recusa NÃO diz de quem é o vínculo: o gerente de um
+    inquilino não deve descobrir os nomes dos outros por tentativa."""
+    from app.api.v1.empresa import VinculoIn, salvar_vinculos
+
+    a, b, gerente = carteiras
+    b.mw_enterprise_id = 42
+    db.commit()
+
+    with pytest.raises(HTTPException) as erro:
+        salvar_vinculos(VinculoIn(mw_enterprise_id=42), db=db, gerente=gerente)
+    assert erro.value.status_code == 409
+    assert b.nome not in erro.value.detail, "o nome da outra empresa vazou na mensagem"
+
+
+def test_a_plataforma_nao_casa_empresa(db):
+    """A trava do desenho novo: as rotas de catálogo e de vínculo saíram do painel. Sem
+    token, a plataforma não tem o que listar — e listar com a credencial de serviço
+    mostraria a carteira de quem a gerou."""
+    from app.api.v1 import painel_empresas
+
+    assert not hasattr(painel_empresas, "catalogo")
+    assert not hasattr(painel_empresas, "salvar_vinculos")
+
+
+def test_promover_conta_existente_a_gerente(db, duas_empresas, administrador, carteiras):
+    """"Criar gerente" não serve para quem já está no sistema: a conta traz usinas
+    concedidas, tokens de produto e histórico, e recriá-la perderia tudo."""
+    from app.api.v1.painel_empresas import tornar_gerente
 
     a, _b = duas_empresas
-    so_meuplano = salvar_vinculos(a.id, VinculoIn(mp_tenant_id=3), db=db, _gestor=administrador)
-    assert so_meuplano.mp_tenant_id == 3 and so_meuplano.mw_enterprise_id is None
+    cliente = db.scalar(select(User).where(User.apelido == "cliente.b"))
+
+    saida = tornar_gerente(a.id, cliente.apelido, db=db, gestor=administrador)
+    assert saida.perfil == "gestor_empresa"
+    db.refresh(cliente)
+    assert cliente.empresa_id == a.id and cliente.abre_empresa
+
+
+def test_o_administrador_nao_se_rebaixa_a_gerente(db, duas_empresas, administrador):
+    """Ele perderia o painel no mesmo instante, e a saída seria outro administrador ou o
+    banco. O caminho certo é uma conta para cada papel."""
+    from app.api.v1.painel_empresas import tornar_gerente
+
+    a, _b = duas_empresas
+    with pytest.raises(HTTPException) as erro:
+        tornar_gerente(a.id, administrador.apelido, db=db, gestor=administrador)
+    assert erro.value.status_code == 400
 
 
 # ------------------------------------------------------ os papéis de uma pessoa
@@ -575,3 +601,28 @@ def test_a_empresa_so_administra_quem_e_dela(db, duas_empresas, administrador):
             a.id, da_b.id, UsuarioPatch(senha="outra-senha-123"), db=db, gestor=administrador
         )
     assert erro.value.status_code == 404
+
+
+def test_o_aviso_do_catalogo_traz_a_frase_do_produto(db, duas_empresas, administrador, monkeypatch):
+    """Defeito guardado, visto na tela do dono em 28/09/2026: o aviso trazia o `str()` da
+    exceção do httpx — "Client error '401 Unauthorized' for url 'https://.../admin/tenants'
+    For more information check: https://developer.mozilla.org/..." —, com a URL interna do
+    upstream e um convite a ler documentação de HTTP. A frase que resolvia estava do outro
+    lado: "Token revogado. Emita um novo no meuPlano.".
+    """
+    import httpx
+
+    from app.api.v1 import empresa as api_empresa
+    from app.models.integracao import Produto
+
+    resposta = httpx.Response(
+        401,
+        json={"detail": "Token revogado. Emita um novo no meuPlano."},
+        request=httpx.Request("GET", "https://meuplano.exemplo/api/v1/meuacesso/admin/tenants"),
+    )
+    erro = httpx.HTTPStatusError("Client error '401 Unauthorized'", request=resposta.request, response=resposta)
+
+    aviso = api_empresa._aviso(Produto.MEUPLANO, erro)
+    assert "Token revogado" in aviso
+    assert "developer.mozilla.org" not in aviso
+    assert "meuplano.exemplo" not in aviso, "a URL interna do upstream foi para a tela"

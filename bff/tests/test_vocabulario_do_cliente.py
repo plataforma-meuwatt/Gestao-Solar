@@ -35,10 +35,15 @@ import pytest
 V1 = Path(__file__).resolve().parents[1] / "app" / "api" / "v1"
 
 #: Só o painel do gestor. Todo o resto de `app/api/v1` é lido por cliente.
-# `painel_empresas.py` entrou em 28/09/2026: ali o gestor casa a empresa DAQUI com a de
-# cada produto, e o nome do produto é a informação — trocá-lo por "Monitoramento" deixaria
-# a tela pedindo para escolher entre duas listas sem dizer de onde cada uma veio.
-DO_GESTOR = {"painel.py", "painel_clientes.py", "painel_empresas.py"}
+# `empresa.py` é o portão do GERENTE da empresa de O&M, e ali o nome do produto é a
+# informação: ele cola o token de cada um em Conexões e escolhe, em Vínculos, qual empresa
+# do meuWatt e qual do meuPlano é a dele. "Monitoramento" deixaria a tela pedindo para
+# escolher entre duas listas sem dizer de onde cada uma veio.
+#
+# `painel_empresas.py` esteve aqui por algumas horas, em 28/09/2026, quando a tela de casar
+# empresas morava no painel. Ela mudou de lado — quem tem token é a empresa, não a
+# plataforma — e com ela foi embora a única razão de o painel nomear produto ali.
+DO_GESTOR = {"painel.py", "painel_clientes.py", "empresa.py"}
 
 #: A exceção, com o motivo — não uma lista para onde empurrar o que der trabalho.
 #:
@@ -102,12 +107,20 @@ def test_o_painel_do_gestor_continua_nomeando_os_produtos() -> None:
     única função naquela tela é dizer em qual produto falta o vínculo — ficaria dizendo
     "algum sistema não respondeu", que não conserta nada.
     """
-    nomeiam = {
-        arquivo.name
-        for arquivo in (V1 / n for n in DO_GESTOR)
-        for _, texto in _textos_que_saem(arquivo)
-        if any(p in texto.lower() for p in PRODUTOS)
-    }
+    nomeiam = set()
+    for nome_do_arquivo in DO_GESTOR:
+        arquivo = V1 / nome_do_arquivo
+        if any(p in t.lower() for _, t in _textos_que_saem(arquivo) for p in PRODUTOS):
+            nomeiam.add(nome_do_arquivo)
+            continue
+        # Nomear pela FONTE ÚNICA também conta, e é melhor do que o literal: `NOME[produto]`
+        # (`core/tokens_produto`) devolve "meuWatt"/"meuPlano" com a mesma grafia em todo
+        # lugar. Exigir a string crua empurraria o código de volta para a cópia — e foi
+        # justamente ao trocar o literal pela fonte que este teste reprovou, em 28/09/2026,
+        # num arquivo que continuava dizendo o nome do produto na tela.
+        if "NOME[" in arquivo.read_text(encoding="utf-8"):
+            nomeiam.add(nome_do_arquivo)
+
     assert nomeiam == DO_GESTOR, f"O painel deixou de nomear os produtos: falta {DO_GESTOR - nomeiam}"
 
 

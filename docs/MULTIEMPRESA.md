@@ -147,6 +147,29 @@ produtos, só no meuWatt, só no meuPlano. E o mesmo **corolário do dado morto*
 nenhum dos dois vínculos é fantasma — aparece na lista e todas as telas dela vêm vazias,
 porque não há upstream de onde ler. A tela diz isso em vermelho, na própria linha.
 
+### 3.5c Quem CASA a empresa é quem tem o token — e isso é a empresa
+
+Correção de rumo do dono, no mesmo dia em que o vínculo nasceu: a tela de casar empresas
+estava no painel da PLATAFORMA, e a plataforma **não tem token nos produtos**. Ela montava
+a lista com a credencial de serviço — que é de uma conta específica do meuWatt — e pedia ao
+gestor que escolhesse ali. O gestor então via a carteira de quem gerou aquele token, não a
+do inquilino.
+
+A divisão que vale:
+
+| quem | faz |
+|---|---|
+| **plataforma** (`renan.gestao`) | cadastra a empresa, cadastra o usuário dela, **vê tudo**. Sem token, sem vínculo. |
+| **empresa** (o gerente) | cola o token dela em Conexões e, **com ele**, escolhe em Vínculos qual empresa do meuWatt e do meuPlano é a sua |
+
+Por isso `GET /vinculos/catalogo` e `PUT /vinculos` vivem em `/api/empresa/*`, lendo com
+`integracoes.cliente_*(db, empresa_id)`. E a empresa vem da **sessão**, nunca da URL: uma
+rota de empresa que aceitasse o id de outra deixaria um gerente apontar a empresa do
+vizinho para a dele.
+
+No painel sobrou o **indicador**: a linha da empresa diz "meuWatt · meuPlano" ou "sem
+vínculo", e quando falta explica de quem é o trabalho. Informação, não formulário.
+
 ### 3.6 Cada empresa tem a conta DELA no meuWatt e no meuPlano
 
 Decisão do dono, 28/09/2026. O que isso significa no código é menos do que parece, porque

@@ -23,7 +23,7 @@ recusa esta sessão em qualquer rota de painel.
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -31,6 +31,8 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import gestor_empresa_atual
+from app.core.tokens_produto import NOME
+from app.models.empresa import Empresa
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
@@ -309,4 +311,144 @@ def desconectar(
         produto,
         ator_email=gerente.identificacao,
         empresa_id=svc.empresa_exigida(gerente),
+    )
+
+
+# ---------------------------------------------------------------- os vínculos
+
+
+class EmpresaDoProduto(BaseModel):
+    """Uma empresa como o produto de origem a descreve."""
+
+    id: int
+    nome: str
+    documento: str | None = None
+    #: Quantas usinas e pessoas ela tem LÁ. Só o meuWatt responde isso; serve para
+    #: reconhecer qual é qual quando dois nomes se parecem.
+    usinas: int | None = None
+    pessoas: int | None = None
+    #: Já é a que esta empresa aponta.
+    escolhida: bool = False
+
+
+class CatalogoOut(BaseModel):
+    meuwatt: list[EmpresaDoProduto] = []
+    meuplano: list[EmpresaDoProduto] = []
+    mw_enterprise_id: int | None = None
+    mp_tenant_id: int | None = None
+    #: Cada lado cai sozinho. A frase é a que o produto escreveu — é lá que mora
+    #: "token revogado".
+    avisos: list[str] = []
+
+
+def _aviso(produto: Produto, exc: Exception) -> str:
+    """A frase que o PRODUTO escreveu, não a da biblioteca de rede.
+
+    `str(exc)` de um erro do httpx chega assim na tela: *"Client error '401 Unauthorized'
+    for url 'https://.../admin/tenants' For more information check:
+    https://developer.mozilla.org/..."* — a URL interna do upstream na tela, um convite a
+    ler documentação de HTTP, e escondida a única frase que resolve.
+    """
+    return f"{NOME[produto]}: {integracoes.traduzir_falha(exc, produto).detalhe}"
+
+
+@router.get("/vinculos/catalogo", response_model=CatalogoOut)
+async def catalogo_de_vinculos(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> CatalogoOut:
+    """As empresas que o SEU token enxerga em cada produto.
+
+    **Quem casa a empresa é quem tem o token, e é você.** A plataforma cadastra a empresa e
+    o usuário dela; ela não tem credencial no meuWatt nem no meuPlano, e usar a credencial
+    de serviço para montar esta lista mostraria a carteira de quem a gerou — que não é a
+    sua. Aqui a leitura sai com o token desta empresa, então a lista é exatamente o que a
+    sua conta alcança lá.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    empresa = svc.por_id(db, empresa_id)
+    saida = CatalogoOut(
+        mw_enterprise_id=empresa.mw_enterprise_id, mp_tenant_id=empresa.mp_tenant_id
+    )
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db, empresa_id)
+        for e in await cliente.empresas_om():
+            saida.meuwatt.append(
+                EmpresaDoProduto(
+                    id=e["id"],
+                    nome=e.get("name") or "sem nome",
+                    documento=e.get("cnpj"),
+                    usinas=e.get("plants_count"),
+                    pessoas=e.get("employees_count"),
+                    escolhida=e["id"] == empresa.mw_enterprise_id,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 — a tela abre com um produto fora
+        saida.avisos.append(_aviso(Produto.MEUWATT, exc))
+
+    try:
+        cliente_mp = await integracoes.cliente_meuplano(db, empresa_id)
+        for t in await cliente_mp.empresas_om():
+            saida.meuplano.append(
+                EmpresaDoProduto(
+                    id=t["id"],
+                    nome=t.get("name") or "sem nome",
+                    documento=t.get("document"),
+                    escolhida=t["id"] == empresa.mp_tenant_id,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        saida.avisos.append(_aviso(Produto.MEUPLANO, exc))
+
+    return saida
+
+
+class VinculoIn(BaseModel):
+    """Ausente mantém; `null` explícito descasa — a mesma régua de `mw_micro_plant_id`."""
+
+    mw_enterprise_id: int | None = None
+    mp_tenant_id: int | None = None
+
+
+class VinculoOut(BaseModel):
+    mw_enterprise_id: int | None = None
+    mp_tenant_id: int | None = None
+
+
+@router.put("/vinculos", response_model=VinculoOut)
+def salvar_vinculos(
+    body: VinculoIn,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> VinculoOut:
+    """Diz que a empresa de lá e a de lá são esta — a sua.
+
+    A empresa vem da SESSÃO, nunca da URL: uma rota de empresa que aceitasse o id de outra
+    deixaria qualquer gerente apontar a empresa do vizinho para a dele.
+    """
+    empresa = svc.por_id(db, svc.empresa_exigida(gerente))
+
+    for campo in ("mw_enterprise_id", "mp_tenant_id"):
+        if campo not in body.model_fields_set:
+            continue
+        valor = getattr(body, campo)
+        if valor is not None:
+            outra = db.scalar(
+                select(Empresa).where(
+                    getattr(Empresa, campo) == valor, Empresa.id != empresa.id
+                )
+            )
+            if outra is not None:
+                # Sem dizer QUAL empresa já tem: o gerente de um inquilino não deve
+                # descobrir os nomes dos outros por tentativa.
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Essa empresa já está vinculada a outra conta da plataforma. "
+                    "Fale com quem administra.",
+                )
+        setattr(empresa, campo, valor)
+
+    db.commit()
+    return VinculoOut(
+        mw_enterprise_id=empresa.mw_enterprise_id, mp_tenant_id=empresa.mp_tenant_id
     )
