@@ -458,6 +458,19 @@ def salvar_vinculos(
 # ------------------------------------------------- trazer as usinas da empresa
 
 
+class CandidataOut(BaseModel):
+    """Uma usina do meuPlano que PARECE ser esta do meuWatt.
+
+    Os motivos vão junto ("mesmo nome", "a 300 m", "mesma potência") porque casar errado
+    mistura a geração de uma usina com a manutenção de outra, e ninguém percebe até alguém
+    questionar um relatório. Quem decide é quem lê os motivos.
+    """
+
+    mp_usina_id: int
+    nome: str
+    motivos: list[str] = []
+
+
 class LinhaDeUsina(BaseModel):
     """Uma usina vista dos dois lados, como a conciliação do painel a descreve."""
 
@@ -474,10 +487,21 @@ class LinhaDeUsina(BaseModel):
     #: Sugestão de par, quando a usina só apareceu de um lado.
     par_provavel_mw: str | None = None
     par_provavel_nome: str | None = None
+    #: As candidatas do meuPlano para esta usina do meuWatt, da mais provável para a menos.
+    candidatos: list[CandidataOut] = []
+
+
+class UsinaDoMeuPlano(BaseModel):
+    id: int
+    nome: str
 
 
 class CatalogoDeUsinas(BaseModel):
     linhas: list[LinhaDeUsina] = []
+    #: Todas as usinas do meuPlano que o token alcança — para casar à mão quando a
+    #: sugestão não serve. Sem isso, uma usina cujo nome não se parece com nada ficaria
+    #: sem par para sempre, e a tela não teria como dizer que existe.
+    usinas_do_meuplano: list[UsinaDoMeuPlano] = []
     avisos: list[str] = []
 
 
@@ -525,10 +549,22 @@ async def catalogo_de_usinas(
             no_app=l.no_app,
             par_provavel_mw=l.par_provavel_mw,
             par_provavel_nome=l.par_provavel_nome,
+            candidatos=[
+                CandidataOut(mp_usina_id=c.mp_usina_id, nome=c.nome, motivos=c.motivos)
+                for c in l.candidatos
+            ],
         )
         for l in conciliacao.montar(usinas_mw, usinas_mp, links)
     ]
-    return CatalogoDeUsinas(linhas=linhas, avisos=avisos)
+    return CatalogoDeUsinas(
+        linhas=linhas,
+        usinas_do_meuplano=[
+            UsinaDoMeuPlano(id=u["id"], nome=conciliacao.nome_de(u))
+            for u in usinas_mp
+            if u.get("id") is not None
+        ],
+        avisos=avisos,
+    )
 
 
 class UsinaIn(BaseModel):
@@ -572,9 +608,18 @@ def salvar_usina(
         if link is None or link.empresa_id != empresa_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
 
-    # O mesmo identificador de produto não pode pertencer a duas usinas — nem dentro da
-    # empresa, nem entre empresas. A mensagem muda conforme o caso: dentro, diz de quem é;
-    # fora, apenas recusa, para não revelar a carteira do vizinho.
+    # O mesmo identificador de produto não pode pertencer a duas usinas. Três casos, e
+    # confundi-los travou o dono na primeira tentativa:
+    #
+    # 1. a usina existe e é **de ninguém** — é o estado de tudo o que foi cadastrado antes
+    #    do multiempresa. Trazer para a empresa é ADOTÁ-LA, não criar outra: criar daria
+    #    duas linhas para a mesma usina, e recusar (que era o que acontecia) deixava as 7
+    #    usinas reais inalcançáveis, com a mensagem "já pertence a outra empresa" — que era
+    #    falsa, porque ela não pertencia a ninguém;
+    # 2. a usina já é DESTA empresa por outro vínculo — aí é conflito de verdade, e a
+    #    mensagem diz com qual nome ela já está aqui;
+    # 3. a usina é de OUTRA empresa — recusa sem dizer de quem, para não revelar a
+    #    carteira do vizinho.
     for campo, valor in ((PlantLink.mw_plant_slug, body.mw_slug), (PlantLink.mp_usina_id, body.mp_usina_id)):
         if valor is None:
             continue
@@ -582,20 +627,28 @@ def salvar_usina(
         if link is not None:
             condicoes.append(PlantLink.id != link.id)
         outro = db.scalar(select(PlantLink).where(*condicoes))
-        if outro is not None:
-            if outro.empresa_id == empresa_id:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"Esta usina já está aqui como “{outro.nome}”. Desfaça o outro vínculo antes.",
-                )
+        if outro is None:
+            continue
+
+        if outro.empresa_id is None and link is None:
+            link = outro  # adoção
+            continue
+        if outro.empresa_id == empresa_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Esta usina já pertence a outra empresa da plataforma. Fale com quem administra.",
+                f"Esta usina já está aqui como “{outro.nome}”. Desfaça o outro vínculo antes.",
             )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta usina já pertence a outra empresa da plataforma. Fale com quem administra.",
+        )
 
     if link is None:
         link = PlantLink(nome=body.nome, empresa_id=empresa_id)
         db.add(link)
+    else:
+        # Adotada ou já dela: o dono é sempre o da sessão.
+        link.empresa_id = empresa_id
 
     link.mw_plant_slug = body.mw_slug
     link.mp_usina_id = body.mp_usina_id

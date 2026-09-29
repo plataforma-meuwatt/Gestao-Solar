@@ -909,6 +909,8 @@ export const trocarMinhaSenha = (dados: { senha_atual: string; senha_nova: strin
 
 /* ------------------------------- o gerente opera a empresa dele (com o token) */
 
+export type CandidataDeUsina = { mp_usina_id: number; nome: string; motivos: string[] }
+
 export type LinhaDeUsina = {
   chave: string
   nome: string
@@ -922,9 +924,16 @@ export type LinhaDeUsina = {
   no_app: boolean
   par_provavel_mw: string | null
   par_provavel_nome: string | null
+  /** As candidatas do meuPlano, da mais provável para a menos. */
+  candidatos: CandidataDeUsina[]
 }
 
-export type CatalogoDeUsinas = { linhas: LinhaDeUsina[]; avisos: string[] }
+export type CatalogoDeUsinas = {
+  linhas: LinhaDeUsina[]
+  /** Todas as do meuPlano, para casar à mão quando a sugestão não serve. */
+  usinas_do_meuplano: { id: number; nome: string }[]
+  avisos: string[]
+}
 
 export const catalogoDeUsinas = () =>
   apiEmpresa.get<CatalogoDeUsinas>('/usinas/catalogo').then((r) => r.data)

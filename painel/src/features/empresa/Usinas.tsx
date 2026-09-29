@@ -105,6 +105,7 @@ export function UsinasDaEmpresa() {
                       <LinhaUsina
                         key={l.chave}
                         linha={l}
+                        doMeuPlano={data?.usinas_do_meuplano ?? []}
                         ocupado={salvar.isPending}
                         aoSalvar={(dados) => salvar.mutate(dados)}
                       />
@@ -122,15 +123,21 @@ export function UsinasDaEmpresa() {
 
 function LinhaUsina({
   linha,
+  doMeuPlano,
   ocupado,
   aoSalvar,
 }: {
   linha: LinhaDeUsina
+  doMeuPlano: { id: number; nome: string }[]
   ocupado: boolean
   aoSalvar: (dados: Parameters<typeof salvarUsinaDaEmpresa>[0]) => void
 }) {
   const [nome, setNome] = useState(linha.nome)
+  const [casando, setCasando] = useState(false)
+  const [alvo, setAlvo] = useState<string>('')
   const jaEstaAqui = linha.plant_link_id !== null
+  // Casar vale para a usina do meuWatt que ainda não tem par: é dela que sai o `mp_usina_id`.
+  const podeCasar = linha.mw_slug !== null && linha.mp_usina_id === null
 
   const base = {
     plant_link_id: linha.plant_link_id,
@@ -190,8 +197,71 @@ function LinhaUsina({
               Trazer para a empresa
             </button>
           )}
+
+          {podeCasar ? (
+            <button className="btn-fantasma" onClick={() => setCasando((v) => !v)}>
+              Casar com o meuPlano
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {/* Casar é dizer "esta usina do meuWatt é aquela do meuPlano". A sugestão ordena e
+          diz POR QUE ("mesmo nome", "a 300 m"); quem decide é quem lê — um par errado
+          mistura a geração de uma com a manutenção de outra, e ninguém percebe até alguém
+          questionar um relatório. Por isso a lista inteira também está aqui. */}
+      {casando ? (
+        <div className="mt-3 border-t border-borda pt-3">
+          {linha.candidatos.length ? (
+            <div className="grid gap-1 mb-2">
+              <p className="rotulo-campo">Parecem ser a mesma</p>
+              {linha.candidatos.map((c) => (
+                <button
+                  key={c.mp_usina_id}
+                  className="text-left px-3 py-2 rounded-campo hover:bg-superficie"
+                  disabled={ocupado}
+                  onClick={() =>
+                    aoSalvar({ ...base, mp_usina_id: c.mp_usina_id, no_app: linha.no_app || true })
+                  }
+                >
+                  <span className="text-sm text-forte">{c.nome}</span>
+                  {c.motivos.length ? (
+                    <span className="text-xs text-fraco ml-2">{c.motivos.join(' · ')}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-rotulo mb-2">
+              Nenhuma parecida por nome, distância ou potência — escolha na lista.
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <select
+              className="campo h-9 text-sm"
+              value={alvo}
+              onChange={(e) => setAlvo(e.target.value)}
+            >
+              <option value="">todas as usinas do meuPlano…</option>
+              {doMeuPlano.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.nome}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn-secundario shrink-0"
+              disabled={!alvo || ocupado}
+              onClick={() =>
+                aoSalvar({ ...base, mp_usina_id: Number(alvo), no_app: linha.no_app || true })
+              }
+            >
+              Casar
+            </button>
+          </div>
+        </div>
+      ) : null}
     </Cartao>
   )
 }

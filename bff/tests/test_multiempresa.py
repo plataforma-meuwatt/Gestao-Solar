@@ -12,7 +12,7 @@ FastAPI: é o mesmo código que roda na requisição, sem subir servidor.
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.security import (
     criar_token,
@@ -753,3 +753,54 @@ def test_nao_se_concede_usina_de_outra_empresa(db, carteiras):
             criado.id, UsinasDoClienteIn(plant_link_ids=[da_b.id]), db=db, gerente=gerente
         )
     assert erro.value.status_code == 404
+
+
+def test_usina_sem_dono_e_ADOTADA_e_nao_recusada(db, carteiras):
+    """Defeito guardado, e travou o dono na primeira tentativa: as usinas cadastradas
+    ANTES do multiempresa estão sem dono, e o código tratava "sem dono" como "de outra
+    empresa". As 7 usinas reais ficavam inalcançáveis, com a mensagem "já pertence a outra
+    empresa" — que era falsa: ela não pertencia a ninguém.
+
+    Trazer para a empresa é adotar a linha que existe, nunca criar uma segunda para a
+    mesma usina.
+    """
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    a, _b, gerente = carteiras
+    orfa = PlantLink(nome="Órfã", mw_plant_slug="orfa-slug")
+    db.add(orfa)
+    db.commit()
+    id_antes = orfa.id
+
+    trazida = salvar_usina(
+        UsinaIn(mw_slug="orfa-slug", nome="Órfã", no_app=True), db=db, gerente=gerente
+    )
+    assert trazida.plant_link_id == id_antes, "criou uma segunda linha em vez de adotar"
+
+    db.refresh(orfa)
+    assert orfa.empresa_id == a.id
+    assert db.scalar(
+        select(func.count()).select_from(PlantLink).where(PlantLink.mw_plant_slug == "orfa-slug")
+    ) == 1
+
+
+def test_casar_as_duas_pontas_na_mesma_linha(db, carteiras):
+    """"Esta usina do meuWatt é aquela do meuPlano" — o que faltava na tela do gerente.
+
+    É a MESMA operação de trazer: gravar o estado desejado da usina. Separada em
+    "vincular" e "ligar", a tela chamaria duas rotas e a segunda poderia falhar depois da
+    primeira, deixando a usina casada e fora do aplicativo.
+    """
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    a, _b, gerente = carteiras
+    so_mw = salvar_usina(UsinaIn(mw_slug="so-mw", nome="Só meuWatt"), db=db, gerente=gerente)
+    assert so_mw.origem == "meuwatt"
+
+    casada = salvar_usina(
+        UsinaIn(plant_link_id=so_mw.plant_link_id, mw_slug="so-mw", mp_usina_id=77, nome="Casada"),
+        db=db,
+        gerente=gerente,
+    )
+    assert casada.origem == "ambos" and casada.mp_usina_id == 77
+    assert db.get(PlantLink, casada.plant_link_id).empresa_id == a.id
