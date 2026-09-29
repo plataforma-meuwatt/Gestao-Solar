@@ -15,11 +15,15 @@ from fastapi.testclient import TestClient
 
 from app.core.db import get_db
 from app.core.security import criar_token, gerar_hash_senha
+from app.core.datas import hoje as hoje_na_usina
 from app.main import app
 from app.models.billing import Invoice, Produto, Subscription
 from app.models.user import Perfil, User
 
-HOJE = date.today()
+# O "hoje" do BFF é o da usina (Brasília), não o do servidor: entre 00:00 e 03:00 UTC os
+# dois discordam em um dia, e os testes de atraso reprovavam sozinhos de madrugada — foi o
+# que aconteceu em 29/09/2026 ("assert 11 == 12"). A régua do teste é a mesma do código.
+HOJE = hoje_na_usina()
 
 
 @pytest.fixture

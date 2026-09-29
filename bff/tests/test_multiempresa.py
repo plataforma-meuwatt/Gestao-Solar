@@ -626,3 +626,40 @@ def test_o_aviso_do_catalogo_traz_a_frase_do_produto(db, duas_empresas, administ
     assert "Token revogado" in aviso
     assert "developer.mozilla.org" not in aviso
     assert "meuplano.exemplo" not in aviso, "a URL interna do upstream foi para a tela"
+
+
+def test_cada_portao_troca_a_propria_senha(db, carteiras, administrador):
+    """Defeito guardado: a troca da própria senha só existia para o CLIENTE
+    (`/api/v1/auth/trocar-senha`, que recusa sessão com escopo). Quem administra a
+    plataforma e quem gerencia uma empresa não tinha como trocar a senha pela tela — a
+    saída era outro administrador ou o banco. Pior na conta que nasce com senha
+    provisória: ela fica com a senha que alguém digitou e viu.
+    """
+    from app.api.v1.sessao import SenhaIn, trocar_a_propria_senha
+    from app.core.security import conferir_senha
+
+    _a, _b, gerente = carteiras
+
+    trocar_a_propria_senha(
+        SenhaIn(senha_atual="senha-1234", senha_nova="senha-nova-999"), db=db, usuario=gerente
+    )
+    db.refresh(gerente)
+    assert conferir_senha("senha-nova-999", gerente.senha_hash)
+
+    # A senha atual é exigida mesmo com a sessão autenticada: um computador destravado e
+    # esquecido não pode bastar para trancar o dono para fora.
+    with pytest.raises(HTTPException) as erro:
+        trocar_a_propria_senha(
+            SenhaIn(senha_atual="chute", senha_nova="outra-senha-1"), db=db, usuario=administrador
+        )
+    assert erro.value.status_code == 400
+    assert "não confere" in erro.value.detail
+
+    # E as regras óbvias continuam valendo.
+    for atual, nova, trecho in (
+        ("admin-1234", "curta", "8 caracteres"),
+        ("admin-1234", "admin-1234", "diferente"),
+    ):
+        with pytest.raises(HTTPException) as erro:
+            trocar_a_propria_senha(SenhaIn(senha_atual=atual, senha_nova=nova), db=db, usuario=administrador)
+        assert trecho in erro.value.detail

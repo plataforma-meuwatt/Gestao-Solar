@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.security import ALGORITMO
+from app.core.security import ALGORITMO, conferir_senha, gerar_hash_senha
 from app.models.user import User
 from app.services import pessoas
 
@@ -119,3 +119,45 @@ def trocar(
         perfil=destino.perfil.value,
         empresa=pessoas.nome_da_empresa(db, destino),
     )
+
+
+class SenhaIn(BaseModel):
+    senha_atual: str
+    senha_nova: str
+
+
+@router.post("/senha", status_code=204)
+def trocar_a_propria_senha(
+    body: SenhaIn, db: Session = Depends(get_db), usuario: User = Depends(sessao_atual)
+) -> None:
+    """Trocar a PRÓPRIA senha, venha a sessão do portão que vier.
+
+    Existia só para o cliente (`/api/v1/auth/trocar-senha`, que recusa sessão com escopo),
+    então quem administra a plataforma e quem gerencia uma empresa não tinha como trocar a
+    própria senha pela tela — a única saída era pedir a outro administrador, ou o banco. É
+    especialmente ruim para a conta que nasce com senha provisória: ela fica com a senha
+    que alguém digitou e viu.
+
+    **Exige a senha atual mesmo com a sessão autenticada**, pela mesma razão da rota do
+    app: um computador destravado e esquecido não deve bastar para trocar a senha e
+    trancar o dono para fora.
+
+    A sessão atual continua válida — o token não carrega a senha. Derrubá-la obrigaria a
+    entrar de novo logo depois de trocar, sem ganho nenhum de segurança.
+    """
+    if not conferir_senha(body.senha_atual, usuario.senha_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A senha atual não confere.")
+    if len(body.senha_nova) < 8:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "A senha nova precisa de pelo menos 8 caracteres."
+        )
+    if body.senha_nova == body.senha_atual:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "A senha nova precisa ser diferente da atual."
+        )
+
+    usuario.senha_hash = gerar_hash_senha(body.senha_nova)
+    # Fecha o ciclo da senha provisória também aqui: sem isto, a conta que trocou pela
+    # tela do painel continuaria sendo empurrada para a troca no aplicativo.
+    usuario.trocar_senha = False
+    db.commit()

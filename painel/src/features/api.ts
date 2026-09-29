@@ -902,3 +902,7 @@ export const editarUsuarioDaEmpresa = (
   api
     .patch<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/usuarios/${usuarioId}`, dados)
     .then((r) => r.data)
+
+/** Trocar a PRÓPRIA senha — vale para os três portões, por isso fora do prefixo do painel. */
+export const trocarMinhaSenha = (dados: { senha_atual: string; senha_nova: string }) =>
+  sessao.post<void>('/senha', dados).then(() => undefined)

@@ -127,9 +127,12 @@ async def test_o_motor_entrega_uma_vez_por_episodio(db, ponte, cenario, monkeypa
 
 
 def test_hora_em_brasilia():
-    agora = datetime.now(UTC)
-    hoje = agora.replace(hour=15, minute=5, second=0, microsecond=0)
-    assert motor._hora_brt(hoje.isoformat()) == "12:05"  # UTC → BRT
+    # O "hoje" da função é em BRASÍLIA, e o teste montava a hora em UTC: entre 00:00 e
+    # 03:00 UTC os dois calendários discordam, e o teste reprovava sozinho de madrugada —
+    # foi o que aconteceu em 29/09/2026. O instante de referência agora nasce em BRT.
+    agora = datetime.now(motor.BRT)
+    hoje = agora.replace(hour=12, minute=5, second=0, microsecond=0)
+    assert motor._hora_brt(hoje.isoformat()) == "12:05"
     antes = (agora - timedelta(days=10)).replace(hour=20, minute=17)
     assert motor._hora_brt(antes.isoformat()).count("/") == 1  # outro dia leva a data
     assert motor._hora_brt(None) == "—"

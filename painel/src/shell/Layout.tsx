@@ -17,6 +17,7 @@
 
 import {
   Building2,
+  KeyRound,
   Link2,
   Repeat,
   ShieldCheck,
@@ -33,7 +34,7 @@ import { useQuery } from '@tanstack/react-query'
 import React from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
-import { meuAcesso, meusPapeis, trocarDePapel } from '@/features/api'
+import { meuAcesso, meusPapeis, trocarDePapel, trocarMinhaSenha } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth, type Escopo, type Perfil } from '@/store/auth'
 
@@ -263,6 +264,105 @@ function TrocarPapel() {
   )
 }
 
+/**
+ * Trocar a própria senha — de qualquer papel.
+ *
+ * Não existia no painel: só o aplicativo do cliente tinha essa tela. Quem administra a
+ * plataforma e quem gerencia uma empresa ficavam com a senha que alguém digitou e viu ao
+ * criar a conta, e a única saída era pedir a outro administrador.
+ *
+ * A senha atual é pedida mesmo com a sessão aberta, pela mesma razão do aplicativo: um
+ * computador destravado e esquecido não pode bastar para trancar o dono para fora.
+ */
+function TrocarSenha({ aoFechar }: { aoFechar: () => void }) {
+  const [atual, setAtual] = React.useState('')
+  const [nova, setNova] = React.useState('')
+  const [erro, setErro] = React.useState<string | null>(null)
+  const [pronto, setPronto] = React.useState(false)
+  const [salvando, setSalvando] = React.useState(false)
+
+  async function salvar() {
+    setErro(null)
+    setSalvando(true)
+    try {
+      await trocarMinhaSenha({ senha_atual: atual, senha_nova: nova })
+      setPronto(true)
+    } catch (e) {
+      setErro(mensagemDeErro(e))
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center p-4">
+      <div className="cartao w-full max-w-md p-5">
+        <p className="text-lg font-bold text-forte mb-4">Trocar minha senha</p>
+
+        {pronto ? (
+          <>
+            <p className="text-sm text-ok">
+              Senha trocada. Ela vale a partir da próxima vez que você entrar — esta sessão
+              continua aberta.
+            </p>
+            <div className="flex justify-end mt-4">
+              <button className="btn-primario" onClick={aoFechar}>
+                Fechar
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-3">
+              <div>
+                <label className="rotulo-campo" htmlFor="senha-atual">
+                  Senha atual
+                </label>
+                <input
+                  id="senha-atual"
+                  type="password"
+                  className="campo"
+                  value={atual}
+                  onChange={(e) => setAtual(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="rotulo-campo" htmlFor="senha-nova">
+                  Senha nova
+                </label>
+                <input
+                  id="senha-nova"
+                  type="password"
+                  className="campo"
+                  value={nova}
+                  onChange={(e) => setNova(e.target.value)}
+                />
+                <p className="text-xs text-fraco mt-1.5">Pelo menos 8 caracteres.</p>
+              </div>
+            </div>
+
+            {erro ? <p className="text-sm text-parado mt-3">{erro}</p> : null}
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button className="btn-secundario" onClick={aoFechar}>
+                Cancelar
+              </button>
+              <button
+                className="btn-primario"
+                onClick={() => void salvar()}
+                disabled={!atual || nova.length < 8 || salvando}
+              >
+                {salvando ? 'Trocando…' : 'Trocar senha'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** Como cada perfil se chama na tela. */
 const PAPEL: Record<Perfil, string> = {
   administrador: 'Administrador do sistema',
@@ -359,6 +459,7 @@ class LimiteDeErro extends React.Component<
 export function Layout() {
   const { token, nome, perfil, empresa, escopo, sair, ehAdministrador, ehEmpresa, pode, atualizar } =
     useAuth()
+  const [trocandoSenha, setTrocandoSenha] = React.useState(false)
   const local = useLocation()
 
   // A verdade do acesso é do servidor, e ela muda no meio da sessão. Falha de rede aqui
@@ -427,12 +528,18 @@ export function Layout() {
               "Gestor_empresa" na tela — código de banco lido por gente é o mesmo defeito
               que o CLAUDE.md nomeia. */}
           <p className="text-[11px] text-fraco px-1 mb-2">{perfil ? PAPEL[perfil] : ''}</p>
+          <button onClick={() => setTrocandoSenha(true)} className="btn-fantasma w-full mb-1.5">
+            <KeyRound size={13} />
+            Trocar minha senha
+          </button>
           <button onClick={sair} className="btn-fantasma w-full">
             <LogOut size={13} />
             Sair
           </button>
         </div>
       </nav>
+
+      {trocandoSenha ? <TrocarSenha aoFechar={() => setTrocandoSenha(false)} /> : null}
 
       <main className="flex-1 overflow-y-auto">
         <FaixaDePapel escopo={escopo} empresa={empresa} perfil={perfil} />
