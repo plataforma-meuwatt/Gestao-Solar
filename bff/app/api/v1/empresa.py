@@ -24,7 +24,7 @@ recusa esta sessão em qualquer rota de painel.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import Field
+from pydantic import EmailStr, Field
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -36,6 +36,7 @@ from app.models.empresa import Empresa
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
+from app.services import clientes, conciliacao
 from app.services import empresas as svc
 from app.services import integracoes
 
@@ -452,3 +453,269 @@ def salvar_vinculos(
     return VinculoOut(
         mw_enterprise_id=empresa.mw_enterprise_id, mp_tenant_id=empresa.mp_tenant_id
     )
+
+
+# ------------------------------------------------- trazer as usinas da empresa
+
+
+class LinhaDeUsina(BaseModel):
+    """Uma usina vista dos dois lados, como a conciliação do painel a descreve."""
+
+    chave: str
+    nome: str
+    plant_link_id: int | None = None
+    mw_slug: str | None = None
+    mp_usina_id: int | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    origem: str
+    no_app: bool = False
+    #: Sugestão de par, quando a usina só apareceu de um lado.
+    par_provavel_mw: str | None = None
+    par_provavel_nome: str | None = None
+
+
+class CatalogoDeUsinas(BaseModel):
+    linhas: list[LinhaDeUsina] = []
+    avisos: list[str] = []
+
+
+@router.get("/usinas/catalogo", response_model=CatalogoDeUsinas)
+async def catalogo_de_usinas(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> CatalogoDeUsinas:
+    """As usinas que o SEU token enxerga nos dois produtos, e o que já está aqui dentro.
+
+    É a conciliação do painel, escopada: quem lê é o token desta empresa, então a lista é
+    exatamente a carteira dela. A plataforma não monta isso — ela não tem credencial nos
+    produtos, e usar a de serviço mostraria a carteira de outra gente.
+
+    As usinas JÁ trazidas entram pelo vínculo desta empresa (`gs_plant_links.empresa_id`),
+    nunca pelo inventário inteiro: um `PlantLink` de outra empresa não aparece aqui.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    usinas_mw: list[dict] = []
+    usinas_mp: list[dict] = []
+    avisos: list[str] = []
+
+    try:
+        usinas_mw = await (await integracoes.cliente_meuwatt(db, empresa_id)).usinas()
+    except Exception as exc:  # noqa: BLE001 — cada lado cai sozinho
+        avisos.append(_aviso(Produto.MEUWATT, exc))
+    try:
+        usinas_mp = await (await integracoes.cliente_meuplano(db, empresa_id)).usinas()
+    except Exception as exc:  # noqa: BLE001
+        avisos.append(_aviso(Produto.MEUPLANO, exc))
+
+    links = list(
+        db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all()
+    )
+    linhas = [
+        LinhaDeUsina(
+            chave=l.chave,
+            nome=l.nome,
+            plant_link_id=l.plant_link_id,
+            mw_slug=l.mw_slug,
+            mp_usina_id=l.mp_usina_id,
+            cidade=l.cidade,
+            uf=l.uf,
+            kwp=l.kwp,
+            origem=l.origem,
+            no_app=l.no_app,
+            par_provavel_mw=l.par_provavel_mw,
+            par_provavel_nome=l.par_provavel_nome,
+        )
+        for l in conciliacao.montar(usinas_mw, usinas_mp, links)
+    ]
+    return CatalogoDeUsinas(linhas=linhas, avisos=avisos)
+
+
+class UsinaIn(BaseModel):
+    plant_link_id: int | None = None
+    mw_slug: str | None = None
+    mp_usina_id: int | None = None
+    nome: str
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    #: Se ela entra no aplicativo. Desligada continua aqui, com vínculos e concessões
+    #: intactos — o gerente religa sem refazer nada.
+    no_app: bool = True
+
+
+@router.put("/usinas", response_model=LinhaDeUsina)
+def salvar_usina(
+    body: UsinaIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> LinhaDeUsina:
+    """Traz a usina para a empresa, casa os dois lados, liga ou desliga no aplicativo.
+
+    Uma operação só para as três coisas porque são a mesma vista de ângulos diferentes:
+    gravar o estado desejado daquela usina. Separadas, a tela chamaria duas rotas para
+    "trazer a usina do meuPlano para o app", com a chance de a segunda falhar depois da
+    primeira.
+
+    **A usina nasce com o dono da sessão**, e uma que já é de OUTRA empresa é recusada como
+    inexistente: o gerente não deve descobrir, por tentativa, o que existe na carteira dos
+    outros.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    if body.mw_slug is None and body.mp_usina_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "A usina precisa existir em pelo menos um dos dois produtos.",
+        )
+
+    link = None
+    if body.plant_link_id is not None:
+        link = db.get(PlantLink, body.plant_link_id)
+        if link is None or link.empresa_id != empresa_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
+
+    # O mesmo identificador de produto não pode pertencer a duas usinas — nem dentro da
+    # empresa, nem entre empresas. A mensagem muda conforme o caso: dentro, diz de quem é;
+    # fora, apenas recusa, para não revelar a carteira do vizinho.
+    for campo, valor in ((PlantLink.mw_plant_slug, body.mw_slug), (PlantLink.mp_usina_id, body.mp_usina_id)):
+        if valor is None:
+            continue
+        condicoes = [campo == valor]
+        if link is not None:
+            condicoes.append(PlantLink.id != link.id)
+        outro = db.scalar(select(PlantLink).where(*condicoes))
+        if outro is not None:
+            if outro.empresa_id == empresa_id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Esta usina já está aqui como “{outro.nome}”. Desfaça o outro vínculo antes.",
+                )
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Esta usina já pertence a outra empresa da plataforma. Fale com quem administra.",
+            )
+
+    if link is None:
+        link = PlantLink(nome=body.nome, empresa_id=empresa_id)
+        db.add(link)
+
+    link.mw_plant_slug = body.mw_slug
+    link.mp_usina_id = body.mp_usina_id
+    link.nome = body.nome
+    link.cidade = body.cidade
+    link.uf = body.uf
+    link.kwp = body.kwp
+    link.ativo = body.no_app
+    db.commit()
+    db.refresh(link)
+
+    return LinhaDeUsina(
+        chave=f"link:{link.id}",
+        nome=link.nome,
+        plant_link_id=link.id,
+        mw_slug=link.mw_plant_slug,
+        mp_usina_id=link.mp_usina_id,
+        cidade=link.cidade,
+        uf=link.uf,
+        kwp=link.kwp,
+        origem=("ambos" if link.mw_plant_slug and link.mp_usina_id
+                else "meuwatt" if link.mw_plant_slug else "meuplano"),
+        no_app=link.ativo,
+    )
+
+
+# ------------------------------------------------------ cadastrar cliente aqui
+
+
+class ClienteIn(BaseModel):
+    nome: str = Field(min_length=2)
+    apelido: str = Field(min_length=3)
+    email: EmailStr | None = None
+
+
+class ClienteCriadoOut(BaseModel):
+    id: int
+    nome: str
+    apelido: str
+    #: A senha provisória, mostrada UMA vez. Entregue com o APELIDO, que é o que autentica
+    #: — mandar o e-mail junto convida a tentar entrar com ele, que é o que não funciona.
+    senha: str
+
+
+@router.post("/clientes", response_model=ClienteCriadoOut, status_code=201)
+def criar_cliente(
+    body: ClienteIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> ClienteCriadoOut:
+    """Cadastra um dono de usina DESTA empresa.
+
+    Reusa `services/clientes.criar`, que é onde moram as regras do cadastro (apelido
+    normalizado, e-mail repetido entre clientes, senha provisória). Uma segunda cópia aqui
+    divergiria no primeiro dia em que alguém melhorasse uma delas.
+
+    A empresa vem da sessão e é gravada no cliente: é ela que faz a conta aparecer para
+    este gerente e para mais ninguém.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    try:
+        criado = clientes.criar(
+            db,
+            nome=body.nome,
+            apelido=body.apelido,
+            email=str(body.email) if body.email else None,
+            empresa=None,
+            criado_por=gerente,
+        )
+    except clientes.RegraDeNegocio as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    criado.usuario.empresa_id = empresa_id
+    db.commit()
+
+    return ClienteCriadoOut(
+        id=criado.usuario.id,
+        nome=criado.usuario.nome,
+        apelido=criado.usuario.apelido,
+        senha=criado.senha_provisoria,
+    )
+
+
+class UsinasDoClienteIn(BaseModel):
+    #: A lista COMPLETA: o que não vier é revogado.
+    plant_link_ids: list[int] = []
+
+
+@router.put("/clientes/{cliente_id}/usinas", status_code=204)
+def definir_usinas_do_cliente(
+    cliente_id: int,
+    body: UsinasDoClienteIn,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> None:
+    """Concede as usinas desta empresa a um cliente dela.
+
+    Duas guardas, e as duas importam: o cliente tem de ser DESTA empresa, e cada usina
+    também. Sem a segunda, um id na requisição concederia a usina de outra empresa — e o
+    dono dela veria no aplicativo dados de uma carteira que não é a sua.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+
+    cliente = db.get(User, cliente_id)
+    if cliente is None or cliente.empresa_id != empresa_id or cliente.perfil is not Perfil.CLIENTE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cliente não encontrado nesta empresa.")
+
+    if body.plant_link_ids:
+        minhas = {
+            u.id
+            for u in db.scalars(
+                select(PlantLink).where(PlantLink.empresa_id == empresa_id)
+            ).all()
+        }
+        fora = [pid for pid in body.plant_link_ids if pid not in minhas]
+        if fora:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa."
+            )
+
+    try:
+        clientes.definir_usinas(db, cliente, body.plant_link_ids)
+    except clientes.RegraDeNegocio as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()

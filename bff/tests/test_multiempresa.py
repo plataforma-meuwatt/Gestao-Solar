@@ -663,3 +663,93 @@ def test_cada_portao_troca_a_propria_senha(db, carteiras, administrador):
         with pytest.raises(HTTPException) as erro:
             trocar_a_propria_senha(SenhaIn(senha_atual=atual, senha_nova=nova), db=db, usuario=administrador)
         assert trecho in erro.value.detail
+
+
+# --------------------------------------- o gerente opera a empresa dele sozinho
+
+
+def test_o_gerente_traz_usina_e_ela_nasce_da_empresa_dele(db, carteiras):
+    """Defeito guardado, e o dono esbarrou nele: as telas do gerente eram só LEITURA — ele
+    via "nenhuma usina" e a tela mandava falar com a plataforma. Mas é ele quem tem o token
+    e enxerga a carteira nos produtos; a plataforma não tem credencial nenhuma."""
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    a, _b, gerente = carteiras
+    nova = salvar_usina(
+        UsinaIn(mw_slug="usina-nova", nome="Usina Nova", no_app=True), db=db, gerente=gerente
+    )
+    assert nova.plant_link_id is not None
+
+    trazida = db.get(PlantLink, nova.plant_link_id)
+    assert trazida.empresa_id == a.id, "a usina nasceu sem dono ou com o dono errado"
+
+
+def test_o_gerente_nao_mexe_na_usina_de_outra_empresa(db, carteiras):
+    """404, e não 403: dizer "existe, mas é de outra" já contaria o que existe na carteira
+    do vizinho."""
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    _a, b, gerente = carteiras
+    da_b = db.scalar(select(PlantLink).where(PlantLink.empresa_id == b.id))
+
+    with pytest.raises(HTTPException) as erro:
+        salvar_usina(
+            UsinaIn(plant_link_id=da_b.id, mw_slug="usina-b", nome="Roubada"),
+            db=db,
+            gerente=gerente,
+        )
+    assert erro.value.status_code == 404
+
+    # E o identificador de produto de outra empresa é recusado sem dizer de quem é.
+    with pytest.raises(HTTPException) as erro:
+        salvar_usina(UsinaIn(mw_slug="usina-b", nome="Outra tentativa"), db=db, gerente=gerente)
+    assert erro.value.status_code == 409
+    assert b.nome not in erro.value.detail
+
+
+def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
+    """O fluxo inteiro do lado da empresa, que é o que o dono precisava: cadastrar o dono
+    de usina e entregar a ele as usinas DA EMPRESA."""
+    from app.api.v1.empresa import (
+        ClienteIn,
+        UsinaIn,
+        UsinasDoClienteIn,
+        criar_cliente,
+        definir_usinas_do_cliente,
+        listar_clientes,
+        salvar_usina,
+    )
+
+    a, _b, gerente = carteiras
+    usina = salvar_usina(UsinaIn(mw_slug="nova-1", nome="Nova 1"), db=db, gerente=gerente)
+
+    criado = criar_cliente(ClienteIn(nome="Dona Maria", apelido="dona.maria"), db=db, gerente=gerente)
+    assert criado.senha
+
+    definir_usinas_do_cliente(
+        criado.id, UsinasDoClienteIn(plant_link_ids=[usina.plant_link_id]), db=db, gerente=gerente
+    )
+
+    na_lista = {c.apelido: c for c in listar_clientes(db=db, gerente=gerente)}
+    assert na_lista["dona.maria"].usinas == 1
+
+    # O cliente nasceu NA EMPRESA — é isso que o faz aparecer para este gerente e mais
+    # ninguém.
+    conta = db.scalar(select(User).where(User.apelido == "dona.maria"))
+    assert conta.empresa_id == a.id
+
+
+def test_nao_se_concede_usina_de_outra_empresa(db, carteiras):
+    """Defeito guardado: um id na requisição concederia a usina de outra empresa, e o dono
+    dela veria no aplicativo dados de uma carteira que não é a sua."""
+    from app.api.v1.empresa import ClienteIn, UsinasDoClienteIn, criar_cliente, definir_usinas_do_cliente
+
+    _a, b, gerente = carteiras
+    da_b = db.scalar(select(PlantLink).where(PlantLink.empresa_id == b.id))
+    criado = criar_cliente(ClienteIn(nome="Cliente Novo", apelido="cli.novo"), db=db, gerente=gerente)
+
+    with pytest.raises(HTTPException) as erro:
+        definir_usinas_do_cliente(
+            criado.id, UsinasDoClienteIn(plant_link_ids=[da_b.id]), db=db, gerente=gerente
+        )
+    assert erro.value.status_code == 404

@@ -80,12 +80,14 @@ export function VinculosDaEmpresa() {
             itens={data?.meuwatt ?? []}
             escolhido={escolhidoMw}
             aoEscolher={setMw}
+            houveAviso={(data?.avisos ?? []).some((a) => a.startsWith('meuWatt'))}
           />
           <Escolha
             titulo="Empresa no meuPlano"
             itens={data?.meuplano ?? []}
             escolhido={escolhidoMp}
             aoEscolher={setMp}
+            houveAviso={(data?.avisos ?? []).some((a) => a.startsWith('meuPlano'))}
           />
 
           {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
@@ -118,19 +120,27 @@ function Escolha({
   itens,
   escolhido,
   aoEscolher,
+  houveAviso,
 }: {
   titulo: string
   itens: EmpresaDoProduto[]
   escolhido: number | null
   aoEscolher: (v: number | null) => void
+  /** Se o produto falhou. Separa "não respondeu" de "respondeu e não tem nada". */
+  houveAviso: boolean
 }) {
   if (!itens.length) {
+    // Duas ausências diferentes, e mandar olhar "o aviso acima" quando não há aviso
+    // nenhum é o defeito que o dono viu: o meuPlano respondeu 200 com lista vazia —
+    // simplesmente não há empresa cadastrada lá — e a tela o mandou procurar um erro.
     return (
       <div>
         <p className="rotulo-campo">{titulo}</p>
         <p className="text-sm text-rotulo mt-1">
-          Nada para escolher — ou o produto não respondeu (veja o aviso acima e o token em
-          Conexões), ou a sua conta não enxerga nenhuma empresa lá.
+          {houveAviso
+            ? 'O produto não respondeu — veja o aviso acima e confira o token em Conexões.'
+            : 'O produto respondeu, e não há nenhuma empresa cadastrada lá. Deixe “Nenhuma”: ' +
+              'ter só um dos lados é normal.'}
         </p>
       </div>
     )

@@ -906,3 +906,48 @@ export const editarUsuarioDaEmpresa = (
 /** Trocar a PRÓPRIA senha — vale para os três portões, por isso fora do prefixo do painel. */
 export const trocarMinhaSenha = (dados: { senha_atual: string; senha_nova: string }) =>
   sessao.post<void>('/senha', dados).then(() => undefined)
+
+/* ------------------------------- o gerente opera a empresa dele (com o token) */
+
+export type LinhaDeUsina = {
+  chave: string
+  nome: string
+  plant_link_id: number | null
+  mw_slug: string | null
+  mp_usina_id: number | null
+  cidade: string | null
+  uf: string | null
+  kwp: number | null
+  origem: 'ambos' | 'meuwatt' | 'meuplano'
+  no_app: boolean
+  par_provavel_mw: string | null
+  par_provavel_nome: string | null
+}
+
+export type CatalogoDeUsinas = { linhas: LinhaDeUsina[]; avisos: string[] }
+
+export const catalogoDeUsinas = () =>
+  apiEmpresa.get<CatalogoDeUsinas>('/usinas/catalogo').then((r) => r.data)
+
+export const salvarUsinaDaEmpresa = (dados: {
+  plant_link_id?: number | null
+  mw_slug?: string | null
+  mp_usina_id?: number | null
+  nome: string
+  cidade?: string | null
+  uf?: string | null
+  kwp?: number | null
+  no_app?: boolean
+}) => apiEmpresa.put<LinhaDeUsina>('/usinas', dados).then((r) => r.data)
+
+export const criarClienteDaEmpresa = (dados: {
+  nome: string
+  apelido: string
+  email?: string | null
+}) =>
+  apiEmpresa
+    .post<{ id: number; nome: string; apelido: string; senha: string }>('/clientes', dados)
+    .then((r) => r.data)
+
+export const definirUsinasDoCliente = (clienteId: number, plant_link_ids: number[]) =>
+  apiEmpresa.put<void>(`/clientes/${clienteId}/usinas`, { plant_link_ids }).then(() => undefined)

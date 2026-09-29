@@ -7,11 +7,8 @@ import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
-import {
-  ClientesDaEmpresa,
-  UsinasDaEmpresa,
-  UsuariosDaEmpresa,
-} from '@/features/empresa/MinhaEmpresa'
+import { UsinasDaEmpresa } from '@/features/empresa/Usinas'
+import { ClientesDaEmpresa, UsuariosDaEmpresa } from '@/features/empresa/MinhaEmpresa'
 import { Usuarios } from '@/features/usuarios/Usuarios'
 import { DetalheCliente } from '@/features/clientes/Detalhe'
 import { ListaClientes } from '@/features/clientes/Lista'

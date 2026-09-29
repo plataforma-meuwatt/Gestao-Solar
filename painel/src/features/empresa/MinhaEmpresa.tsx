@@ -17,18 +17,21 @@
  * empresa fixo no alto da tela.
  */
 
-import { useQuery } from '@tanstack/react-query'
-import { Sun, UserCog, Users } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { UserCog, UserPlus, Users } from 'lucide-react'
 
-import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
+import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
+  catalogoDeUsinas,
   clientesDaEmpresa,
-  usinasDaEmpresa,
+  criarClienteDaEmpresa,
+  definirUsinasDoCliente,
   usuariosDaEmpresa,
   type ClienteDaEmpresa,
-  type UsinaDaEmpresa,
   type UsuarioDaEmpresa,
 } from '@/features/api'
+import { useState } from 'react'
+
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -40,6 +43,7 @@ function Lista<T>({
   buscar,
   vazio,
   desenhar,
+  acao,
 }: {
   titulo: string
   apoio: string
@@ -47,12 +51,13 @@ function Lista<T>({
   buscar: () => Promise<T[]>
   vazio: { titulo: string; descricao: string }
   desenhar: (item: T) => React.ReactNode
+  acao?: React.ReactNode
 }) {
   const empresa = useAuth((s) => s.empresa)
   const { data, isLoading, error } = useQuery({ queryKey: ['empresa', chave], queryFn: buscar })
 
   return (
-    <Pagina titulo={titulo} apoio={empresa ? `${apoio} · ${empresa}` : apoio}>
+    <Pagina titulo={titulo} apoio={empresa ? `${apoio} · ${empresa}` : apoio} acao={acao}>
       {isLoading ? (
         <Carregando />
       ) : error ? (
@@ -66,54 +71,42 @@ function Lista<T>({
   )
 }
 
-export function UsinasDaEmpresa() {
-  return (
-    <Lista<UsinaDaEmpresa>
-      titulo="Usinas"
-      apoio="As usinas operadas pela sua empresa"
-      chave="usinas"
-      buscar={usinasDaEmpresa}
-      vazio={{
-        titulo: 'Nenhuma usina ligada à sua empresa',
-        descricao: 'Quem liga usina à empresa é quem administra a plataforma. Fale com eles.',
-      }}
-      desenhar={(u) => (
-        <Cartao key={u.id}>
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex items-start gap-3">
-              <Sun size={18} className="text-rotulo mt-1 shrink-0" />
-              <div>
-                <p className="text-forte font-semibold">{u.nome}</p>
-                <p className="text-sm text-rotulo mt-0.5">
-                  {[u.cidade, u.uf].filter(Boolean).join(' · ') || 'sem cidade cadastrada'}
-                  {u.kwp ? ` · ${u.kwp.toLocaleString('pt-BR')} kWp` : ''}
-                </p>
-                <p className="text-sm text-rotulo mt-2">
-                  {u.clientes} {u.clientes === 1 ? 'cliente recebe' : 'clientes recebem'} esta
-                  usina no aplicativo
-                </p>
-              </div>
-            </div>
-            {/* Desligada continua na lista de propósito: sumir seria responder "não
-                existe" a algo que existe e que pode ser religado. */}
-            <Selo tom={u.ativo ? 'ok' : 'sem-dados'}>{u.ativo ? 'No app' : 'Desligada'}</Selo>
-          </div>
-        </Cartao>
-      )}
-    />
-  )
-}
-
+/**
+ * Os clientes da empresa — cadastrados AQUI, pelo gerente.
+ *
+ * A primeira versão era só leitura e dizia "clientes aparecem assim que forem cadastrados",
+ * sem dizer por quem: o gerente não tinha como cadastrar ninguém, e a plataforma não
+ * cadastra cliente de inquilino. Ficava um beco.
+ *
+ * Quem cadastra é quem atende, e é ele também quem concede as usinas — dentre as da
+ * própria empresa, porque conceder a usina de outra faria o dono dela ver, no aplicativo,
+ * dados de uma carteira que não é a sua.
+ */
 export function ClientesDaEmpresa() {
+  const [novo, setNovo] = useState(false)
+  const [usinasDe, setUsinasDe] = useState<ClienteDaEmpresa | null>(null)
+
   return (
+    <>
+      {novo ? <NovoCliente aoFechar={() => setNovo(false)} /> : null}
+      {usinasDe ? (
+        <UsinasDoCliente cliente={usinasDe} aoFechar={() => setUsinasDe(null)} />
+      ) : null}
+
     <Lista<ClienteDaEmpresa>
       titulo="Clientes"
       apoio="Os donos de usina que a sua empresa atende"
       chave="clientes"
       buscar={clientesDaEmpresa}
+      acao={
+        <button className="btn-primario" onClick={() => setNovo(true)}>
+          <UserPlus size={16} />
+          Novo cliente
+        </button>
+      }
       vazio={{
         titulo: 'Nenhum cliente nesta empresa',
-        descricao: 'Clientes aparecem aqui assim que forem cadastrados na sua empresa.',
+        descricao: 'Cadastre o primeiro em “Novo cliente”. Ele entra no aplicativo com o apelido e a senha que você entrega.',
       }}
       desenhar={(c) => (
         <Cartao key={c.id}>
@@ -131,11 +124,17 @@ export function ClientesDaEmpresa() {
                 </p>
               </div>
             </div>
-            <Selo tom={c.ativo ? 'ok' : 'sem-dados'}>{c.ativo ? 'Ativo' : 'Inativo'}</Selo>
+            <div className="flex items-center gap-2">
+              <Selo tom={c.ativo ? 'ok' : 'sem-dados'}>{c.ativo ? 'Ativo' : 'Inativo'}</Selo>
+              <button className="btn-fantasma" onClick={() => setUsinasDe(c)}>
+                Usinas
+              </button>
+            </div>
           </div>
         </Cartao>
       )}
     />
+    </>
   )
 }
 
@@ -173,5 +172,180 @@ export function UsuariosDaEmpresa() {
         </Cartao>
       )}
     />
+  )
+}
+
+
+/** Cadastro do dono de usina, com a senha provisória mostrada uma vez. */
+function NovoCliente({ aoFechar }: { aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [nome, setNome] = useState('')
+  const [apelido, setApelido] = useState('')
+  const [email, setEmail] = useState('')
+  const [criado, setCriado] = useState<{ apelido: string; senha: string } | null>(null)
+
+  const criar = useMutation({
+    mutationFn: () => criarClienteDaEmpresa({ nome, apelido, email: email || null }),
+    onSuccess: (r) => {
+      setCriado({ apelido: r.apelido, senha: r.senha })
+      qc.invalidateQueries({ queryKey: ['empresa'] })
+    },
+  })
+
+  if (criado) {
+    return (
+      <Modal titulo="Cliente cadastrado" aoFechar={aoFechar}>
+        <div className="grid gap-4">
+          <Aviso>
+            Anote agora: a senha não é guardada em texto e não dá para vê-la de novo.
+          </Aviso>
+          <Cartao>
+            <p className="text-sm text-rotulo">Entra com o apelido</p>
+            <p className="text-forte font-semibold text-lg mt-1">{criado.apelido}</p>
+            <p className="text-sm text-rotulo mt-4">Senha provisória</p>
+            <p className="text-forte font-semibold text-lg mt-1">{criado.senha}</p>
+          </Cartao>
+          <p className="text-xs text-fraco">
+            Entregue as duas coisas juntas. O e-mail é só contato — quem autentica é o apelido.
+          </p>
+          <div className="flex justify-end">
+            <button className="btn-primario" onClick={aoFechar}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal titulo="Novo cliente" aoFechar={aoFechar}>
+      <div className="grid gap-4">
+        <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} />
+        <Campo
+          rotulo="Apelido (é com ele que entra)"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value)}
+        />
+        <Campo
+          rotulo="E-mail (opcional)"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          nota="Contato apenas. Serve para achar a conta dele no meuWatt e no meuPlano."
+        />
+
+        {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
+        {!nome.trim() || !apelido.trim() ? (
+          <p className="text-xs text-rotulo">Preencha nome e apelido para cadastrar.</p>
+        ) : null}
+
+        <div className="flex justify-end gap-2">
+          <button className="btn-secundario" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn-primario"
+            onClick={() => criar.mutate()}
+            disabled={!nome.trim() || !apelido.trim() || criar.isPending}
+          >
+            {criar.isPending ? 'Cadastrando…' : 'Cadastrar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * Quais usinas este cliente recebe no aplicativo.
+ *
+ * Só as que estão **no app** aparecem: uma usina desligada não pode ser concedida, e
+ * oferecê-la aqui produziria uma concessão que não mostra nada.
+ */
+function UsinasDoCliente({
+  cliente,
+  aoFechar,
+}: {
+  cliente: ClienteDaEmpresa
+  aoFechar: () => void
+}) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['empresa', 'usinas-catalogo'],
+    queryFn: catalogoDeUsinas,
+  })
+  const [marcadas, setMarcadas] = useState<number[] | null>(null)
+
+  const noApp = (data?.linhas ?? []).filter((l) => l.plant_link_id !== null && l.no_app)
+  const atuais = marcadas ?? []
+
+  const salvar = useMutation({
+    mutationFn: () => definirUsinasDoCliente(cliente.id, atuais),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['empresa'] })
+      aoFechar()
+    },
+  })
+
+  return (
+    <Modal titulo={`Usinas de ${cliente.nome}`} aoFechar={aoFechar}>
+      {isLoading ? (
+        <Carregando />
+      ) : (
+        <div className="grid gap-4">
+          <Aviso>
+            A lista é completa: o que ficar desmarcado é retirado dele. Cada usina pertence
+            a um cliente só.
+          </Aviso>
+
+          {!noApp.length ? (
+            <p className="text-sm text-rotulo">
+              Nenhuma usina ligada no aplicativo ainda. Traga e ligue em “Usinas”.
+            </p>
+          ) : (
+            <ul className="grid gap-1 max-h-72 overflow-y-auto pr-1">
+              {noApp.map((l) => (
+                <li key={l.chave}>
+                  <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo hover:bg-superficie cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={atuais.includes(l.plant_link_id as number)}
+                      onChange={() =>
+                        setMarcadas((m) => {
+                          const base = m ?? []
+                          const id = l.plant_link_id as number
+                          return base.includes(id)
+                            ? base.filter((x) => x !== id)
+                            : [...base, id]
+                        })
+                      }
+                    />
+                    <span className="text-sm text-forte">{l.nome}</span>
+                    <span className="text-xs text-fraco">
+                      {[l.cidade, l.uf].filter(Boolean).join(' · ')}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+
+          <div className="flex justify-end gap-2">
+            <button className="btn-secundario" onClick={aoFechar}>
+              Cancelar
+            </button>
+            <button
+              className="btn-primario"
+              onClick={() => salvar.mutate()}
+              disabled={salvar.isPending}
+            >
+              {salvar.isPending ? 'Salvando…' : 'Salvar'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
