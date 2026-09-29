@@ -391,6 +391,11 @@ esquecido ao mexer em qualquer consulta é isto:
   plataforma cadastra empresa e usuário e **vê tudo**, mas não tem token nos produtos —
   montar a lista com a credencial de serviço mostraria a carteira de quem a gerou. Por isso
   `/api/empresa/vinculos*`, com a empresa saindo da SESSÃO.
+- **O cliente NÃO precisa de conta nos produtos.** O dono de usina costuma não ter, e
+  exigir um token dele tornaria impossível cadastrar quem só existe aqui. `token_do_cliente`
+  usa o dele quando houver e cai no da EMPRESA que o atende; nunca no da plataforma. O que
+  ele vê continua sendo o concedido (`gs_user_plant_access`) — o token só diz com que
+  credencial a leitura acontece, nunca o que ela devolve.
 - **Cada empresa tem a conta DELA no meuWatt e no meuPlano.** `integracoes.obter` recebe a
   empresa; sem a credencial dela, cai na da plataforma — e esse atalho é **recusado
   sozinho** quando houver mais de uma empresa ativa, porque servir a credencial da

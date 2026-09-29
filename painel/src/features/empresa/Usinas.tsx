@@ -18,12 +18,14 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, Sun, Wrench } from 'lucide-react'
+import { Cpu, Link2, Sun, Wrench } from 'lucide-react'
 import { useState } from 'react'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
 import {
+  casarMicroUsina,
   catalogoDeUsinas,
+  microUsinasDaEmpresa,
   salvarUsinaDaEmpresa,
   type LinhaDeUsina,
 } from '@/features/api'
@@ -115,9 +117,104 @@ export function UsinasDaEmpresa() {
               )
             })
           )}
+
+          <MicroUsinas linhas={linhas} />
         </div>
       )}
     </Pagina>
+  )
+}
+
+/**
+ * As micro usinas do MICRO do meuWatt — os portais dos fabricantes (Solis, Canadian, TSUN).
+ *
+ * Não são um quarto formato de usina: cada uma se **casa** com uma usina que já está aqui,
+ * e serve a uma coisa — o aviso de que ela parou chega ao dono. Por isso o que se escolhe
+ * é "esta micro é aquela usina", nunca "traga a micro para dentro".
+ *
+ * A seção só aparece quando há alguma: o MICRO é leitura de administrador no meuWatt, e um
+ * token de escopo menor não o enxerga. Nesse caso a resposta traz o aviso — que é diferente
+ * de "não existe nenhuma".
+ */
+function MicroUsinas({ linhas }: { linhas: LinhaDeUsina[] }) {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['empresa', 'micro-usinas'],
+    queryFn: microUsinasDaEmpresa,
+    retry: false,
+  })
+
+  const casar = useMutation({
+    mutationFn: ({ id, alvo }: { id: number; alvo: number | null }) => casarMicroUsina(id, alvo),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['empresa'] }),
+  })
+
+  const minhas = linhas.filter((l) => l.plant_link_id !== null)
+  const micro = data?.micro ?? []
+
+  if (data?.aviso) return <Erro>{data.aviso}</Erro>
+  if (!micro.length) return null
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <Cpu size={16} className="text-rotulo" />
+        <p className="text-forte font-semibold">Micro usinas</p>
+        <span className="text-xs text-fraco">{micro.length}</span>
+      </div>
+      <p className="text-sm text-rotulo mb-2">
+        Dos portais dos fabricantes. Case cada uma com a usina daqui para o aviso de parada
+        chegar ao dono.
+      </p>
+
+      <div className="grid gap-2">
+        {micro.map((m) => (
+          <Cartao key={m.id}>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-forte font-semibold">{m.nome}</p>
+                <p className="text-sm text-rotulo mt-1">
+                  {m.kwp ? `${m.kwp.toLocaleString('pt-BR')} kWp` : 'sem potência'}
+                  {m.estacoes.length ? ` · ${m.estacoes.join(' + ')}` : ''}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {m.plant_link_id ? (
+                  <>
+                    <Selo tom="ok">em {m.usina_nome}</Selo>
+                    <button
+                      className="btn-fantasma"
+                      disabled={casar.isPending}
+                      onClick={() => casar.mutate({ id: m.id, alvo: null })}
+                    >
+                      Desfazer
+                    </button>
+                  </>
+                ) : (
+                  <select
+                    className="campo h-9 text-sm"
+                    value=""
+                    onChange={(e) =>
+                      e.target.value && casar.mutate({ id: m.id, alvo: Number(e.target.value) })
+                    }
+                  >
+                    <option value="">casar com a usina…</option>
+                    {minhas.map((l) => (
+                      <option key={l.plant_link_id} value={l.plant_link_id as number}>
+                        {l.nome}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+          </Cartao>
+        ))}
+      </div>
+
+      {casar.error ? <Erro>{mensagemDeErro(casar.error)}</Erro> : null}
+    </div>
   )
 }
 

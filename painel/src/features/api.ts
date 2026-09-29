@@ -960,3 +960,21 @@ export const criarClienteDaEmpresa = (dados: {
 
 export const definirUsinasDoCliente = (clienteId: number, plant_link_ids: number[]) =>
   apiEmpresa.put<void>(`/clientes/${clienteId}/usinas`, { plant_link_ids }).then(() => undefined)
+
+/** A micro usina vista pela EMPRESA: traz junto com qual usina daqui ela já está casada. */
+export type MicroDaEmpresa = {
+  id: number
+  nome: string
+  kwp: number | null
+  estacoes: string[]
+  plant_link_id: number | null
+  usina_nome: string | null
+}
+
+export const microUsinasDaEmpresa = () =>
+  apiEmpresa
+    .get<{ micro: MicroDaEmpresa[]; aviso: string | null }>('/micro-usinas')
+    .then((r) => r.data)
+
+export const casarMicroUsina = (microId: number, plant_link_id: number | null) =>
+  apiEmpresa.put<MicroDaEmpresa>(`/micro-usinas/${microId}`, { plant_link_id }).then((r) => r.data)

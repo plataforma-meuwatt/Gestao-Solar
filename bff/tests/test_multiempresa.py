@@ -804,3 +804,128 @@ def test_casar_as_duas_pontas_na_mesma_linha(db, carteiras):
     )
     assert casada.origem == "ambos" and casada.mp_usina_id == 77
     assert db.get(PlantLink, casada.plant_link_id).empresa_id == a.id
+
+
+# ------------------------------------- o cliente que não tem conta nos produtos
+
+
+def test_cliente_sem_token_le_com_o_da_empresa(db, carteiras, duas_empresas):
+    """Pergunta do dono, 29/09/2026: *"o cliente precisa colocar o token dele ou passa
+    para mim?"*. Nenhum dos dois: o dono da usina costuma NÃO ter conta no meuWatt nem no
+    meuPlano, e exigir um token dele tornaria impossível cadastrar quem só existe aqui.
+
+    Quem tem conta nos produtos é a empresa que o atende. O que o cliente VÊ continua sendo
+    o que foi concedido a ele — o token só diz com que credencial a leitura acontece.
+    """
+    from app.core.cripto import cifrar
+    from app.models.integracao import Integracao, Produto
+    from app.services import vinculos
+
+    a, _b = duas_empresas
+    cliente = User(apelido="sem.token", nome="Sem Token", perfil=Perfil.CLIENTE, empresa_id=a.id)
+    db.add(cliente)
+    db.add(
+        Integracao(
+            produto=Produto.MEUWATT,
+            base_url="https://api.meuwatt.test",
+            empresa_id=a.id,
+            token_cifrado=cifrar("mw_pat_da_empresa"),
+        )
+    )
+    db.commit()
+
+    assert vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT) == "mw_pat_da_empresa"
+
+
+def test_o_token_do_proprio_cliente_tem_preferencia(db, duas_empresas):
+    """Quando existe, o dele é melhor: carrega o escopo que o produto já aplica, incluindo
+    usina que a pessoa vê por pertencer a uma organização de lá."""
+    from app.core.cripto import cifrar
+    from app.models.integracao import Integracao, Produto
+    from app.models.user import VinculoProduto
+    from app.services import vinculos
+
+    a, _b = duas_empresas
+    cliente = User(apelido="com.token", nome="Com Token", perfil=Perfil.CLIENTE, empresa_id=a.id)
+    db.add(cliente)
+    db.flush()
+    db.add(
+        Integracao(
+            produto=Produto.MEUWATT,
+            base_url="https://api.meuwatt.test",
+            empresa_id=a.id,
+            token_cifrado=cifrar("mw_pat_da_empresa"),
+        )
+    )
+    db.add(
+        VinculoProduto(
+            gs_user_id=cliente.id,
+            produto=Produto.MEUWATT,
+            usuario_remoto_id="9",
+            token_cifrado=cifrar("mw_pat_do_cliente"),
+        )
+    )
+    db.commit()
+
+    assert vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT) == "mw_pat_do_cliente"
+
+
+def test_cliente_sem_empresa_nao_cai_na_credencial_da_plataforma(db):
+    """A trava do atalho: cliente sem empresa lendo com a credencial da PLATAFORMA leria a
+    carteira de outra gente com a credencial de quem construiu o sistema."""
+    from app.core.cripto import cifrar
+    from app.models.integracao import Integracao, Produto
+    from app.services import vinculos
+
+    solto = User(apelido="solto", nome="Solto", perfil=Perfil.CLIENTE)
+    db.add(solto)
+    db.add(
+        Integracao(
+            produto=Produto.MEUWATT,
+            base_url="https://api.meuwatt.test",
+            token_cifrado=cifrar("mw_pat_da_PLATAFORMA"),
+        )
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as erro:
+        vinculos.token_do_cliente(db, solto.id, Produto.MEUWATT)
+    assert erro.value.status_code == 424
+
+
+def test_a_micro_usina_pertence_a_uma_usina_so(db, carteiras):
+    """Pedido do dono: levar as micro usinas (Solis, Canadian, TSUN) para cá. Elas não são
+    um quarto formato de usina — casam com uma que já existe, e servem a uma coisa: o aviso
+    de parada delas chegar ao dono.
+
+    Casar a mesma micro na segunda usina desfaria o primeiro par em silêncio, e o aviso
+    passaria a chegar em nome da usina errada.
+    """
+    from app.api.v1.empresa import MicroVinculoIn, UsinaIn, casar_micro_usina, salvar_usina
+
+    a, _b, gerente = carteiras
+    u1 = salvar_usina(UsinaIn(mw_slug="u-1", nome="Usina 1"), db=db, gerente=gerente)
+    u2 = salvar_usina(UsinaIn(mw_slug="u-2", nome="Usina 2"), db=db, gerente=gerente)
+
+    casar_micro_usina(7, MicroVinculoIn(plant_link_id=u1.plant_link_id), db=db, gerente=gerente)
+    assert db.get(PlantLink, u1.plant_link_id).mw_micro_plant_id == 7
+
+    with pytest.raises(HTTPException) as erro:
+        casar_micro_usina(7, MicroVinculoIn(plant_link_id=u2.plant_link_id), db=db, gerente=gerente)
+    assert erro.value.status_code == 409 and "Usina 1" in erro.value.detail
+
+    # Descasar libera a micro para outra usina.
+    casar_micro_usina(7, MicroVinculoIn(plant_link_id=None), db=db, gerente=gerente)
+    casar_micro_usina(7, MicroVinculoIn(plant_link_id=u2.plant_link_id), db=db, gerente=gerente)
+    assert db.get(PlantLink, u1.plant_link_id).mw_micro_plant_id is None
+    assert db.get(PlantLink, u2.plant_link_id).mw_micro_plant_id == 7
+
+
+def test_micro_usina_nao_casa_com_usina_de_outra_empresa(db, carteiras):
+    from app.api.v1.empresa import MicroVinculoIn, casar_micro_usina
+
+    _a, b, gerente = carteiras
+    da_b = db.scalar(select(PlantLink).where(PlantLink.empresa_id == b.id))
+    with pytest.raises(HTTPException) as erro:
+        casar_micro_usina(9, MicroVinculoIn(plant_link_id=da_b.id), db=db, gerente=gerente)
+    assert erro.value.status_code == 404

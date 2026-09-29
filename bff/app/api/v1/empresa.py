@@ -772,3 +772,129 @@ def definir_usinas_do_cliente(
     except clientes.RegraDeNegocio as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     db.commit()
+
+
+# ------------------------------------------------------------- as micro usinas
+
+
+class MicroUsinaOut(BaseModel):
+    """Uma usina do MICRO do meuWatt — os portais dos fabricantes (Solis, Canadian, TSUN).
+
+    Não é um quarto formato de usina: ela se **casa** com uma usina que já está aqui, e
+    serve a uma coisa — o aviso de usina parada dela chega ao dono. Por isso o que se
+    escolhe é "esta micro é aquela usina", nunca "traga a micro para dentro".
+    """
+
+    id: int
+    nome: str
+    kwp: float | None = None
+    #: As estações dos portais que a formam ("UFV Sitio Solis + UFV Sitio Canadian").
+    estacoes: list[str] = []
+    #: A usina desta empresa já casada com ela, se houver.
+    plant_link_id: int | None = None
+    usina_nome: str | None = None
+
+
+class MicroCatalogoOut(BaseModel):
+    micro: list[MicroUsinaOut] = []
+    aviso: str | None = None
+
+
+@router.get("/micro-usinas", response_model=MicroCatalogoOut)
+async def micro_usinas(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> MicroCatalogoOut:
+    """As micro usinas que o SEU token alcança no MICRO do meuWatt.
+
+    O MICRO é leitura de administrador lá: um token de escopo menor não o enxerga, e a
+    resposta vem com o aviso em vez de uma lista vazia — vazio diria "não existe nenhuma",
+    que é outra coisa.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    casadas = {
+        u.mw_micro_plant_id: u
+        for u in db.scalars(
+            select(PlantLink).where(
+                PlantLink.empresa_id == empresa_id, PlantLink.mw_micro_plant_id.is_not(None)
+            )
+        ).all()
+    }
+
+    try:
+        cliente = await integracoes.cliente_meuwatt(db, empresa_id)
+        cru = await cliente.micro_usinas()
+    except Exception as exc:  # noqa: BLE001
+        return MicroCatalogoOut(aviso=_aviso(Produto.MEUWATT, exc))
+
+    lista = cru.get("plants", []) if isinstance(cru, dict) else (cru or [])
+    saida = []
+    for m in lista:
+        mid = m.get("id")
+        if mid is None:
+            continue
+        casada = casadas.get(mid)
+        saida.append(
+            MicroUsinaOut(
+                id=mid,
+                nome=m.get("name") or "sem nome",
+                kwp=m.get("capacity_kwp"),
+                estacoes=[e.get("name") for e in (m.get("stations") or []) if e.get("name")],
+                plant_link_id=casada.id if casada else None,
+                usina_nome=casada.nome if casada else None,
+            )
+        )
+    return MicroCatalogoOut(micro=saida)
+
+
+class MicroVinculoIn(BaseModel):
+    #: A usina DESTA empresa que recebe a micro. `null` descasa.
+    plant_link_id: int | None = None
+
+
+@router.put("/micro-usinas/{micro_id}", response_model=MicroUsinaOut)
+def casar_micro_usina(
+    micro_id: int,
+    body: MicroVinculoIn,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> MicroUsinaOut:
+    """Diz que esta micro usina é aquela usina daqui — ou desfaz o par.
+
+    Uma micro pertence a UMA usina: casá-la com a segunda desfaria o primeiro par em
+    silêncio, e o aviso de parada passaria a chegar em nome da usina errada. Por isso o
+    par anterior é recusado com o nome de quem o tem.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+
+    ja_casada = db.scalar(
+        select(PlantLink).where(
+            PlantLink.empresa_id == empresa_id, PlantLink.mw_micro_plant_id == micro_id
+        )
+    )
+
+    if body.plant_link_id is None:
+        if ja_casada is not None:
+            ja_casada.mw_micro_plant_id = None
+            db.commit()
+        return MicroUsinaOut(id=micro_id, nome="")
+
+    usina = db.get(PlantLink, body.plant_link_id)
+    if usina is None or usina.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa.")
+
+    if ja_casada is not None and ja_casada.id != usina.id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Esta micro usina já está em “{ja_casada.nome}”. Desfaça lá antes.",
+        )
+    if usina.mw_micro_plant_id is not None and usina.mw_micro_plant_id != micro_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"“{usina.nome}” já tem outra micro usina. Desfaça aquele par antes.",
+        )
+
+    usina.mw_micro_plant_id = micro_id
+    db.commit()
+    return MicroUsinaOut(
+        id=micro_id, nome="", plant_link_id=usina.id, usina_nome=usina.nome
+    )

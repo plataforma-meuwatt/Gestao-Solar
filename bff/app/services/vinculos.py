@@ -61,7 +61,7 @@ from app.clients.meuplano import MeuPlanoClient
 from app.clients.meuwatt import MeuWattClient
 from app.core.cripto import SegredoInvalido, cifrar, decifrar
 from app.core.tokens_produto import NOME, TokenInvalido, prefixo_visivel, validar
-from app.models.integracao import Produto
+from app.models.integracao import Integracao, Produto
 from app.models.user import User, VinculoProduto
 from app.services import integracoes
 
@@ -134,19 +134,84 @@ class SemConexao(HTTPException):
 
 
 def token_do_cliente(db: Session, cliente_id: int, produto: Produto) -> str:
+    """O token com que se lê os dados DESTE cliente. O dele, de preferência; o da empresa
+    que o atende, quando ele não tem conta no produto.
+
+    ## Por que o da empresa serve
+
+    A pergunta do dono, em 29/09/2026: *"o cliente precisa colocar o token dele ou passa
+    para mim?"*. Nenhum dos dois, na maior parte dos casos. O cliente é o dono da usina —
+    ele costuma **não ter conta** no meuWatt nem no meuPlano, e exigir um token dele
+    tornaria impossível cadastrar quem só existe aqui.
+
+    Quem tem conta nos dois produtos é a EMPRESA de O&M que o atende, e é ela quem opera
+    as usinas dele. Lendo com o token dela, o cliente novo entra no aplicativo no mesmo
+    dia, sem depender de ninguém gerar credencial em lugar nenhum.
+
+    ## O que continua protegendo o escopo
+
+    **A concessão.** O que o cliente vê são as usinas concedidas a ele
+    (`gs_user_plant_access`, via `usinas_do_usuario`), e isso não mudou: o token só diz
+    com que credencial a leitura acontece, nunca o que ela pode devolver. Um token mais
+    amplo com uma concessão vazia continua mostrando tela vazia.
+
+    **Só o da própria empresa.** O atalho para em `empresa_id`: cliente sem empresa não
+    cai na credencial da plataforma — isso leria a carteira de outra gente com a
+    credencial de quem construiu o sistema.
+
+    O token DO CLIENTE continua tendo preferência, e é melhor quando existe: ele carrega o
+    escopo que o produto de origem já aplica, incluindo usina que a pessoa vê por
+    pertencer a uma organização de lá.
+    """
     vinculo = obter(db, cliente_id, produto)
+    if vinculo is not None and vinculo.token_cifrado:
+        try:
+            return decifrar(vinculo.token_cifrado)
+        except SegredoInvalido as exc:
+            raise SemConexao(
+                f"O token do {NOME[produto]} deste cliente não abre com a chave atual. "
+                f"Cole o token de novo na ficha dele."
+            ) from exc
+
+    da_empresa = _token_da_empresa(db, cliente_id, produto)
+    if da_empresa is not None:
+        return da_empresa
+
     if vinculo is None or not vinculo.token_cifrado:
         raise SemConexao(
-            f"Este cliente ainda não conectou a conta do {NOME[produto]}. "
-            f"Abra a ficha dele e cole o token."
+            f"Nem este cliente nem a empresa dele têm conexão com o {NOME[produto]}. "
+            f"Conecte a conta da empresa em Conexões, ou cole o token do cliente na "
+            f"ficha dele."
         )
+    raise SemConexao(
+        f"A conexão com o {NOME[produto]} deste cliente não está utilizável."
+    )
+
+
+def _token_da_empresa(db: Session, cliente_id: int, produto: Produto) -> str | None:
+    """A credencial da empresa que atende este cliente, quando ele mesmo não tem.
+
+    Devolve `None` — e não levanta — quando não há: quem chama já tem a frase certa para
+    o caso de não existir nenhuma das duas, e um erro aqui trocaria essa frase por outra,
+    mais distante do conserto.
+    """
+    cliente = db.get(User, cliente_id)
+    if cliente is None or cliente.empresa_id is None:
+        return None
+
+    integracao = db.scalar(
+        select(Integracao).where(
+            Integracao.produto == produto, Integracao.empresa_id == cliente.empresa_id
+        )
+    )
+    if integracao is None or not integracao.ativa or not integracao.token_cifrado:
+        return None
     try:
-        return decifrar(vinculo.token_cifrado)
-    except SegredoInvalido as exc:
-        raise SemConexao(
-            f"O token do {NOME[produto]} deste cliente não abre com a chave atual. "
-            f"Cole o token de novo na ficha dele."
-        ) from exc
+        return decifrar(integracao.token_cifrado)
+    except SegredoInvalido:
+        # A credencial da empresa existe e não abre. Quem conserta isso é o gerente, em
+        # Conexões — e a frase de quem chama já diz isso.
+        return None
 
 
 def _endereco(db: Session, produto: Produto) -> str:
