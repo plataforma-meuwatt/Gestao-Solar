@@ -920,8 +920,9 @@ export type LinhaDeUsina = {
   cidade: string | null
   uf: string | null
   kwp: number | null
-  origem: 'ambos' | 'meuwatt' | 'meuplano'
+  origem: 'ambos' | 'meuwatt' | 'meuplano' | 'micro'
   no_app: boolean
+  mw_micro_plant_id: number | null
   par_provavel_mw: string | null
   par_provavel_nome: string | null
   /** As candidatas do meuPlano, da mais provável para a menos. */
@@ -930,6 +931,8 @@ export type LinhaDeUsina = {
 
 export type CatalogoDeUsinas = {
   linhas: LinhaDeUsina[]
+  /** Quantas a empresa escolheu não ver. */
+  ocultas: number
   /** Todas as do meuPlano, para casar à mão quando a sugestão não serve. */
   usinas_do_meuplano: { id: number; nome: string }[]
   avisos: string[]
@@ -942,6 +945,7 @@ export const salvarUsinaDaEmpresa = (dados: {
   plant_link_id?: number | null
   mw_slug?: string | null
   mp_usina_id?: number | null
+  mw_micro_plant_id?: number | null
   nome: string
   cidade?: string | null
   uf?: string | null
@@ -978,3 +982,13 @@ export const microUsinasDaEmpresa = () =>
 
 export const casarMicroUsina = (microId: number, plant_link_id: number | null) =>
   apiEmpresa.put<MicroDaEmpresa>(`/micro-usinas/${microId}`, { plant_link_id }).then((r) => r.data)
+
+/** Preferência de tela desta empresa: some da lista de trazer, nada mais muda. */
+export const ocultarUsina = (dados: {
+  mw_slug?: string | null
+  mp_usina_id?: number | null
+  mw_micro_plant_id?: number | null
+}) => apiEmpresa.post<void>('/usinas/ocultar', dados).then(() => undefined)
+
+export const mostrarTodasAsUsinas = () =>
+  apiEmpresa.delete<void>('/usinas/ocultas').then(() => undefined)

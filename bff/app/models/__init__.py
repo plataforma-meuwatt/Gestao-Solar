@@ -14,6 +14,7 @@ from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.pessoa import Pessoa
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
 from app.models.plant import PlantLink
+from app.models.usina_oculta import UsinaOculta
 from app.models.user import (
     Perfil,
     SenhaProvisoria,
@@ -31,6 +32,7 @@ __all__ = [
     "VinculoProduto",
     "SenhaProvisoria",
     "PlantLink",
+    "UsinaOculta",
     "Permissao",
     "AcessoPainel",
     "ContatoUsina",

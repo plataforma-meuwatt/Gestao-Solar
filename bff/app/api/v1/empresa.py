@@ -35,6 +35,7 @@ from app.core.tokens_produto import NOME
 from app.models.empresa import Empresa
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
+from app.models.usina_oculta import UsinaOculta
 from app.models.user import Perfil, User, UserPlantAccess
 from app.services import clientes, conciliacao
 from app.services import empresas as svc
@@ -482,8 +483,10 @@ class LinhaDeUsina(BaseModel):
     cidade: str | None = None
     uf: str | None = None
     kwp: float | None = None
+    #: `ambos`, `meuwatt`, `meuplano` ou `micro` — a usina que só existe no MICRO.
     origem: str
     no_app: bool = False
+    mw_micro_plant_id: int | None = None
     #: Sugestão de par, quando a usina só apareceu de um lado.
     par_provavel_mw: str | None = None
     par_provavel_nome: str | None = None
@@ -498,6 +501,10 @@ class UsinaDoMeuPlano(BaseModel):
 
 class CatalogoDeUsinas(BaseModel):
     linhas: list[LinhaDeUsina] = []
+    #: Quantas a empresa escolheu não ver. A tela mostra o número: uma lista que encolhe
+    #: sem contador faz procurar a usina que "sumiu", e a resposta ("você a ocultou")
+    #: precisa estar na mesma tela.
+    ocultas: int = 0
     #: Todas as usinas do meuPlano que o token alcança — para casar à mão quando a
     #: sugestão não serve. Sem isso, uma usina cujo nome não se parece com nada ficaria
     #: sem par para sempre, e a tela não teria como dizer que existe.
@@ -535,6 +542,25 @@ async def catalogo_de_usinas(
     links = list(
         db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all()
     )
+
+    # "Não mostrar esta usina": preferência de TELA desta empresa. A usina some da lista de
+    # trazer e nada mais muda — o dono dela, no aplicativo, continua vendo o que foi
+    # concedido. Só as que AINDA NÃO foram trazidas são escondidas: esconder uma que já
+    # está aqui faria a linha sumir com os vínculos dela dentro.
+    ocultas = {
+        (o.produto, o.identificador)
+        for o in db.scalars(
+            select(UsinaOculta).where(UsinaOculta.empresa_id == empresa_id)
+        ).all()
+    }
+
+    def esta_oculta(l) -> bool:
+        if l.plant_link_id is not None:
+            return False
+        if l.mw_slug and (Produto.MEUWATT, l.mw_slug) in ocultas:
+            return True
+        return bool(l.mp_usina_id and (Produto.MEUPLANO, str(l.mp_usina_id)) in ocultas)
+
     linhas = [
         LinhaDeUsina(
             chave=l.chave,
@@ -555,9 +581,35 @@ async def catalogo_de_usinas(
             ],
         )
         for l in conciliacao.montar(usinas_mw, usinas_mp, links)
+        if not esta_oculta(l)
     ]
+    # As micro usinas entram na MESMA lista, como origem `micro`: uma usina que só existe
+    # no portal do fabricante é uma usina, não o complemento de outra. As já trazidas saem
+    # daqui porque já vieram como `PlantLink` acima.
+    ja_trazidas = {l.mw_micro_plant_id for l in links if l.mw_micro_plant_id}
+    try:
+        cru = await (await integracoes.cliente_meuwatt(db, empresa_id)).micro_usinas()
+        for m in (cru.get("plants", []) if isinstance(cru, dict) else (cru or [])):
+            mid = m.get("id")
+            if mid is None or mid in ja_trazidas:
+                continue
+            if (Produto.MEUWATT, f"micro:{mid}") in ocultas:
+                continue
+            linhas.append(
+                LinhaDeUsina(
+                    chave=f"micro:{mid}",
+                    nome=m.get("name") or "sem nome",
+                    kwp=m.get("capacity_kwp"),
+                    origem="micro",
+                    mw_micro_plant_id=mid,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 — o MICRO é leitura de administrador lá
+        avisos.append(_aviso(Produto.MEUWATT, exc))
+
     return CatalogoDeUsinas(
         linhas=linhas,
+        ocultas=len(ocultas),
         usinas_do_meuplano=[
             UsinaDoMeuPlano(id=u["id"], nome=conciliacao.nome_de(u))
             for u in usinas_mp
@@ -567,10 +619,28 @@ async def catalogo_de_usinas(
     )
 
 
+def _origem(link: PlantLink) -> str:
+    """De onde esta usina vem. A ordem importa: uma usina que está nos dois produtos é
+    "ambos" mesmo tendo micro, porque a micro é um detalhe do monitoramento dela — e uma
+    que SÓ tem micro é "micro", que é o caso do cliente cujo único monitoramento é o
+    portal do fabricante."""
+    if link.mw_plant_slug and link.mp_usina_id:
+        return "ambos"
+    if link.mw_plant_slug:
+        return "meuwatt"
+    if link.mp_usina_id:
+        return "meuplano"
+    return "micro"
+
+
 class UsinaIn(BaseModel):
     plant_link_id: int | None = None
     mw_slug: str | None = None
     mp_usina_id: int | None = None
+    #: A usina do MICRO (Solis, Canadian, TSUN). **Sozinha ela já é uma usina**: há
+    #: cliente cujo único monitoramento é o portal do fabricante, e exigir par no meuWatt
+    #: o deixaria de fora. Junto de um `mw_slug`, é a mesma usina vista nos dois lugares.
+    mw_micro_plant_id: int | None = None
     nome: str
     cidade: str | None = None
     uf: str | None = None
@@ -596,10 +666,10 @@ def salvar_usina(
     outros.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    if body.mw_slug is None and body.mp_usina_id is None:
+    if body.mw_slug is None and body.mp_usina_id is None and body.mw_micro_plant_id is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "A usina precisa existir em pelo menos um dos dois produtos.",
+            "A usina precisa existir em pelo menos um dos produtos.",
         )
 
     link = None
@@ -620,7 +690,11 @@ def salvar_usina(
     #    mensagem diz com qual nome ela já está aqui;
     # 3. a usina é de OUTRA empresa — recusa sem dizer de quem, para não revelar a
     #    carteira do vizinho.
-    for campo, valor in ((PlantLink.mw_plant_slug, body.mw_slug), (PlantLink.mp_usina_id, body.mp_usina_id)):
+    for campo, valor in (
+        (PlantLink.mw_plant_slug, body.mw_slug),
+        (PlantLink.mp_usina_id, body.mp_usina_id),
+        (PlantLink.mw_micro_plant_id, body.mw_micro_plant_id),
+    ):
         if valor is None:
             continue
         condicoes = [campo == valor]
@@ -652,6 +726,7 @@ def salvar_usina(
 
     link.mw_plant_slug = body.mw_slug
     link.mp_usina_id = body.mp_usina_id
+    link.mw_micro_plant_id = body.mw_micro_plant_id
     link.nome = body.nome
     link.cidade = body.cidade
     link.uf = body.uf
@@ -669,9 +744,9 @@ def salvar_usina(
         cidade=link.cidade,
         uf=link.uf,
         kwp=link.kwp,
-        origem=("ambos" if link.mw_plant_slug and link.mp_usina_id
-                else "meuwatt" if link.mw_plant_slug else "meuplano"),
+        origem=_origem(link),
         no_app=link.ativo,
+        mw_micro_plant_id=link.mw_micro_plant_id,
     )
 
 
@@ -898,3 +973,85 @@ def casar_micro_usina(
     return MicroUsinaOut(
         id=micro_id, nome="", plant_link_id=usina.id, usina_nome=usina.nome
     )
+
+
+class OcultarIn(BaseModel):
+    """Qual usina sumir da lista. Um dos três, o mesmo que a identifica no produto."""
+
+    mw_slug: str | None = None
+    mp_usina_id: int | None = None
+    mw_micro_plant_id: int | None = None
+
+
+def _chave_oculta(body: OcultarIn) -> tuple[Produto, str]:
+    if body.mw_slug:
+        return (Produto.MEUWATT, body.mw_slug)
+    if body.mp_usina_id is not None:
+        return (Produto.MEUPLANO, str(body.mp_usina_id))
+    if body.mw_micro_plant_id is not None:
+        return (Produto.MEUWATT, f"micro:{body.mw_micro_plant_id}")
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Diga qual usina ocultar.")
+
+
+@router.post("/usinas/ocultar", status_code=204)
+def ocultar_usina(
+    body: OcultarIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> None:
+    """Tira esta usina da lista de trazer — só para esta empresa, e só nesta tela.
+
+    Não apaga nada, não sai do produto de origem e não muda o que ninguém vê no
+    aplicativo. É preferência de tela, e é reversível.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    produto, identificador = _chave_oculta(body)
+
+    ja = db.scalar(
+        select(UsinaOculta).where(
+            UsinaOculta.empresa_id == empresa_id,
+            UsinaOculta.produto == produto,
+            UsinaOculta.identificador == identificador,
+        )
+    )
+    if ja is None:
+        db.add(
+            UsinaOculta(empresa_id=empresa_id, produto=produto, identificador=identificador)
+        )
+        db.commit()
+
+
+class UsinaOcultaOut(BaseModel):
+    produto: str
+    identificador: str
+    ocultada_em: datetime
+
+
+@router.get("/usinas/ocultas", response_model=list[UsinaOcultaOut])
+def listar_ocultas(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> list[UsinaOcultaOut]:
+    """O que foi escondido, para poder voltar. Sem esta lista, ocultar seria definitivo na
+    prática — e ninguém lembraria o nome do que escondeu."""
+    empresa_id = svc.empresa_exigida(gerente)
+    return [
+        UsinaOcultaOut(
+            produto=o.produto.value, identificador=o.identificador, ocultada_em=o.ocultada_em
+        )
+        for o in db.scalars(
+            select(UsinaOculta)
+            .where(UsinaOculta.empresa_id == empresa_id)
+            .order_by(UsinaOculta.identificador)
+        ).all()
+    ]
+
+
+@router.delete("/usinas/ocultas", status_code=204)
+def mostrar_todas(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> None:
+    """Volta a mostrar TODAS. Uma só de cada vez exigiria a tela guardar o identificador de
+    cada oculta; trazer tudo de volta e esconder de novo o que não serve é menos passos
+    para quem se arrependeu."""
+    empresa_id = svc.empresa_exigida(gerente)
+    for o in db.scalars(select(UsinaOculta).where(UsinaOculta.empresa_id == empresa_id)).all():
+        db.delete(o)
+    db.commit()

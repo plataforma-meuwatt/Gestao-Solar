@@ -929,3 +929,62 @@ def test_micro_usina_nao_casa_com_usina_de_outra_empresa(db, carteiras):
     with pytest.raises(HTTPException) as erro:
         casar_micro_usina(9, MicroVinculoIn(plant_link_id=da_b.id), db=db, gerente=gerente)
     assert erro.value.status_code == 404
+
+
+# ---------------------------------------------------- "não mostrar esta usina"
+
+
+def test_ocultar_tira_da_lista_e_volta(db, carteiras):
+    """Pedido do dono: o token da empresa alcança 23 usinas e boa parte não interessa. Sem
+    "não mostrar", elas ficam para sempre na lista de trazer.
+
+    É preferência de TELA: não apaga nada, não sai do produto e não muda o que ninguém vê
+    no aplicativo.
+    """
+    from app.api.v1.empresa import OcultarIn, listar_ocultas, mostrar_todas, ocultar_usina
+    from app.models.integracao import Produto
+    from app.models.usina_oculta import UsinaOculta
+
+    a, _b, gerente = carteiras
+    ocultar_usina(OcultarIn(mw_slug="nao-quero"), db=db, gerente=gerente)
+    ocultar_usina(OcultarIn(mp_usina_id=99), db=db, gerente=gerente)
+    # Ocultar duas vezes a mesma não duplica linha — o gerente clica de novo porque a tela
+    # demorou, e isso não é erro dele.
+    ocultar_usina(OcultarIn(mw_slug="nao-quero"), db=db, gerente=gerente)
+
+    assert len(listar_ocultas(db=db, gerente=gerente)) == 2
+    assert db.scalar(
+        select(func.count()).select_from(UsinaOculta).where(UsinaOculta.empresa_id == a.id)
+    ) == 2
+
+    mostrar_todas(db=db, gerente=gerente)
+    assert listar_ocultas(db=db, gerente=gerente) == []
+
+
+def test_a_micro_usina_sozinha_ja_e_uma_usina(db, carteiras):
+    """Correção do dono, 29/09/2026: *"a micro usina não preciso casar com nada"*. Há
+    cliente cujo único monitoramento é o portal do fabricante — exigir par no meuWatt o
+    deixaria de fora do sistema."""
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    a, _b, gerente = carteiras
+    so_micro = salvar_usina(
+        UsinaIn(mw_micro_plant_id=42, nome="Só no portal do fabricante"), db=db, gerente=gerente
+    )
+    assert so_micro.origem == "micro"
+    assert so_micro.mw_micro_plant_id == 42
+
+    trazida = db.get(PlantLink, so_micro.plant_link_id)
+    assert trazida.empresa_id == a.id
+    assert trazida.mw_plant_slug is None and trazida.mp_usina_id is None
+
+
+def test_usina_sem_nenhum_identificador_e_recusada(db, carteiras):
+    """O corolário do dado morto: linha que não aponta para nada em produto nenhum é
+    fantasma — aparece na lista e todas as telas dela vêm vazias."""
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+
+    _a, _b, gerente = carteiras
+    with pytest.raises(HTTPException) as erro:
+        salvar_usina(UsinaIn(nome="Fantasma"), db=db, gerente=gerente)
+    assert erro.value.status_code == 400
