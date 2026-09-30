@@ -1013,10 +1013,11 @@ def test_a_usina_so_do_MICRO_nao_e_classificada_como_meuPlano(db, carteiras):
     assert _origem(nos_dois) == "ambos"
 
 
-def test_a_concessao_vale_para_qualquer_conta_da_empresa(db, carteiras):
+def test_a_concessao_e_do_dono_de_usina_e_a_tela_le_antes_de_salvar(db, carteiras):
     """Defeito guardado, e o dono esbarrou nele: *"só consigo puxar as usinas da conta do
-    gerente, mas não consigo atribuir aos usuários"*. A concessão exigia perfil `cliente`,
-    e o GERENTE também é dono de usina no aplicativo — é assim que ele vê a carteira.
+    gerente, mas não consigo atribuir aos usuários"*. A concessão é a de quem RECEBE a
+    usina no aplicativo — o dono dela —, e a tela precisa ler o que já está concedido
+    antes de salvar, porque a gravação é a lista completa.
     """
     from app.api.v1.empresa import (
         UsinaIn,
@@ -1027,15 +1028,18 @@ def test_a_concessao_vale_para_qualquer_conta_da_empresa(db, carteiras):
     )
 
     a, _b, gerente = carteiras
-    u = salvar_usina(UsinaIn(mw_slug="p-1", nome="Para o gerente"), db=db, gerente=gerente)
+    u = salvar_usina(UsinaIn(mw_slug="p-1", nome="Para o dono"), db=db, gerente=gerente)
+    dono = db.scalar(select(User).where(User.apelido == "cliente.b"))
+    dono.empresa_id = a.id
+    db.commit()
 
     # Abre vazia, e é por isso que a tela precisa desta rota antes de salvar.
-    assert usinas_do_usuario(gerente.id, db=db, gerente=gerente) == []
+    assert usinas_do_usuario(dono.id, db=db, gerente=gerente) == []
 
     definir_usinas_do_cliente(
-        gerente.id, UsinasDoClienteIn(plant_link_ids=[u.plant_link_id]), db=db, gerente=gerente
+        dono.id, UsinasDoClienteIn(plant_link_ids=[u.plant_link_id]), db=db, gerente=gerente
     )
-    concedidas = usinas_do_usuario(gerente.id, db=db, gerente=gerente)
+    concedidas = usinas_do_usuario(dono.id, db=db, gerente=gerente)
     assert [c.plant_link_id for c in concedidas] == [u.plant_link_id]
     assert concedidas[0].da_empresa is True
 
@@ -1122,14 +1126,16 @@ def test_a_recusa_diz_QUAL_usina_nao_e_da_empresa(db, carteiras):
     concessão herdada, de antes do multiempresa."""
     from app.api.v1.empresa import UsinasDoClienteIn, definir_usinas_do_cliente
 
-    _a, _b, gerente = carteiras
+    a, _b, gerente = carteiras
     orfa = PlantLink(nome="UFV Herdada", mw_plant_slug="ufv-herdada")
+    dono = db.scalar(select(User).where(User.apelido == "cliente.b"))
+    dono.empresa_id = a.id
     db.add(orfa)
     db.commit()
 
     with pytest.raises(HTTPException) as erro:
         definir_usinas_do_cliente(
-            gerente.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
+            dono.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
         )
     assert erro.value.status_code == 409
     assert "UFV Herdada" in erro.value.detail
@@ -1218,3 +1224,83 @@ def test_cliente_no_painel_ouve_ONDE_entrar_e_nao_senha_invalida(db, carteiras, 
         entrar(EntrarIn(apelido="dona.usina", senha="chute"), db=db)
     assert erro.value.status_code == 401
     assert erro.value.detail == "Apelido ou senha inválidos"
+
+
+def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empresas):
+    """A causa raiz que a prova em produção revelou: eu tinha feito o gerente depender de
+    concessão, e isso o punha a COMPETIR com os clientes pela mesma usina. A regra da casa
+    é "cada usina pertence a um cliente só", então conceder ao gerente o que já era de um
+    dono era recusado — e a recusa estava certa. O erro era a premissa.
+
+    Gerente vê a carteira da empresa por ser gerente. Uma concessão para ele seria uma
+    segunda verdade sobre o mesmo fato.
+    """
+    from app.api.v1.empresa import UsinaIn, UsinasDoClienteIn, definir_usinas_do_cliente, salvar_usina
+    from app.api.v1.plants import usinas_do_usuario as escopo_do_app
+
+    a, _b, gerente = carteiras
+    u1 = salvar_usina(UsinaIn(mw_slug="c-1", nome="Carteira 1"), db=db, gerente=gerente)
+    u2 = salvar_usina(UsinaIn(mw_slug="c-2", nome="Carteira 2"), db=db, gerente=gerente)
+
+    # Sem conceder nada a ele, as duas já aparecem — mais a que a fixture criou.
+    nomes = {u.nome for u in escopo_do_app(db, gerente)}
+    assert {"Carteira 1", "Carteira 2"} <= nomes
+
+    # E o dono de usina recebe a MESMA usina sem conflito com o gerente.
+    cliente = db.scalar(select(User).where(User.apelido == "cliente.b"))
+    cliente.empresa_id = a.id
+    db.commit()
+    definir_usinas_do_cliente(
+        cliente.id, UsinasDoClienteIn(plant_link_ids=[u1.plant_link_id]), db=db, gerente=gerente
+    )
+    assert {u.nome for u in escopo_do_app(db, cliente)} == {"Carteira 1"}
+
+    # Conceder ao gerente é recusado com a frase que explica por quê.
+    with pytest.raises(HTTPException) as erro:
+        definir_usinas_do_cliente(
+            gerente.id, UsinasDoClienteIn(plant_link_ids=[u2.plant_link_id]), db=db, gerente=gerente
+        )
+    assert erro.value.status_code == 400 and "já vê todas" in erro.value.detail
+
+
+def test_a_MICRO_aparece_no_app_do_gerente(db, carteiras):
+    """O pedido, em uma frase: as micro usinas têm de aparecer no aplicativo do gerente.
+
+    Duas coisas precisam ser verdade ao mesmo tempo, e cada uma quebrou uma vez hoje:
+    a usina só-MICRO existe como usina (não é complemento de outra), e o gerente vê a
+    carteira da empresa sem depender de concessão.
+    """
+    from app.api.v1.empresa import UsinaIn, salvar_usina
+    from app.api.v1.plants import usinas_do_usuario as escopo_do_app
+
+    _a, _b, gerente = carteiras
+    salvar_usina(UsinaIn(mw_micro_plant_id=1, nome="Micro do Sítio"), db=db, gerente=gerente)
+    salvar_usina(UsinaIn(mw_micro_plant_id=2, nome="Micro do Stuqui"), db=db, gerente=gerente)
+
+    nomes = {u.nome for u in escopo_do_app(db, gerente)}
+    assert {"Micro do Sítio", "Micro do Stuqui"} <= nomes, "micro usina fora do app do gerente"
+
+
+def test_o_gerente_nunca_mais_ouve_que_a_usina_nao_e_da_empresa(db, carteiras):
+    """A garantia que o dono pediu: o erro que o travou não pode voltar por caminho nenhum.
+
+    Ele nascia de uma premissa errada — gerente dependendo de concessão. Com a premissa
+    corrigida, a rota recusa a tentativa ANTES de olhar usina, com a frase que explica; e
+    a tela não oferece mais o botão. São duas portas, e a de baixo é esta.
+    """
+    from app.api.v1.empresa import UsinasDoClienteIn, definir_usinas_do_cliente
+
+    _a, _b, gerente = carteiras
+    orfa = PlantLink(nome="UFV Leme", mw_plant_slug="ufv-leme-teste")
+    db.add(orfa)
+    db.commit()
+
+    # Mesmo mandando a usina órfã — o caso exato que ele viu — a resposta é sobre o
+    # PAPEL, não sobre a usina: não há o que conceder a um gerente.
+    with pytest.raises(HTTPException) as erro:
+        definir_usinas_do_cliente(
+            gerente.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
+        )
+    assert erro.value.status_code == 400
+    assert "já vê todas as usinas" in erro.value.detail
+    assert "não é da sua empresa" not in erro.value.detail

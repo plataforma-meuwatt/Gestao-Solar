@@ -44,6 +44,24 @@ def usinas_do_usuario(db: Session, usuario: User) -> list[PlantLink]:
     `PlantLink.ativo` entra na condição: uma usina desligada no painel sai do aplicativo
     sem que ninguém precise mexer nas concessões de cada cliente.
     """
+    # O GERENTE vê a carteira inteira da empresa dele, sem concessão nenhuma.
+    #
+    # Fazê-lo depender de concessão o punha a competir com os clientes pela mesma usina:
+    # a regra da casa é "cada usina pertence a UM cliente só", então conceder ao gerente o
+    # que já é de um dono era recusado — e a recusa estava certa. O erro era a premissa.
+    #
+    # E é o que a palavra gerente significa aqui: ele opera as usinas da empresa, todas.
+    # Uma concessão para ele seria uma segunda verdade sobre o mesmo fato, capaz de
+    # divergir da primeira no dia em que alguém esquecesse de atualizá-la.
+    if usuario.abre_empresa and usuario.empresa_id is not None:
+        return list(
+            db.scalars(
+                select(PlantLink)
+                .where(PlantLink.empresa_id == usuario.empresa_id, PlantLink.ativo)
+                .order_by(PlantLink.nome)
+            ).all()
+        )
+
     return list(
         db.scalars(
             select(PlantLink)

@@ -141,7 +141,9 @@ function Linha({
             <p className="text-sm text-rotulo mt-2 flex items-center gap-3 flex-wrap">
               <span className="flex items-center gap-1.5">
                 <Sun size={14} />
-                {usuario.usinas} {usuario.usinas === 1 ? 'usina' : 'usinas'} no app
+                {usuario.perfil === 'cliente'
+                  ? `${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
+                  : 'vê todas as usinas da empresa'}
               </span>
               <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
@@ -157,9 +159,15 @@ function Linha({
           <Selo tom={usuario.ativo ? 'ok' : 'sem-dados'}>
             {usuario.ativo ? 'Ativo' : 'Inativo'}
           </Selo>
-          <button className="btn-secundario" onClick={aoAbrirUsinas}>
-            Usinas
-          </button>
+          {/* Gerente não recebe concessão: ele vê a carteira inteira da empresa por SER
+              gerente. Oferecer o botão o punha a competir com os clientes pela mesma
+              usina — a regra é "cada usina pertence a um dono só" —, e o salvar voltava
+              como erro. Um botão que só sabe recusar é pior que botão nenhum. */}
+          {usuario.perfil === 'cliente' ? (
+            <button className="btn-secundario" onClick={aoAbrirUsinas}>
+              Usinas
+            </button>
+          ) : null}
           <button className="btn-fantasma" onClick={aoAbrirTokens}>
             Token
           </button>
@@ -257,26 +265,50 @@ function UsinasDoUsuario({
             ele deve ver.
           </Aviso>
 
+          {/* A herdada entra na LISTA, marcada — não só num aviso.
+              O aviso sozinho criou um beco: a tela mandava desmarcar uma usina que ela
+              mesma não mostrava, porque a lista só traz as da empresa. Não havia caixa
+              para desmarcar, e o salvar recusava para sempre. */}
           {herdadas.length ? (
             <div className="border border-alerta/30 bg-alerta/5 rounded-card p-3">
               <p className="text-sm text-alerta font-semibold">
-                {herdadas.length === 1 ? 'Uma usina concedida' : `${herdadas.length} usinas concedidas`}{' '}
-                antes desta empresa existir
+                {herdadas.length === 1
+                  ? 'Uma usina concedida antes desta empresa existir'
+                  : `${herdadas.length} usinas concedidas antes desta empresa existir`}
               </p>
               <p className="text-xs text-rotulo mt-1">
-                {herdadas.map((h) => h.nome).join(', ')} — ainda não {herdadas.length === 1 ? 'pertence' : 'pertencem'} a
-                nenhuma empresa. Traga em “Usinas” para manter, ou salve assim para tirar
-                {herdadas.length === 1 ? '-la' : '-las'} desta pessoa.
+                {herdadas.length === 1 ? 'Ela ainda não pertence' : 'Elas ainda não pertencem'} a
+                nenhuma empresa. Desmarque abaixo para tirar desta pessoa, ou traga em
+                “Usinas” para manter.
               </p>
             </div>
           ) : null}
 
-          {!noApp.length ? (
+          {!noApp.length && !herdadas.length ? (
             <p className="text-sm text-rotulo">
               Nenhuma usina ligada no aplicativo ainda. Traga e ligue em “Usinas”.
             </p>
           ) : (
             <ul className="grid gap-1 max-h-80 overflow-y-auto pr-1">
+              {herdadas.map((h) => (
+                <li key={`herdada-${h.plant_link_id}`}>
+                  <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo bg-alerta/5 hover:bg-superficie cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={escolhidas.includes(h.plant_link_id)}
+                      onChange={() =>
+                        setMarcadas(
+                          escolhidas.includes(h.plant_link_id)
+                            ? escolhidas.filter((x) => x !== h.plant_link_id)
+                            : [...escolhidas, h.plant_link_id],
+                        )
+                      }
+                    />
+                    <span className="text-sm text-forte">{h.nome}</span>
+                    <span className="text-xs text-alerta">não é da empresa</span>
+                  </label>
+                </li>
+              ))}
               {noApp.map((l) => {
                 const id = l.plant_link_id as number
                 return (

@@ -843,12 +843,19 @@ def definir_usinas_do_cliente(
     """
     empresa_id = svc.empresa_exigida(gerente)
 
-    # Qualquer conta DESTA empresa recebe usina, e não só o perfil `cliente`: o gerente
-    # também é dono de usina no aplicativo — foi como o dono deste sistema usou a própria
-    # conta o tempo todo. O que a guarda exige é que a pessoa seja da empresa.
     cliente = db.get(User, cliente_id)
     if cliente is None or cliente.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+
+    # Conceder usina a um GERENTE não existe: ele vê a carteira inteira da empresa por ser
+    # gerente. Com concessão, ele competia com os clientes pela mesma usina — a regra da
+    # casa é "cada usina pertence a UM cliente só" —, e conceder-lhe o que já era de um
+    # dono era recusado com razão. O erro estava na premissa, não na regra.
+    if cliente.abre_empresa:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "O gerente já vê todas as usinas da empresa — não há o que conceder a ele.",
+        )
 
     if body.plant_link_ids:
         minhas = {
