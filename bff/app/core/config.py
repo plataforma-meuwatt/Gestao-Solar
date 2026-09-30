@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     #: que têm configurado: divergir aqui é login recusado, não aceito em silêncio.
     gs_sso_issuer: str = "gestao-solar"
 
+    # De quantos em quantos MINUTOS o próprio BFF roda o motor de notificações. `0`
+    # desliga (é o padrão, e é o que os testes usam).
+    #
+    # Existe porque não havia agendador nenhum: o motor tinha as duas portas de disparo —
+    # a do cron e a do botão do painel — e ninguém as chamava, então nenhum aviso saía
+    # sozinho. Rodar aqui dentro não pede serviço novo, credencial nem cron externo, e é
+    # seguro porque o disparo é IDEMPOTENTE: a trava é `gs_notificacoes_enviadas`, único
+    # por `user_id + chave`. Duas réplicas do BFF no ar fazem trabalho repetido, nunca
+    # aviso repetido.
+    gs_motor_minutos: int = 0
+
     # A sessão do painel do gestor é curta de propósito: é a tela que guarda as
     # credenciais de serviço dos dois upstreams.
     gs_painel_sessao_horas: int = 8

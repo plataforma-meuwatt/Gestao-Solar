@@ -573,23 +573,14 @@ async def listar_usinas(
     # rota de monitoramento do meuWatt a alcança — ela aparecia na lista com tudo vazio,
     # que é o defeito da REGRA 0 com outra roupa: ausência lida como "não gerou". O MICRO
     # responde por ela, e é de lá que vêm potência e energia de hoje.
-    so_micro = [l for l in links if l.mw_micro_plant_id and not l.mw_plant_slug]
+    so_micro = [l for l in links if l.so_micro]
     if so_micro:
         try:
-            cliente_micro = vinculos.cliente_meuwatt(db, usuario.id)
-            por_id = {
-                m.get("id"): m for m in await cliente_micro.micro_usinas(ao_vivo=True)
-            }
+            por_id = await _micro_ao_vivo(db, usuario)
             for link in so_micro:
                 m = por_id.get(link.mw_micro_plant_id)
-                if m is None:
-                    continue
-                dados_por_usina[link.id] = {
-                    "potencia_kw": m.get("power_kw"),
-                    "energia_hoje_kwh": m.get("today_kwh"),
-                    # `offline` é o portal inteiro mudo; `partial`, parte das estações.
-                    "sem_comunicacao": m.get("status") == "offline",
-                }
+                if m is not None:
+                    dados_por_usina[link.id] = _dados_do_micro(m)
         except Exception as exc:  # noqa: BLE001 — a lista abre com o MICRO fora
             aviso_geral = aviso_geral or f"Micro usinas: {exc}"
 
@@ -720,6 +711,53 @@ def _parados(inversores: list[dict[str, Any]]) -> int:
     return sum(1 for i in inversores if _em_falha(i))
 
 
+async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]]:
+    """As micro usinas do MICRO, ao vivo, indexadas pelo id que `mw_micro_plant_id` guarda.
+
+    Uma chamada serve a lista inteira e o detalhe: o MICRO devolve todas de uma vez, e
+    pedir uma por usina seria multiplicar a ida ao portal do fabricante sem trazer nada.
+    """
+    cliente = vinculos.cliente_meuwatt(db, usuario.id)
+    return {m.get("id"): m for m in await cliente.micro_usinas(ao_vivo=True)}
+
+
+def _dados_do_micro(m: dict[str, Any]) -> dict[str, Any]:
+    """O que o portal do fabricante mede, no formato que as telas já leem.
+
+    **A micro usina É monitorada** — só que pelo portal do fabricante (Solis, Canadian,
+    TSUN), não pelo meuWatt. A tela do detalhe não lia isto e respondia "Esta usina não
+    está ligada ao monitoramento" para uma usina cuja potência de agora aparecia na lista
+    ao lado, vinda daqui. Duas telas discordando sobre o mesmo fato.
+
+    O que o MICRO não tem — curva do dia, série por dia, inversor a inversor — continua
+    sem ter, e quem pergunta recebe a frase de `_sem_monitoramento`, que diz por quê.
+    """
+    return {
+        "potencia_kw": m.get("power_kw"),
+        "energia_hoje_kwh": m.get("today_kwh"),
+        "capacidade_kwp": m.get("capacity_kwp"),
+        # `offline` é o portal inteiro mudo; `partial`, parte das estações.
+        "sem_comunicacao": m.get("status") == "offline",
+        "alertas_ativos": m.get("active_alerts"),
+    }
+
+
+def _sem_monitoramento(link: PlantLink) -> str:
+    """Por que esta tela não tem número — dizendo a VERDADE sobre esta usina.
+
+    "Esta usina não está ligada ao monitoramento" é falso para a micro usina: ela é
+    monitorada pelo portal do fabricante, e o app mostra a potência dela na lista. O que
+    falta é o detalhamento que só o meuWatt tem. Repetir a frase do não-monitorado fazia
+    o dono ler "não medimos nada daqui" — o oposto do que acontece.
+    """
+    if link.so_micro:
+        return (
+            "Esta usina é monitorada pelo portal do fabricante, que informa geração e "
+            "estado — mas não o detalhamento por inversor nem a curva do dia."
+        )
+    return "Esta usina não está ligada ao monitoramento."
+
+
 @router.get("/plants/{plant_link_id}", response_model=UsinaDetalheOut)
 async def detalhe_usina(
     plant_link_id: int,
@@ -730,7 +768,17 @@ async def detalhe_usina(
 
     dados: dict[str, Any] = {}
     equipamentos: dict[str, Any] = {}
-    if link.mw_plant_slug:
+    if link.so_micro:
+        try:
+            m = (await _micro_ao_vivo(db, usuario)).get(link.mw_micro_plant_id)
+            if m is None:
+                dados = {"aviso": "O portal do fabricante não devolveu esta usina agora."}
+            else:
+                dados = _dados_do_micro(m)
+                equipamentos["alertas_ativos"] = dados.pop("alertas_ativos", None)
+        except Exception as exc:  # noqa: BLE001
+            dados = {"aviso": f"Portal do fabricante indisponível: {exc}"}
+    elif link.mw_plant_slug:
         try:
             cliente = vinculos.cliente_meuwatt(db, usuario.id)
             # Os inversores já vêm de `_dados_meuwatt`, do mesmo `monitoring/current`.
@@ -1029,7 +1077,7 @@ async def geracao_da_usina(
     saida = GeracaoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = _sem_monitoramento(link)
         return saida
 
     try:
@@ -1198,7 +1246,7 @@ async def curva_do_dia(
     saida = CurvaUsinaOut(dia=referencia.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = _sem_monitoramento(link)
         return saida
 
     try:
@@ -1658,9 +1706,7 @@ def _usina_monitorada(db: Session, usuario: User, plant_link_id: int) -> PlantLi
     a tela precisa dizer isso em vez de desenhar um gráfico em branco."""
     link = _usina_no_escopo(db, usuario, plant_link_id)
     if not link.mw_plant_slug:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao monitoramento."
-        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _sem_monitoramento(link))
     return link
 
 

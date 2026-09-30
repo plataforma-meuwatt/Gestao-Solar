@@ -42,7 +42,7 @@ from app.core.datas import hoje as hoje_na_usina
 from app.models.integracao import Produto
 from app.models.notificacao import NotificacaoEnviada
 from app.models.plant import PlantLink
-from app.models.user import User
+from app.models.user import Perfil, User
 from app.services import avisos as svc_avisos
 from app.services import integracoes
 from app.services import notificacoes as catalogo
@@ -159,13 +159,29 @@ def _leitor(db: Session, plant_link_id: int, produto: Produto) -> int | None:
     Usina sem ninguém conectado fica de fora, em silêncio — não temos como saber o estado
     dela, e calar é melhor do que inventar.
     """
+    from app.api.v1.plants import usinas_do_usuario
     from app.models.user import UserPlantAccess
 
-    candidatos = db.scalars(
-        select(User)
-        .join(UserPlantAccess, UserPlantAccess.user_id == User.id)
-        .where(UserPlantAccess.plant_link_id == plant_link_id, User.ativo)
+    candidatos = list(
+        db.scalars(
+            select(User)
+            .join(UserPlantAccess, UserPlantAccess.user_id == User.id)
+            .where(UserPlantAccess.plant_link_id == plant_link_id, User.ativo)
+        ).all()
+    )
+    # O GERENTE não tem concessão — ele vê a carteira da empresa por ser gerente —, e é
+    # justamente ele quem costuma ter o token dos produtos. Procurar só em
+    # `gs_user_plant_access` deixava toda usina sem leitor no dia em que as concessões
+    # dele foram removidas: o relatório enchia de "ninguém com token do meuWatt para ler"
+    # e nenhum aviso de parada saía. `usinas_do_usuario` é a MESMA régua de alcance que o
+    # aplicativo usa, então quem enxerga a usina lá enxerga aqui.
+    gerentes = db.scalars(
+        select(User).where(User.ativo, User.perfil == Perfil.GESTOR_EMPRESA)
     ).all()
+    candidatos += [
+        g for g in gerentes
+        if any(u.id == plant_link_id for u in usinas_do_usuario(db, g))
+    ]
     for pessoa in candidatos:
         if vinculos.obter(db, pessoa.id, produto) is not None:
             return pessoa.id

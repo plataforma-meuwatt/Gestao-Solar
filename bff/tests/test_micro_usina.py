@@ -188,3 +188,79 @@ async def test_catalogo_sem_acesso_abre_vazio_com_aviso(db, ponte):
     respx.get(f"{BASE}/micro/plants").mock(return_value=httpx.Response(403, json={"detail": "Acesso negado"}))
     r = await painel.micro_usinas(db=db, _=None)
     assert r.usinas == [] and r.aviso and "MICRO" in r.aviso
+
+
+def test_a_micro_usina_e_monitorada_e_a_tela_nao_diz_o_contrario(db):
+    """Defeito visto pelo dono em 30/09/2026: as micro apareciam na lista do app com a
+    potência de agora, e ao abrir a usina a tela respondia "Esta usina não está ligada ao
+    monitoramento". Duas telas discordando sobre o mesmo fato, e a segunda mentindo — ela
+    É monitorada, pelo portal do fabricante.
+
+    A frase certa diz de onde vem o dado e o que o portal NÃO tem, em vez de negar o
+    monitoramento inteiro.
+    """
+    from app.api.v1.plants import _sem_monitoramento
+    from app.models.plant import PlantLink
+
+    micro = PlantLink(nome="Só do portal", mw_micro_plant_id=7)
+    normal = PlantLink(nome="Sem nada", mp_usina_id=99)
+
+    assert micro.so_micro is True
+    assert normal.so_micro is False
+
+    frase = _sem_monitoramento(micro)
+    assert "não está ligada ao monitoramento" not in frase
+    assert "portal do fabricante" in frase
+    assert "inversor" in frase, "a frase precisa dizer O QUE falta, não só o que há"
+
+    assert _sem_monitoramento(normal) == "Esta usina não está ligada ao monitoramento."
+
+
+def test_o_aviso_de_parada_da_micro_usina_sai_por_PUSH(db):
+    """O que o dono pediu em 30/09/2026: "quero receber notificação quando a micro parar".
+
+    O coletor de push (`avisos.paradas_por_usuario`) percorria só usinas com
+    `mw_plant_slug` — a micro ficava de fora e o dono de uma usina que só existe no portal
+    do fabricante nunca era avisado. E o texto não podia ser o mesmo: não há "inversor"
+    nem `slot-N` lá, então o toque abriria uma tela de equipamento inexistente.
+    """
+    from app.models.plant import PlantLink
+    from app.models.user import Perfil, User
+    from app.services.avisos import AvisoDeParada, texto_do_aviso
+
+    usina = PlantLink(id=9, nome="Matioli", mw_micro_plant_id=6)
+    dono = User(apelido="dono", nome="Dono", perfil=Perfil.CLIENTE)
+    aviso = AvisoDeParada(
+        usuario=dono,
+        usina=usina,
+        inversor="Matioli",
+        equipamento_id="",
+        chave="9:micro:4",
+        motivo="equipamento fora",
+    )
+    titulo, corpo, dados = texto_do_aviso(aviso)
+
+    assert titulo == "Matioli · parada"
+    assert "equipamento fora" in corpo
+    assert "inversor" not in corpo.lower(), "o portal do fabricante não reporta inversor"
+    assert "equipamento" not in corpo.split(".")[-1], "não manda tocar num equipamento que não existe"
+    assert dados["usina_id"] == 9
+    assert dados["equipamento_id"] == "", "id inventado abriria tela vazia"
+
+
+def test_o_agendador_dispara_os_DOIS_caminhos_de_aviso(db):
+    """Nenhum aviso saía sozinho: o motor tinha as duas portas de disparo e ninguém as
+    chamava. E são dois caminhos com travas próprias — o push (`gs_avisos_enviados`) e o
+    WhatsApp (`gs_notificacoes_enviadas`); disparar só um deixaria o outro mudo."""
+    from pathlib import Path
+
+    fonte = Path(__file__).resolve().parents[1].joinpath("app", "main.py").read_text("utf-8")
+    laco = fonte[fonte.index("async def _rodar_motor_de_tempos_em_tempos") :]
+    laco = laco[: laco.index("@asynccontextmanager")]
+
+    assert "disparar_avisos_de_parada" in laco, "o push ficou de fora do agendador"
+    assert "motor.disparar" in laco, "o WhatsApp ficou de fora do agendador"
+    # Cada um no seu `try`: uma falha do segundo não pode calar o primeiro.
+    assert laco.count("except Exception") >= 2
+    # Dorme ANTES da primeira volta, para não atrasar o `/health` de um deploy.
+    assert laco.index("await asyncio.sleep") < laco.index("disparar_avisos_de_parada(")

@@ -14,6 +14,7 @@ explícita de origens (`GS_CORS_ORIGENS`).
 Contrato completo em `docs/CONTRATO_API.md`.
 """
 
+import asyncio
 import logging
 import traceback
 import uuid
@@ -62,12 +63,67 @@ from app.core.config import get_settings
 settings = get_settings()
 settings.validar_producao()
 
+async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
+    """O agendador dos avisos, dentro do próprio processo.
+
+    O motor tinha duas portas de disparo — a do cron (`/api/v1/interno/...`) e a do botão
+    do painel — e **ninguém chamava nenhuma das duas**: nenhum aviso saía sozinho, em
+    nenhuma usina. Um laço aqui resolve sem serviço novo, sem credencial e sem cron
+    externo, e é seguro porque o disparo é idempotente por `gs_notificacoes_enviadas`.
+
+    Dorme ANTES da primeira volta: subir e imediatamente ir aos dois upstreams atrasaria
+    o `/health` de um deploy, que é o que o Railway usa para decidir se trocou de versão.
+
+    Nada aqui derruba a API: uma volta que estoura é registrada e a próxima acontece.
+    """
+    from app.api.v1.avisos import disparar_avisos_de_parada
+    from app.core.db import SessionLocal
+    from app.services import motor
+
+    while True:
+        await asyncio.sleep(minutos * 60)
+        # Os dois caminhos de aviso, que são separados e têm travas próprias: o PUSH
+        # (`gs_avisos_enviados`) e o WhatsApp (`gs_notificacoes_enviadas`). O push é o que
+        # entrega hoje — o WhatsApp ainda espera a aprovação da Meta —, e por isso ele vem
+        # primeiro: uma falha do segundo não pode calar o primeiro.
+        try:
+            with SessionLocal() as db:
+                r = await disparar_avisos_de_parada(simular=False, db=db)
+            _log.info(
+                "avisos/push: %s candidatos, %s enviados, %s repetidos",
+                r.candidatos, r.enviados, r.repetidos,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("avisos/push: a volta falhou; a próxima continua agendada")
+
+        try:
+            with SessionLocal() as db:
+                rel = await motor.disparar(db)
+            _log.info(
+                "motor/whatsapp: %s eventos, %s enviadas, %s avisos",
+                rel.eventos, rel.enviadas, len(rel.avisos),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("motor: a volta falhou; a próxima continua agendada")
+
+
 @asynccontextmanager
 async def _ciclo_de_vida(_app: FastAPI):
     """As sessões com os upstreams vivem enquanto o processo vive (keep-alive, ver
     `clients/http.py`); no desligamento elas são devolvidas, para não ficar conexão
-    pendurada."""
+    pendurada. E, se `GS_MOTOR_MINUTOS` for maior que zero, o motor de avisos roda aqui."""
+    tarefa = (
+        asyncio.create_task(_rodar_motor_de_tempos_em_tempos(settings.gs_motor_minutos))
+        if settings.gs_motor_minutos > 0
+        else None
+    )
     yield
+    if tarefa is not None:
+        tarefa.cancel()
     await http_upstream.fechar_sessoes()
 
 

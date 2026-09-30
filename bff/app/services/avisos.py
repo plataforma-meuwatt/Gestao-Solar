@@ -27,7 +27,7 @@ from app.models.integracao import Produto
 from app.models.permissao import Dispositivo
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import permissoes, vinculos
+from app.services import integracoes, permissoes, vinculos
 
 CATEGORIA = "notificacao"
 SUBCATEGORIA = "usina_parada"
@@ -37,12 +37,17 @@ SUBCATEGORIA = "usina_parada"
 class AvisoDeParada:
     usuario: User
     usina: PlantLink
-    #: Nome do inversor parado, como o meuWatt o chama.
+    #: Nome do inversor parado, como o meuWatt o chama. Na MICRO usina é o nome da
+    #: estação no portal do fabricante, que é a unidade que aquele portal reporta.
     inversor: str
     #: `slot-N` — identifica a posição física, que sobrevive à troca do aparelho.
+    #: Vazio na micro usina: o portal do fabricante não expõe posição, e inventar uma
+    #: faria o toque na notificação abrir uma tela de equipamento que não existe.
     equipamento_id: str
     #: Chave estável desta parada, para o chamador não avisar duas vezes.
     chave: str
+    #: O que o portal chamou o motivo ("equipamento fora"). Só na micro usina.
+    motivo: str | None = None
 
 
 def _parados(monitoramento: Any) -> list[dict[str, Any]]:
@@ -84,7 +89,10 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
     alvos: dict[int, PlantLink] = {
         u.id: u for lista in escopos.values() for u in lista if u.mw_plant_slug
     }
-    if not alvos:
+    micro: dict[int, PlantLink] = {
+        u.id: u for lista in escopos.values() for u in lista if u.so_micro
+    }
+    if not alvos and not micro:
         return []
 
     # Cada usina é lida com o token de ALGUÉM que tem acesso a ela — e uma vez só.
@@ -120,9 +128,49 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
             continue
         estado[link.id] = _parados(resposta)
 
+    # ── as MICRO usinas, que o laço acima não alcança ──────────────────────────
+    #
+    # Elas não têm `mw_plant_slug`: quem as mede é o portal do fabricante (Solis,
+    # Canadian, TSUN), e o meuWatt as expõe pelo MICRO. Ficavam de fora deste coletor, e
+    # o dono de uma usina que só existe lá nunca recebia aviso de parada — enquanto o app
+    # mostrava a potência dela na lista, vinda da mesma origem.
+    #
+    # **A leitura é com credencial de SERVIÇO, e essa é a exceção do MICRO:** ele não é
+    # escopado por usina no meuWatt, só administrador o lê, então nenhum token de cliente
+    # o enxerga. É a mesma exceção que `motor._coletar_parada_micro` já declara.
+    paradas_micro: dict[int, list[dict[str, Any]]] = {}
+    if micro:
+        try:
+            servico = await integracoes.cliente_meuwatt(db)
+            alertas = await servico.micro_alertas()
+        except Exception:  # noqa: BLE001 — MICRO fora não derruba o aviso das outras
+            alertas = []
+        por_micro_id: dict[int, list[PlantLink]] = {}
+        for u in micro.values():
+            por_micro_id.setdefault(u.mw_micro_plant_id, []).append(u)
+        for alerta in alertas:
+            for u in por_micro_id.get(alerta.get("plant_id"), []):
+                paradas_micro.setdefault(u.id, []).append(alerta)
+
     avisos: list[AvisoDeParada] = []
     for pessoa in pessoas:
         for link in escopos[pessoa.id]:
+            for alerta in paradas_micro.get(link.id, []):
+                episodio = alerta.get("key") or alerta.get("id")
+                if episodio is None:
+                    continue
+                avisos.append(
+                    AvisoDeParada(
+                        usuario=pessoa,
+                        usina=link,
+                        inversor=str(alerta.get("station_name") or "Estação"),
+                        equipamento_id="",
+                        # A chave do EPISÓDIO no meuWatt é estável: a mesma parada não
+                        # avisa duas vezes, e uma nova, depois de resolvida, avisa.
+                        chave=f"{link.id}:{episodio}",
+                        motivo=str(alerta.get("kind_label") or "parada").lower(),
+                    )
+                )
             for inv in estado.get(link.id, []):
                 equipamento_id = str(inv.get("id") or "")
                 nome = str(inv.get("name") or inv.get("serial_number") or "Inversor")
@@ -153,8 +201,14 @@ def texto_do_aviso(aviso: AvisoDeParada) -> tuple[str, str, dict[str, Any]]:
     sistema corta o texto — quem tem sete usinas precisa saber qual antes de decidir
     se levanta da cama.
     """
-    titulo = f"{aviso.usina.nome} · inversor parado"
-    corpo = f"{aviso.inversor} parou de gerar. Toque para ver o equipamento."
+    if aviso.usina.so_micro:
+        # Sem "inversor" e sem equipamento: o portal do fabricante reporta a ESTAÇÃO, e
+        # mandar tocar num equipamento que não existe abriria uma tela vazia.
+        titulo = f"{aviso.usina.nome} · parada"
+        corpo = f"{aviso.inversor}: {aviso.motivo or 'parada'}. Toque para ver a usina."
+    else:
+        titulo = f"{aviso.usina.nome} · inversor parado"
+        corpo = f"{aviso.inversor} parou de gerar. Toque para ver o equipamento."
     dados = {
         "tipo": "usina_parada",
         "usina_id": aviso.usina.id,

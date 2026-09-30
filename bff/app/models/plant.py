@@ -52,3 +52,14 @@ class PlantLink(Base):
     @property
     def tem_meuplano(self) -> bool:
         return self.mp_usina_id is not None
+
+    @property
+    def so_micro(self) -> bool:
+        """A usina existe SÓ no portal do fabricante (Solis, Canadian, TSUN).
+
+        **Sozinha ela já é uma usina** — há cliente cujo único monitoramento é esse. A
+        pergunta mora aqui porque é feita em toda tela que decide de onde ler, e cada
+        cópia dela é uma chance de uma tela dizer "não monitorada" enquanto a vizinha
+        mostra a potência de agora, que foi o que aconteceu em 30/09/2026.
+        """
+        return self.mw_micro_plant_id is not None and self.mw_plant_slug is None
