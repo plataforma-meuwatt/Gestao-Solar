@@ -19,7 +19,9 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/imagens/adaptive-icon.png",
         "backgroundColor": "#02061A"
-      }
+      },
+      "_googleServicesFile": "O google-services.json do Firebase (projeto gestao-solar-87de9), que identifica ESTE app para o FCM. É config NATIVA: não vai por OTA, então trocá-lo exige build novo. Sem ele o Firebase não inicializa no aparelho e `getExpoPushTokenAsync` falha — o sintoma é a tela de avisos dizendo 'inativo' sem explicar por quê. Não é segredo: traz identificadores públicos do cliente, e por isso fica no git. O que É segredo é a chave de CONTA DE SERVIÇO, que vive só no EAS.",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-router",

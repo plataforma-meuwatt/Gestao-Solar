@@ -532,6 +532,30 @@ async def listar_usinas(
     aviso_geral: str | None = None
     dados_por_usina: dict[int, dict[str, Any]] = {}
 
+    # A usina que só existe no MICRO (portal do fabricante) não tem `slug`, então nenhuma
+    # rota de monitoramento do meuWatt a alcança — ela aparecia na lista com tudo vazio,
+    # que é o defeito da REGRA 0 com outra roupa: ausência lida como "não gerou". O MICRO
+    # responde por ela, e é de lá que vêm potência e energia de hoje.
+    so_micro = [l for l in links if l.mw_micro_plant_id and not l.mw_plant_slug]
+    if so_micro:
+        try:
+            cliente_micro = vinculos.cliente_meuwatt(db, usuario.id)
+            por_id = {
+                m.get("id"): m for m in await cliente_micro.micro_usinas(ao_vivo=True)
+            }
+            for link in so_micro:
+                m = por_id.get(link.mw_micro_plant_id)
+                if m is None:
+                    continue
+                dados_por_usina[link.id] = {
+                    "potencia_kw": m.get("power_kw"),
+                    "energia_hoje_kwh": m.get("today_kwh"),
+                    # `offline` é o portal inteiro mudo; `partial`, parte das estações.
+                    "sem_comunicacao": m.get("status") == "offline",
+                }
+        except Exception as exc:  # noqa: BLE001 — a lista abre com o MICRO fora
+            aviso_geral = aviso_geral or f"Micro usinas: {exc}"
+
     com_mw = [l for l in links if l.mw_plant_slug]
     if com_mw:
         try:

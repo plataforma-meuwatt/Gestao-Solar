@@ -280,7 +280,7 @@ class MeuWattClient:
             offset += limit
         return todos
 
-    async def micro_usinas(self) -> list[dict[str, Any]]:
+    async def micro_usinas(self, ao_vivo: bool = False) -> list[dict[str, Any]]:
         """As micro usinas do MICRO — usinas que vêm dos portais dos fabricantes (Solis,
         Canadian) e que o monitoramento do meuWatt não conhece. Só o cadastro
         (`live=false`: o meuWatt não vai aos portais), para o gestor casar no vínculo.
@@ -289,7 +289,10 @@ class MeuWattClient:
         — só administrador o lê —, então nenhum token de cliente o enxerga. É o mesmo caso
         do catálogo de usinas da conciliação (ver `services/vinculos.py`).
         """
-        dados = await self._get("/micro/plants", live="false")
+        # `live=true` faz o meuWatt ir aos portais dos fabricantes e voltar com status,
+        # potência e energia de hoje — é o que a tela do dono precisa. Caro, então só quem
+        # vai MOSTRAR o número pede; quem só quer o cadastro (casar, listar) pede sem.
+        dados = await self._get("/micro/plants", live="true" if ao_vivo else "false")
         plantas = dados.get("plants") if isinstance(dados, dict) else None
         return [p for p in plantas or [] if isinstance(p, dict)]
 

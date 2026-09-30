@@ -61,3 +61,10 @@ Layout/Gestao Solar/
 Layout/meuPlano/
 Layout/meuWatt/
 Layout/**/.thumbnail
+
+# A chave de CONTA DE SERVIÇO do Firebase. Quem a tem manda notificação em nome do app —
+# ela vive só no EAS, e um arquivo desses no repositório é um segredo publicado. O
+# `google-services.json`, que é o gêmeo confuso, NÃO entra aqui: ele traz identificadores
+# públicos do cliente, é config nativa do build e precisa estar versionado.
+*firebase-adminsdk*.json
+*-service-account*.json

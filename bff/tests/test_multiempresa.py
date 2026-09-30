@@ -988,3 +988,26 @@ def test_usina_sem_nenhum_identificador_e_recusada(db, carteiras):
     with pytest.raises(HTTPException) as erro:
         salvar_usina(UsinaIn(nome="Fantasma"), db=db, gerente=gerente)
     assert erro.value.status_code == 400
+
+
+def test_a_usina_so_do_MICRO_nao_e_classificada_como_meuPlano(db, carteiras):
+    """Defeito guardado, e o dono o viu na tela: as 5 micro usinas apareceram no grupo
+    "Só no meuPlano". `conciliacao.montar` só conhece os dois produtos e classifica como
+    meuPlano tudo o que não tem slug — a origem tem de vir do LINK quando a usina já está
+    aqui.
+    """
+    from app.api.v1.empresa import _origem
+
+    micro = PlantLink(nome="Só micro", mw_micro_plant_id=9, empresa_id=carteiras[0].id)
+    so_mp = PlantLink(nome="Só meuPlano", mp_usina_id=5, empresa_id=carteiras[0].id)
+    nos_dois = PlantLink(
+        nome="Nos dois", mw_plant_slug="s", mp_usina_id=6, mw_micro_plant_id=1,
+        empresa_id=carteiras[0].id,
+    )
+    db.add_all([micro, so_mp, nos_dois])
+    db.commit()
+
+    assert _origem(micro) == "micro"
+    assert _origem(so_mp) == "meuplano"
+    # Com os dois produtos, a micro é detalhe do monitoramento — não muda a origem.
+    assert _origem(nos_dois) == "ambos"

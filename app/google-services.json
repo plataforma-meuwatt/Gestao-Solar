@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "239855919522",
+    "project_id": "gestao-solar-87de9",
+    "storage_bucket": "gestao-solar-87de9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:239855919522:android:4adaef5dde10cb7cc5d2fb",
+        "android_client_info": {
+          "package_name": "com.meuwatt.gestaosolar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-j260hUvsksI4O5qUZf6MwQl-7lZbdxs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

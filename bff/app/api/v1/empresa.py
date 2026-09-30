@@ -561,6 +561,7 @@ async def catalogo_de_usinas(
             return True
         return bool(l.mp_usina_id and (Produto.MEUPLANO, str(l.mp_usina_id)) in ocultas)
 
+    _por_link = {l.id: l for l in links}
     linhas = [
         LinhaDeUsina(
             chave=l.chave,
@@ -571,8 +572,14 @@ async def catalogo_de_usinas(
             cidade=l.cidade,
             uf=l.uf,
             kwp=l.kwp,
-            origem=l.origem,
+            # A origem vem do LINK quando a usina já está aqui: `conciliacao.montar` só
+            # conhece os dois produtos e classifica como "meuPlano" tudo o que não tem
+            # slug — foi assim que as 5 micro apareceram no grupo errado.
+            origem=_origem(_por_link.get(l.plant_link_id)) if l.plant_link_id else l.origem,
             no_app=l.no_app,
+            mw_micro_plant_id=(
+                _por_link[l.plant_link_id].mw_micro_plant_id if l.plant_link_id else None
+            ),
             par_provavel_mw=l.par_provavel_mw,
             par_provavel_nome=l.par_provavel_nome,
             candidatos=[
