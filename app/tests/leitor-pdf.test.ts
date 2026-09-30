@@ -349,3 +349,42 @@ test('o WebView pode abrir o arquivo da própria página, e diz quando não abre
   assert.match(leitor, /onError=\{/)
   assert.match(leitor, /onHttpError=\{/)
 })
+
+test('toda espera do leitor tem prazo — nenhuma fase fica infinita', () => {
+  // Defeito guardado, relatado em 30/09/2026 como "download infinito": o relógio de
+  // segurança só corria na fase de desenho. `fetch` não tem prazo próprio, então uma
+  // conexão que abre e emudece deixava a tela em "Baixando o documento…" para sempre —
+  // sem mensagem e sem saída, porque o único botão respondia "ainda não terminou de
+  // baixar". Medido no mesmo dia: o servidor entrega o PDF em 0,9–2,2 s.
+  const fonte = readFileSync(join(RAIZ, 'components', 'LeitorPdf.tsx'), 'utf8')
+
+  const prazos = fonte.slice(fonte.indexOf('const PRAZO_DA_FASE'))
+  for (const fase of ['baixando', 'montando', 'desenhando']) {
+    assert.match(prazos.slice(0, 400), new RegExp(`${fase}:`), `a fase "${fase}" ficou sem prazo`)
+    assert.match(fonte, new RegExp(`${fase}:\\s*'`), `a fase "${fase}" ficou sem recado`)
+  }
+
+  // E o relógio tem de ENXERGAR as três: um `if` que só deixa passar 'desenhando' é
+  // exatamente o estado anterior, com a tabela de prazos ali sem servir para nada.
+  const relogio = fonte.slice(fonte.indexOf('let restante = PRAZO_DA_FASE') - 900)
+  assert.match(relogio, /estado\.fase === 'baixando'/)
+  assert.match(relogio, /estado\.fase === 'montando'/)
+  assert.match(relogio, /PRAZO_DA_FASE\[fase\]/)
+})
+
+test('os dois downloads do app passam pelo MESMO transporte, e ele tem prazo', () => {
+  // A cópia em `relatorios.tsx` (o pacote ZIP) chamava `fetch` direto, com a dívida
+  // declarada no próprio comentário. Consertar só o PDF deixaria o pacote pendurando.
+  const pdf = readFileSync(join(RAIZ, 'lib', 'pdf.ts'), 'utf8')
+  assert.match(pdf, /export async function buscarArquivo/)
+  assert.match(pdf, /new AbortController\(\)/)
+  assert.match(pdf, /signal: freio\.signal/)
+  assert.match(pdf, /export const PRAZO_DOWNLOAD_MS/)
+
+  const relatorios = readFileSync(join(RAIZ, 'app', '(tabs)', 'relatorios.tsx'), 'utf8')
+  assert.ok(
+    !/await fetch\(/.test(relatorios),
+    'a tela de relatórios voltou a chamar `fetch` direto — sem prazo',
+  )
+  assert.match(relatorios, /buscarArquivo\(url\)/)
+})

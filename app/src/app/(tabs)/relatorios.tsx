@@ -130,7 +130,7 @@ import {
   type PreparoDeFichas,
   type UsinaDoAno,
 } from '@/features/relatorios-ano'
-import { tokenDaSessao } from '@/lib/api'
+import { buscarArquivo } from '@/lib/pdf'
 import { dataPorExtenso, numero } from '@/lib/format'
 import { useAuth } from '@/store/auth'
 import { cores, espaco, fontes, raio, tons, TOQUE_MIN, tomAlpha } from '@/theme/tokens'
@@ -1130,7 +1130,9 @@ function PacoteDeFichas({ usina, de, ate }: { usina: UsinaDoAno; de: string; ate
 async function baixarPacote(url: string, arquivo: string, titulo: string): Promise<string | null> {
   let bytes: Uint8Array
   try {
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` } })
+    // Mesmo transporte do PDF, e por isso o mesmo PRAZO: sem ele, um pacote pedido numa
+    // rede que emudece pendura a promessa para sempre e a tela não tem o que dizer.
+    const r = await buscarArquivo(url)
     if (!r.ok) {
       let detalhe: string | null = null
       try {

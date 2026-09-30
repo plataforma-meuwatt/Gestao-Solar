@@ -44,6 +44,42 @@ import { PDFJS_MIOLO, PDFJS_VERSAO, PDFJS_WORKER } from '@/lib/pdfjs-embutido'
 const MINIMO_PLAUSIVEL = 1000
 
 /**
+ * Prazo do download. **A espera sem prazo é o defeito que isto conserta.**
+ *
+ * `fetch` não tem prazo próprio: quando a conexão da usina abre o soquete e emudece, a
+ * promessa nunca resolve — nem com erro. A tela ficava em "Baixando o documento…" para
+ * sempre, sem mensagem e sem saída, e o único botão respondia "o arquivo ainda não
+ * terminou de baixar". Relatado em 30/09/2026 como "download infinito".
+ *
+ * 90 s é folga larga, não aperto: medido contra a produção no mesmo dia, o PDF mensal sai
+ * em 0,9–2,2 s com ~250 kB, e o de manutenção — que é gerado na hora, com Playwright — em
+ * 1,3 s. Mesmo a 3 kB/s o arquivo inteiro cabe aqui dentro. O prazo existe para o caso em
+ * que NADA chega, não para apressar rede ruim.
+ */
+export const PRAZO_DOWNLOAD_MS = 90_000
+
+/**
+ * `fetch` com prazo e com a sessão em cabeçalho — o transporte dos dois downloads do app
+ * (o PDF e o pacote ZIP dos relatórios).
+ *
+ * Existe exportado porque a cópia que vivia em `relatorios.tsx` tinha o mesmo defeito, e
+ * consertar só uma deixaria a outra pendurando — a dívida declarada lá ("o certo é
+ * `lib/pdf.ts` virar um `lib/arquivo.ts`") cobrava exatamente isto.
+ */
+export async function buscarArquivo(url: string, prazoMs = PRAZO_DOWNLOAD_MS): Promise<Response> {
+  const freio = new AbortController()
+  const relogio = setTimeout(() => freio.abort(), prazoMs)
+  try {
+    return await fetch(url, {
+      headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
+      signal: freio.signal,
+    })
+  } finally {
+    clearTimeout(relogio)
+  }
+}
+
+/**
  * Acima disto o leitor interno não é tentado: vai direto ao aplicativo externo.
  *
  * O motivo é memória, não gosto. Para desenhar, o arquivo viaja em base64 dentro do HTML
@@ -78,16 +114,16 @@ export async function baixarPdf({
 }): Promise<{ arquivo: FileSystem.File } | { erro: string }> {
   let bytes: Uint8Array
   try {
-    const resposta = await fetch(url, {
-      headers: { Authorization: `Bearer ${tokenDaSessao() ?? ''}` },
-    })
+    const resposta = await buscarArquivo(url)
     if (!resposta.ok) return { erro: await motivoDaResposta(resposta) }
     bytes = new Uint8Array(await resposta.arrayBuffer())
   } catch (e) {
+    // `abort` aqui é o prazo estourando, e a frase diz isso: "interrompido" sozinho faz
+    // procurar um toque que não houve.
     return {
       erro:
         e instanceof Error && /abort/i.test(e.message)
-          ? 'O download foi interrompido. Tente de novo.'
+          ? `O servidor não respondeu em ${Math.round(PRAZO_DOWNLOAD_MS / 1000)} segundos. Tente de novo.`
           : 'Não foi possível baixar. Verifique a conexão e tente de novo.',
     }
   }

@@ -39,6 +39,7 @@ import {
   baixarPdf,
   compartilharPdf,
   escreverPaginaDoLeitor,
+  PRAZO_DOWNLOAD_MS,
   TETO_LEITOR_BYTES,
   type RecadoDoLeitor,
 } from '@/lib/pdf'
@@ -52,6 +53,30 @@ import { cores, espaco, fontes, raio, tipo, tons } from '@/theme/tokens'
  * memória, motor sem suporte —, não para apressar documento grande.
  */
 const ESPERA_MAXIMA_MS = 45_000
+
+/**
+ * Quanto tempo cada fase pode ficar parada antes de a tela desistir e DIZER.
+ *
+ * Antes só a fase de desenho tinha relógio, e foi por isso que "download infinito" voltou:
+ * o `fetch` não tem prazo próprio, então uma conexão que abre e emudece deixava a tela em
+ * "Baixando o documento…" para sempre — sem erro, sem botão, e o "Abrir em outro app"
+ * respondendo "o arquivo ainda não terminou de baixar". Toda espera desta tela tem prazo
+ * agora; o do download é o mesmo do transporte, com uma folga para a mensagem de lá chegar
+ * primeiro — ela é mais específica ("o servidor não respondeu em 90 segundos").
+ */
+const PRAZO_DA_FASE: Record<'baixando' | 'montando' | 'desenhando', number> = {
+  baixando: PRAZO_DOWNLOAD_MS + 5_000,
+  // Gravação de alguns megabytes em disco. Nunca demorou tanto; o prazo é para o aparelho
+  // que fica sem espaço ou sem memória no meio e não volta.
+  montando: 60_000,
+  desenhando: ESPERA_MAXIMA_MS,
+}
+
+const RECADO_DA_FASE: Record<'baixando' | 'montando' | 'desenhando', string> = {
+  baixando: 'O download não terminou. Verifique a conexão e tente de novo.',
+  montando: 'O documento não terminou de ser preparado neste aparelho. Tente de novo.',
+  desenhando: 'O documento não terminou de abrir neste aparelho. Tente em outro aplicativo.',
+}
 
 type Estado =
   | { fase: 'baixando' }
@@ -144,8 +169,17 @@ export function LeitorPdf({
   // primeiro quadro pintado. Um relógio de parede acusaria de morto um desenho que está
   // apenas esperando a vez — e mandaria o dono para fora do app sem motivo.
   useEffect(() => {
-    if (estado.fase !== 'desenhando' || estado.pagina > 0) return
-    let restante = ESPERA_MAXIMA_MS
+    // Vale para TODA espera, não só para a do desenho: baixar e montar também podem não
+    // terminar, e sem prazo a tela mente ("Baixando…") até alguém fechar o aplicativo.
+    const fase =
+      estado.fase === 'baixando' || estado.fase === 'montando'
+        ? estado.fase
+        : estado.fase === 'desenhando' && estado.pagina === 0
+          ? 'desenhando'
+          : null
+    if (fase === null) return
+
+    let restante = PRAZO_DA_FASE[fase]
     let ultimo = Date.now()
     const tique = setInterval(() => {
       const agora = Date.now()
@@ -153,10 +187,7 @@ export function LeitorPdf({
       ultimo = agora
       if (restante > 0 || !vivo.current) return
       clearInterval(tique)
-      setEstado({
-        fase: 'erro',
-        mensagem: 'O documento não terminou de abrir neste aparelho. Tente em outro aplicativo.',
-      })
+      setEstado({ fase: 'erro', mensagem: RECADO_DA_FASE[fase] })
     }, 1000)
     return () => clearInterval(tique)
   }, [estado])
