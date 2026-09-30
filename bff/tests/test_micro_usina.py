@@ -199,7 +199,7 @@ def test_a_micro_usina_e_monitorada_e_a_tela_nao_diz_o_contrario(db):
     A frase certa diz de onde vem o dado e o que o portal NÃO tem, em vez de negar o
     monitoramento inteiro.
     """
-    from app.api.v1.plants import _sem_monitoramento
+    from app.api.v1.plants import sem_monitoramento
     from app.models.plant import PlantLink
 
     micro = PlantLink(nome="Só do portal", mw_micro_plant_id=7)
@@ -208,12 +208,15 @@ def test_a_micro_usina_e_monitorada_e_a_tela_nao_diz_o_contrario(db):
     assert micro.so_micro is True
     assert normal.so_micro is False
 
-    frase = _sem_monitoramento(micro)
+    frase = sem_monitoramento(micro)
     assert "não está ligada ao monitoramento" not in frase
     assert "portal do fabricante" in frase
     assert "inversor" in frase, "a frase precisa dizer O QUE falta, não só o que há"
 
-    assert _sem_monitoramento(normal) == "Esta usina não está ligada ao monitoramento."
+    assert sem_monitoramento(normal) == "Esta usina não está ligada ao monitoramento."
+    assert sem_monitoramento(normal, "vêm os relatórios") == (
+        "Esta usina não está ligada ao monitoramento, de onde vêm os relatórios."
+    )
 
 
 def test_o_aviso_de_parada_da_micro_usina_sai_por_PUSH(db):
@@ -264,3 +267,29 @@ def test_o_agendador_dispara_os_DOIS_caminhos_de_aviso(db):
     assert laco.count("except Exception") >= 2
     # Dorme ANTES da primeira volta, para não atrasar o `/health` de um deploy.
     assert laco.index("await asyncio.sleep") < laco.index("disparar_avisos_de_parada(")
+
+
+def test_a_frase_do_monitoramento_tem_UMA_fonte():
+    """Defeito guardado, e o dono o viu duas vezes no mesmo dia (30/09/2026).
+
+    "Esta usina não está ligada ao monitoramento" estava escrita à mão em treze lugares —
+    seis só em `equipamentos.py`. Consertar `plants.py` deixou os outros doze mentindo, e
+    a resposta dele foi "continua escrito que não tem monitoramento".
+
+    Quem quiser a frase chama `plants.sem_monitoramento(link, o_que)`, que sabe distinguir
+    a usina não monitorada da MICRO — monitorada pelo portal do fabricante.
+    """
+    from pathlib import Path
+
+    rotas = Path(__file__).resolve().parents[1] / "app" / "api" / "v1"
+    culpados = [
+        f"{arq.name}:{n}"
+        for arq in sorted(rotas.glob("*.py"))
+        if arq.name != "plants.py"
+        for n, linha in enumerate(arq.read_text("utf-8").splitlines(), 1)
+        if "não está ligada ao monitoramento" in linha and "sem_monitoramento" not in linha
+    ]
+    assert not culpados, (
+        "a frase voltou a ser escrita à mão — use `plants.sem_monitoramento(link, …)`: "
+        + ", ".join(culpados)
+    )

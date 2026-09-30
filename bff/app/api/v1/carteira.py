@@ -67,6 +67,7 @@ from app.api.v1.manutencao import (
 )
 from app.api.v1.pendencias import CONCLUIDA, listar_pendencias
 from app.api.v1.plants import (
+    sem_monitoramento,
     _chave_mes,
     _energia_do_periodo,
     _meses_entre,
@@ -541,7 +542,7 @@ async def _bloco_energia(
     linhas: list[UsinaEnergiaOut] = [
         UsinaEnergiaOut(
             id=l.id, nome=l.nome, cidade=l.cidade, uf=l.uf,
-            motivo="Esta usina não está ligada ao monitoramento.",
+            motivo=sem_monitoramento(l),
         )
         for l in links
         if not l.mw_plant_slug

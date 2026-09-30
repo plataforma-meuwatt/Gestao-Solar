@@ -730,7 +730,7 @@ def _dados_do_micro(m: dict[str, Any]) -> dict[str, Any]:
     ao lado, vinda daqui. Duas telas discordando sobre o mesmo fato.
 
     O que o MICRO não tem — curva do dia, série por dia, inversor a inversor — continua
-    sem ter, e quem pergunta recebe a frase de `_sem_monitoramento`, que diz por quê.
+    sem ter, e quem pergunta recebe a frase de `sem_monitoramento`, que diz por quê.
     """
     return {
         "potencia_kw": m.get("power_kw"),
@@ -742,20 +742,28 @@ def _dados_do_micro(m: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sem_monitoramento(link: PlantLink) -> str:
+def sem_monitoramento(link: PlantLink, o_que: str | None = None) -> str:
     """Por que esta tela não tem número — dizendo a VERDADE sobre esta usina.
 
     "Esta usina não está ligada ao monitoramento" é falso para a micro usina: ela é
     monitorada pelo portal do fabricante, e o app mostra a potência dela na lista. O que
     falta é o detalhamento que só o meuWatt tem. Repetir a frase do não-monitorado fazia
-    o dono ler "não medimos nada daqui" — o oposto do que acontece.
+    o dono ler "não medimos nada daqui" — o oposto do que acontece, e foi o que ele viu
+    em 30/09/2026 em tela após tela.
+
+    **É a fonte única da frase.** Ela estava escrita à mão em treze lugares — seis só em
+    `equipamentos.py` —, e consertar um deles deixou os outros doze mentindo: o dono
+    respondeu "continua escrito que não tem monitoramento" no mesmo dia. `o_que` é o que
+    FALTA naquela tela, para a frase ser específica sem se repetir.
     """
     if link.so_micro:
+        falta = o_que or "o detalhamento por inversor nem a curva do dia"
         return (
             "Esta usina é monitorada pelo portal do fabricante, que informa geração e "
-            "estado — mas não o detalhamento por inversor nem a curva do dia."
+            f"estado — mas não {falta}."
         )
-    return "Esta usina não está ligada ao monitoramento."
+    base = "Esta usina não está ligada ao monitoramento"
+    return f"{base}, de onde {o_que}." if o_que else f"{base}."
 
 
 @router.get("/plants/{plant_link_id}", response_model=UsinaDetalheOut)
@@ -1077,7 +1085,7 @@ async def geracao_da_usina(
     saida = GeracaoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = _sem_monitoramento(link)
+        saida.aviso = sem_monitoramento(link)
         return saida
 
     try:
@@ -1246,7 +1254,7 @@ async def curva_do_dia(
     saida = CurvaUsinaOut(dia=referencia.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = _sem_monitoramento(link)
+        saida.aviso = sem_monitoramento(link)
         return saida
 
     try:
@@ -1706,7 +1714,7 @@ def _usina_monitorada(db: Session, usuario: User, plant_link_id: int) -> PlantLi
     a tela precisa dizer isso em vez de desenhar um gráfico em branco."""
     link = _usina_no_escopo(db, usuario, plant_link_id)
     if not link.mw_plant_slug:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, _sem_monitoramento(link))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, sem_monitoramento(link))
     return link
 
 

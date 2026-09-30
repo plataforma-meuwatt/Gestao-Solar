@@ -665,7 +665,11 @@ function EnergiaDoMes({ usina, celula }: { usina: UsinaDoAno; celula: CelulaDoAn
       : e.estado === 'sem_fechamento'
         ? 'O monitoramento ainda não fechou este mês para esta usina. Quando fechar e a equipe anexar os PDFs, eles aparecem aqui.'
         : e.estado === 'sem_monitoramento'
-          ? 'Esta usina não está ligada ao monitoramento, que é de onde vêm os relatórios de geração.'
+          ? // O servidor manda a frase pronta: "não está ligada ao monitoramento" é FALSO
+            // para a micro usina, que É monitorada — pelo portal do fabricante. A frase
+            // local fica como reserva para um servidor anterior a este campo.
+            (e.motivo ??
+              'Esta usina não está ligada ao monitoramento, que é de onde vêm os relatórios de geração.')
           : e.estado === 'indisponivel'
             ? 'Não deu para falar com o monitoramento agora. Isto não quer dizer que não haja relatório — quer dizer que não sabemos. Puxe a tela para recarregar quando houver sinal.'
             : `O servidor devolveu um estado que este aplicativo ainda não conhece: “${e.estado}”.`

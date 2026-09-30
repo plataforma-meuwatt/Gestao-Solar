@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.v1.plants import _numero, _usina_no_escopo
+from app.api.v1.plants import _numero, _usina_no_escopo, sem_monitoramento
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
@@ -430,7 +430,7 @@ async def detalhe_do_equipamento(
 
     if not link.mw_plant_slug:
         raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao monitoramento."
+            status.HTTP_404_NOT_FOUND, sem_monitoramento(link, "a lista de equipamentos")
         )
 
     try:
@@ -651,7 +651,7 @@ async def equipamentos_da_usina(
     if not link.mw_plant_slug:
         return EquipamentosOut(
             usina=link.nome,
-            aviso="Esta usina não está ligada ao monitoramento, de onde vêm os inversores.",
+            aviso=sem_monitoramento(link, "vêm os inversores"),
         )
 
     try:
@@ -840,7 +840,7 @@ async def comparativo_da_usina(
     saida = ComparativoOut(recorte=recorte, inicio=inicio.isoformat(), fim=fim.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     try:
@@ -1024,7 +1024,7 @@ async def curva_do_rele_de_temperatura(
     saida = CurvaEquipamentoOut(dia=alvo.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     try:
@@ -1110,7 +1110,7 @@ async def maximas_do_rele_de_temperatura(
     saida = MaximasOut(inicio=inicio.isoformat(), fim=fim.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     try:
@@ -1191,7 +1191,7 @@ async def curva_do_rele_de_protecao(
     saida = CurvaEquipamentoOut(dia=alvo.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     try:
@@ -1262,7 +1262,7 @@ async def historico_de_flags(
     saida = HistoricoDeFlagsOut()
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     # A rota do upstream exige o id NUMÉRICO; o app carrega `relay-{id}`.
@@ -1326,7 +1326,7 @@ async def curva_das_strings(
     saida = CurvaEquipamentoOut(dia=alvo.isoformat())
 
     if not link.mw_plant_slug:
-        saida.aviso = "Esta usina não está ligada ao monitoramento."
+        saida.aviso = sem_monitoramento(link, "o detalhamento por equipamento")
         return saida
 
     try:

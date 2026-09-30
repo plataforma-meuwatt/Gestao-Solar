@@ -117,7 +117,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.v1.manutencao import _erro_do_upstream, _nome_ascii
-from app.api.v1.plants import _usina_no_escopo
+from app.api.v1.plants import _usina_no_escopo, sem_monitoramento
 from app.clients.meuwatt import MeuWattClient
 from app.core.datas import hoje
 from app.core.db import get_db
@@ -469,7 +469,7 @@ def _slug_do_upstream(link: PlantLink) -> str:
     """
     slug = (link.mw_plant_slug or "").strip()
     if not slug:
-        raise HTTPException(404, "Esta usina não está ligada ao monitoramento.")
+        raise HTTPException(404, sem_monitoramento(link, "os dados para exportação"))
     if not _SLUG.match(slug):
         # Nunca aconteceu, e é para continuar assim: o campo é digitado no painel, e um
         # `../../../admin/users` aqui normalizaria para outra rota da mw-api chamada com o

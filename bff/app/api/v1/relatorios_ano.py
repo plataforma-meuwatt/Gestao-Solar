@@ -103,7 +103,7 @@ from app.api.v1.documents import (
     mensais_das_usinas,
 )
 from app.api.v1.manutencao import CronogramaOut, cronograma_da_usina
-from app.api.v1.plants import usinas_do_usuario
+from app.api.v1.plants import sem_monitoramento, usinas_do_usuario
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
@@ -157,6 +157,11 @@ class EnergiaCelulaOut(BaseModel):
     #:   isto em `sem_fechamento` afirmaria que ninguém publicou, que é o contrário de
     #:   "não sabemos"; o motivo viaja no `aviso` do topo.
     estado: str
+    #: A frase pronta, quando a ausência precisa de explicação. Hoje só em
+    #: `sem_monitoramento`, porque "não está ligada ao monitoramento" é FALSO para a
+    #: micro usina — ela é monitorada pelo portal do fabricante. A tela imprime isto
+    #: quando vem; sem ele, cai na frase dela.
+    motivo: str | None = None
     #: O id que `/documents/{id}/file` aceita. Nulo em tudo que não seja fechamento.
     documento_id: int | None = None
     #: Quando o fechamento foi enviado ao cliente. **Não** é o mês da célula — o mês vem
@@ -350,7 +355,7 @@ def _pecas(documento: DocumentoOut) -> list[PecaOut]:
 
 
 def _celula_de_energia(
-    documento: DocumentoOut | None, *, monitorada: bool, indisponivel: bool
+    documento: DocumentoOut | None, link: PlantLink, *, monitorada: bool, indisponivel: bool
 ) -> EnergiaCelulaOut:
     """Qual das cinco ausências é esta — nomeada, nunca achatada numa frase só."""
     if documento is not None:
@@ -362,7 +367,13 @@ def _celula_de_energia(
             pecas=pecas,
         )
     if not monitorada:
-        return EnergiaCelulaOut(estado="sem_monitoramento")
+        # O motivo vem PRONTO do servidor, e não montado na tela: a micro usina é
+        # monitorada pelo portal do fabricante, e a frase genérica a chamava de não
+        # monitorada. Regra da casa — rótulo que o cliente lê é dado da API.
+        return EnergiaCelulaOut(
+            estado="sem_monitoramento",
+            motivo=sem_monitoramento(link, "vêm os relatórios de geração"),
+        )
     # "Não sabemos" e "ninguém publicou" são coisas diferentes, e só a segunda é ausência.
     if indisponivel:
         return EnergiaCelulaOut(estado="indisponivel")
@@ -370,12 +381,12 @@ def _celula_de_energia(
 
 
 def _anual_de_energia(
-    documento: DocumentoOut | None, *, monitorada: bool, indisponivel: bool
+    documento: DocumentoOut | None, link: PlantLink, *, monitorada: bool, indisponivel: bool
 ) -> AnualEnergiaOut:
     if not monitorada:
         return AnualEnergiaOut(
             estado="sem_monitoramento",
-            motivo="Esta usina não está ligada ao monitoramento, de onde vêm os relatórios.",
+            motivo=sem_monitoramento(link, "vêm os relatórios de geração"),
         )
     if indisponivel:
         return AnualEnergiaOut(
@@ -523,6 +534,7 @@ def _linha(
             mes=mes,
             energia=_celula_de_energia(
                 docs_por_mes.get(mes),
+                link,
                 monitorada=monitorada,
                 indisponivel=energia_indisponivel,
             ),
@@ -533,7 +545,7 @@ def _linha(
     ]
     linha.anual = AnualOut(
         energia=_anual_de_energia(
-            doc_anual, monitorada=monitorada, indisponivel=energia_indisponivel
+            doc_anual, link, monitorada=monitorada, indisponivel=energia_indisponivel
         ),
         manutencao=_anual_de_manutencao(link, ano, mes_corrente),
     )

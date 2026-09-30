@@ -45,7 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, computed_field
 from sqlalchemy.orm import Session
 
-from app.api.v1.plants import usinas_do_usuario
+from app.api.v1.plants import sem_monitoramento, usinas_do_usuario
 from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
@@ -411,7 +411,7 @@ async def _geracao(
         # seria falso; sem filtro, dizer "esta usina" não teria referente.
         if filtrada:
             return DocumentosOut(
-                aviso="Esta usina não está ligada ao monitoramento, de onde vêm os relatórios."
+                aviso=sem_monitoramento(links[0], "vêm os relatórios")
             )
         return DocumentosOut(
             aviso="Nenhuma das suas usinas está ligada ao monitoramento, de onde vêm os relatórios."

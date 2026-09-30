@@ -84,6 +84,15 @@ export type EstadoDaEnergia =
 
 export type EnergiaDoMes = {
   estado: EstadoDaEnergia | string
+  /**
+   * A frase pronta do servidor, quando a ausência precisa de explicação.
+   *
+   * Hoje só em `sem_monitoramento`, e existe porque a frase que a tela montava era FALSA
+   * para a micro usina: ela É monitorada — pelo portal do fabricante — e a tela dizia o
+   * contrário, com a potência dela visível na lista ao lado. Rótulo que o cliente lê é
+   * dado da API.
+   */
+  motivo: string | null
   documento_id: number | null
   /** Quando o fechamento foi ENVIADO. Não é o mês da célula — esse é a coluna. */
   publicado_em: string | null

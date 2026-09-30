@@ -41,7 +41,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.v1.plants import _janela, _referencia_pedida, _usina_no_escopo
+from app.api.v1.plants import (
+    _janela,
+    _referencia_pedida,
+    _usina_no_escopo,
+    sem_monitoramento,
+)
 from app.core.datas import BRT
 from app.core.db import get_db
 from app.core.security import usuario_atual
@@ -312,7 +317,7 @@ async def paradas_da_usina(
 
     if not link.mw_plant_slug:
         raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao monitoramento."
+            status.HTTP_404_NOT_FOUND, sem_monitoramento(link, "o histórico de paradas")
         )
 
     try:
