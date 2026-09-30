@@ -76,15 +76,24 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     procurado = (body.apelido or "").strip().lower()
     usuario = db.scalar(select(User).where(User.apelido == procurado))
 
-    # Mensagem única para conta inexistente, senha errada e perfil sem acesso a lugar
-    # nenhum: quem tenta adivinhar não aprende qual das três aconteceu.
-    if (
-        usuario is None
-        or not usuario.ativo
-        or not (usuario.abre_painel or usuario.abre_empresa)
-        or not conferir_senha(body.senha, usuario.senha_hash)
-    ):
+    # Mensagem única para conta inexistente, senha errada e conta desativada: quem tenta
+    # adivinhar não aprende qual das três aconteceu.
+    if usuario is None or not usuario.ativo or not conferir_senha(body.senha, usuario.senha_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+
+    # Senha CERTA e conta que não abre esta tela: aqui a frase muda, e de propósito.
+    #
+    # Quem provou a senha é o dono da conta — dizer-lhe onde entrar não ensina nada a
+    # quem está adivinhando, porque adivinhar não passa da linha acima. Já o silêncio
+    # custou caro: o dono criou uma conta de dono de usina, anotou a senha, tentou no
+    # painel e leu "apelido ou senha inválidos". Passou a procurar defeito na senha, que
+    # estava certa — só o endereço é que era outro.
+    if not (usuario.abre_painel or usuario.abre_empresa):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Esta conta é de dono de usina: ela entra pelo aplicativo ou pelo portal do "
+            "cliente, não por aqui. A senha está certa.",
+        )
 
     # AUTENTICAR é uma coisa só; AUTORIZAR é que tem três portões. Por isso a porta de
     # entrada é única e o que muda é o token que sai dela: o gerente da O&M recebe uma

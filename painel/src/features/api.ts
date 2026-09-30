@@ -957,6 +957,8 @@ export const criarClienteDaEmpresa = (dados: {
   nome: string
   apelido: string
   email?: string | null
+  /** `cliente` (dono de usina) ou `gestor_empresa`. São os dois papéis de uma empresa. */
+  perfil?: 'cliente' | 'gestor_empresa'
 }) =>
   apiEmpresa
     .post<{ id: number; nome: string; apelido: string; senha: string }>('/clientes', dados)
@@ -1021,5 +1023,7 @@ export const editarContaDaEmpresa = (
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 
 /** As usinas que esta conta recebe hoje — a tela precisa antes de salvar a lista completa. */
+export type Concedida = { plant_link_id: number; nome: string; da_empresa: boolean }
+
 export const usinasConcedidas = (usuarioId: number) =>
-  apiEmpresa.get<number[]>(`/usuarios/${usuarioId}/usinas`).then((r) => r.data)
+  apiEmpresa.get<Concedida[]>(`/usuarios/${usuarioId}/usinas`).then((r) => r.data)

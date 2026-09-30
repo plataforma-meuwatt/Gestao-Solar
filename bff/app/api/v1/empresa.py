@@ -764,6 +764,11 @@ class ClienteIn(BaseModel):
     nome: str = Field(min_length=2)
     apelido: str = Field(min_length=3)
     email: EmailStr | None = None
+    #: `cliente` (dono de usina, entra no app) ou `gestor_empresa` (opera a empresa com
+    #: você). São os dois únicos papéis que existem dentro de uma empresa — os da
+    #: plataforma não se criam daqui, e pedi-los aqui seria dar a um inquilino a chave do
+    #: sistema inteiro.
+    perfil: Perfil = Perfil.CLIENTE
 
 
 class ClienteCriadoOut(BaseModel):
@@ -779,7 +784,7 @@ class ClienteCriadoOut(BaseModel):
 def criar_cliente(
     body: ClienteIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> ClienteCriadoOut:
-    """Cadastra um dono de usina DESTA empresa.
+    """Cadastra alguém DESTA empresa: um dono de usina ou outro gerente.
 
     Reusa `services/clientes.criar`, que é onde moram as regras do cadastro (apelido
     normalizado, e-mail repetido entre clientes, senha provisória). Uma segunda cópia aqui
@@ -789,6 +794,11 @@ def criar_cliente(
     este gerente e para mais ninguém.
     """
     empresa_id = svc.empresa_exigida(gerente)
+    if body.perfil not in (Perfil.CLIENTE, Perfil.GESTOR_EMPRESA):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Dentro da empresa só existem dono de usina e gerente.",
+        )
     try:
         criado = clientes.criar(
             db,
@@ -802,6 +812,7 @@ def criar_cliente(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
     criado.usuario.empresa_id = empresa_id
+    criado.usuario.perfil = body.perfil
     db.commit()
 
     return ClienteCriadoOut(
@@ -848,8 +859,30 @@ def definir_usinas_do_cliente(
         }
         fora = [pid for pid in body.plant_link_ids if pid not in minhas]
         if fora:
+            # Duas ausências, e a diferença entre elas é o que se pode DIZER.
+            #
+            # Usina SEM dono é herdada: existia antes do multiempresa e nunca foi trazida
+            # para empresa nenhuma. O gerente tem direito ao nome dela — é a usina que ele
+            # vê marcada na própria tela, e sem o nome ele não sabe qual caixa desmarcar.
+            # Foi esse "não encontrada" seco que o travou, com todas as caixas marcadas.
+            #
+            # Usina de OUTRA empresa é 404 e sem nome: dizer "existe, mas é de outro"
+            # entrega a carteira do vizinho a quem chutar números.
+            herdadas, alheias = [], []
+            for pid in fora:
+                usina = db.get(PlantLink, pid)
+                (herdadas if usina is not None and usina.empresa_id is None else alheias).append(
+                    usina.nome if usina is not None else f"#{pid}"
+                )
+            if alheias:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa."
+                )
             raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa."
+                status.HTTP_409_CONFLICT,
+                f"{'Esta usina ainda não é' if len(herdadas) == 1 else 'Estas usinas ainda não são'} "
+                f"da sua empresa: {', '.join(herdadas)}. "
+                "Traga em “Usinas”, ou desmarque antes de salvar.",
             )
 
     try:
@@ -1237,22 +1270,40 @@ def editar_conta_da_empresa(
     )
 
 
-@router.get("/usuarios/{usuario_id}/usinas", response_model=list[int])
+class ConcedidaOut(BaseModel):
+    plant_link_id: int
+    nome: str
+    #: É da empresa de quem concede. `false` é uma concessão herdada: a usina foi dada
+    #: antes do multiempresa e nunca foi trazida para empresa nenhuma. A tela precisa
+    #: mostrá-la — senão ela vai junto no "salvar" e volta como erro sem nome.
+    da_empresa: bool
+
+
+@router.get("/usuarios/{usuario_id}/usinas", response_model=list[ConcedidaOut])
 def usinas_do_usuario(
     usuario_id: int, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
-) -> list[int]:
-    """As usinas que esta pessoa recebe hoje.
+) -> list[ConcedidaOut]:
+    """As usinas que esta pessoa recebe hoje, e se cada uma é mesmo da empresa.
 
     A tela precisa disto antes de salvar: a gravação é a lista COMPLETA, e uma tela que
-    abrisse com tudo desmarcado apagaria a concessão inteira no primeiro clique em Salvar.
+    abrisse com tudo desmarcado apagaria a concessão inteira no primeiro clique.
+
+    E precisa do `da_empresa` porque existe concessão HERDADA — usina concedida antes de o
+    sistema ser multiempresa, que nunca foi trazida para ninguém. Ela aparece marcada como
+    tal, para o gerente resolver: trazer a usina, ou tirar a concessão.
     """
     empresa_id = svc.empresa_exigida(gerente)
     conta = db.get(User, usuario_id)
     if conta is None or conta.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
 
-    return list(
-        db.scalars(
-            select(UserPlantAccess.plant_link_id).where(UserPlantAccess.user_id == conta.id)
-        ).all()
-    )
+    linhas = db.execute(
+        select(PlantLink.id, PlantLink.nome, PlantLink.empresa_id)
+        .join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
+        .where(UserPlantAccess.user_id == conta.id)
+        .order_by(PlantLink.nome)
+    ).all()
+    return [
+        ConcedidaOut(plant_link_id=i, nome=n, da_empresa=(e == empresa_id))
+        for i, n, e in linhas
+    ]

@@ -19,7 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Link2, Sun, UserCog } from 'lucide-react'
+import { KeyRound, Link2, Sun, UserCog, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
@@ -29,6 +29,7 @@ import {
   definirUsinasDoCliente,
   desconectarContaDoCliente,
   editarContaDaEmpresa,
+  criarClienteDaEmpresa,
   usinasConcedidas,
   usuariosDetalhados,
   type Produto,
@@ -53,11 +54,18 @@ export function UsuariosDaEmpresa() {
   })
   const [usinasDe, setUsinasDe] = useState<UsuarioDetalhado | null>(null)
   const [tokensDe, setTokensDe] = useState<UsuarioDetalhado | null>(null)
+  const [novo, setNovo] = useState(false)
 
   return (
     <Pagina
       titulo="Usuários"
       apoio={empresa ? `Quem é da sua empresa · ${empresa}` : 'Quem é da sua empresa'}
+      acao={
+        <button className="btn-primario" onClick={() => setNovo(true)}>
+          <UserPlus size={16} />
+          Novo usuário
+        </button>
+      }
     >
       {isLoading ? (
         <Carregando />
@@ -86,6 +94,7 @@ export function UsuariosDaEmpresa() {
         <UsinasDoUsuario usuario={usinasDe} aoFechar={() => setUsinasDe(null)} />
       ) : null}
       {tokensDe ? <Tokens usuario={tokensDe} aoFechar={() => setTokensDe(null)} /> : null}
+      {novo ? <NovoUsuario aoFechar={() => setNovo(false)} /> : null}
     </Pagina>
   )
 }
@@ -221,7 +230,10 @@ function UsinasDoUsuario({
     queryFn: () => usinasConcedidas(usuario.id),
   })
   const [marcadas, setMarcadas] = useState<number[] | null>(null)
-  const escolhidas = marcadas ?? atuais ?? []
+  const escolhidas = marcadas ?? (atuais ?? []).map((c) => c.plant_link_id)
+  // Concessão HERDADA: usina dada antes do multiempresa, que nunca foi trazida para
+  // empresa nenhuma. Ela precisa aparecer — senão vai junto no salvar e volta como erro.
+  const herdadas = (atuais ?? []).filter((c) => !c.da_empresa)
 
   const salvar = useMutation({
     mutationFn: () => definirUsinasDoCliente(usuario.id, escolhidas),
@@ -244,6 +256,20 @@ function UsinasDoUsuario({
             {usuario.usinas} {usuario.usinas === 1 ? 'usina' : 'usinas'} — marque tudo o que
             ele deve ver.
           </Aviso>
+
+          {herdadas.length ? (
+            <div className="border border-alerta/30 bg-alerta/5 rounded-card p-3">
+              <p className="text-sm text-alerta font-semibold">
+                {herdadas.length === 1 ? 'Uma usina concedida' : `${herdadas.length} usinas concedidas`}{' '}
+                antes desta empresa existir
+              </p>
+              <p className="text-xs text-rotulo mt-1">
+                {herdadas.map((h) => h.nome).join(', ')} — ainda não {herdadas.length === 1 ? 'pertence' : 'pertencem'} a
+                nenhuma empresa. Traga em “Usinas” para manter, ou salve assim para tirar
+                {herdadas.length === 1 ? '-la' : '-las'} desta pessoa.
+              </p>
+            </div>
+          ) : null}
 
           {!noApp.length ? (
             <p className="text-sm text-rotulo">
@@ -398,6 +424,107 @@ function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: ()
             disabled={!token.trim() || conectar.isPending}
           >
             {conectar.isPending ? 'Conferindo…' : 'Conectar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+
+/** Cadastro de quem é da empresa: dono de usina ou outro gerente. */
+function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [nome, setNome] = useState('')
+  const [apelido, setApelido] = useState('')
+  const [email, setEmail] = useState('')
+  const [perfil, setPerfil] = useState<'cliente' | 'gestor_empresa'>('cliente')
+  const [criado, setCriado] = useState<{ apelido: string; senha: string } | null>(null)
+
+  const criar = useMutation({
+    mutationFn: () => criarClienteDaEmpresa({ nome, apelido, email: email || null, perfil }),
+    onSuccess: (r) => {
+      setCriado({ apelido: r.apelido, senha: r.senha })
+      qc.invalidateQueries({ queryKey: ['empresa'] })
+    },
+  })
+
+  if (criado) {
+    return (
+      <Modal titulo="Usuário criado" aoFechar={aoFechar}>
+        <div className="grid gap-4">
+          <Aviso>Anote agora: a senha não é guardada em texto e não dá para vê-la de novo.</Aviso>
+          <Cartao>
+            <p className="text-sm text-rotulo">Entra com o apelido</p>
+            <p className="text-forte font-semibold text-lg mt-1">{criado.apelido}</p>
+            <p className="text-sm text-rotulo mt-4">Senha provisória</p>
+            <p className="text-forte font-semibold text-lg mt-1">{criado.senha}</p>
+          </Cartao>
+          <p className="text-xs text-fraco">
+            Entregue as duas juntas. O e-mail é só contato — quem autentica é o apelido.
+          </p>
+          <div className="flex justify-end">
+            <button className="btn-primario" onClick={aoFechar}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal titulo="Novo usuário" aoFechar={aoFechar}>
+      <div className="grid gap-4">
+        <div>
+          <p className="rotulo-campo">O que ele é</p>
+          <select
+            className="campo h-9 text-sm mt-1"
+            value={perfil}
+            onChange={(e) => setPerfil(e.target.value as 'cliente' | 'gestor_empresa')}
+          >
+            <option value="cliente">Dono de usina — entra no aplicativo</option>
+            <option value="gestor_empresa">Gerente — opera a empresa com você</option>
+          </select>
+          <p className="text-xs text-fraco mt-1.5">
+            {perfil === 'cliente'
+              ? 'Vê apenas as usinas que você conceder a ele.'
+              : 'Vê e opera tudo desta empresa, como você.'}
+          </p>
+        </div>
+
+        <div>
+          <p className="rotulo-campo">Nome</p>
+          <input className="campo mt-1" value={nome} onChange={(e) => setNome(e.target.value)} />
+        </div>
+        <div>
+          <p className="rotulo-campo">Apelido (é com ele que entra)</p>
+          <input
+            className="campo mt-1"
+            value={apelido}
+            onChange={(e) => setApelido(e.target.value)}
+          />
+        </div>
+        <div>
+          <p className="rotulo-campo">E-mail (opcional)</p>
+          <input className="campo mt-1" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+
+        {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
+        {!nome.trim() || !apelido.trim() ? (
+          <p className="text-xs text-rotulo">Preencha nome e apelido para cadastrar.</p>
+        ) : null}
+
+        <div className="flex justify-end gap-2">
+          <button className="btn-secundario" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn-primario"
+            onClick={() => criar.mutate()}
+            disabled={!nome.trim() || !apelido.trim() || criar.isPending}
+          >
+            {criar.isPending ? 'Criando…' : 'Criar'}
           </button>
         </div>
       </div>

@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app.core.datas import hoje as hoje_na_usina
@@ -48,7 +48,26 @@ def usinas_do_usuario(db: Session, usuario: User) -> list[PlantLink]:
         db.scalars(
             select(PlantLink)
             .join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
-            .where(UserPlantAccess.user_id == usuario.id, PlantLink.ativo)
+            .where(
+                UserPlantAccess.user_id == usuario.id,
+                PlantLink.ativo,
+                # A usina de OUTRA empresa não aparece, nem com a concessão gravada.
+                #
+                # A concessão sozinha deixou de bastar quando o sistema virou multiempresa:
+                # uma linha antiga apontando para usina que hoje é de outro inquilino faria
+                # o dono ver, no aplicativo, a carteira de um concorrente — e nada na tela
+                # indicaria isso. Conferir aqui é mais barato que confiar em toda tela que
+                # lê usina, e é o mesmo lugar por onde todas elas passam.
+                #
+                # Usina SEM dono continua passando: ela é o estado de quem foi cadastrado
+                # antes do multiempresa e ainda não foi trazida para uma empresa. Não é de
+                # ninguém, então não vaza de ninguém — e esconder o que a pessoa já via
+                # seria tirar funcionalidade para resolver uma migração pendente.
+                or_(
+                    PlantLink.empresa_id.is_(None),
+                    PlantLink.empresa_id == usuario.empresa_id,
+                ),
+            )
             .order_by(PlantLink.nome)
         ).all()
     )

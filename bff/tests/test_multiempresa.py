@@ -1035,7 +1035,9 @@ def test_a_concessao_vale_para_qualquer_conta_da_empresa(db, carteiras):
     definir_usinas_do_cliente(
         gerente.id, UsinasDoClienteIn(plant_link_ids=[u.plant_link_id]), db=db, gerente=gerente
     )
-    assert usinas_do_usuario(gerente.id, db=db, gerente=gerente) == [u.plant_link_id]
+    concedidas = usinas_do_usuario(gerente.id, db=db, gerente=gerente)
+    assert [c.plant_link_id for c in concedidas] == [u.plant_link_id]
+    assert concedidas[0].da_empresa is True
 
 
 def test_nao_se_le_a_concessao_de_conta_de_outra_empresa(db, carteiras, duas_empresas):
@@ -1080,3 +1082,139 @@ def test_a_lista_de_usuarios_aguenta_conta_com_token_proprio(db, carteiras, duas
     assert por_apelido["com.conta"].produtos == ["meuwatt"]
     # E quem não tem token próprio diz isso com uma lista vazia — é o caso comum.
     assert por_apelido[gerente.apelido].produtos == []
+
+
+# ------------------------------------------- a concessão herdada, e o vazamento
+
+
+def test_o_cliente_nunca_ve_usina_de_OUTRA_empresa_mesmo_concedida(db, carteiras, duas_empresas):
+    """A trava que faltava, e é a causa raiz de verdade: a CONCESSÃO sozinha deixou de
+    bastar quando o sistema virou multiempresa. Uma linha antiga apontando para usina que
+    hoje é de outro inquilino faria o dono ver, no aplicativo, a carteira de um
+    concorrente — e nada na tela indicaria isso.
+    """
+    from app.api.v1.plants import usinas_do_usuario as escopo_do_app
+    from app.models.user import UserPlantAccess
+
+    a, b = duas_empresas
+    cliente = User(apelido="da.a", nome="Da A", perfil=Perfil.CLIENTE, empresa_id=a.id)
+    db.add(cliente)
+    da_a = PlantLink(nome="Minha", mw_plant_slug="minha", empresa_id=a.id)
+    da_b = PlantLink(nome="Do concorrente", mw_plant_slug="dele", empresa_id=b.id)
+    orfa = PlantLink(nome="Herdada", mw_plant_slug="herdada")  # sem dono
+    db.add_all([da_a, da_b, orfa])
+    db.flush()
+    for u in (da_a, da_b, orfa):
+        db.add(UserPlantAccess(user_id=cliente.id, plant_link_id=u.id))
+    db.commit()
+
+    nomes = {u.nome for u in escopo_do_app(db, cliente)}
+    assert "Minha" in nomes
+    assert "Do concorrente" not in nomes, "a usina de outra empresa vazou para o cliente"
+    # A sem dono continua: é o estado de quem existia antes do multiempresa, e esconder o
+    # que a pessoa já via seria tirar funcionalidade por causa de migração pendente.
+    assert "Herdada" in nomes
+
+
+def test_a_recusa_diz_QUAL_usina_nao_e_da_empresa(db, carteiras):
+    """Defeito guardado, e travou o dono numa tela com todas as caixas marcadas: o
+    "Usina não encontrada nesta empresa" não dizia qual das oito era, e uma delas era uma
+    concessão herdada, de antes do multiempresa."""
+    from app.api.v1.empresa import UsinasDoClienteIn, definir_usinas_do_cliente
+
+    _a, _b, gerente = carteiras
+    orfa = PlantLink(nome="UFV Herdada", mw_plant_slug="ufv-herdada")
+    db.add(orfa)
+    db.commit()
+
+    with pytest.raises(HTTPException) as erro:
+        definir_usinas_do_cliente(
+            gerente.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
+        )
+    assert erro.value.status_code == 409
+    assert "UFV Herdada" in erro.value.detail
+    assert "Usinas" in erro.value.detail, "a frase não diz o que fazer"
+
+
+def test_a_tela_enxerga_a_concessao_herdada(db, carteiras):
+    """Sem o `da_empresa`, a herdada ia junto no "salvar" e voltava como erro sem nome — o
+    gerente não tinha como saber qual caixa desmarcar."""
+    from app.api.v1.empresa import UsinaIn, salvar_usina, usinas_do_usuario
+    from app.models.user import UserPlantAccess
+
+    a, _b, gerente = carteiras
+    minha = salvar_usina(UsinaIn(mw_slug="da-casa", nome="Da casa"), db=db, gerente=gerente)
+    orfa = PlantLink(nome="Herdada", mw_plant_slug="herdada-2")
+    db.add(orfa)
+    db.flush()
+    db.add_all([
+        UserPlantAccess(user_id=gerente.id, plant_link_id=minha.plant_link_id),
+        UserPlantAccess(user_id=gerente.id, plant_link_id=orfa.id),
+    ])
+    db.commit()
+
+    por_nome = {c.nome: c for c in usinas_do_usuario(gerente.id, db=db, gerente=gerente)}
+    assert por_nome["Da casa"].da_empresa is True
+    assert por_nome["Herdada"].da_empresa is False
+
+
+def test_o_gerente_cria_dono_de_usina_e_outro_gerente(db, carteiras):
+    """O botão que faltava na tela de Usuários. São os dois únicos papéis que existem
+    dentro de uma empresa — os da plataforma não se criam daqui, e pedi-los seria dar a um
+    inquilino a chave do sistema inteiro."""
+    from app.api.v1.empresa import ClienteIn, criar_cliente
+
+    a, _b, gerente = carteiras
+    dono = criar_cliente(ClienteIn(nome="Dono Novo", apelido="dono.novo"), db=db, gerente=gerente)
+    colega = criar_cliente(
+        ClienteIn(nome="Colega", apelido="colega.om", perfil=Perfil.GESTOR_EMPRESA),
+        db=db,
+        gerente=gerente,
+    )
+
+    por_apelido = {u.apelido: u for u in db.scalars(select(User)).all()}
+    assert por_apelido["dono.novo"].perfil is Perfil.CLIENTE
+    assert por_apelido["colega.om"].perfil is Perfil.GESTOR_EMPRESA
+    assert por_apelido["colega.om"].empresa_id == a.id
+    assert dono.senha and colega.senha
+
+    with pytest.raises(HTTPException) as erro:
+        criar_cliente(
+            ClienteIn(nome="Chefe", apelido="chefe", perfil=Perfil.ADMINISTRADOR),
+            db=db,
+            gerente=gerente,
+        )
+    assert erro.value.status_code == 400
+
+
+def test_cliente_no_painel_ouve_ONDE_entrar_e_nao_senha_invalida(db, carteiras, duas_empresas):
+    """Defeito guardado, e o dono o viveu: criou uma conta de dono de usina, anotou a
+    senha, tentou no painel e leu "apelido ou senha inválidos". Passou a procurar defeito
+    na senha, que estava certa — só o endereço é que era outro.
+
+    A mensagem única continua para quem NÃO provou a senha. Quem provou é o dono da conta,
+    e dizer-lhe onde entrar não ensina nada a quem está adivinhando.
+    """
+    from app.api.v1.painel import EntrarIn, entrar
+
+    a, _b = duas_empresas
+    dono = User(
+        apelido="dona.usina",
+        nome="Dona da Usina",
+        perfil=Perfil.CLIENTE,
+        empresa_id=a.id,
+        senha_hash=gerar_hash_senha("senha-certa-1"),
+    )
+    db.add(dono)
+    db.commit()
+
+    with pytest.raises(HTTPException) as erro:
+        entrar(EntrarIn(apelido="dona.usina", senha="senha-certa-1"), db=db)
+    assert erro.value.status_code == 403
+    assert "aplicativo" in erro.value.detail and "senha está certa" in erro.value.detail
+
+    # E com a senha ERRADA continua a frase única, sem contar que a conta existe.
+    with pytest.raises(HTTPException) as erro:
+        entrar(EntrarIn(apelido="dona.usina", senha="chute"), db=db)
+    assert erro.value.status_code == 401
+    assert erro.value.detail == "Apelido ou senha inválidos"
