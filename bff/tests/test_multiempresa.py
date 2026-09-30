@@ -1011,3 +1011,38 @@ def test_a_usina_so_do_MICRO_nao_e_classificada_como_meuPlano(db, carteiras):
     assert _origem(so_mp) == "meuplano"
     # Com os dois produtos, a micro é detalhe do monitoramento — não muda a origem.
     assert _origem(nos_dois) == "ambos"
+
+
+def test_a_concessao_vale_para_qualquer_conta_da_empresa(db, carteiras):
+    """Defeito guardado, e o dono esbarrou nele: *"só consigo puxar as usinas da conta do
+    gerente, mas não consigo atribuir aos usuários"*. A concessão exigia perfil `cliente`,
+    e o GERENTE também é dono de usina no aplicativo — é assim que ele vê a carteira.
+    """
+    from app.api.v1.empresa import (
+        UsinaIn,
+        UsinasDoClienteIn,
+        definir_usinas_do_cliente,
+        salvar_usina,
+        usinas_do_usuario,
+    )
+
+    a, _b, gerente = carteiras
+    u = salvar_usina(UsinaIn(mw_slug="p-1", nome="Para o gerente"), db=db, gerente=gerente)
+
+    # Abre vazia, e é por isso que a tela precisa desta rota antes de salvar.
+    assert usinas_do_usuario(gerente.id, db=db, gerente=gerente) == []
+
+    definir_usinas_do_cliente(
+        gerente.id, UsinasDoClienteIn(plant_link_ids=[u.plant_link_id]), db=db, gerente=gerente
+    )
+    assert usinas_do_usuario(gerente.id, db=db, gerente=gerente) == [u.plant_link_id]
+
+
+def test_nao_se_le_a_concessao_de_conta_de_outra_empresa(db, carteiras, duas_empresas):
+    from app.api.v1.empresa import usinas_do_usuario
+
+    _a, b, gerente = carteiras
+    de_outra = db.scalar(select(User).where(User.empresa_id == b.id, User.perfil == Perfil.CLIENTE))
+    with pytest.raises(HTTPException) as erro:
+        usinas_do_usuario(de_outra.id, db=db, gerente=gerente)
+    assert erro.value.status_code == 404

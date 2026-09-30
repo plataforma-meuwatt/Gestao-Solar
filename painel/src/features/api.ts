@@ -992,3 +992,34 @@ export const ocultarUsina = (dados: {
 
 export const mostrarTodasAsUsinas = () =>
   apiEmpresa.delete<void>('/usinas/ocultas').then(() => undefined)
+
+export type UsuarioDetalhado = {
+  id: number
+  nome: string
+  apelido: string
+  perfil: string
+  ativo: boolean
+  email: string | null
+  usinas: number
+  produtos: Produto[]
+}
+
+export const usuariosDetalhados = () =>
+  apiEmpresa.get<UsuarioDetalhado[]>('/usuarios/detalhados').then((r) => r.data)
+
+export const conectarContaDoCliente = (usuarioId: number, produto: Produto, token: string) =>
+  apiEmpresa
+    .put<{ ok: boolean; detalhe: string }>(`/usuarios/${usuarioId}/conexoes/${produto}`, { token })
+    .then((r) => r.data)
+
+export const desconectarContaDoCliente = (usuarioId: number, produto: Produto) =>
+  apiEmpresa.delete<void>(`/usuarios/${usuarioId}/conexoes/${produto}`).then(() => undefined)
+
+export const editarContaDaEmpresa = (
+  usuarioId: number,
+  dados: { ativo?: boolean; senha?: string },
+) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
+
+/** As usinas que esta conta recebe hoje — a tela precisa antes de salvar a lista completa. */
+export const usinasConcedidas = (usuarioId: number) =>
+  apiEmpresa.get<number[]>(`/usuarios/${usuarioId}/usinas`).then((r) => r.data)

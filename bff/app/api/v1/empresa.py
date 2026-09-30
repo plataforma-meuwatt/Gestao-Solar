@@ -30,14 +30,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import gestor_empresa_atual
+from app.core.security import gerar_hash_senha, gestor_empresa_atual
 from app.core.tokens_produto import NOME
 from app.models.empresa import Empresa
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.usina_oculta import UsinaOculta
-from app.models.user import Perfil, User, UserPlantAccess
-from app.services import clientes, conciliacao
+from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
+from app.services import clientes, conciliacao, vinculos
 from app.services import empresas as svc
 from app.services import integracoes
 
@@ -832,9 +832,12 @@ def definir_usinas_do_cliente(
     """
     empresa_id = svc.empresa_exigida(gerente)
 
+    # Qualquer conta DESTA empresa recebe usina, e não só o perfil `cliente`: o gerente
+    # também é dono de usina no aplicativo — foi como o dono deste sistema usou a própria
+    # conta o tempo todo. O que a guarda exige é que a pessoa seja da empresa.
     cliente = db.get(User, cliente_id)
-    if cliente is None or cliente.empresa_id != empresa_id or cliente.perfil is not Perfil.CLIENTE:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cliente não encontrado nesta empresa.")
+    if cliente is None or cliente.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
 
     if body.plant_link_ids:
         minhas = {
@@ -1062,3 +1065,191 @@ def mostrar_todas(
     for o in db.scalars(select(UsinaOculta).where(UsinaOculta.empresa_id == empresa_id)).all():
         db.delete(o)
     db.commit()
+
+
+# ------------------------------- o gerente cuida das contas da empresa dele
+
+
+class UsuarioDetalhado(BaseModel):
+    """Uma conta da empresa, com o que o gerente precisa para operá-la."""
+
+    id: int
+    nome: str
+    apelido: str
+    perfil: str
+    ativo: bool
+    email: str | None = None
+    #: Quantas usinas esta pessoa recebe no aplicativo.
+    usinas: int = 0
+    #: Em quais produtos a conta DELA está conectada. Vazio é o normal: o cliente lê com
+    #: o token da empresa, e o dele só existe quando ele tem conta lá.
+    produtos: list[str] = []
+
+
+@router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
+def usuarios_detalhados(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> list[UsuarioDetalhado]:
+    """Quem é da empresa, com concessões e conexões — a lista que a tela opera."""
+    empresa_id = svc.empresa_exigida(gerente)
+    contas = list(
+        db.scalars(select(User).where(User.empresa_id == empresa_id).order_by(User.nome)).all()
+    )
+    if not contas:
+        return []
+
+    ids = [c.id for c in contas]
+    quantas = dict(
+        db.execute(
+            select(UserPlantAccess.user_id, func.count(UserPlantAccess.plant_link_id))
+            .where(UserPlantAccess.user_id.in_(ids))
+            .group_by(UserPlantAccess.user_id)
+        ).all()
+    )
+    conectados: dict[int, list[str]] = {}
+    for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
+        conectados.setdefault(v.gs_user_id, []).append(v.produto.value)
+
+    return [
+        UsuarioDetalhado(
+            id=c.id,
+            nome=c.nome,
+            apelido=c.apelido,
+            perfil=c.perfil.value,
+            ativo=c.ativo,
+            email=c.email,
+            usinas=quantas.get(c.id, 0),
+            produtos=sorted(conectados.get(c.id, [])),
+        )
+        for c in contas
+    ]
+
+
+class ConectarClienteIn(BaseModel):
+    token: str = Field(min_length=1)
+
+
+class ConexaoDoClienteOut(BaseModel):
+    ok: bool
+    detalhe: str
+
+
+@router.put("/usuarios/{usuario_id}/conexoes/{produto}", response_model=ConexaoDoClienteOut)
+async def conectar_conta_do_cliente(
+    usuario_id: int,
+    produto: Produto,
+    body: ConectarClienteIn,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> ConexaoDoClienteOut:
+    """Cola o token PESSOAL deste cliente no produto.
+
+    É opcional — sem ele, o Gestão Solar lê os dados dele com a credencial da empresa, e a
+    concessão é que decide o que aparece. Com ele, a leitura passa a acontecer **como o
+    cliente**: as usinas que ele enxergaria lá, pela regra de lá, e o produto passa a
+    aceitar que ele ENTRE com a senha daqui.
+
+    Responde 200 mesmo quando o token é recusado, com `ok: false` e o motivo: o erro é do
+    valor colado, não da requisição, e a tela precisa da frase inteira — um 400 viraria
+    "Erro 400" em qualquer tratamento genérico pelo caminho.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = db.get(User, usuario_id)
+    if conta is None or conta.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+
+    r = await vinculos.conectar(db, conta, produto, body.token, por=gerente)
+    return ConexaoDoClienteOut(ok=r.ok, detalhe=r.detalhe)
+
+
+@router.delete("/usuarios/{usuario_id}/conexoes/{produto}", status_code=204)
+def desconectar_conta_do_cliente(
+    usuario_id: int,
+    produto: Produto,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> None:
+    """Para de usar o token pessoal dele — a leitura volta a ser com a credencial da
+    empresa. **Não revoga nada** no produto de origem."""
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = db.get(User, usuario_id)
+    if conta is None or conta.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+
+    vinculo = vinculos.obter(db, conta.id, produto)
+    if vinculo is not None:
+        db.delete(vinculo)
+        db.commit()
+
+
+class ContaPatch(BaseModel):
+    ativo: bool | None = None
+    senha: str | None = None
+
+
+@router.patch("/usuarios/{usuario_id}", response_model=UsuarioDetalhado)
+def editar_conta_da_empresa(
+    usuario_id: int,
+    body: ContaPatch,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> UsuarioDetalhado:
+    """Desativa, reativa ou redefine a senha de quem é da empresa.
+
+    A própria conta é recusada: desativar a si mesmo tranca o gerente para fora no mesmo
+    instante, e a saída seria a plataforma.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = db.get(User, usuario_id)
+    if conta is None or conta.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    if conta.id == gerente.id and body.ativo is False:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Você ficaria sem acesso no mesmo instante."
+        )
+
+    if body.ativo is not None:
+        conta.ativo = body.ativo
+    if body.senha:
+        if len(body.senha) < 8:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
+            )
+        conta.senha_hash = gerar_hash_senha(body.senha)
+    db.commit()
+
+    return UsuarioDetalhado(
+        id=conta.id,
+        nome=conta.nome,
+        apelido=conta.apelido,
+        perfil=conta.perfil.value,
+        ativo=conta.ativo,
+        email=conta.email,
+        usinas=db.scalar(
+            select(func.count())
+            .select_from(UserPlantAccess)
+            .where(UserPlantAccess.user_id == conta.id)
+        )
+        or 0,
+    )
+
+
+@router.get("/usuarios/{usuario_id}/usinas", response_model=list[int])
+def usinas_do_usuario(
+    usuario_id: int, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> list[int]:
+    """As usinas que esta pessoa recebe hoje.
+
+    A tela precisa disto antes de salvar: a gravação é a lista COMPLETA, e uma tela que
+    abrisse com tudo desmarcado apagaria a concessão inteira no primeiro clique em Salvar.
+    """
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = db.get(User, usuario_id)
+    if conta is None or conta.empresa_id != empresa_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+
+    return list(
+        db.scalars(
+            select(UserPlantAccess.plant_link_id).where(UserPlantAccess.user_id == conta.id)
+        ).all()
+    )
