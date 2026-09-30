@@ -651,7 +651,7 @@ async def equipamentos_da_usina(
     if not link.mw_plant_slug:
         return EquipamentosOut(
             usina=link.nome,
-            aviso=sem_monitoramento(link, "vêm os inversores"),
+            aviso=sem_monitoramento(link, "os inversores"),
         )
 
     try:

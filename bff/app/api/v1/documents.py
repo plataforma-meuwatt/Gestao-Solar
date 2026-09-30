@@ -411,7 +411,7 @@ async def _geracao(
         # seria falso; sem filtro, dizer "esta usina" não teria referente.
         if filtrada:
             return DocumentosOut(
-                aviso=sem_monitoramento(links[0], "vêm os relatórios")
+                aviso=sem_monitoramento(links[0], "os relatórios de geração")
             )
         return DocumentosOut(
             aviso="Nenhuma das suas usinas está ligada ao monitoramento, de onde vêm os relatórios."

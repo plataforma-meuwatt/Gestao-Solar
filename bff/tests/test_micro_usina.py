@@ -214,8 +214,13 @@ def test_a_micro_usina_e_monitorada_e_a_tela_nao_diz_o_contrario(db):
     assert "inversor" in frase, "a frase precisa dizer O QUE falta, não só o que há"
 
     assert sem_monitoramento(normal) == "Esta usina não está ligada ao monitoramento."
-    assert sem_monitoramento(normal, "vêm os relatórios") == (
-        "Esta usina não está ligada ao monitoramento, de onde vêm os relatórios."
+    # O complemento é NOMINAL e entra por elipse. Com verbo ("vêm os inversores") saía
+    # "mas não vêm os inversores", que foi o que o dono leu na primeira versão.
+    assert sem_monitoramento(micro, "os inversores").endswith("mas não os inversores.")
+    # A usina realmente não monitorada recebe a frase genérica, sem complemento: ela
+    # tinha de concordar nos dois ramos, e não concordava.
+    assert sem_monitoramento(normal, "os inversores") == (
+        "Esta usina não está ligada ao monitoramento."
     )
 
 

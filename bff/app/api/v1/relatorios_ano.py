@@ -372,7 +372,7 @@ def _celula_de_energia(
         # monitorada. Regra da casa — rótulo que o cliente lê é dado da API.
         return EnergiaCelulaOut(
             estado="sem_monitoramento",
-            motivo=sem_monitoramento(link, "vêm os relatórios de geração"),
+            motivo=sem_monitoramento(link, "os relatórios de geração"),
         )
     # "Não sabemos" e "ninguém publicou" são coisas diferentes, e só a segunda é ausência.
     if indisponivel:
@@ -386,7 +386,7 @@ def _anual_de_energia(
     if not monitorada:
         return AnualEnergiaOut(
             estado="sem_monitoramento",
-            motivo=sem_monitoramento(link, "vêm os relatórios de geração"),
+            motivo=sem_monitoramento(link, "os relatórios de geração"),
         )
     if indisponivel:
         return AnualEnergiaOut(

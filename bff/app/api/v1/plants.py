@@ -757,13 +757,19 @@ def sem_monitoramento(link: PlantLink, o_que: str | None = None) -> str:
     FALTA naquela tela, para a frase ser específica sem se repetir.
     """
     if link.so_micro:
+        # `o_que` é NOMINAL ("os inversores", "o histórico de paradas") e entra por
+        # elipse: "informa geração e estado — mas não os inversores". Passá-lo com verbo
+        # ("vêm os inversores") produzia "mas não vêm os inversores", que é o que saiu na
+        # primeira versão desta frase.
         falta = o_que or "o detalhamento por inversor nem a curva do dia"
         return (
             "Esta usina é monitorada pelo portal do fabricante, que informa geração e "
             f"estado — mas não {falta}."
         )
-    base = "Esta usina não está ligada ao monitoramento"
-    return f"{base}, de onde {o_que}." if o_que else f"{base}."
+    # A usina realmente não monitorada recebe a frase genérica: quem está na tela de
+    # relatórios já sabe que é de relatórios que se fala, e repetir isso só abria a
+    # chance de concordância errada nos dois ramos.
+    return "Esta usina não está ligada ao monitoramento."
 
 
 @router.get("/plants/{plant_link_id}", response_model=UsinaDetalheOut)
