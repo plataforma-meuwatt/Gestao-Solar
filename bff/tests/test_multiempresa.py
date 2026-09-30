@@ -1046,3 +1046,37 @@ def test_nao_se_le_a_concessao_de_conta_de_outra_empresa(db, carteiras, duas_emp
     with pytest.raises(HTTPException) as erro:
         usinas_do_usuario(de_outra.id, db=db, gerente=gerente)
     assert erro.value.status_code == 404
+
+
+def test_a_lista_de_usuarios_aguenta_conta_com_token_proprio(db, carteiras, duas_empresas):
+    """Defeito guardado, e derrubou a tela inteira com 500 em produção:
+    `VinculoProduto.produto` é TEXTO no banco, e não o enum `Produto` — diferente de
+    `Integracao.produto`, que é `Enum(...)`. O código chamou `.value` nele.
+
+    Os dois modelos se parecem o bastante para enganar, e nenhum teste exercitava a lista
+    com uma conta que TEM token próprio — que é justamente o caso do dono.
+    """
+    from app.api.v1.empresa import usuarios_detalhados
+    from app.core.cripto import cifrar
+    from app.models.integracao import Produto
+    from app.models.user import VinculoProduto
+
+    a, _b = duas_empresas
+    _x, _y, gerente = carteiras
+    cliente = User(apelido="com.conta", nome="Com Conta", perfil=Perfil.CLIENTE, empresa_id=a.id)
+    db.add(cliente)
+    db.flush()
+    db.add(
+        VinculoProduto(
+            gs_user_id=cliente.id,
+            produto=Produto.MEUWATT,
+            usuario_remoto_id="11",
+            token_cifrado=cifrar("mw_pat_dele"),
+        )
+    )
+    db.commit()
+
+    por_apelido = {u.apelido: u for u in usuarios_detalhados(db=db, gerente=gerente)}
+    assert por_apelido["com.conta"].produtos == ["meuwatt"]
+    # E quem não tem token próprio diz isso com uma lista vazia — é o caso comum.
+    assert por_apelido[gerente.apelido].produtos == []

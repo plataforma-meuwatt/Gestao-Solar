@@ -1108,7 +1108,10 @@ def usuarios_detalhados(
     )
     conectados: dict[int, list[str]] = {}
     for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
-        conectados.setdefault(v.gs_user_id, []).append(v.produto.value)
+        # `VinculoProduto.produto` é TEXTO no banco, e não o enum `Produto` — diferente de
+        # `Integracao.produto`, que é `Enum(...)`. Chamar `.value` aqui estourava 500 na
+        # tela inteira, e o traço dos dois modelos é parecido o bastante para enganar.
+        conectados.setdefault(v.gs_user_id, []).append(str(v.produto))
 
     return [
         UsuarioDetalhado(
