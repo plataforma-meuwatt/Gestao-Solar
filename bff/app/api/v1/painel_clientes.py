@@ -24,6 +24,7 @@ from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
 from app.services import clientes as svc
+from app.services import empresas
 from app.services import vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel · clientes"])
@@ -137,7 +138,14 @@ class ClienteIn(BaseModel):
     #: Continua sendo pedido porque é a chave que acha a conta dele no meuWatt e no
     #: meuPlano — sem ele o vínculo com os produtos vira busca manual. Mas não autentica.
     email: EmailStr | None = None
+    #: O texto livre antigo — o nome da empresa DELE, impresso no cadastro.
     empresa: str | None = None
+    #: A empresa de O&M que o atende, e é o que decide quem enxerga esta conta. Sem ela o
+    #: cliente nasce órfão: não aparece para gerente nenhum, e `usinas_do_usuario` recorta
+    #: por `empresa_id`, então a tela dele vem vazia para sempre. Três contas assim já
+    #: existiam quando isto foi achado (30/09/2026). Nulo continua sendo aceito, porque o
+    #: sistema nasceu sem empresas e as contas de antes são legítimas.
+    empresa_id: int | None = None
 
 
 class ClienteCriadoOut(BaseModel):
@@ -166,6 +174,11 @@ def criar_cliente(
         )
     except svc.RegraDeNegocio as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    if body.empresa_id is not None:
+        empresas.por_id(db, body.empresa_id)  # 404 se não existir
+        criado.usuario.empresa_id = body.empresa_id
+        db.commit()
 
     return ClienteCriadoOut(
         id=criado.usuario.id,

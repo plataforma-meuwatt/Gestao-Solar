@@ -90,7 +90,10 @@ def _conferir_atalho_da_plataforma(db: Session, produto: Produto) -> None:
     a outra devolveria usinas, ordens e faturas do concorrente. A conta é feita aqui, na
     hora, em vez de depender de alguém lembrar de configurar a segunda antes de cadastrá-la.
     """
-    quantas = db.scalar(select(func.count()).select_from(Empresa).where(Empresa.ativa)) or 0
+    # Conta TODAS, não só as ativas: desativar a segunda empresa devolvia o atalho à
+    # primeira, que voltava a ler o meuWatt e o meuPlano com a credencial da PLATAFORMA —
+    # uma trava que se desarma sozinha não é trava.
+    quantas = db.scalar(select(func.count()).select_from(Empresa)) or 0
     if quantas > 1:
         raise RuntimeError(
             f"Esta empresa ainda não tem a conexão dela com o {produto.value}. "
@@ -100,10 +103,27 @@ def _conferir_atalho_da_plataforma(db: Session, produto: Produto) -> None:
         )
 
 
-def listar(db: Session) -> dict[Produto, Integracao | None]:
-    """Sempre devolve as duas chaves — a tela mostra o produto não configurado também."""
-    existentes = {i.produto: i for i in db.scalars(select(Integracao)).all()}
-    return {p: existentes.get(p) for p in Produto}
+def listar(db: Session, empresa_id: int | None = None) -> dict[Produto, Integracao | None]:
+    """A credencial de cada produto PARA ESTA EMPRESA. Sempre as duas chaves — a tela
+    mostra o produto não configurado também.
+
+    Sem o recorte (que é como isto nasceu), a consulta era `select(Integracao)` inteira e
+    a última linha de cada produto vencia por acaso: o painel da plataforma exibia o
+    token de um inquilino no lugar do seu, e o aplicativo de um cliente da empresa A lia
+    o estado da ponte da B — "Conectado" com a ponte dele quebrada. Delega a `obter`, que
+    é onde a regra do nulo mora.
+    """
+    def uma(p: Produto) -> Integracao | None:
+        try:
+            return obter(db, p, empresa_id)
+        except RuntimeError:
+            # A trava do atalho disparou: esta empresa não tem ponte própria e não pode
+            # usar a da plataforma. Para uma LISTAGEM isso é "não configurada", que é o
+            # estado que a tela já sabe desenhar — estourar aqui derrubaria a tela de
+            # pontes do cliente inteira, inclusive a do produto que está no ar.
+            return None
+
+    return {p: uma(p) for p in Produto}
 
 
 def registrar_evento(

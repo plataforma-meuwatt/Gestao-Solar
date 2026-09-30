@@ -238,6 +238,9 @@ export const criarCliente = (dados: {
   apelido: string
   email?: string | null
   empresa?: string | null
+  /** A empresa de O&M que o atende. Sem ela o cliente não aparece para gerente nenhum e
+   *  a tela dele vem vazia — `usinas_do_usuario` recorta por empresa. */
+  empresa_id?: number | null
 }) =>
   api
     .post<{

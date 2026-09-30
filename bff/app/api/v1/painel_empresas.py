@@ -201,12 +201,17 @@ def salvar_carteira(
     """
     svc.por_id(db, empresa_id)
 
-    for modelo, coluna, escolhidos in (
-        (PlantLink, PlantLink.empresa_id, set(body.usinas)),
-        (User, User.empresa_id, set(body.clientes)),
+    # Conta da PLATAFORMA nunca ganha empresa por aqui. Sem este filtro, marcar um
+    # administrador em `clientes` gravava `empresa_id` nele — e a partir daí ele aparecia
+    # na lista do gerente daquela empresa, que trocava a senha dele e entrava no painel
+    # como administrador. A guarda em `_conta_da_empresa` fecha a saída; esta fecha a
+    # entrada, para o estado nem existir. (Revisão adversarial, 30/09/2026.)
+    for modelo, coluna, escolhidos, extra in (
+        (PlantLink, PlantLink.empresa_id, set(body.usinas), []),
+        (User, User.empresa_id, set(body.clientes), [User.perfil.not_in(pessoas.DA_PLATAFORMA)]),
     ):
         for item in db.scalars(
-            select(modelo).where(coluna.is_(None) | (coluna == empresa_id))
+            select(modelo).where(coluna.is_(None) | (coluna == empresa_id), *extra)
         ).all():
             item.empresa_id = empresa_id if item.id in escolhidos else None
 

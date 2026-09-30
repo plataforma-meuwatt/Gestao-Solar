@@ -850,7 +850,7 @@ def minhas_conexoes(
     endereço ou nome de quem o gerou: isso é assunto do painel, e é o gestor quem resolve.
     """
     links = usinas_do_usuario(db, usuario)
-    estado = integracoes.listar(db)
+    estado = integracoes.listar(db, usuario.empresa_id)
 
     # A ponte é nomeada pelo SERVIÇO que presta, não pelo produto que a implementa: quem
     # entra aqui é o dono da usina, que não tem conta no meuWatt nem no meuPlano e não tem

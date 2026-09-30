@@ -258,9 +258,10 @@ def test_a_credencial_da_empresa_nao_sobrescreve_a_da_plataforma(db, duas_empres
     from app.services import integracoes
 
     a, b = duas_empresas
-    # Uma empresa ativa: é o cenário da migração, em que o atalho para a credencial da
-    # plataforma ainda é legítimo (a trava dele tem teste próprio, logo abaixo).
-    b.ativa = False
+    # UMA empresa no sistema — a segunda é apagada, não desativada: desativar não devolve
+    # o atalho (ver o teste abaixo). É o cenário da migração, em que a credencial da
+    # plataforma ainda é legitimamente a da única empresa.
+    db.delete(b)
     db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br"))
     db.commit()
 
@@ -293,10 +294,21 @@ def test_com_duas_empresas_o_atalho_da_plataforma_e_recusado(db, duas_empresas):
         integracoes.obter(db, Produto.MEUWATT, a.id)
     assert "conexão dela" in str(erro.value)
 
-    # Desligar uma delas devolve o sistema ao caso de uma empresa só, e o atalho volta.
+    # E DESLIGAR a outra não devolve o atalho — este teste já afirmou o contrário, e
+    # estava errado. A credencial da plataforma pertence à conta de alguém: com duas
+    # empresas cadastradas, ninguém sabe a qual delas. Desativar a primeira faria a
+    # segunda ler a carteira da primeira com o token da primeira, que é exatamente o
+    # vazamento que a trava existe para impedir. Uma trava que se desarma sozinha não é
+    # trava. (Revisão de isolamento, 30/09/2026.)
     b.ativa = False
     db.commit()
-    assert integracoes.obter(db, Produto.MEUWATT, a.id) is not None
+    with pytest.raises(RuntimeError):
+        integracoes.obter(db, Produto.MEUWATT, a.id)
+
+    # A saída é conectar a conta DA empresa, não mexer no cadastro da outra.
+    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br", empresa_id=a.id))
+    db.commit()
+    assert integracoes.obter(db, Produto.MEUWATT, a.id).empresa_id == a.id
 
 
 # ---------------------------------------------------------------- o gerente
@@ -668,14 +680,14 @@ def test_cada_portao_troca_a_propria_senha(db, carteiras, administrador):
 # --------------------------------------- o gerente opera a empresa dele sozinho
 
 
-def test_o_gerente_traz_usina_e_ela_nasce_da_empresa_dele(db, carteiras):
+async def test_o_gerente_traz_usina_e_ela_nasce_da_empresa_dele(db, carteiras):
     """Defeito guardado, e o dono esbarrou nele: as telas do gerente eram só LEITURA — ele
     via "nenhuma usina" e a tela mandava falar com a plataforma. Mas é ele quem tem o token
     e enxerga a carteira nos produtos; a plataforma não tem credencial nenhuma."""
     from app.api.v1.empresa import UsinaIn, salvar_usina
 
     a, _b, gerente = carteiras
-    nova = salvar_usina(
+    nova = await salvar_usina(
         UsinaIn(mw_slug="usina-nova", nome="Usina Nova", no_app=True), db=db, gerente=gerente
     )
     assert nova.plant_link_id is not None
@@ -684,7 +696,7 @@ def test_o_gerente_traz_usina_e_ela_nasce_da_empresa_dele(db, carteiras):
     assert trazida.empresa_id == a.id, "a usina nasceu sem dono ou com o dono errado"
 
 
-def test_o_gerente_nao_mexe_na_usina_de_outra_empresa(db, carteiras):
+async def test_o_gerente_nao_mexe_na_usina_de_outra_empresa(db, carteiras):
     """404, e não 403: dizer "existe, mas é de outra" já contaria o que existe na carteira
     do vizinho."""
     from app.api.v1.empresa import UsinaIn, salvar_usina
@@ -693,7 +705,7 @@ def test_o_gerente_nao_mexe_na_usina_de_outra_empresa(db, carteiras):
     da_b = db.scalar(select(PlantLink).where(PlantLink.empresa_id == b.id))
 
     with pytest.raises(HTTPException) as erro:
-        salvar_usina(
+        await salvar_usina(
             UsinaIn(plant_link_id=da_b.id, mw_slug="usina-b", nome="Roubada"),
             db=db,
             gerente=gerente,
@@ -702,12 +714,12 @@ def test_o_gerente_nao_mexe_na_usina_de_outra_empresa(db, carteiras):
 
     # E o identificador de produto de outra empresa é recusado sem dizer de quem é.
     with pytest.raises(HTTPException) as erro:
-        salvar_usina(UsinaIn(mw_slug="usina-b", nome="Outra tentativa"), db=db, gerente=gerente)
+        await salvar_usina(UsinaIn(mw_slug="usina-b", nome="Outra tentativa"), db=db, gerente=gerente)
     assert erro.value.status_code == 409
     assert b.nome not in erro.value.detail
 
 
-def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
+async def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
     """O fluxo inteiro do lado da empresa, que é o que o dono precisava: cadastrar o dono
     de usina e entregar a ele as usinas DA EMPRESA."""
     from app.api.v1.empresa import (
@@ -721,7 +733,7 @@ def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
     )
 
     a, _b, gerente = carteiras
-    usina = salvar_usina(UsinaIn(mw_slug="nova-1", nome="Nova 1"), db=db, gerente=gerente)
+    usina = await salvar_usina(UsinaIn(mw_slug="nova-1", nome="Nova 1"), db=db, gerente=gerente)
 
     criado = criar_cliente(ClienteIn(nome="Dona Maria", apelido="dona.maria"), db=db, gerente=gerente)
     assert criado.senha
@@ -755,7 +767,7 @@ def test_nao_se_concede_usina_de_outra_empresa(db, carteiras):
     assert erro.value.status_code == 404
 
 
-def test_usina_sem_dono_e_ADOTADA_e_nao_recusada(db, carteiras):
+async def test_usina_sem_dono_e_ADOTADA_e_nao_recusada(db, carteiras):
     """Defeito guardado, e travou o dono na primeira tentativa: as usinas cadastradas
     ANTES do multiempresa estão sem dono, e o código tratava "sem dono" como "de outra
     empresa". As 7 usinas reais ficavam inalcançáveis, com a mensagem "já pertence a outra
@@ -772,7 +784,7 @@ def test_usina_sem_dono_e_ADOTADA_e_nao_recusada(db, carteiras):
     db.commit()
     id_antes = orfa.id
 
-    trazida = salvar_usina(
+    trazida = await salvar_usina(
         UsinaIn(mw_slug="orfa-slug", nome="Órfã", no_app=True), db=db, gerente=gerente
     )
     assert trazida.plant_link_id == id_antes, "criou uma segunda linha em vez de adotar"
@@ -784,7 +796,7 @@ def test_usina_sem_dono_e_ADOTADA_e_nao_recusada(db, carteiras):
     ) == 1
 
 
-def test_casar_as_duas_pontas_na_mesma_linha(db, carteiras):
+async def test_casar_as_duas_pontas_na_mesma_linha(db, carteiras):
     """"Esta usina do meuWatt é aquela do meuPlano" — o que faltava na tela do gerente.
 
     É a MESMA operação de trazer: gravar o estado desejado da usina. Separada em
@@ -794,10 +806,10 @@ def test_casar_as_duas_pontas_na_mesma_linha(db, carteiras):
     from app.api.v1.empresa import UsinaIn, salvar_usina
 
     a, _b, gerente = carteiras
-    so_mw = salvar_usina(UsinaIn(mw_slug="so-mw", nome="Só meuWatt"), db=db, gerente=gerente)
+    so_mw = await salvar_usina(UsinaIn(mw_slug="so-mw", nome="Só meuWatt"), db=db, gerente=gerente)
     assert so_mw.origem == "meuwatt"
 
-    casada = salvar_usina(
+    casada = await salvar_usina(
         UsinaIn(plant_link_id=so_mw.plant_link_id, mw_slug="so-mw", mp_usina_id=77, nome="Casada"),
         db=db,
         gerente=gerente,
@@ -893,7 +905,7 @@ def test_cliente_sem_empresa_nao_cai_na_credencial_da_plataforma(db):
     assert erro.value.status_code == 424
 
 
-def test_a_micro_usina_pertence_a_uma_usina_so(db, carteiras):
+async def test_a_micro_usina_pertence_a_uma_usina_so(db, carteiras):
     """Pedido do dono: levar as micro usinas (Solis, Canadian, TSUN) para cá. Elas não são
     um quarto formato de usina — casam com uma que já existe, e servem a uma coisa: o aviso
     de parada delas chegar ao dono.
@@ -904,8 +916,8 @@ def test_a_micro_usina_pertence_a_uma_usina_so(db, carteiras):
     from app.api.v1.empresa import MicroVinculoIn, UsinaIn, casar_micro_usina, salvar_usina
 
     a, _b, gerente = carteiras
-    u1 = salvar_usina(UsinaIn(mw_slug="u-1", nome="Usina 1"), db=db, gerente=gerente)
-    u2 = salvar_usina(UsinaIn(mw_slug="u-2", nome="Usina 2"), db=db, gerente=gerente)
+    u1 = await salvar_usina(UsinaIn(mw_slug="u-1", nome="Usina 1"), db=db, gerente=gerente)
+    u2 = await salvar_usina(UsinaIn(mw_slug="u-2", nome="Usina 2"), db=db, gerente=gerente)
 
     casar_micro_usina(7, MicroVinculoIn(plant_link_id=u1.plant_link_id), db=db, gerente=gerente)
     assert db.get(PlantLink, u1.plant_link_id).mw_micro_plant_id == 7
@@ -961,14 +973,14 @@ def test_ocultar_tira_da_lista_e_volta(db, carteiras):
     assert listar_ocultas(db=db, gerente=gerente) == []
 
 
-def test_a_micro_usina_sozinha_ja_e_uma_usina(db, carteiras):
+async def test_a_micro_usina_sozinha_ja_e_uma_usina(db, carteiras):
     """Correção do dono, 29/09/2026: *"a micro usina não preciso casar com nada"*. Há
     cliente cujo único monitoramento é o portal do fabricante — exigir par no meuWatt o
     deixaria de fora do sistema."""
     from app.api.v1.empresa import UsinaIn, salvar_usina
 
     a, _b, gerente = carteiras
-    so_micro = salvar_usina(
+    so_micro = await salvar_usina(
         UsinaIn(mw_micro_plant_id=42, nome="Só no portal do fabricante"), db=db, gerente=gerente
     )
     assert so_micro.origem == "micro"
@@ -979,14 +991,14 @@ def test_a_micro_usina_sozinha_ja_e_uma_usina(db, carteiras):
     assert trazida.mw_plant_slug is None and trazida.mp_usina_id is None
 
 
-def test_usina_sem_nenhum_identificador_e_recusada(db, carteiras):
+async def test_usina_sem_nenhum_identificador_e_recusada(db, carteiras):
     """O corolário do dado morto: linha que não aponta para nada em produto nenhum é
     fantasma — aparece na lista e todas as telas dela vêm vazias."""
     from app.api.v1.empresa import UsinaIn, salvar_usina
 
     _a, _b, gerente = carteiras
     with pytest.raises(HTTPException) as erro:
-        salvar_usina(UsinaIn(nome="Fantasma"), db=db, gerente=gerente)
+        await salvar_usina(UsinaIn(nome="Fantasma"), db=db, gerente=gerente)
     assert erro.value.status_code == 400
 
 
@@ -1013,7 +1025,7 @@ def test_a_usina_so_do_MICRO_nao_e_classificada_como_meuPlano(db, carteiras):
     assert _origem(nos_dois) == "ambos"
 
 
-def test_a_concessao_e_do_dono_de_usina_e_a_tela_le_antes_de_salvar(db, carteiras):
+async def test_a_concessao_e_do_dono_de_usina_e_a_tela_le_antes_de_salvar(db, carteiras):
     """Defeito guardado, e o dono esbarrou nele: *"só consigo puxar as usinas da conta do
     gerente, mas não consigo atribuir aos usuários"*. A concessão é a de quem RECEBE a
     usina no aplicativo — o dono dela —, e a tela precisa ler o que já está concedido
@@ -1028,7 +1040,7 @@ def test_a_concessao_e_do_dono_de_usina_e_a_tela_le_antes_de_salvar(db, carteira
     )
 
     a, _b, gerente = carteiras
-    u = salvar_usina(UsinaIn(mw_slug="p-1", nome="Para o dono"), db=db, gerente=gerente)
+    u = await salvar_usina(UsinaIn(mw_slug="p-1", nome="Para o dono"), db=db, gerente=gerente)
     dono = db.scalar(select(User).where(User.apelido == "cliente.b"))
     dono.empresa_id = a.id
     db.commit()
@@ -1120,14 +1132,44 @@ def test_o_cliente_nunca_ve_usina_de_OUTRA_empresa_mesmo_concedida(db, carteiras
     assert "Herdada" in nomes
 
 
-def test_a_recusa_diz_QUAL_usina_nao_e_da_empresa(db, carteiras):
-    """Defeito guardado, e travou o dono numa tela com todas as caixas marcadas: o
-    "Usina não encontrada nesta empresa" não dizia qual das oito era, e uma delas era uma
-    concessão herdada, de antes do multiempresa."""
+def test_a_herdada_e_ADOTADA_e_a_frase_que_travou_o_dono_nao_existe_mais(db, carteiras):
+    """A garantia pedida em 30/09/2026: "Esta usina ainda não é da sua empresa" não pode
+    voltar por caminho nenhum.
+
+    A usina sem dono é de antes do multiempresa. Esta tela a mostra MARCADA, porque
+    alguém da empresa já a recebe — e mandá-la de volta no "salvar" é o clique mais comum
+    que existe aqui. A versão anterior respondia com um 409 que mandava "trazer em
+    Usinas", onde ela não aparecia: o catálogo sai do upstream, e uma herdada só do
+    meuPlano não tem `mw_slug`. Quem já a enxerga é dono dela; adotar é gravar o que já
+    era verdade.
+    """
     from app.api.v1.empresa import UsinasDoClienteIn, definir_usinas_do_cliente
+    from app.models.user import UserPlantAccess
 
     a, _b, gerente = carteiras
     orfa = PlantLink(nome="UFV Herdada", mw_plant_slug="ufv-herdada")
+    dono = db.scalar(select(User).where(User.apelido == "cliente.b"))
+    dono.empresa_id = a.id
+    db.add(orfa)
+    db.flush()
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=orfa.id))
+    db.commit()
+
+    definir_usinas_do_cliente(
+        dono.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
+    )
+    db.refresh(orfa)
+    assert orfa.empresa_id == a.id, "a herdada que a empresa já enxerga passa a ser dela"
+
+
+def test_a_orfa_que_ninguem_desta_empresa_recebe_continua_404(db, carteiras):
+    """A adoção é estreita de propósito. Sem isto, o campo viraria "reivindique qualquer
+    usina órfã por número" — e o 404 é sem nome para não entregar a carteira do vizinho a
+    quem chuta."""
+    from app.api.v1.empresa import UsinasDoClienteIn, definir_usinas_do_cliente
+
+    a, _b, gerente = carteiras
+    orfa = PlantLink(nome="Órfã de ninguém", mw_plant_slug="orfa-de-ninguem")
     dono = db.scalar(select(User).where(User.apelido == "cliente.b"))
     dono.empresa_id = a.id
     db.add(orfa)
@@ -1137,19 +1179,19 @@ def test_a_recusa_diz_QUAL_usina_nao_e_da_empresa(db, carteiras):
         definir_usinas_do_cliente(
             dono.id, UsinasDoClienteIn(plant_link_ids=[orfa.id]), db=db, gerente=gerente
         )
-    assert erro.value.status_code == 409
-    assert "UFV Herdada" in erro.value.detail
-    assert "Usinas" in erro.value.detail, "a frase não diz o que fazer"
+    assert erro.value.status_code == 404
+    assert "Órfã de ninguém" not in erro.value.detail
+    assert "não é da sua empresa" not in erro.value.detail
 
 
-def test_a_tela_enxerga_a_concessao_herdada(db, carteiras):
+async def test_a_tela_enxerga_a_concessao_herdada(db, carteiras):
     """Sem o `da_empresa`, a herdada ia junto no "salvar" e voltava como erro sem nome — o
     gerente não tinha como saber qual caixa desmarcar."""
     from app.api.v1.empresa import UsinaIn, salvar_usina, usinas_do_usuario
     from app.models.user import UserPlantAccess
 
     a, _b, gerente = carteiras
-    minha = salvar_usina(UsinaIn(mw_slug="da-casa", nome="Da casa"), db=db, gerente=gerente)
+    minha = await salvar_usina(UsinaIn(mw_slug="da-casa", nome="Da casa"), db=db, gerente=gerente)
     orfa = PlantLink(nome="Herdada", mw_plant_slug="herdada-2")
     db.add(orfa)
     db.flush()
@@ -1226,7 +1268,7 @@ def test_cliente_no_painel_ouve_ONDE_entrar_e_nao_senha_invalida(db, carteiras, 
     assert erro.value.detail == "Apelido ou senha inválidos"
 
 
-def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empresas):
+async def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empresas):
     """A causa raiz que a prova em produção revelou: eu tinha feito o gerente depender de
     concessão, e isso o punha a COMPETIR com os clientes pela mesma usina. A regra da casa
     é "cada usina pertence a um cliente só", então conceder ao gerente o que já era de um
@@ -1239,8 +1281,8 @@ def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empre
     from app.api.v1.plants import usinas_do_usuario as escopo_do_app
 
     a, _b, gerente = carteiras
-    u1 = salvar_usina(UsinaIn(mw_slug="c-1", nome="Carteira 1"), db=db, gerente=gerente)
-    u2 = salvar_usina(UsinaIn(mw_slug="c-2", nome="Carteira 2"), db=db, gerente=gerente)
+    u1 = await salvar_usina(UsinaIn(mw_slug="c-1", nome="Carteira 1"), db=db, gerente=gerente)
+    u2 = await salvar_usina(UsinaIn(mw_slug="c-2", nome="Carteira 2"), db=db, gerente=gerente)
 
     # Sem conceder nada a ele, as duas já aparecem — mais a que a fixture criou.
     nomes = {u.nome for u in escopo_do_app(db, gerente)}
@@ -1263,7 +1305,7 @@ def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empre
     assert erro.value.status_code == 400 and "já vê todas" in erro.value.detail
 
 
-def test_a_MICRO_aparece_no_app_do_gerente(db, carteiras):
+async def test_a_MICRO_aparece_no_app_do_gerente(db, carteiras):
     """O pedido, em uma frase: as micro usinas têm de aparecer no aplicativo do gerente.
 
     Duas coisas precisam ser verdade ao mesmo tempo, e cada uma quebrou uma vez hoje:
@@ -1274,8 +1316,8 @@ def test_a_MICRO_aparece_no_app_do_gerente(db, carteiras):
     from app.api.v1.plants import usinas_do_usuario as escopo_do_app
 
     _a, _b, gerente = carteiras
-    salvar_usina(UsinaIn(mw_micro_plant_id=1, nome="Micro do Sítio"), db=db, gerente=gerente)
-    salvar_usina(UsinaIn(mw_micro_plant_id=2, nome="Micro do Stuqui"), db=db, gerente=gerente)
+    await salvar_usina(UsinaIn(mw_micro_plant_id=1, nome="Micro do Sítio"), db=db, gerente=gerente)
+    await salvar_usina(UsinaIn(mw_micro_plant_id=2, nome="Micro do Stuqui"), db=db, gerente=gerente)
 
     nomes = {u.nome for u in escopo_do_app(db, gerente)}
     assert {"Micro do Sítio", "Micro do Stuqui"} <= nomes, "micro usina fora do app do gerente"

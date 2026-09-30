@@ -398,9 +398,54 @@ esquecido ao mexer em qualquer consulta é isto:
   credencial a leitura acontece, nunca o que ela devolve.
 - **Cada empresa tem a conta DELA no meuWatt e no meuPlano.** `integracoes.obter` recebe a
   empresa; sem a credencial dela, cai na da plataforma — e esse atalho é **recusado
-  sozinho** quando houver mais de uma empresa ativa, porque servir a credencial da
-  plataforma à segunda empresa é entregar a carteira da primeira. O token de cada
-  CLIENTE já era dele e não mudou.
+  sozinho** a partir da segunda empresa CADASTRADA (ativa ou não), porque servir a
+  credencial da plataforma à segunda empresa é entregar a carteira da primeira.
+  Desativar a outra não devolve o atalho: uma trava que se desarma sozinha não é trava.
+  O token de cada CLIENTE já era dele e não mudou.
+
+#### O que a revisão de 30/09/2026 corrigiu, e não pode voltar
+
+Cinco leituras independentes do código (becos, invariantes, isolamento, contrato
+front×back e adversarial de autorização) acharam os mesmos pontos por caminhos diferentes.
+Os testes de `tests/test_escalada_e_isolamento.py` são um por achado.
+
+- ⛔ **Conta da PLATAFORMA não se administra pelo portão da empresa.** Conferir
+  `empresa_id` não basta: `PUT /api/painel/empresas/{id}/carteira` gravava empresa em
+  qualquer conta marcada, inclusive administrador — e aí `PATCH /api/empresa/usuarios/{id}`
+  trocava a senha dele e o gerente entrava no painel da plataforma. Toda rota de
+  `/api/empresa/*` que recebe id de conta passa por `_conta_da_empresa`, que recusa
+  `pessoas.DA_PLATAFORMA` com **404 sem nome**; e a carteira não adota mais conta de
+  plataforma, para o estado nem existir. Fechar só um dos dois lados deixaria a porta.
+- ⛔ **Desativar a empresa PARA a leitura, em todos os portões.** A conferência de
+  `Empresa.ativa` mora em `core/security.py` (`_empresa_ativa`), chamada por
+  `usuario_atual` e `gestor_empresa_atual` — ali passam todas as requisições
+  autenticadas, inclusive as de token emitido antes da desativação. Antes só
+  `painel.entrar` conferia, e `auth.login` emitia token de app de 30 dias para a mesma
+  conta: desativar escondia o botão e não parava nada.
+- **Usina SEM dono deixou de existir** (migration `a1b4e7c20d36`). A herdada que uma
+  empresa já concede é ADOTADA por ela ao salvar; a que ninguém dela recebe continua 404
+  sem nome. A frase "Esta usina ainda não é da sua empresa" foi apagada do código: ela
+  aparecia no clique mais comum da tela e mandava "trazer em Usinas", onde a usina não
+  estava — o catálogo sai do upstream, e uma herdada só do meuPlano não tem `mw_slug`.
+- **Concessão a GERENTE foi apagada e é recusada.** Ele vê a carteira da empresa por ser
+  gerente; a concessão era o caminho por onde a herdada chegava à tela dele.
+- **Identificador do corpo é conferido contra o SEU token** (`_o_seu_token_enxerga`), e só
+  quando ENTRA — renomear, ligar e desligar não pagam ida ao upstream, e um produto fora
+  do ar não trava o gerente. Sem isso, um `mw_slug` digitado à mão ocupava o identificador
+  da usina de outra empresa, que passava a receber "já pertence a outra empresa" ao trazer
+  a própria.
+- **`integracoes.listar` recebe a empresa.** Era `select(Integracao)` inteiro chaveado por
+  produto: a última linha vencia por acaso, e o aplicativo de um cliente da empresa A lia
+  o estado da ponte da B. Numa listagem, a trava do atalho vira "não configurada" em vez
+  de derrubar a tela.
+- **A tela de Conexões não entrega QUEM gerou a credencial da plataforma** — nome, e-mail
+  e prefixo são identidade de outra conta. O estado, sim: é o que a empresa precisa saber.
+- **Modal de concessão: UM só.** A tela de Clientes tinha uma segunda cópia que abria com
+  tudo desmarcado e gravava a lista vazia — a gravação é substituição total, então o
+  primeiro "Salvar" revogava todas as usinas do cliente. Agora as duas telas usam
+  `UsinasDoUsuario`, que carrega o que a pessoa já recebe antes de desenhar.
+- **Cliente criado pelo painel da plataforma nasce com a empresa que o atende.** Sem ela a
+  conta é órfã: nenhum gerente a enxerga e as telas dela vêm vazias para sempre.
 
 ### Nada de "chips" para selecionar opção
 

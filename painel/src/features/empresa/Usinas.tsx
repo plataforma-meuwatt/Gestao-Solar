@@ -273,7 +273,9 @@ function LinhaUsina({
                   className="text-left px-3 py-2 rounded-campo hover:bg-superficie"
                   disabled={ocupado}
                   onClick={() =>
-                    aoSalvar({ ...base, mp_usina_id: c.mp_usina_id, no_app: linha.no_app || true })
+                    // `|| true` era sempre true: casar religava no app uma usina que o
+                    // gerente tinha desligado de propósito.
+                    aoSalvar({ ...base, mp_usina_id: c.mp_usina_id, no_app: linha.no_app })
                   }
                 >
                   <span className="text-sm text-forte">{c.nome}</span>
@@ -306,7 +308,7 @@ function LinhaUsina({
               className="btn-secundario shrink-0"
               disabled={!alvo || ocupado}
               onClick={() =>
-                aoSalvar({ ...base, mp_usina_id: Number(alvo), no_app: linha.no_app || true })
+                aoSalvar({ ...base, mp_usina_id: Number(alvo), no_app: linha.no_app })
               }
             >
               Casar

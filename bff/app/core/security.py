@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.models.empresa import Empresa
 from app.models.user import User
 from app.services import areas_painel
 
@@ -110,7 +111,30 @@ def usuario_atual(
     usuario = db.get(User, user_id)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
+    _empresa_ativa(db, usuario)
     return usuario
+
+
+def _empresa_ativa(db: Session, usuario: User) -> None:
+    """Desativar a empresa tem de parar a leitura dela — em todos os portões.
+
+    `painel.entrar` já recusava o gerente de empresa desativada, e só ele: `auth.login`
+    emitia token de aplicativo para a mesma conta, com 30 dias de validade e renovação
+    sem fim, e a carteira inteira continuava respondendo. Desativar a empresa não parava
+    nada — só escondia o botão.
+
+    A conferência mora aqui porque aqui passam **todas** as requisições autenticadas,
+    inclusive as de um token emitido antes da desativação. Conta da plataforma tem
+    `empresa_id` nulo e não é tocada.
+    """
+    if usuario.empresa_id is None:
+        return
+    empresa = db.get(Empresa, usuario.empresa_id)
+    if empresa is None or not empresa.ativa:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "A empresa desta conta está desativada. Fale com quem administra a plataforma.",
+        )
 
 
 def criar_token_painel(user_id: int) -> tuple[str, datetime]:
@@ -177,6 +201,7 @@ def gestor_empresa_atual(
             "Esta conta não está ligada a nenhuma empresa. Peça a quem administra a "
             "plataforma para vinculá-la.",
         )
+    _empresa_ativa(db, usuario)
     return usuario
 
 

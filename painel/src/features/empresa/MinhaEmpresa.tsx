@@ -22,16 +22,15 @@ import { UserCog, UserPlus, Users } from 'lucide-react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
-  catalogoDeUsinas,
   clientesDaEmpresa,
   criarClienteDaEmpresa,
-  definirUsinasDoCliente,
   usuariosDaEmpresa,
   type ClienteDaEmpresa,
   type UsuarioDaEmpresa,
 } from '@/features/api'
 import { useState } from 'react'
 
+import { UsinasDoUsuario } from '@/features/empresa/Usuarios'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -90,7 +89,10 @@ export function ClientesDaEmpresa() {
     <>
       {novo ? <NovoCliente aoFechar={() => setNovo(false)} /> : null}
       {usinasDe ? (
-        <UsinasDoCliente cliente={usinasDe} aoFechar={() => setUsinasDe(null)} />
+        <UsinasDoUsuario
+          usuario={{ id: usinasDe.id, nome: usinasDe.nome, usinas: usinasDe.usinas }}
+          aoFechar={() => setUsinasDe(null)}
+        />
       ) : null}
 
     <Lista<ClienteDaEmpresa>
@@ -252,100 +254,6 @@ function NovoCliente({ aoFechar }: { aoFechar: () => void }) {
           </button>
         </div>
       </div>
-    </Modal>
-  )
-}
-
-/**
- * Quais usinas este cliente recebe no aplicativo.
- *
- * Só as que estão **no app** aparecem: uma usina desligada não pode ser concedida, e
- * oferecê-la aqui produziria uma concessão que não mostra nada.
- */
-function UsinasDoCliente({
-  cliente,
-  aoFechar,
-}: {
-  cliente: ClienteDaEmpresa
-  aoFechar: () => void
-}) {
-  const qc = useQueryClient()
-  const { data, isLoading } = useQuery({
-    queryKey: ['empresa', 'usinas-catalogo'],
-    queryFn: catalogoDeUsinas,
-  })
-  const [marcadas, setMarcadas] = useState<number[] | null>(null)
-
-  const noApp = (data?.linhas ?? []).filter((l) => l.plant_link_id !== null && l.no_app)
-  const atuais = marcadas ?? []
-
-  const salvar = useMutation({
-    mutationFn: () => definirUsinasDoCliente(cliente.id, atuais),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['empresa'] })
-      aoFechar()
-    },
-  })
-
-  return (
-    <Modal titulo={`Usinas de ${cliente.nome}`} aoFechar={aoFechar}>
-      {isLoading ? (
-        <Carregando />
-      ) : (
-        <div className="grid gap-4">
-          <Aviso>
-            A lista é completa: o que ficar desmarcado é retirado dele. Cada usina pertence
-            a um cliente só.
-          </Aviso>
-
-          {!noApp.length ? (
-            <p className="text-sm text-rotulo">
-              Nenhuma usina ligada no aplicativo ainda. Traga e ligue em “Usinas”.
-            </p>
-          ) : (
-            <ul className="grid gap-1 max-h-72 overflow-y-auto pr-1">
-              {noApp.map((l) => (
-                <li key={l.chave}>
-                  <label className="flex items-center gap-2.5 px-3 py-2 rounded-campo hover:bg-superficie cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={atuais.includes(l.plant_link_id as number)}
-                      onChange={() =>
-                        setMarcadas((m) => {
-                          const base = m ?? []
-                          const id = l.plant_link_id as number
-                          return base.includes(id)
-                            ? base.filter((x) => x !== id)
-                            : [...base, id]
-                        })
-                      }
-                    />
-                    <span className="text-sm text-forte">{l.nome}</span>
-                    <span className="text-xs text-fraco">
-                      {[l.cidade, l.uf].filter(Boolean).join(' · ')}
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
-
-          <div className="flex justify-end gap-2">
-            <button className="btn-secundario" onClick={aoFechar}>
-              Cancelar
-            </button>
-            <button
-              className="btn-primario"
-              onClick={() => salvar.mutate()}
-              disabled={salvar.isPending}
-            >
-              {salvar.isPending ? 'Salvando…' : 'Salvar'}
-            </button>
-          </div>
-        </div>
-      )}
     </Modal>
   )
 }

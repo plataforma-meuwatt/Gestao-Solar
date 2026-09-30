@@ -9,7 +9,7 @@
  * Os passos 2 e 3 podem ser pulados: quem contratou só um produto vincula só um.
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -18,6 +18,8 @@ import { Aviso, Campo, Cartao, Erro, Pagina, Passos } from '@/components/base'
 import {
   conectarProduto,
   criarCliente,
+  listarEmpresas,
+  type Empresa,
   definirUsinas,
   type Produto,
   type ResultadoConexao,
@@ -63,13 +65,29 @@ export function NovoCliente() {
   const [apelidoManual, setApelidoManual] = useState(false)
   const [email, setEmail] = useState('')
   const [empresa, setEmpresa] = useState('')
+  // Quem atende este cliente. Sem isso ele nasce órfão: nenhum gerente o enxerga e a
+  // tela dele vem vazia, porque o recorte de usinas é por empresa.
+  const [empresaId, setEmpresaId] = useState('')
+  // A lista das empresas de O&M. `[]` quando quem cria não abre a área de empresas —
+  // aí o seletor não aparece e o cliente nasce como antes.
+  const { data: empresasOM = [] } = useQuery({
+    queryKey: ['empresas'],
+    queryFn: listarEmpresas,
+    retry: false,
+  })
 
   const [clienteId, setClienteId] = useState<number | null>(null)
   const [senha, setSenha] = useState<string | null>(null)
 
   const criar = useMutation({
     mutationFn: () =>
-      criarCliente({ nome, apelido, email: email || null, empresa: empresa || null }),
+      criarCliente({
+        nome,
+        apelido,
+        email: email || null,
+        empresa: empresa || null,
+        empresa_id: empresaId ? Number(empresaId) : null,
+      }),
     onSuccess: (r) => {
       setClienteId(r.id)
       setSenha(r.senha_provisoria)
@@ -132,12 +150,37 @@ export function NovoCliente() {
               disabled={!!clienteId}
             />
             <Campo
-              rotulo="Empresa"
+              rotulo="Empresa dele"
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value)}
-              placeholder="Empresa (opcional)"
+              placeholder="A empresa do cliente (opcional)"
               disabled={!!clienteId}
             />
+            {empresasOM.length ? (
+              <div>
+                <label className="rotulo-campo" htmlFor="empresa-om">
+                  Quem atende
+                </label>
+                <select
+                  id="empresa-om"
+                  className="campo"
+                  value={empresaId}
+                  onChange={(e) => setEmpresaId(e.target.value)}
+                  disabled={!!clienteId}
+                >
+                  <option value="">nenhuma — conta da plataforma</option>
+                  {empresasOM.map((e: Empresa) => (
+                    <option key={e.id} value={e.id}>
+                      {e.nome}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-rotulo mt-1">
+                  A empresa de O&amp;M que presta o serviço. Sem ela, nenhum gerente
+                  enxerga esta conta e as telas dela vêm vazias.
+                </p>
+              </div>
+            ) : null}
             <div className="flex gap-2">
               <button type="submit" className="btn-primario" disabled={criar.isPending}>
                 {criar.isPending ? 'Criando…' : clienteId ? 'Continuar' : 'Criar e continuar'}

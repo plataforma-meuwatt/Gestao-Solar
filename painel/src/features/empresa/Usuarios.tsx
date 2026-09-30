@@ -218,12 +218,17 @@ function Linha({
  * Só usinas ligadas no app aparecem: uma desligada não pode ser concedida, e oferecê-la
  * produziria uma concessão que não mostra nada. A lista é completa — o que ficar
  * desmarcado é retirado dela.
+ *
+ * **Exportado porque a tela de Clientes tinha uma segunda cópia deste modal, e a cópia
+ * apagava a concessão inteira no primeiro clique**: ela abria com tudo desmarcado e
+ * gravava a lista vazia. Duas telas fazendo a mesma coisa é a divergência da casa; aqui
+ * ela custou dado. O tipo é o mínimo que o modal usa, para servir às duas listas.
  */
-function UsinasDoUsuario({
+export function UsinasDoUsuario({
   usuario,
   aoFechar,
 }: {
-  usuario: UsuarioDetalhado
+  usuario: { id: number; nome: string; usinas: number }
   aoFechar: () => void
 }) {
   const qc = useQueryClient()

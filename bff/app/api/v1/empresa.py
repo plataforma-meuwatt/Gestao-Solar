@@ -37,7 +37,7 @@ from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.usina_oculta import UsinaOculta
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
-from app.services import clientes, conciliacao, vinculos
+from app.services import clientes, conciliacao, pessoas, vinculos
 from app.services import empresas as svc
 from app.services import integracoes
 
@@ -185,11 +185,14 @@ def listar_usuarios(
 ) -> list[UsuarioOut]:
     """Quem é da empresa — gerentes e clientes, na mesma lista, com o papel dito.
 
-    Contas da plataforma não aparecem aqui nem por engano: elas têm `empresa_id` nulo, e
-    o recorte é por igualdade com a empresa da sessão.
+    Conta da plataforma é excluída pelo PERFIL, não pelo `empresa_id` nulo — que era o
+    que este texto dizia e estava errado: `PUT /api/painel/empresas/{id}/carteira` grava
+    empresa em qualquer conta, e um administrador com empresa gravada aparecia aqui.
     """
     usuarios = db.scalars(
-        svc.no_escopo(select(User), User.empresa_id, gerente).order_by(User.nome)
+        svc.no_escopo(select(User), User.empresa_id, gerente)
+        .where(User.perfil.not_in(pessoas.DA_PLATAFORMA))
+        .order_by(User.nome)
     ).all()
     return [
         UsuarioOut(
@@ -200,6 +203,30 @@ def listar_usuarios(
 
 
 # --------------------------------------------------------------------- conexões
+
+
+def _conta_da_empresa(db: Session, usuario_id: int, empresa_id: int) -> User:
+    """A conta que este gerente administra — ou 404.
+
+    Conferir a empresa NÃO basta, e a assimetria com a rota-irmã da plataforma
+    (`painel_empresas.py`, que recusa perfil de plataforma desde sempre) era escalada de
+    privilégio completa: um administrador com `empresa_id` gravado — estado real, o
+    comentário de lá diz "acontece" — aparecia na lista do gerente, e
+    `PATCH /usuarios/{id}` trocava a senha dele. Com a senha, o gerente entrava em
+    `/api/painel/entrar` como administrador, que é quem guarda as credenciais de TODOS os
+    inquilinos. Descoberto por revisão adversarial em 30/09/2026.
+
+    404 e não 400: quem administra a plataforma não é da empresa, e a frase "essa é da
+    plataforma" confirmaria a existência da conta a quem chuta números.
+    """
+    conta = db.get(User, usuario_id)
+    if (
+        conta is None
+        or conta.empresa_id != empresa_id
+        or conta.perfil in pessoas.DA_PLATAFORMA
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    return conta
 
 
 class ConexaoOut(BaseModel):
@@ -225,6 +252,17 @@ class ConexaoOut(BaseModel):
 def _conexao_out(produto: Produto, integracao, empresa_id: int) -> ConexaoOut:
     if integracao is None:
         return ConexaoOut(produto=produto.value, configurada=False, estado="nunca")
+    if integracao.empresa_id != empresa_id:
+        # A credencial que responde é a da PLATAFORMA (atalho da migração). O estado a
+        # empresa precisa saber; QUEM gerou o token é de quem o gerou — nome, e-mail e
+        # prefixo são identidade de outra conta, e a tela já diz o que importa com
+        # `propria=False`.
+        return ConexaoOut(
+            produto=produto.value,
+            configurada=True,
+            estado=integracao.estado.value,
+            propria=False,
+        )
     return ConexaoOut(
         produto=produto.value,
         configurada=True,
@@ -612,7 +650,12 @@ async def catalogo_de_usinas(
                 )
             )
     except Exception as exc:  # noqa: BLE001 — o MICRO é leitura de administrador lá
-        avisos.append(_aviso(Produto.MEUWATT, exc))
+        # O meuWatt é lido duas vezes aqui (usinas e micro). Com o token revogado, as duas
+        # falham com a MESMA frase — e a tela desenha `avisos.map(key={a})`: chave
+        # repetida no React e o erro impresso em dobro.
+        aviso = _aviso(Produto.MEUWATT, exc)
+        if aviso not in avisos:
+            avisos.append(aviso)
 
     return CatalogoDeUsinas(
         linhas=linhas,
@@ -648,7 +691,7 @@ class UsinaIn(BaseModel):
     #: cliente cujo único monitoramento é o portal do fabricante, e exigir par no meuWatt
     #: o deixaria de fora. Junto de um `mw_slug`, é a mesma usina vista nos dois lugares.
     mw_micro_plant_id: int | None = None
-    nome: str
+    nome: str = Field(min_length=1)
     cidade: str | None = None
     uf: str | None = None
     kwp: float | None = None
@@ -657,8 +700,67 @@ class UsinaIn(BaseModel):
     no_app: bool = True
 
 
+async def _ler(cliente_esperado):
+    """`(await cliente).usinas()` em uma linha, para o chamador ficar legível."""
+    return await (await cliente_esperado).usinas()
+
+
+async def _o_seu_token_enxerga(db: Session, empresa_id: int, body: "UsinaIn") -> None:
+    """O identificador que veio no corpo tem de estar no catálogo do SEU token.
+
+    A tela só oferece o que o catálogo devolveu, mas o corpo é JSON: sem esta conferência,
+    um `mw_slug` digitado à mão gravava na carteira desta empresa a usina de outra. Não
+    vazava leitura — quem lê é o token —, mas ocupava o identificador: a empresa dona
+    passava a receber "já pertence a outra empresa" ao trazer a própria usina, e o par
+    201 × 409 virava um oráculo de quem tem o quê.
+
+    **Só confere o que ENTRA.** Renomear, ligar e desligar não mexem em identificador e
+    não pagam ida ao upstream — nem ficam reféns de um produto fora do ar.
+    """
+    ja_da_empresa = {
+        (l.mw_plant_slug, l.mp_usina_id, l.mw_micro_plant_id)
+        for l in db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all()
+    }
+    slugs = {a for a, _, _ in ja_da_empresa}
+    mps = {b for _, b, _ in ja_da_empresa}
+    micros = {c for _, _, c in ja_da_empresa}
+
+    async def confere(valor, ja_tem, ler, chave, frase):
+        if valor is None or valor in ja_tem:
+            return
+        try:
+            itens = await ler()
+        except Exception:  # noqa: BLE001
+            # Upstream mudo, ou empresa ainda sem credencial própria: não há o que
+            # afirmar, e travar aqui impediria o gerente de trabalhar por causa de um
+            # produto fora do ar. A trava existe contra corpo forjado, não contra
+            # instabilidade — e o que ele reivindicar sem credencial não lê nada.
+            return
+        if valor not in {i.get(chave) for i in itens}:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, frase)
+
+    async def micro():
+        cru = await (await integracoes.cliente_meuwatt(db, empresa_id)).micro_usinas()
+        return cru.get("plants", []) if isinstance(cru, dict) else (cru or [])
+
+    await confere(
+        body.mw_slug, slugs,
+        lambda: _ler(integracoes.cliente_meuwatt(db, empresa_id)),
+        "slug", "Esta usina não está no seu meuWatt.",
+    )
+    await confere(
+        body.mp_usina_id, mps,
+        lambda: _ler(integracoes.cliente_meuplano(db, empresa_id)),
+        "id", "Esta usina não está no seu meuPlano.",
+    )
+    await confere(
+        body.mw_micro_plant_id, micros, micro, "id",
+        "Esta micro usina não está no seu meuWatt.",
+    )
+
+
 @router.put("/usinas", response_model=LinhaDeUsina)
-def salvar_usina(
+async def salvar_usina(
     body: UsinaIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> LinhaDeUsina:
     """Traz a usina para a empresa, casa os dois lados, liga ou desliga no aplicativo.
@@ -678,6 +780,8 @@ def salvar_usina(
             status.HTTP_400_BAD_REQUEST,
             "A usina precisa existir em pelo menos um dos produtos.",
         )
+
+    await _o_seu_token_enxerga(db, empresa_id, body)
 
     link = None
     if body.plant_link_id is not None:
@@ -733,7 +837,11 @@ def salvar_usina(
 
     link.mw_plant_slug = body.mw_slug
     link.mp_usina_id = body.mp_usina_id
-    link.mw_micro_plant_id = body.mw_micro_plant_id
+    # Só mexe na micro se o chamador a mandou: um painel publicado antes deste campo não
+    # o manda, e cada "Ligar/Desligar" dele apagaria o par em silêncio. Mesma guarda do
+    # gêmeo em `painel.py`, que só ela tinha.
+    if "mw_micro_plant_id" in body.model_fields_set:
+        link.mw_micro_plant_id = body.mw_micro_plant_id
     link.nome = body.nome
     link.cidade = body.cidade
     link.uf = body.uf
@@ -843,9 +951,7 @@ def definir_usinas_do_cliente(
     """
     empresa_id = svc.empresa_exigida(gerente)
 
-    cliente = db.get(User, cliente_id)
-    if cliente is None or cliente.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    cliente = _conta_da_empresa(db, cliente_id, empresa_id)
 
     # Conceder usina a um GERENTE não existe: ele vê a carteira inteira da empresa por ser
     # gerente. Com concessão, ele competia com os clientes pela mesma usina — a regra da
@@ -866,31 +972,36 @@ def definir_usinas_do_cliente(
         }
         fora = [pid for pid in body.plant_link_ids if pid not in minhas]
         if fora:
-            # Duas ausências, e a diferença entre elas é o que se pode DIZER.
+            # HERDADA é ADOTADA, não recusada — e essa é a correção de raiz.
             #
-            # Usina SEM dono é herdada: existia antes do multiempresa e nunca foi trazida
-            # para empresa nenhuma. O gerente tem direito ao nome dela — é a usina que ele
-            # vê marcada na própria tela, e sem o nome ele não sabe qual caixa desmarcar.
-            # Foi esse "não encontrada" seco que o travou, com todas as caixas marcadas.
+            # Usina sem dono (`empresa_id` nulo) é de antes do multiempresa. Esta tela a
+            # mostra marcada, porque alguém DESTA empresa já a recebia; mandá-la de volta
+            # no "salvar" é o caminho normal, e a versão anterior respondia
+            # "Esta usina ainda não é da sua empresa: <nome>. Traga em Usinas" — um erro
+            # no clique mais comum da tela, com a instrução para um lugar onde a usina não
+            # aparecia (o catálogo sai do upstream, e uma herdada sem `mw_slug` não está
+            # lá). Quem já a enxerga é dono dela: adotar é gravar o que já era verdade.
             #
-            # Usina de OUTRA empresa é 404 e sem nome: dizer "existe, mas é de outro"
-            # entrega a carteira do vizinho a quem chutar números.
-            herdadas, alheias = [], []
-            for pid in fora:
-                usina = db.get(PlantLink, pid)
-                (herdadas if usina is not None and usina.empresa_id is None else alheias).append(
-                    usina.nome if usina is not None else f"#{pid}"
-                )
-            if alheias:
+            # A adoção é ESTREITA de propósito: só a usina que esta empresa já concede a
+            # alguém dela. Um id chutado que nunca foi concedido continua 404 sem nome —
+            # senão o campo viraria "reivindique qualquer usina órfã por número".
+            orfas_que_ja_vejo = {
+                pid
+                for pid in db.scalars(
+                    select(PlantLink.id)
+                    .join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
+                    .join(User, User.id == UserPlantAccess.user_id)
+                    .where(PlantLink.empresa_id.is_(None), User.empresa_id == empresa_id)
+                ).all()
+            }
+            if [pid for pid in fora if pid not in orfas_que_ja_vejo]:
+                # De OUTRA empresa, ou inexistente: 404 sem nome, para não entregar a
+                # carteira do vizinho a quem chuta números.
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa."
                 )
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"{'Esta usina ainda não é' if len(herdadas) == 1 else 'Estas usinas ainda não são'} "
-                f"da sua empresa: {', '.join(herdadas)}. "
-                "Traga em “Usinas”, ou desmarque antes de salvar.",
-            )
+            for pid in fora:
+                db.get(PlantLink, pid).empresa_id = empresa_id
 
     try:
         clientes.definir_usinas(db, cliente, body.plant_link_ids)
@@ -991,11 +1102,18 @@ def casar_micro_usina(
     """
     empresa_id = svc.empresa_exigida(gerente)
 
+    # A busca é GLOBAL, não só nesta empresa: duas empresas apontando para a mesma micro
+    # fazem `motor._coletar_parada_micro` distribuir o alerta real de uma como se fosse da
+    # outra — ele lê o MICRO com a credencial da plataforma e mapeia por `mw_micro_plant_id`
+    # sem recorte. `salvar_usina` já confere assim; aqui faltava.
     ja_casada = db.scalar(
-        select(PlantLink).where(
-            PlantLink.empresa_id == empresa_id, PlantLink.mw_micro_plant_id == micro_id
-        )
+        select(PlantLink).where(PlantLink.mw_micro_plant_id == micro_id)
     )
+    if ja_casada is not None and ja_casada.empresa_id != empresa_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta micro usina já está em uma usina de outra empresa da plataforma.",
+        )
 
     if body.plant_link_id is None:
         if ja_casada is not None:
@@ -1133,7 +1251,14 @@ def usuarios_detalhados(
     """Quem é da empresa, com concessões e conexões — a lista que a tela opera."""
     empresa_id = svc.empresa_exigida(gerente)
     contas = list(
-        db.scalars(select(User).where(User.empresa_id == empresa_id).order_by(User.nome)).all()
+        db.scalars(
+            select(User)
+            .where(
+                User.empresa_id == empresa_id,
+                User.perfil.not_in(pessoas.DA_PLATAFORMA),
+            )
+            .order_by(User.nome)
+        ).all()
     )
     if not contas:
         return []
@@ -1197,9 +1322,7 @@ async def conectar_conta_do_cliente(
     "Erro 400" em qualquer tratamento genérico pelo caminho.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    conta = db.get(User, usuario_id)
-    if conta is None or conta.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
 
     r = await vinculos.conectar(db, conta, produto, body.token, por=gerente)
     return ConexaoDoClienteOut(ok=r.ok, detalhe=r.detalhe)
@@ -1215,9 +1338,7 @@ def desconectar_conta_do_cliente(
     """Para de usar o token pessoal dele — a leitura volta a ser com a credencial da
     empresa. **Não revoga nada** no produto de origem."""
     empresa_id = svc.empresa_exigida(gerente)
-    conta = db.get(User, usuario_id)
-    if conta is None or conta.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
 
     vinculo = vinculos.obter(db, conta.id, produto)
     if vinculo is not None:
@@ -1243,9 +1364,7 @@ def editar_conta_da_empresa(
     instante, e a saída seria a plataforma.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    conta = db.get(User, usuario_id)
-    if conta is None or conta.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
     if conta.id == gerente.id and body.ativo is False:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Você ficaria sem acesso no mesmo instante."
@@ -1300,9 +1419,7 @@ def usinas_do_usuario(
     tal, para o gerente resolver: trazer a usina, ou tirar a concessão.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    conta = db.get(User, usuario_id)
-    if conta is None or conta.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
 
     linhas = db.execute(
         select(PlantLink.id, PlantLink.nome, PlantLink.empresa_id)
