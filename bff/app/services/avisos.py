@@ -17,6 +17,7 @@ tempo — e é por isso que `paradas_por_usuario` devolve a chave de cada parada
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -48,6 +49,37 @@ class AvisoDeParada:
     chave: str
     #: O que o portal chamou o motivo ("equipamento fora"). Só na micro usina.
     motivo: str | None = None
+    #: A causa que o detector do meuWatt deu, quando deu. Vira o CORPO do aviso
+    #: agrupado: é o que a pessoa procura antes de decidir se vai à usina.
+    causa: str | None = None
+
+
+#: Parada mais velha que isto não gera aviso.
+#:
+#: Ao ligar o aviso pela primeira vez — ou ao conectar o meuWatt — a carteira pode ter
+#: paradas abertas há semanas, e despejá-las todas na primeira volta é enxurrada de
+#: notícia velha. Foi o que o dono recebeu em 30/09/2026. A régua é a mesma do meuPlano,
+#: que já tinha pago esse preço.
+JANELA_HORAS = 72
+
+
+def _recente(inv: dict[str, Any]) -> bool:
+    """A parada começou dentro da janela? Sem data, trata-se como recente.
+
+    Errar para o lado de AVISAR é o certo aqui: a memória (`gs_avisos_enviados`) impede a
+    repetição, então o custo de um falso "recente" é um aviso a mais uma vez só — contra
+    o custo de calar uma parada real.
+    """
+    quando = inv.get("down_since")
+    if not quando:
+        return True
+    try:
+        inicio = datetime.fromisoformat(str(quando).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - inicio) <= timedelta(hours=JANELA_HORAS)
 
 
 def _parados(monitoramento: Any) -> list[dict[str, Any]]:
@@ -68,7 +100,8 @@ def _parados(monitoramento: Any) -> list[dict[str, Any]]:
         # `bedtime` é a usina dormindo — noite não é parada.
         if estado == "bedtime":
             continue
-        if inv.get("down") is True or estado == "fault":
+        # Parada velha não entra: ver `JANELA_HORAS`.
+        if (inv.get("down") is True or estado == "fault") and _recente(inv):
             saida.append(inv)
     return saida
 
@@ -183,6 +216,7 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
                         # `down_since` entra na chave: o mesmo inversor parando de novo
                         # depois de voltar é um evento NOVO e merece aviso novo.
                         chave=f"{link.id}:{equipamento_id}:{inv.get('down_since') or ''}",
+                        causa=str(inv.get("down_cause")) if inv.get("down_cause") else None,
                     )
                 )
     return avisos
@@ -192,6 +226,65 @@ def tokens_do_usuario(db: Session, usuario: User) -> list[str]:
     return list(
         db.scalars(select(Dispositivo.token).where(Dispositivo.user_id == usuario.id)).all()
     )
+
+
+def texto_do_grupo(grupo: list[AvisoDeParada]) -> tuple[str, str, dict[str, Any]]:
+    """UM aviso para todas as paradas da MESMA usina na mesma volta.
+
+    Cinco inversores do mesmo skid caem juntos — é um evento, não cinco. Em 30/09/2026 o
+    dono recebeu vinte toques seguidos, um por inversor de Porto Ferreira, e comparou com
+    o meuPlano, que mandou um só: "20 inversores pararam". Ele tem razão, e a régua
+    replicada aqui é a de lá (`meuPlano/backend/app/services/meuacesso/paradas_notify.py`):
+
+    - **o título conta**, porque é o que aparece na tela bloqueada e é a diferença entre
+      "um inversor" e "a usina inteira";
+    - **o corpo traz a causa** quando o detector a tem; senão os nomes, que é o que a
+      pessoa procura ao chegar na usina. Três cabem na tarja; o resto vira contagem;
+    - **o toque leva ao lugar certo**: com UM parado, à tela daquele equipamento; com
+      vários, à usina — uma tela de equipamento não responde "quais são os outros".
+
+    A trava de repetição continua sendo POR PARADA (`gs_avisos_enviados`, uma linha por
+    chave): agrupar é só a entrega. Um sexto inversor que cair depois gera aviso novo, e
+    os cinco já avisados não voltam nele.
+    """
+    primeiro = grupo[0]
+    usina = primeiro.usina
+    n = len(grupo)
+    nomes = [a.inversor for a in grupo]
+
+    if usina.so_micro:
+        # O portal do fabricante reporta ESTAÇÃO, não inversor, e não tem `slot-N`.
+        titulo = f"{usina.nome} · parada" if n == 1 else f"{usina.nome}: {n} estações pararam"
+        corpo = (
+            f"{nomes[0]}: {primeiro.motivo or 'parada'}. Toque para ver a usina."
+            if n == 1
+            else _lista(nomes, n)
+        )
+    elif n == 1:
+        titulo = f"{usina.nome} · inversor parado"
+        corpo = f"{nomes[0]} parou de gerar. Toque para ver o equipamento."
+    else:
+        titulo = f"{usina.nome}: {n} inversores pararam"
+        causa = next((a.causa for a in grupo if a.causa), None)
+        corpo = causa or _lista(nomes, n)
+
+    return (
+        titulo,
+        corpo,
+        {
+            "tipo": "usina_parada",
+            "usina_id": usina.id,
+            # Com vários, o toque vai para a USINA: a tela de um equipamento não diz
+            # quais são os outros, que é a pergunta de quem acabou de ser avisado.
+            "equipamento_id": primeiro.equipamento_id if n == 1 else "",
+            "quantidade": n,
+        },
+    )
+
+
+def _lista(nomes: list[str], n: int) -> str:
+    """Três nomes cabem na tarja da notificação; o resto vira contagem."""
+    return ", ".join(nomes[:3]) + (f" e outros {n - 3}" if n > 3 else "")
 
 
 def texto_do_aviso(aviso: AvisoDeParada) -> tuple[str, str, dict[str, Any]]:

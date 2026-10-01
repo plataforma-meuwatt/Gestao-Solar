@@ -1,0 +1,120 @@
+"""Um toque por USINA, não um por inversor.
+
+Em 30/09/2026 o dono recebeu vinte notificações seguidas — uma por inversor parado de
+Porto Ferreira — e comparou com o meuPlano, que mandou uma só: "20 inversores pararam".
+Ele estava certo, e a régua replicada aqui é a de lá
+(`meuPlano/backend/app/services/meuacesso/paradas_notify.py`).
+
+Vinte toques pelo mesmo problema é o tipo de ruído que faz desligar a notificação — e aí
+o alarme verdadeiro da semana seguinte não chega em ninguém. Cada teste abaixo diz, na
+primeira linha, qual parte do desenho ele guarda.
+"""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from app.models.plant import PlantLink
+from app.models.user import Perfil, User
+from app.services.avisos import AvisoDeParada, _parados, texto_do_grupo
+
+
+@pytest.fixture
+def pf():
+    return PlantLink(id=4, nome="Porto Ferreira", mw_plant_slug="porto-ferreira")
+
+
+@pytest.fixture
+def dono():
+    return User(apelido="dono", nome="Dono", perfil=Perfil.CLIENTE)
+
+
+def _aviso(dono, usina, nome, causa=None, motivo=None):
+    return AvisoDeParada(
+        usuario=dono, usina=usina, inversor=nome, equipamento_id=f"slot-{nome[-1]}",
+        chave=f"{usina.id}:{nome}", causa=causa, motivo=motivo,
+    )
+
+
+def test_o_titulo_CONTA_quando_e_mais_de_um(db, dono, pf):
+    """É o título que aparece na tela bloqueada, e é a diferença entre "um inversor" e
+    "a usina inteira". Vinte títulos iguais não dizem nenhuma das duas."""
+    um = texto_do_grupo([_aviso(dono, pf, "INV 1")])[0]
+    vinte = texto_do_grupo([_aviso(dono, pf, f"INV {i}") for i in range(20)])[0]
+
+    assert um == "Porto Ferreira · inversor parado"
+    assert vinte == "Porto Ferreira: 20 inversores pararam"
+
+
+def test_o_corpo_traz_a_CAUSA_quando_o_detector_a_tem(db, dono, pf):
+    """É o que a pessoa procura antes de decidir se vai à usina. Sem causa, os nomes."""
+    com_causa = [
+        _aviso(dono, pf, "INV 1", causa="Falha de comunicação"),
+        _aviso(dono, pf, "INV 2"),
+    ]
+    assert texto_do_grupo(com_causa)[1] == "Falha de comunicação"
+
+    sem_causa = [_aviso(dono, pf, f"INV {i}") for i in range(1, 6)]
+    # Três cabem na tarja da notificação; o resto vira contagem.
+    assert texto_do_grupo(sem_causa)[1] == "INV 1, INV 2, INV 3 e outros 2"
+
+
+def test_com_VARIOS_o_toque_abre_a_usina_e_nao_um_equipamento(db, dono, pf):
+    """Uma tela de equipamento não responde "quais são os outros", que é a pergunta de
+    quem acabou de ser avisado de que vinte pararam."""
+    _, _, de_um = texto_do_grupo([_aviso(dono, pf, "INV 1")])
+    _, _, de_varios = texto_do_grupo([_aviso(dono, pf, "INV 1"), _aviso(dono, pf, "INV 2")])
+
+    assert de_um["equipamento_id"] == "slot-1"
+    assert de_varios["equipamento_id"] == ""
+    assert de_varios["usina_id"] == 4
+    assert de_varios["quantidade"] == 2
+
+
+def test_a_micro_usina_agrupa_por_ESTACAO(db, dono):
+    """O portal do fabricante reporta estação, não inversor — e não tem `slot-N`."""
+    micro = PlantLink(id=9, nome="Matioli", mw_micro_plant_id=6)
+    uma = texto_do_grupo([_aviso(dono, micro, "Matioli", motivo="equipamento fora")])
+    tres = texto_do_grupo([_aviso(dono, micro, f"Estação {i}") for i in range(3)])
+
+    assert uma[0] == "Matioli · parada"
+    assert "equipamento fora" in uma[1]
+    assert tres[0] == "Matioli: 3 estações pararam"
+    assert "inversor" not in tres[0].lower()
+
+
+def test_a_rota_manda_UM_push_por_usina_e_trava_por_PARADA(db):
+    """O agrupamento é só da ENTREGA. A memória continua tendo uma linha por parada: um
+    sexto inversor que cair depois gera aviso novo, e os cinco já avisados não voltam
+    nele. Trocar a trava por "uma por usina" calaria o sexto."""
+    from pathlib import Path
+
+    fonte = Path(__file__).resolve().parents[1].joinpath("app", "api", "v1", "avisos.py")
+    corpo = fonte.read_text("utf-8")
+
+    assert "por_pessoa_e_usina" in corpo, "o agrupamento por usina sumiu"
+    assert "texto_do_grupo(grupo)" in corpo, "voltou a montar o texto de um aviso só"
+    assert "for aviso in grupo:\n            db.add(AvisoEnviado(" in corpo, (
+        "a trava deixou de ser por parada"
+    )
+    assert "for aviso in lista:" not in corpo, "voltou o laço que mandava um push por inversor"
+
+
+def test_parada_VELHA_nao_vira_enxurrada_no_primeiro_laco(db):
+    """Ao ligar o aviso, a carteira pode ter paradas abertas há semanas. Despejá-las todas
+    na primeira volta é notícia velha às três da manhã — e foi parte dos vinte toques."""
+    agora = datetime.now(UTC)
+    nova = (agora - timedelta(hours=2)).isoformat()
+    velha = (agora - timedelta(days=30)).isoformat()
+
+    monitoramento = {
+        "inverters": [
+            {"id": "slot-1", "name": "Nova", "down": True, "down_since": nova},
+            {"id": "slot-2", "name": "Velha", "down": True, "down_since": velha},
+            # Sem data: trata-se como recente, porque errar para o lado de avisar é o
+            # certo — a memória impede a repetição.
+            {"id": "slot-3", "name": "Sem data", "down": True},
+        ]
+    }
+    nomes = {i["name"] for i in _parados(monitoramento)}
+    assert nomes == {"Nova", "Sem data"}

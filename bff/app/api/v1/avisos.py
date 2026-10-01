@@ -85,37 +85,51 @@ async def disparar_avisos_de_parada(
     if not novos:
         return saida
 
-    # Agrupado por pessoa: os tokens dela são os mesmos para todos os avisos, e
-    # consultá-los por aviso repetiria a query.
-    por_usuario: dict[int, list[avisos.AvisoDeParada]] = {}
+    # Agrupado por PESSOA e por USINA, nesta ordem, e as duas agrupam por motivos
+    # diferentes:
+    #
+    # - por pessoa, porque os tokens dela são os mesmos para todos os avisos e
+    #   consultá-los por aviso repetiria a query;
+    # - por usina, porque cinco inversores do mesmo skid caem juntos: é um evento, não
+    #   cinco. Em 30/09/2026 o dono recebeu VINTE toques seguidos, um por inversor de
+    #   Porto Ferreira, enquanto o meuPlano mandou um só dizendo "20 inversores pararam".
+    #   O ruído de vinte toques pelo mesmo problema é o que faz desligar a notificação —
+    #   e aí o alarme verdadeiro da semana seguinte não chega em ninguém.
+    #
+    # A trava continua POR PARADA: o grupo grava uma linha de `AvisoEnviado` para cada
+    # chave. Um sexto inversor que cair depois gera aviso novo, com só ele dentro.
+    por_pessoa_e_usina: dict[tuple[int, int], list[avisos.AvisoDeParada]] = {}
     for c in novos:
-        por_usuario.setdefault(c.usuario.id, []).append(c)
+        por_pessoa_e_usina.setdefault((c.usuario.id, c.usina.id), []).append(c)
 
+    tokens_por_pessoa: dict[int, list[str]] = {}
     mortos: set[str] = set()
-    for lista in por_usuario.values():
-        pessoa = lista[0].usuario
-        tokens = avisos.tokens_do_usuario(db, pessoa)
+    for grupo in por_pessoa_e_usina.values():
+        pessoa = grupo[0].usuario
+        if pessoa.id not in tokens_por_pessoa:
+            tokens_por_pessoa[pessoa.id] = avisos.tokens_do_usuario(db, pessoa)
+        tokens = tokens_por_pessoa[pessoa.id]
         if not tokens:
             # Tem permissão e nunca abriu o app, ou negou o aviso no Android. Não é
             # erro — e não marcamos como enviado, para que ele receba quando registrar.
-            saida.sem_destino += len(lista)
+            saida.sem_destino += len(grupo)
             continue
 
-        for aviso in lista:
-            titulo, corpo, dados = avisos.texto_do_aviso(aviso)
-            if simular:
-                saida.enviados += 1
-                continue
+        titulo, corpo, dados = avisos.texto_do_grupo(grupo)
+        if simular:
+            saida.enviados += 1
+            continue
 
-            resultado = await push.enviar(tokens, titulo, corpo, dados)
-            saida.enviados += resultado.enviados
-            saida.erros.extend(resultado.erros)
-            mortos.update(resultado.invalidos)
+        resultado = await push.enviar(tokens, titulo, corpo, dados)
+        saida.enviados += resultado.enviados
+        saida.erros.extend(resultado.erros)
+        mortos.update(resultado.invalidos)
 
-            # A trava é gravada mesmo quando a entrega falhou por rede: reenviar em
-            # laço um aviso que o Expo recusou transformaria uma falha em enxurrada.
-            # Se a parada persistir, o `down_since` continua o mesmo — e é justamente
-            # esse o caso em que não se deve avisar de novo.
+        # A trava é gravada mesmo quando a entrega falhou por rede: reenviar em laço um
+        # aviso que o Expo recusou transformaria uma falha em enxurrada. Se a parada
+        # persistir, o `down_since` continua o mesmo — e é justamente esse o caso em que
+        # não se deve avisar de novo.
+        for aviso in grupo:
             db.add(AvisoEnviado(user_id=pessoa.id, chave=aviso.chave))
 
     if not simular:
