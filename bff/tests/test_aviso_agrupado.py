@@ -118,3 +118,28 @@ def test_parada_VELHA_nao_vira_enxurrada_no_primeiro_laco(db):
     }
     nomes = {i["name"] for i in _parados(monitoramento)}
     assert nomes == {"Nova", "Sem data"}
+
+
+def test_a_causa_vai_em_PORTUGUES_nunca_o_codigo_do_detector(db):
+    """Defeito que o dono leu no celular em 30/09/2026: o corpo da notificação de Porto
+    Ferreira era `zero_active_power`. Código de banco na tela é o que a regra da casa
+    proíbe, e a tradução mora no BFF — uma vez, para todas as telas.
+
+    Código desconhecido devolve `None` de propósito: quem chama cai nos nomes dos
+    inversores. Imprimir o código cru "porque é melhor que nada" é o próprio defeito.
+    """
+    from app.services.vocabulario_mw import causa_em_portugues
+
+    assert causa_em_portugues("zero_active_power") == "Potência zero durante o dia"
+    assert causa_em_portugues("COMMUNICATION_FAILURE") == "Falha de comunicação"
+    assert causa_em_portugues("never_woke_up") == "Não acordou pela manhã"
+    assert causa_em_portugues("codigo_que_o_meuwatt_criar_amanha") is None
+    assert causa_em_portugues(None) is None
+
+
+def test_causa_desconhecida_cai_nos_NOMES_e_nao_no_codigo(db, dono, pf):
+    """O corpo tem de dizer algo útil sempre — e o código cru não é útil."""
+    grupo = [_aviso(dono, pf, "INV 1", causa=None), _aviso(dono, pf, "INV 2", causa=None)]
+    corpo = texto_do_grupo(grupo)[1]
+    assert corpo == "INV 1, INV 2"
+    assert "_" not in corpo, "código do detector vazou para o corpo"

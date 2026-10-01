@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.v1.plants import _numero, _usina_no_escopo, sem_monitoramento
+from app.services.vocabulario_mw import causa_em_portugues
 from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import usuario_atual
@@ -493,7 +494,8 @@ async def detalhe_do_equipamento(
         parado_ha_min=minutos,
         ignorado=ignorado,
         fabricante_alerta=inv.get("alert_text"),
-        causa_parada=inv.get("down_cause"),
+        # Mesma régua do aviso: a tela do equipamento mostrava o código do detector.
+        causa_parada=causa_em_portugues(inv.get("down_cause")),
         em_falha=inv.get("down"),
         performance_pct=_numero(inv.get("performance")),
         desvio_mediana=_numero(inv.get("median_deviation")),

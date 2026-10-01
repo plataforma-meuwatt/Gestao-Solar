@@ -29,6 +29,7 @@ from app.models.permissao import Dispositivo
 from app.models.plant import PlantLink
 from app.models.user import User
 from app.services import integracoes, permissoes, vinculos
+from app.services.vocabulario_mw import causa_em_portugues
 
 CATEGORIA = "notificacao"
 SUBCATEGORIA = "usina_parada"
@@ -216,7 +217,10 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
                         # `down_since` entra na chave: o mesmo inversor parando de novo
                         # depois de voltar é um evento NOVO e merece aviso novo.
                         chave=f"{link.id}:{equipamento_id}:{inv.get('down_since') or ''}",
-                        causa=str(inv.get("down_cause")) if inv.get("down_cause") else None,
+                        # Traduzida já aqui: o código cru do detector
+                        # ("zero_active_power") foi o corpo da notificação que o dono
+                        # recebeu em 30/09/2026.
+                        causa=causa_em_portugues(inv.get("down_cause")),
                     )
                 )
     return avisos
