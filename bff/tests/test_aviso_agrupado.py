@@ -52,11 +52,11 @@ def test_o_corpo_traz_a_CAUSA_quando_o_detector_a_tem(db, dono, pf):
         _aviso(dono, pf, "INV 1", causa="Falha de comunicação"),
         _aviso(dono, pf, "INV 2"),
     ]
-    assert texto_do_grupo(com_causa)[1] == "Falha de comunicação"
+    assert texto_do_grupo(com_causa)[1] == "Falha de comunicação."
 
     sem_causa = [_aviso(dono, pf, f"INV {i}") for i in range(1, 6)]
     # Três cabem na tarja da notificação; o resto vira contagem.
-    assert texto_do_grupo(sem_causa)[1] == "INV 1, INV 2, INV 3 e outros 2"
+    assert texto_do_grupo(sem_causa)[1] == "INV 1, INV 2, INV 3 e outros 2."
 
 
 def test_com_VARIOS_o_toque_abre_a_usina_e_nao_um_equipamento(db, dono, pf):
@@ -104,20 +104,16 @@ def test_parada_VELHA_nao_vira_enxurrada_no_primeiro_laco(db):
     """Ao ligar o aviso, a carteira pode ter paradas abertas há semanas. Despejá-las todas
     na primeira volta é notícia velha às três da manhã — e foi parte dos vinte toques."""
     agora = datetime.now(UTC)
-    nova = (agora - timedelta(hours=2)).isoformat()
+    nova = (agora - timedelta(hours=2)).isoformat()  # já persistiu, e é de hoje
     velha = (agora - timedelta(days=30)).isoformat()
 
     monitoramento = {
         "inverters": [
             {"id": "slot-1", "name": "Nova", "down": True, "down_since": nova},
             {"id": "slot-2", "name": "Velha", "down": True, "down_since": velha},
-            # Sem data: trata-se como recente, porque errar para o lado de avisar é o
-            # certo — a memória impede a repetição.
-            {"id": "slot-3", "name": "Sem data", "down": True},
         ]
     }
-    nomes = {i["name"] for i in _parados(monitoramento)}
-    assert nomes == {"Nova", "Sem data"}
+    assert {i["name"] for i in _parados(monitoramento)} == {"Nova"}
 
 
 def test_a_causa_vai_em_PORTUGUES_nunca_o_codigo_do_detector(db):
@@ -141,5 +137,75 @@ def test_causa_desconhecida_cai_nos_NOMES_e_nao_no_codigo(db, dono, pf):
     """O corpo tem de dizer algo útil sempre — e o código cru não é útil."""
     grupo = [_aviso(dono, pf, "INV 1", causa=None), _aviso(dono, pf, "INV 2", causa=None)]
     corpo = texto_do_grupo(grupo)[1]
-    assert corpo == "INV 1, INV 2"
+    assert corpo == "INV 1, INV 2."
     assert "_" not in corpo, "código do detector vazou para o corpo"
+
+
+def test_parada_de_MINUTOS_nao_vira_aviso(db):
+    """Alarme falso, relatado em 04/10/2026: o dono recebeu "Pirapozinho: 8 inversores
+    pararam" e a equipe em campo respondeu que não houve parada.
+
+    Os dois tinham razão. O detector do meuWatt registrou MESMO as paradas, e as duas
+    levas daquele dia foram:
+
+    | leva  | duração     | perda por inversor |
+    |-------|-------------|--------------------|
+    | 10:41 | 32 a 38 min | 20 a 26 kWh        |
+    | 11:38 | 7 a 16 min  | 0,01 a 0,10 kWh    |
+
+    A segunda é oscilação: quando a equipe abriu a tela, já tinha voltado sozinha. O aviso
+    saía dez minutos depois do início, sem saber se aquilo ia durar sete minutos ou três
+    horas. Agora espera `PERSISTENCIA_MINUTOS` — a primeira leva ainda avisa (uma volta
+    depois), a segunda não avisa nenhuma vez.
+    """
+    agora = datetime.now(UTC)
+
+    def inv(nome, minutos=None, **extra):
+        d = {"id": f"slot-{nome}", "name": nome, "down": True, **extra}
+        if minutos is not None:
+            d["down_since"] = (agora - timedelta(minutes=minutos)).isoformat()
+        return d
+
+    monitoramento = {
+        "inverters": [
+            inv("oscilacao", 7),       # a leva das 11:38
+            inv("limite", 19),         # ainda não
+            inv("parada real", 36),    # a leva das 10:41
+            inv("velha", 60 * 24 * 4),  # fora da janela de 72 h
+            inv("sem data"),           # não dá para afirmar que persistiu
+        ]
+    }
+    assert {i["name"] for i in _parados(monitoramento)} == {"parada real"}
+
+
+def test_o_corpo_diz_DESDE_QUANDO(db, dono, pf):
+    """Sem a hora, a equipe abre a tela, vê o estado de AGORA — que pode já ter voltado —
+    e conclui que o aviso estava errado. Foi o que aconteceu em 04/10/2026."""
+    um = _aviso(dono, pf, "Inv 34")
+    um.desde = "07:33"
+    assert texto_do_grupo([um])[1] == (
+        "Inv 34 parou de gerar desde 07:33. Toque para ver o equipamento."
+    )
+
+    varios = [_aviso(dono, pf, f"Inv {i}", causa="Não acordou pela manhã") for i in range(2)]
+    varios[0].desde = "07:41"
+    assert texto_do_grupo(varios)[1] == "Não acordou pela manhã desde 07:41."
+
+    # Sem a hora o aviso ainda sai — só não inventa um horário.
+    sem_hora = [_aviso(dono, pf, f"Inv {i}", causa="Falha de comunicação") for i in range(2)]
+    assert texto_do_grupo(sem_hora)[1] == "Falha de comunicação."
+
+
+def test_a_hora_de_brasilia_tem_UMA_fonte(db):
+    """Morava privada em `services/motor.py`, e o aviso por push precisava dela: duas
+    cópias discordariam no primeiro fuso que alguém mexesse."""
+    from pathlib import Path
+
+    from app.core.datas import hora_brt
+
+    assert hora_brt("2026-10-04T11:41:00Z").endswith(":41")
+    assert hora_brt(None) == "—"
+    assert hora_brt("não é data") == "—"
+
+    motor = Path(__file__).resolve().parents[1].joinpath("app", "services", "motor.py")
+    assert "def _hora_brt" not in motor.read_text("utf-8"), "a cópia voltou"

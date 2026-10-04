@@ -130,12 +130,14 @@ def test_hora_em_brasilia():
     # O "hoje" da função é em BRASÍLIA, e o teste montava a hora em UTC: entre 00:00 e
     # 03:00 UTC os dois calendários discordam, e o teste reprovava sozinho de madrugada —
     # foi o que aconteceu em 29/09/2026. O instante de referência agora nasce em BRT.
+    from app.core.datas import hora_brt
+
     agora = datetime.now(motor.BRT)
     hoje = agora.replace(hour=12, minute=5, second=0, microsecond=0)
-    assert motor._hora_brt(hoje.isoformat()) == "12:05"
+    assert hora_brt(hoje.isoformat()) == "12:05"
     antes = (agora - timedelta(days=10)).replace(hour=20, minute=17)
-    assert motor._hora_brt(antes.isoformat()).count("/") == 1  # outro dia leva a data
-    assert motor._hora_brt(None) == "—"
+    assert hora_brt(antes.isoformat()).count("/") == 1  # outro dia leva a data
+    assert hora_brt(None) == "—"
 
 
 # ── o vínculo no painel ─────────────────────────────────────────────────────

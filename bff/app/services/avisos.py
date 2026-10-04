@@ -28,6 +28,7 @@ from app.models.integracao import Produto
 from app.models.permissao import Dispositivo
 from app.models.plant import PlantLink
 from app.models.user import User
+from app.core.datas import hora_brt
 from app.services import integracoes, permissoes, vinculos
 from app.services.vocabulario_mw import causa_em_portugues
 
@@ -53,7 +54,31 @@ class AvisoDeParada:
     #: A causa que o detector do meuWatt deu, quando deu. Vira o CORPO do aviso
     #: agrupado: é o que a pessoa procura antes de decidir se vai à usina.
     causa: str | None = None
+    #: Desde quando está parado, em hora de Brasília (`HH:MM`). Vai no corpo porque a
+    #: primeira coisa que a equipe faz ao receber é conferir na tela — e sem a hora ela
+    #: compara com o estado de AGORA, que pode já ter voltado.
+    desde: str | None = None
 
+
+#: Quanto tempo a parada precisa estar ABERTA para virar aviso.
+#:
+#: Sem isto o aviso saía na primeira volta em que o detector marcasse `down` — dez
+#: minutos depois do início —, sem saber se aquilo ia durar sete minutos ou três horas.
+#: Medido em Pirapozinho, 04/10/2026, com as paradas que o próprio detector registrou:
+#:
+#: | leva  | duração     | perda por inversor | o que era          |
+#: |-------|-------------|--------------------|--------------------|
+#: | 10:41 | 32 a 38 min | 20 a 26 kWh        | parada de verdade  |
+#: | 11:38 | 7 a 16 min  | 0,01 a 0,10 kWh    | oscilação          |
+#:
+#: As duas viraram notificação, e a segunda foi a que a equipe em campo não reconheceu —
+#: quando foram olhar, já tinha resolvido sozinha. Com vinte minutos de espera a primeira
+#: ainda avisa (na volta seguinte) e a segunda não avisa nenhuma vez.
+#:
+#: **Esperar não é calar.** O custo é um atraso de no máximo uma volta no aviso
+#: verdadeiro; o custo de não esperar é o alarme falso, que faz desligar a notificação
+#: inteira — e aí o aviso verdadeiro da semana seguinte não chega em ninguém.
+PERSISTENCIA_MINUTOS = 20
 
 #: Parada mais velha que isto não gera aviso.
 #:
@@ -64,23 +89,36 @@ class AvisoDeParada:
 JANELA_HORAS = 72
 
 
-def _recente(inv: dict[str, Any]) -> bool:
-    """A parada começou dentro da janela? Sem data, trata-se como recente.
+def _vale_avisar(inv: dict[str, Any]) -> bool:
+    """A parada já persistiu o bastante, e ainda é notícia?
 
-    Errar para o lado de AVISAR é o certo aqui: a memória (`gs_avisos_enviados`) impede a
-    repetição, então o custo de um falso "recente" é um aviso a mais uma vez só — contra
-    o custo de calar uma parada real.
+    Três perguntas, nesta ordem, e cada uma já custou um aviso errado:
+
+    * **sem `down_since`, não se avisa.** Não dá para afirmar que persistiu o que não se
+      sabe quando começou, e é esse mesmo campo que identifica a parada na memória — sem
+      ele a chave já degrada para a data do dia. Em todas as paradas medidas no meuWatt o
+      campo veio preenchido;
+    * **jovem demais** não avisa: ver `PERSISTENCIA_MINUTOS`;
+    * **velha demais** não avisa: ver `JANELA_HORAS`.
     """
+    aberta = _aberta_ha(inv)
+    if aberta is None:
+        return False
+    return timedelta(minutes=PERSISTENCIA_MINUTOS) <= aberta <= timedelta(hours=JANELA_HORAS)
+
+
+def _aberta_ha(inv: dict[str, Any]) -> timedelta | None:
+    """Há quanto tempo esta parada está aberta — ou `None` quando não se sabe."""
     quando = inv.get("down_since")
     if not quando:
-        return True
+        return None
     try:
         inicio = datetime.fromisoformat(str(quando).replace("Z", "+00:00"))
     except ValueError:
-        return True
+        return None
     if inicio.tzinfo is None:
         inicio = inicio.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - inicio) <= timedelta(hours=JANELA_HORAS)
+    return datetime.now(UTC) - inicio
 
 
 def _parados(monitoramento: Any) -> list[dict[str, Any]]:
@@ -101,8 +139,8 @@ def _parados(monitoramento: Any) -> list[dict[str, Any]]:
         # `bedtime` é a usina dormindo — noite não é parada.
         if estado == "bedtime":
             continue
-        # Parada velha não entra: ver `JANELA_HORAS`.
-        if (inv.get("down") is True or estado == "fault") and _recente(inv):
+        # Parada jovem ou velha demais não entra: ver `_vale_avisar`.
+        if (inv.get("down") is True or estado == "fault") and _vale_avisar(inv):
             saida.append(inv)
     return saida
 
@@ -221,6 +259,7 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
                         # ("zero_active_power") foi o corpo da notificação que o dono
                         # recebeu em 30/09/2026.
                         causa=causa_em_portugues(inv.get("down_cause")),
+                        desde=hora_brt(inv.get("down_since")),
                     )
                 )
     return avisos
@@ -266,11 +305,14 @@ def texto_do_grupo(grupo: list[AvisoDeParada]) -> tuple[str, str, dict[str, Any]
         )
     elif n == 1:
         titulo = f"{usina.nome} · inversor parado"
-        corpo = f"{nomes[0]} parou de gerar. Toque para ver o equipamento."
+        corpo = f"{nomes[0]} parou de gerar{_desde(primeiro)}. Toque para ver o equipamento."
     else:
         titulo = f"{usina.nome}: {n} inversores pararam"
         causa = next((a.causa for a in grupo if a.causa), None)
-        corpo = causa or _lista(nomes, n)
+        # A hora vem SEMPRE, com causa ou sem: a primeira coisa que a equipe faz ao
+        # receber é abrir a tela, e lá ela vê o estado de AGORA — que pode já ter
+        # voltado. Sem "desde quando", ela conclui que o aviso estava errado.
+        corpo = f"{causa or _lista(nomes, n)}{_desde(primeiro)}."
 
     return (
         titulo,
@@ -284,6 +326,11 @@ def texto_do_grupo(grupo: list[AvisoDeParada]) -> tuple[str, str, dict[str, Any]
             "quantidade": n,
         },
     )
+
+
+def _desde(aviso: AvisoDeParada) -> str:
+    """" desde 08:41", ou nada quando não se sabe."""
+    return f" desde {aviso.desde}" if aviso.desde and aviso.desde != "—" else ""
 
 
 def _lista(nomes: list[str], n: int) -> str:

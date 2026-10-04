@@ -38,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients import whatsapp as gateway
-from app.core.datas import hoje as hoje_na_usina
+from app.core.datas import hoje as hoje_na_usina, hora_brt
 from app.models.integracao import Produto
 from app.models.notificacao import NotificacaoEnviada
 from app.models.plant import PlantLink
@@ -232,19 +232,6 @@ async def _coletar_parada(db: Session, rel: Relatorio) -> list[Evento]:
     return eventos
 
 
-def _hora_brt(iso: Any) -> str:
-    """Início da parada em Brasília: "14:12" hoje, "13/09 14:12" em outro dia — a parada de
-    ontem avisada com a hora só faria o dono procurar o problema no dia errado."""
-    if not isinstance(iso, str):
-        return "—"
-    try:
-        inicio = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(BRT)
-    except ValueError:
-        return "—"
-    hoje = datetime.now(BRT).date()
-    return inicio.strftime("%H:%M" if inicio.date() == hoje else "%d/%m %H:%M")
-
-
 async def _coletar_parada_micro(db: Session, rel: Relatorio) -> list[Evento]:
     """Micro usina parada, pelos alertas do MICRO do meuWatt (`GET /micro/alerts`).
 
@@ -290,7 +277,7 @@ async def _coletar_parada_micro(db: Session, rel: Relatorio) -> list[Evento]:
                     # duas vezes, e uma parada nova da mesma estação, depois de resolvida,
                     # tem outra chave e avisa de novo.
                     chave=f"parada:{episodio}",
-                    parametros=[link.nome, f"{estacao} ({motivo})", _hora_brt(alerta.get("started_at"))],
+                    parametros=[link.nome, f"{estacao} ({motivo})", hora_brt(alerta.get("started_at"))],
                 )
             )
     return eventos

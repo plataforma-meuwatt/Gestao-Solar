@@ -45,6 +45,23 @@ def _fuso() -> timezone | ZoneInfo:
 BRT = _fuso()
 
 
+def hora_brt(iso: object) -> str:
+    """Um instante do upstream em hora de Brasília: "14:12" hoje, "13/09 14:12" em outro dia.
+
+    O dia aparece quando não é hoje porque a parada de ontem avisada só com a hora faz
+    procurar o problema no dia errado. Morava privada em `services/motor.py`; subiu para
+    cá quando o aviso por PUSH passou a precisar dela — duas cópias desta régua
+    discordariam no primeiro fuso que alguém mexesse.
+    """
+    if not isinstance(iso, str):
+        return "—"
+    try:
+        instante = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(BRT)
+    except ValueError:
+        return "—"
+    return instante.strftime("%H:%M" if instante.date() == datetime.now(BRT).date() else "%d/%m %H:%M")
+
+
 def hoje() -> date:
     """O dia corrente na usina, não no servidor."""
     return datetime.now(BRT).date()
