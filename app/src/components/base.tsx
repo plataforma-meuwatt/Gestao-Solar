@@ -462,13 +462,25 @@ export function FaixaFrescor({ frescor }: { frescor: Frescor }) {
   if (frescor.origem === 'vazio') return null
   if (frescor.origem === 'rede' && !confirmando) return null
 
-  const tom: Tom = frescor.offline ? 'semDados' : frescor.origem === 'rede' ? 'ok' : 'alerta'
+  const tom: Tom =
+    frescor.problema ? 'semDados' : frescor.origem === 'rede' ? 'ok' : 'alerta'
+  // A faixa diz de QUEM é o problema. "Sem conexão" para um servidor lento manda a
+  // pessoa reiniciar o roteador — foi o que aconteceu em 04/10/2026, no Wi-Fi e no 5G.
+  const porQue =
+    frescor.problema === 'rede'
+      ? 'Sem conexão'
+      : frescor.problema === 'demora'
+        ? 'O servidor demorou'
+        : frescor.problema === 'servidor'
+          ? 'O servidor falhou'
+          : null
   const texto =
     frescor.origem === 'rede' ? (
       'Atualizado agora'
-    ) : frescor.offline ? (
+    ) : porQue ? (
       <>
-        Sem conexão — mostrando dados de <Num style={estilos.faixaFrescorHora}>{frescor.hora}</Num>
+        {porQue} — mostrando dados de{' '}
+        <Num style={estilos.faixaFrescorHora}>{frescor.hora}</Num>
       </>
     ) : (
       <>

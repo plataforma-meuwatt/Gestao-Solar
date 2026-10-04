@@ -300,3 +300,46 @@ def test_a_frase_do_monitoramento_tem_UMA_fonte():
         "a frase voltou a ser escrita à mão — use `plants.sem_monitoramento(link, …)`: "
         + ", ".join(culpados)
     )
+
+
+def test_o_MICRO_tem_prazo_e_nao_bloqueia_a_tela():
+    """Defeito que o dono viu em 04/10/2026 como "sem conexão" no Wi-Fi e no 5G.
+
+    A leitura ao vivo do MICRO vai aos portais dos fabricantes (Solis, Canadian, TSUN) na
+    hora, e é o elo mais lento do sistema: medido naquele dia, três rodadas seguidas
+    levaram 6,9 s, 12,0 s e 21,8 s, contra 1,7–2,1 s das seis usinas do meuWatt em
+    paralelo. Com ela dentro e em SEQUÊNCIA, `GET /api/v1/home` passou de 2–3 s para
+    5–30 s — e o aplicativo desiste em 12 s.
+
+    Duas coisas guardam isso: o prazo, e as duas leituras correndo juntas (em sequência o
+    tempo da tela era a soma, e a parcela do MICRO decidia tudo).
+    """
+    from pathlib import Path
+
+    from app.api.v1.plants import PRAZO_DO_MICRO_S
+
+    assert 0 < PRAZO_DO_MICRO_S <= 10, "prazo frouxo volta a deixar a tela esperando"
+
+    fonte = Path(__file__).resolve().parents[1].joinpath("app", "api", "v1", "plants.py")
+    corpo = fonte.read_text("utf-8")
+    assert "micro_usinas(ao_vivo=True, timeout=PRAZO_DO_MICRO_S)" in corpo, (
+        "a leitura do MICRO voltou a não ter prazo"
+    )
+    assert "_do_micro(), _do_meuwatt(), return_exceptions=True" in corpo, (
+        "as duas leituras voltaram a correr em sequência"
+    )
+
+    cliente = Path(__file__).resolve().parents[1].joinpath("app", "clients", "meuwatt.py")
+    assert "ao_vivo: bool = False, timeout: float | None = None" in cliente.read_text("utf-8")
+
+
+def test_micro_sem_leitura_entra_na_lista_sem_numero(db):
+    """REGRA 0: o prazo estourar não pode virar zero na tela. A usina aparece, os campos
+    perecíveis vêm nulos — "—" — e o aviso diz por quê."""
+    from app.api.v1.plants import _dados_do_micro
+
+    d = _dados_do_micro({"id": 1, "capacity_kwp": 39.04})
+    assert d["potencia_kw"] is None
+    assert d["energia_hoje_kwh"] is None
+    assert d["capacidade_kwp"] == 39.04
+    assert d["sem_comunicacao"] is False

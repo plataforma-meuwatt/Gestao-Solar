@@ -280,7 +280,9 @@ class MeuWattClient:
             offset += limit
         return todos
 
-    async def micro_usinas(self, ao_vivo: bool = False) -> list[dict[str, Any]]:
+    async def micro_usinas(
+        self, ao_vivo: bool = False, timeout: float | None = None
+    ) -> list[dict[str, Any]]:
         """As micro usinas do MICRO — usinas que vêm dos portais dos fabricantes (Solis,
         Canadian) e que o monitoramento do meuWatt não conhece. Só o cadastro
         (`live=false`: o meuWatt não vai aos portais), para o gestor casar no vínculo.
@@ -292,7 +294,14 @@ class MeuWattClient:
         # `live=true` faz o meuWatt ir aos portais dos fabricantes e voltar com status,
         # potência e energia de hoje — é o que a tela do dono precisa. Caro, então só quem
         # vai MOSTRAR o número pede; quem só quer o cadastro (casar, listar) pede sem.
-        dados = await self._get("/micro/plants", live="true" if ao_vivo else "false")
+        # `timeout` existe porque o `live=true` é o elo mais LENTO e mais instável de
+        # todas as leituras deste sistema: medido em 04/10/2026, três rodadas seguidas
+        # levaram 6,9 s, 12,0 s e 21,8 s, contra 1,7–2,1 s das seis usinas do meuWatt
+        # lidas em paralelo. Quem mostra a tela passa um teto e segue sem o número — que
+        # pela REGRA 0 aparece como "—", nunca como zero.
+        dados = await self._get(
+            "/micro/plants", timeout=timeout, live="true" if ao_vivo else "false"
+        )
         plantas = dados.get("plants") if isinstance(dados, dict) else None
         return [p for p in plantas or [] if isinstance(p, dict)]
 

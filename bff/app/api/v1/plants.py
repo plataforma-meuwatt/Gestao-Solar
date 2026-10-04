@@ -574,28 +574,42 @@ async def listar_usinas(
     # que é o defeito da REGRA 0 com outra roupa: ausência lida como "não gerou". O MICRO
     # responde por ela, e é de lá que vêm potência e energia de hoje.
     so_micro = [l for l in links if l.so_micro]
-    if so_micro:
-        try:
-            por_id = await _micro_ao_vivo(db, usuario)
-            for link in so_micro:
-                m = por_id.get(link.mw_micro_plant_id)
-                if m is not None:
-                    dados_por_usina[link.id] = _dados_do_micro(m)
-        except Exception as exc:  # noqa: BLE001 — a lista abre com o MICRO fora
-            aviso_geral = aviso_geral or f"Micro usinas: {exc}"
-
     com_mw = [l for l in links if l.mw_plant_slug]
-    if com_mw:
-        try:
-            cliente = vinculos.cliente_meuwatt(db, usuario.id)
-            resultados = await asyncio.gather(
-                *(_dados_meuwatt(cliente, l, hoje_na_usina()) for l in com_mw),
-                return_exceptions=True,
-            )
-            for link, r in zip(com_mw, resultados, strict=True):
-                dados_por_usina[link.id] = r if isinstance(r, dict) else {}
-        except Exception as exc:  # noqa: BLE001 — ponte fora não derruba a lista
-            aviso_geral = f"Dados de geração indisponíveis: {exc}"
+
+    # As duas leituras correm JUNTAS. Em sequência, o tempo da tela era a SOMA — e a
+    # parcela do MICRO varia de 7 a 22 s, então ela decidia tudo. Em paralelo, o total é
+    # o maior dos dois, e o MICRO ainda tem o prazo de `PRAZO_DO_MICRO_S` por cima.
+    async def _do_micro() -> dict[int, dict[str, Any]]:
+        return await _micro_ao_vivo(db, usuario) if so_micro else {}
+
+    async def _do_meuwatt() -> list[Any]:
+        if not com_mw:
+            return []
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
+        return await asyncio.gather(
+            *(_dados_meuwatt(cliente, l, hoje_na_usina()) for l in com_mw),
+            return_exceptions=True,
+        )
+
+    micro_lido, do_meuwatt = await asyncio.gather(
+        _do_micro(), _do_meuwatt(), return_exceptions=True
+    )
+
+    if isinstance(micro_lido, dict):
+        for link in so_micro:
+            m = micro_lido.get(link.mw_micro_plant_id)
+            if m is not None:
+                dados_por_usina[link.id] = _dados_do_micro(m)
+    elif so_micro:
+        # Sem leitura, a micro entra na lista com os campos nulos — "—" na tela, nunca
+        # zero. O aviso diz por quê, e a faixa de frescor diz de quando é o resto.
+        aviso_geral = aviso_geral or f"Micro usinas: {micro_lido}"
+
+    if isinstance(do_meuwatt, list):
+        for link, r in zip(com_mw, do_meuwatt, strict=True):
+            dados_por_usina[link.id] = r if isinstance(r, dict) else {}
+    elif com_mw:
+        aviso_geral = f"Dados de geração indisponíveis: {do_meuwatt}"
 
     saida: list[UsinaOut] = []
     for link in links:
@@ -711,6 +725,21 @@ def _parados(inversores: list[dict[str, Any]]) -> int:
     return sum(1 for i in inversores if _em_falha(i))
 
 
+#: Quanto a tela espera pelo MICRO antes de desenhar sem ele.
+#:
+#: É o elo mais lento do sistema: o `live=true` faz o meuWatt ir aos portais dos
+#: fabricantes (Solis, Canadian, TSUN) na hora. Medido em 04/10/2026, três rodadas
+#: seguidas: 6,9 s, 12,0 s e 21,8 s — contra 1,7 a 2,1 s das seis usinas do meuWatt lidas
+#: em paralelo. Com ele dentro, `GET /api/v1/home` passou de 2–3 s para 5–30 s, e o
+#: aplicativo, que desiste em 12 s, começou a dizer "Sem conexão com a internet" para
+#: quem estava no Wi-Fi e no 5G.
+#:
+#: Seis segundos pegam a maioria das voltas. Quando não pega, a micro usina entra na lista
+#: SEM leitura — "—", nunca zero — e a faixa de frescor diz de quando é o que está na tela.
+#: Esperar o elo mais lento é o que a carteira do portal já aprendeu a não fazer.
+PRAZO_DO_MICRO_S = 6.0
+
+
 async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]]:
     """As micro usinas do MICRO, ao vivo, indexadas pelo id que `mw_micro_plant_id` guarda.
 
@@ -718,7 +747,8 @@ async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]
     pedir uma por usina seria multiplicar a ida ao portal do fabricante sem trazer nada.
     """
     cliente = vinculos.cliente_meuwatt(db, usuario.id)
-    return {m.get("id"): m for m in await cliente.micro_usinas(ao_vivo=True)}
+    cru = await cliente.micro_usinas(ao_vivo=True, timeout=PRAZO_DO_MICRO_S)
+    return {m.get("id"): m for m in cru}
 
 
 def _dados_do_micro(m: dict[str, Any]) -> dict[str, Any]:

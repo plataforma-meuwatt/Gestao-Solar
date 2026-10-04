@@ -157,8 +157,40 @@ export type Frescor = {
   vencido: boolean
   /** A rede está buscando agora. */
   atualizando: boolean
-  /** A rede falhou e o que sobrou é o disco. */
+  /**
+   * POR QUE o que está na tela veio do disco — e não só "deu erro".
+   *
+   * `offline` era calculado como "existe erro", e por isso um servidor LENTO virava
+   * "Sem conexão" na faixa do alto. Em 04/10/2026 o dono abriu o aplicativo no Wi-Fi e
+   * no 5G e leu que não tinha internet: a rede dele estava perfeita, e o que passava de
+   * doze segundos era `GET /api/v1/home`. Acusar a rede de quem usa por lentidão nossa
+   * é o pior jeito de errar — ele vai reiniciar o roteador.
+   *
+   * * `rede` — não houve resposta nenhuma. Aí sim é a conexão.
+   * * `demora` — o servidor não respondeu no prazo do aplicativo.
+   * * `servidor` — respondeu com erro.
+   */
+  problema: 'rede' | 'demora' | 'servidor' | null
+  /** Atalho de `problema === 'rede'`: a rede falhou e o que sobrou é o disco. */
   offline: boolean
+}
+
+/** Que tipo de falha foi esta — ver `Frescor.problema`. */
+function tipoDoProblema(erro: unknown): 'rede' | 'demora' | 'servidor' | null {
+  if (erro == null) return null
+  if (axios.isAxiosError(erro)) {
+    // O axios marca o estouro de prazo de três jeitos, dependendo da plataforma e da
+    // versão; testar só um deles deixava o timeout cair no ramo de "sem resposta".
+    if (
+      erro.code === 'ECONNABORTED' ||
+      erro.code === 'ETIMEDOUT' ||
+      /timeout/i.test(erro.message ?? '')
+    ) {
+      return 'demora'
+    }
+    return erro.response ? 'servidor' : 'rede'
+  }
+  return 'servidor'
 }
 
 export type Leitura<T> = {
@@ -264,13 +296,15 @@ export function fetchWithCache<T>(
   const validadeMs = opcoes.validadeMs ?? VALIDADE_PADRAO_MS
   const idadeMs = mostrandoCache ? Date.now() - new Date(doDisco.gravadoEm).getTime() : 0
 
+  const problema = mostrandoCache ? tipoDoProblema(consulta.error) : null
   const frescor: Frescor = {
     origem: daRede ? 'rede' : mostrandoCache ? 'cache' : 'vazio',
     hora: mostrandoCache ? hora(doDisco.gravadoEm) : undefined,
     idadeMs,
     vencido: mostrandoCache && idadeMs > validadeMs,
     atualizando: consulta.isFetching,
-    offline: mostrandoCache && consulta.error != null,
+    problema,
+    offline: problema === 'rede',
   }
 
   return {
