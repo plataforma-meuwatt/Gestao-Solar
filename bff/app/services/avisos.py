@@ -58,7 +58,28 @@ class AvisoDeParada:
     #: primeira coisa que a equipe faz ao receber é conferir na tela — e sem a hora ela
     #: compara com o estado de AGORA, que pode já ter voltado.
     desde: str | None = None
+    #: A energia que esta parada já custou, medida pelo meuWatt. É ela que decide se o
+    #: aviso sai (`PERDA_MINIMA_KWH`) e é ela que diz ao dono o tamanho do problema.
+    perda_kwh: float | None = None
 
+
+#: Abaixo desta perda, a parada não acorda ninguém.
+#:
+#: O tempo sozinho não separa parada de oscilação: um inversor que "para" ao amanhecer
+#: não estava gerando nada, e vinte minutos assim custam zero. Medido no meuWatt em
+#: 04/10/2026, com as paradas que o próprio detector gravou:
+#:
+#: | o que era                        | perda medida      |
+#: |----------------------------------|-------------------|
+#: | oscilação de 7 a 16 min          | 0,01 a 0,10 kWh   |
+#: | parada real de 32 a 38 min       | 20 a 26 kWh       |
+#: | parada aberta há 3,5 dias        | 4.635 kWh         |
+#:
+#: Um kWh fica dez vezes acima do maior ruído e vinte vezes abaixo da menor parada real —
+#: folga nos dois lados. E a régua se calibra sozinha no amanhecer: enquanto não há sol,
+#: não há perda, e não há urgência; quando o sol sobe, a perda passa do limiar e o aviso
+#: sai. Nenhuma data de nascer do sol precisa ser calculada aqui.
+PERDA_MINIMA_KWH = 1.0
 
 #: Quanto tempo a parada precisa estar ABERTA para virar aviso.
 #:
@@ -119,6 +140,66 @@ def _aberta_ha(inv: dict[str, Any]) -> timedelta | None:
     if inicio.tzinfo is None:
         inicio = inicio.replace(tzinfo=UTC)
     return datetime.now(UTC) - inicio
+
+
+async def _so_as_materiais(
+    cliente: Any, slug: str, candidatos: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Das paradas que já persistiram, as que o detector confirma e que custam energia.
+
+    Duas perguntas são respondidas por esta única leitura (`alerts?status=active`, uma
+    página, ~1 s):
+
+    1. **o detector ainda considera esta parada aberta?** O `down` do `monitoring/current`
+       e a fila de paradas podem discordar por alguns minutos — e avisar o que já fechou é
+       o alarme que a equipe em campo nega, porque quando ela abre a tela está tudo normal;
+    2. **já custou energia?** `estimated_loss_kwh` é o que separa parada de oscilação, e é
+       um número que o meuWatt calcula; dduzi-lo aqui seria inventar.
+
+    **Falhar aqui não cala ninguém.** Sem resposta do upstream, os candidatos passam como
+    antes: "não consegui conferir" não é "não é material", e o filtro de persistência já
+    tirou o ruído mais barato. Só a resposta POSITIVA — a parada não está na fila, ou está
+    com perda abaixo do limiar — descarta o aviso.
+    """
+    if not candidatos:
+        return []
+    try:
+        pagina = await cliente.alertas(slug, status="active", limit=200)
+    except Exception:  # noqa: BLE001
+        return candidatos
+    ativos = pagina.get("alerts") if isinstance(pagina, dict) else pagina
+    if not isinstance(ativos, list):
+        return candidatos
+
+    # O casamento é pelo número de SÉRIE: do lado do monitoramento ele é `serial_number`,
+    # do lado da fila é `sn`. O `id` não serve — lá é `slot-143`, aqui é `inverter_id: 143`.
+    perda_por_sn: dict[str, float] = {}
+    for a in ativos:
+        if not isinstance(a, dict) or a.get("kind") != "stop":
+            continue
+        sn = str(a.get("sn") or "").strip()
+        if not sn:
+            continue
+        try:
+            perda = float(a.get("estimated_loss_kwh") or 0)
+        except (TypeError, ValueError):
+            perda = 0.0
+        perda_por_sn[sn] = max(perda_por_sn.get(sn, 0.0), perda)
+
+    materiais = []
+    for inv in candidatos:
+        sn = str(inv.get("serial_number") or "").strip()
+        perda = perda_por_sn.get(sn)
+        if perda is None:
+            # O detector não tem esta parada aberta: ou já fechou, ou nunca entrou na
+            # fila. Sem número de série, também não há como conferir — e um candidato que
+            # não se confirma não acorda ninguém.
+            continue
+        if perda < PERDA_MINIMA_KWH:
+            continue
+        inv["perda_kwh"] = perda
+        materiais.append(inv)
+    return materiais
 
 
 def _parados(monitoramento: Any) -> list[dict[str, Any]]:
@@ -198,7 +279,11 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
             # Usina fora do ar não gera aviso e não derruba as outras. Silêncio aqui é
             # correto: "não consegui ler" não é "parou".
             continue
-        estado[link.id] = _parados(resposta)
+        # Primeiro a régua local (persistência e janela), que é de graça; só o que
+        # sobreviver a ela custa a ida à fila de paradas.
+        estado[link.id] = await _so_as_materiais(
+            clientes[dono], link.mw_plant_slug, _parados(resposta)
+        )
 
     # ── as MICRO usinas, que o laço acima não alcança ──────────────────────────
     #
@@ -260,6 +345,7 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
                         # recebeu em 30/09/2026.
                         causa=causa_em_portugues(inv.get("down_cause")),
                         desde=hora_brt(inv.get("down_since")),
+                        perda_kwh=inv.get("perda_kwh"),
                     )
                 )
     return avisos
@@ -305,14 +391,17 @@ def texto_do_grupo(grupo: list[AvisoDeParada]) -> tuple[str, str, dict[str, Any]
         )
     elif n == 1:
         titulo = f"{usina.nome} · inversor parado"
-        corpo = f"{nomes[0]} parou de gerar{_desde(primeiro)}. Toque para ver o equipamento."
+        corpo = (
+            f"{nomes[0]} parou de gerar{_desde(primeiro)}{_custo(grupo)}. "
+            "Toque para ver o equipamento."
+        )
     else:
         titulo = f"{usina.nome}: {n} inversores pararam"
         causa = next((a.causa for a in grupo if a.causa), None)
         # A hora vem SEMPRE, com causa ou sem: a primeira coisa que a equipe faz ao
         # receber é abrir a tela, e lá ela vê o estado de AGORA — que pode já ter
         # voltado. Sem "desde quando", ela conclui que o aviso estava errado.
-        corpo = f"{causa or _lista(nomes, n)}{_desde(primeiro)}."
+        corpo = f"{causa or _lista(nomes, n)}{_desde(primeiro)}{_custo(grupo)}."
 
     return (
         titulo,
@@ -326,6 +415,27 @@ def texto_do_grupo(grupo: list[AvisoDeParada]) -> tuple[str, str, dict[str, Any]
             "quantidade": n,
         },
     )
+
+
+def _kwh(total: float) -> str:
+    """Energia em pt-BR: "240 kWh", "4.635 kWh", "2,4 kWh".
+
+    Uma decimal só abaixo de dez, porque "1,0 kWh" e "1 kWh" dizem o mesmo e o espaço na
+    tarja da notificação é curto. Ponto de milhar e vírgula decimal, como manda a casa.
+    """
+    if total < 10:
+        return f"{total:.1f}".replace(".", ",") + " kWh"
+    return f"{total:,.0f}".replace(",", ".") + " kWh"
+
+
+def _custo(grupo: list["AvisoDeParada"]) -> str:
+    """" · 240 kWh perdidos", ou nada quando o detector não mediu.
+
+    É o número que diz o TAMANHO do problema, e sem ele "8 inversores pararam" é igual
+    numa oscilação e numa parada de três dias.
+    """
+    total = sum(a.perda_kwh or 0 for a in grupo)
+    return f" · {_kwh(total)} perdidos" if total > 0 else ""
 
 
 def _desde(aviso: AvisoDeParada) -> str:

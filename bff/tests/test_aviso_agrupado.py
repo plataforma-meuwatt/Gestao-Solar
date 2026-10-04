@@ -209,3 +209,98 @@ def test_a_hora_de_brasilia_tem_UMA_fonte(db):
 
     motor = Path(__file__).resolve().parents[1].joinpath("app", "services", "motor.py")
     assert "def _hora_brt" not in motor.read_text("utf-8"), "a cópia voltou"
+
+
+class _ClienteFalso:
+    """Um meuWatt de mentira, para provar a régua da materialidade sem rede."""
+
+    def __init__(self, ativos=None, explode=False):
+        self._ativos = ativos if ativos is not None else []
+        self._explode = explode
+        self.chamadas = 0
+
+    async def alertas(self, slug, status="active", limit=200, offset=0):
+        self.chamadas += 1
+        if self._explode:
+            raise RuntimeError("meuWatt fora do ar")
+        return {"plant": slug, "total": len(self._ativos), "alerts": self._ativos}
+
+
+def _ativo(sn, perda, kind="stop"):
+    return {"id": 1, "sn": sn, "kind": kind, "is_active": True, "estimated_loss_kwh": perda}
+
+
+async def test_oscilacao_que_nao_custou_energia_nao_acorda_ninguem(db):
+    """A régua que o dono pediu junto com o tempo, em 04/10/2026: as duas juntas.
+
+    O tempo sozinho não separa parada de oscilação — um inversor que "para" ao amanhecer
+    não estava gerando nada, e vinte minutos assim custam zero. O detector mede a perda, e
+    é ela que diz se vale acordar alguém: oscilação daquele dia custou 0,01 a 0,10 kWh; a
+    parada real, 20 a 26 kWh por inversor.
+    """
+    from app.services.avisos import PERDA_MINIMA_KWH, _so_as_materiais
+
+    candidatos = [
+        {"id": "slot-1", "name": "Ruído", "serial_number": "SN-RUIDO"},
+        {"id": "slot-2", "name": "Real", "serial_number": "SN-REAL"},
+    ]
+    cliente = _ClienteFalso([_ativo("SN-RUIDO", 0.08), _ativo("SN-REAL", 24.0)])
+
+    passaram = await _so_as_materiais(cliente, "porto-ferreira", candidatos)
+    assert [i["name"] for i in passaram] == ["Real"]
+    assert passaram[0]["perda_kwh"] == 24.0
+    assert PERDA_MINIMA_KWH == 1.0
+
+
+async def test_parada_que_o_detector_JA_FECHOU_nao_avisa(db):
+    """O `down` do monitoramento e a fila de paradas discordam por alguns minutos. Avisar
+    o que já fechou é o alarme que a equipe nega — quando ela abre a tela, está normal."""
+    from app.services.avisos import _so_as_materiais
+
+    candidatos = [{"id": "slot-9", "name": "Já voltou", "serial_number": "SN-X"}]
+    assert await _so_as_materiais(_ClienteFalso([]), "tiete", candidatos) == []
+
+
+async def test_upstream_fora_do_ar_NAO_cala_o_aviso(db):
+    """"Não consegui conferir" não é "não é material". Sem resposta, passa como antes — o
+    filtro de persistência já tirou o ruído mais barato."""
+    from app.services.avisos import _so_as_materiais
+
+    candidatos = [{"id": "slot-9", "name": "Talvez", "serial_number": "SN-X"}]
+    passaram = await _so_as_materiais(_ClienteFalso(explode=True), "tiete", candidatos)
+    assert [i["name"] for i in passaram] == ["Talvez"]
+
+
+async def test_a_fila_so_e_consultada_quando_ha_candidato(db):
+    """A régua local (persistência e janela) é de graça; a ida à fila custa ~1 s por
+    usina. Consultá-la a cada volta, com ou sem candidato, multiplicaria a carga no
+    meuWatt pelo número de usinas da carteira para responder "nada mudou"."""
+    from app.services.avisos import _so_as_materiais
+
+    cliente = _ClienteFalso([])
+    assert await _so_as_materiais(cliente, "ibitinga", []) == []
+    assert cliente.chamadas == 0
+
+
+def test_o_corpo_diz_QUANTO_custou(db, dono, pf):
+    """"8 inversores pararam" é igual numa oscilação e numa parada de três dias. O número
+    que diz o tamanho do problema é a energia perdida, em pt-BR."""
+    from app.services.avisos import _kwh
+
+    assert _kwh(0.09) == "0,1 kWh"
+    assert _kwh(2.4) == "2,4 kWh"
+    assert _kwh(240.5) == "240 kWh"
+    assert _kwh(4635.8) == "4.636 kWh"
+
+    grupo = []
+    for i in range(20):
+        a = _aviso(dono, pf, f"Inv {i}", causa="Potência zero durante o dia")
+        a.desde, a.perda_kwh = "07:41", 24.0
+        grupo.append(a)
+    assert texto_do_grupo(grupo)[1] == (
+        "Potência zero durante o dia desde 07:41 · 480 kWh perdidos."
+    )
+
+    # Sem perda medida, o corpo não inventa número nenhum.
+    sem = [_aviso(dono, pf, "Inv 1"), _aviso(dono, pf, "Inv 2")]
+    assert "perdidos" not in texto_do_grupo(sem)[1]
