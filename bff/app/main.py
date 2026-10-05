@@ -63,6 +63,14 @@ from app.core.config import get_settings
 settings = get_settings()
 settings.validar_producao()
 
+#: Quanto o ciclo espera antes da primeira ida a um upstream.
+#:
+#: Existe pelo `/health`: o Railway decide por ele se o deploy trocou de versão, e bater
+#: nos upstreams no instante do boot o atrasa. Vinte segundos bastam para isso e são curtos
+#: o suficiente para o MICRO já estar quente quando alguém abrir o aplicativo.
+_FOLEGO_DO_BOOT_S = 20
+
+
 async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
     """O agendador dos avisos, dentro do próprio processo.
 
@@ -71,8 +79,11 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
     nenhuma usina. Um laço aqui resolve sem serviço novo, sem credencial e sem cron
     externo, e é seguro porque o disparo é idempotente por `gs_notificacoes_enviadas`.
 
-    Dorme ANTES da primeira volta: subir e imediatamente ir aos dois upstreams atrasaria
-    o `/health` de um deploy, que é o que o Railway usa para decidir se trocou de versão.
+    Dorme antes de ir aos upstreams: subir e bater nos dois na hora atrasaria o `/health`
+    de um deploy, que é o que o Railway usa para decidir se trocou de versão. O fôlego do
+    boot é CURTO (`_FOLEGO_DO_BOOT_S`), não a volta inteira — o MICRO precisa estar quente
+    para a primeira abertura do aplicativo, e eram os dez minutos de espera que deixavam
+    quem abria logo depois de uma publicação lendo "o portal do fabricante não respondeu".
 
     Nada aqui derruba a API: uma volta que estoura é registrada e a próxima acontece.
     """
@@ -81,7 +92,28 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
     from app.core.db import SessionLocal
     from app.services import motor
 
+    await asyncio.sleep(_FOLEGO_DO_BOOT_S)
+
     while True:
+        # O MICRO é aquecido ANTES da espera, e os avisos depois. A leitura ao vivo dele
+        # leva ~24 s a frio e 2–3 s em seguida: sem alguém aquecendo, a PRIMEIRA abertura
+        # do aplicativo estoura o prazo da tela e lê "o portal do fabricante não
+        # respondeu" (o que o dono viu em 05/10/2026). Aqui ela acontece sem ninguém
+        # esperando, e dez minutos cabem na validade do guardado.
+        #
+        # **Antes** da espera porque a primeira volta é a do deploy: com ele no fim do
+        # corpo havia dez minutos em que o valor não existia, e quem abrisse o aplicativo
+        # logo depois de uma publicação lia o aviso — conferido em produção em
+        # 05/10/2026, no deploy desta própria correção.
+        try:
+            with SessionLocal() as db:
+                quantas = await plants.aquecer_micro(db)
+            _log.info("micro/aquecer: %s micro usinas guardadas", quantas)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("micro/aquecer: a volta falhou; a próxima continua agendada")
+
         await asyncio.sleep(minutos * 60)
         # Os dois caminhos de aviso, que são separados e têm travas próprias: o PUSH
         # (`gs_avisos_enviados`) e o WhatsApp (`gs_notificacoes_enviadas`). O push é o que
@@ -110,19 +142,6 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
             raise
         except Exception:  # noqa: BLE001
             _log.exception("motor: a volta falhou; a próxima continua agendada")
-
-        # A leitura ao vivo do MICRO leva ~24 s a frio e 2–3 s em seguida: sem alguém
-        # aquecendo, a PRIMEIRA abertura do aplicativo estoura o prazo da tela e lê "o
-        # portal do fabricante não respondeu" (o que o dono viu em 05/10/2026). Aqui ela
-        # acontece sem ninguém esperando, e dez minutos cabem na validade do guardado.
-        try:
-            with SessionLocal() as db:
-                quantas = await plants.aquecer_micro(db)
-            _log.info("micro/aquecer: %s micro usinas guardadas", quantas)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            _log.exception("micro/aquecer: a volta falhou; a próxima continua agendada")
 
 
 @asynccontextmanager

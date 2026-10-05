@@ -435,6 +435,17 @@ def test_o_MICRO_e_aquecido_pelo_ciclo_que_ja_roda():
 
     ciclo = Path(__file__).resolve().parents[1].joinpath("app", "main.py").read_text("utf-8")
     assert "plants.aquecer_micro(db)" in ciclo, "o aquecimento saiu do ciclo de fundo"
+    # O aquecimento vem ANTES da espera da volta. Com ele depois, havia dez minutos após
+    # cada deploy em que o valor não existia — e quem abrisse o aplicativo nessa janela
+    # lia o aviso. Conferido em produção em 05/10/2026, no deploy desta correção.
+    assert ciclo.index("plants.aquecer_micro(db)") < ciclo.index("asyncio.sleep(minutos * 60)"), (
+        "o aquecimento voltou para depois da espera: a janela após o deploy reabriu"
+    )
+    from app.main import _FOLEGO_DO_BOOT_S
+
+    assert 0 < _FOLEGO_DO_BOOT_S <= 60, (
+        "o fôlego do boot é para o `/health` do deploy, não para a volta inteira"
+    )
     assert plants._MICRO_VALIDADE_S >= 600, (
         "a validade do guardado ficou menor que a volta do ciclo (10 min), e aí ele vence "
         "entre duas e a primeira tela volta a mentir"
