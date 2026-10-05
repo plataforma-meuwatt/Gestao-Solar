@@ -17,6 +17,7 @@ erro — e muito melhor do que uma tela de zeros, que se lê como "não gerou na
 import asyncio
 from calendar import monthrange
 from datetime import UTC, date, datetime, timedelta
+from time import monotonic
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -603,7 +604,7 @@ async def listar_usinas(
     elif so_micro:
         # Sem leitura, a micro entra na lista com os campos nulos — "—" na tela, nunca
         # zero. O aviso diz por quê, e a faixa de frescor diz de quando é o resto.
-        aviso_geral = aviso_geral or f"Micro usinas: {micro_lido}"
+        aviso_geral = aviso_geral or MICRO_MUDO
 
     if isinstance(do_meuwatt, list):
         for link, r in zip(com_mw, do_meuwatt, strict=True):
@@ -734,10 +735,64 @@ def _parados(inversores: list[dict[str, Any]]) -> int:
 #: aplicativo, que desiste em 12 s, começou a dizer "Sem conexão com a internet" para
 #: quem estava no Wi-Fi e no 5G.
 #:
-#: Seis segundos pegam a maioria das voltas. Quando não pega, a micro usina entra na lista
-#: SEM leitura — "—", nunca zero — e a faixa de frescor diz de quando é o que está na tela.
+#: Seis segundos pegam a volta QUENTE (2–3 s). A frio ela leva ~24 s, então o que atende
+#: dentro do prazo é o valor guardado — ver `_MICRO_TTL_S` e `_MICRO_TETO_S`. Sem nada
+#: guardado, a micro usina entra na lista SEM leitura — "—", nunca zero — e a faixa de
+#: frescor diz de quando é o que está na tela.
 #: Esperar o elo mais lento é o que a carteira do portal já aprendeu a não fazer.
 PRAZO_DO_MICRO_S = 6.0
+
+
+#: O portal do fabricante não respondeu — dito para o DONO, não para o log.
+#:
+#: Era `f"Portal do fabricante indisponível: {exc}"`, e o `exc` mais comum é um
+#: `httpx.ReadTimeout`, cujo texto é VAZIO: a tela imprimia "Portal do fabricante
+#: indisponível: " com dois-pontos e nada depois (visto em 05/10/2026). O motivo técnico
+#: não ajuda quem lê; o que ajuda é saber que o número volta sozinho.
+MICRO_MUDO = (
+    "O portal do fabricante não respondeu agora. O número volta na próxima atualização."
+)
+
+
+#: A partir de quando vale a pena buscar outro valor no portal do fabricante.
+#:
+#: O `live=true` é caro para o meuWatt, não para nós: ele vai aos portais na hora. Medido
+#: em 05/10/2026, a mesma leitura levou **24,5 s a frio e 2–3 s em seguida** — o portal
+#: publica de minuto em minuto, não a cada requisição. Cinco minutos é o que impede seis
+#: telas abertas de virarem seis idas ao portal.
+_MICRO_TTL_S = 300.0
+
+#: Até quando o valor guardado ainda é "o número de agora".
+#:
+#: Passado isto, ele NÃO é devolvido: a tela recebe o aviso e desenha "—". É a mesma régua
+#: do `validadeMs` do aplicativo (15 min, `app/src/lib/cache.ts`) e a mesma razão — a
+#: potência de agora é perecível, e quem abre com pressa lê o número, não a faixa. Entre
+#: `_MICRO_TTL_S` e aqui, o valor sai na hora e a renovação corre em fundo.
+_MICRO_VALIDADE_S = 900.0
+
+#: Teto da busca, que corre em FUNDO e não tem ninguém esperando por ela.
+#:
+#: É o que conserta o "Portal do fabricante indisponível" que o dono viu em 05/10/2026:
+#: com o prazo da tela (6 s) também dentro do HTTP, a busca morria junto com a espera e o
+#: valor nunca chegava — toda visita estourava os mesmos 6 s e nenhuma guardava nada.
+#: Agora a tela desiste em `PRAZO_DO_MICRO_S` e a busca segue até o fim, enchendo o cache
+#: para a visita seguinte.
+_MICRO_TETO_S = 45.0
+
+#: `(quando, por id do MICRO)` — o último valor que chegou do portal do fabricante.
+#:
+#: Global de propósito: o MICRO não é escopado por usina no meuWatt (ver `micro_usinas`),
+#: e uma chamada devolve a lista inteira — guardá-la por usuário seria pedi-la N vezes.
+#: Quem filtra é o chamador, pelo `mw_micro_plant_id` dos vínculos DAQUELA pessoa.
+_micro_guardado: tuple[float, dict[int, dict[str, Any]]] | None = None
+_micro_voando: asyncio.Task[dict[int, dict[str, Any]]] | None = None
+
+
+async def _buscar_micro(cliente: Any) -> dict[int, dict[str, Any]]:
+    global _micro_guardado
+    cru = await cliente.micro_usinas(ao_vivo=True, timeout=_MICRO_TETO_S)
+    _micro_guardado = (monotonic(), {m.get("id"): m for m in cru})
+    return _micro_guardado[1]
 
 
 async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]]:
@@ -745,10 +800,42 @@ async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]
 
     Uma chamada serve a lista inteira e o detalhe: o MICRO devolve todas de uma vez, e
     pedir uma por usina seria multiplicar a ida ao portal do fabricante sem trazer nada.
+
+    Nada aqui é enfeite, e cada peça paga um defeito já visto:
+
+    - **a busca sobrevive à espera.** O prazo de 6 s era também o teto do HTTP: a tentativa
+      morria junto com a espera, nada era guardado e toda visita estourava os mesmos 6 s.
+      Era isso que fazia a tela do detalhe dizer "Portal do fabricante indisponível" para
+      sempre, e com a frase VAZIA depois dos dois-pontos (05/10/2026);
+    - **uma busca em voo por vez.** Seis telas abertas não são seis idas ao portal;
+    - **o valor guardado atende enquanto é o número de agora** (`_MICRO_TTL_S` para
+      renovar, `_MICRO_VALIDADE_S` para parar de servir).
     """
-    cliente = vinculos.cliente_meuwatt(db, usuario.id)
-    cru = await cliente.micro_usinas(ao_vivo=True, timeout=PRAZO_DO_MICRO_S)
-    return {m.get("id"): m for m in cru}
+    global _micro_voando
+    idade = monotonic() - _micro_guardado[0] if _micro_guardado is not None else None
+    if idade is not None and idade < _MICRO_TTL_S:
+        return _micro_guardado[1]
+
+    if _micro_voando is None or _micro_voando.done():
+        # O cliente nasce AQUI, dentro da requisição: ele lê o banco, e a sessão fecha
+        # quando ela termina — a busca em fundo só pode ficar com a chamada HTTP.
+        cliente = vinculos.cliente_meuwatt(db, usuario.id)
+        _micro_voando = asyncio.create_task(_buscar_micro(cliente))
+        # Sem ninguém esperando, uma busca que falha vira "Task exception was never
+        # retrieved" no log do servidor. Quem espera já recebe a exceção pelo `shield`.
+        _micro_voando.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+    # Valor velho mas AINDA válido sai na hora, e a renovação já está correndo em fundo:
+    # é o que tira o aviso da primeira tela de quem abre o aplicativo depois de uns
+    # minutos — a volta a frio leva ~24 s, e ninguém espera isso.
+    if idade is not None and idade < _MICRO_VALIDADE_S:
+        return _micro_guardado[1]
+
+    # Nada guardado, ou guardado velho demais para passar por "agora": espera-se a busca
+    # pelo prazo da tela e, se ela não voltar, a exceção sobe. Devolver um número de meia
+    # hora atrás como atual é o defeito da REGRA 0 com outra roupa — quem chamou diz o que
+    # faltou, e a tela desenha "—".
+    return await asyncio.wait_for(asyncio.shield(_micro_voando), PRAZO_DO_MICRO_S)
 
 
 def _dados_do_micro(m: dict[str, Any]) -> dict[str, Any]:
@@ -820,8 +907,8 @@ async def detalhe_usina(
             else:
                 dados = _dados_do_micro(m)
                 equipamentos["alertas_ativos"] = dados.pop("alertas_ativos", None)
-        except Exception as exc:  # noqa: BLE001
-            dados = {"aviso": f"Portal do fabricante indisponível: {exc}"}
+        except Exception:  # noqa: BLE001
+            dados = {"aviso": MICRO_MUDO}
     elif link.mw_plant_slug:
         try:
             cliente = vinculos.cliente_meuwatt(db, usuario.id)

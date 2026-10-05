@@ -322,8 +322,14 @@ def test_o_MICRO_tem_prazo_e_nao_bloqueia_a_tela():
 
     fonte = Path(__file__).resolve().parents[1].joinpath("app", "api", "v1", "plants.py")
     corpo = fonte.read_text("utf-8")
-    assert "micro_usinas(ao_vivo=True, timeout=PRAZO_DO_MICRO_S)" in corpo, (
+    assert "asyncio.wait_for(asyncio.shield(_micro_voando), PRAZO_DO_MICRO_S)" in corpo, (
         "a leitura do MICRO voltou a não ter prazo"
+    )
+    # E o prazo da TELA não pode ser o teto do HTTP: com os dois iguais, a busca morria
+    # junto com a espera, o valor nunca era guardado e toda visita estourava os mesmos
+    # 6 s — era isso que fazia o detalhe dizer "indisponível" para sempre (05/10/2026).
+    assert "micro_usinas(ao_vivo=True, timeout=_MICRO_TETO_S)" in corpo, (
+        "a busca em fundo voltou a morrer com a espera da tela"
     )
     assert "_do_micro(), _do_meuwatt(), return_exceptions=True" in corpo, (
         "as duas leituras voltaram a correr em sequência"
@@ -343,3 +349,69 @@ def test_micro_sem_leitura_entra_na_lista_sem_numero(db):
     assert d["energia_hoje_kwh"] is None
     assert d["capacidade_kwp"] == 39.04
     assert d["sem_comunicacao"] is False
+
+
+def test_o_MICRO_guardado_serve_a_visita_seguinte():
+    """Defeito que o dono viu em 05/10/2026: "portal do fabricante indisponível".
+
+    Medido contra a produção naquele dia: `live=true` leva **24,5 s a frio e 2–3 s em
+    seguida** — o meuWatt vai aos portais e guarda. Com o prazo da tela (6 s) servindo
+    também de teto do HTTP, a busca era cancelada junto com a espera: nada era guardado,
+    e a visita seguinte estourava os mesmos 6 s. O aviso era permanente, e o texto dele
+    vinha VAZIO, porque `httpx.ReadTimeout` não tem mensagem.
+
+    Aqui a primeira chamada estoura o prazo e a segunda — depois de a busca terminar —
+    encontra o valor guardado, sem ir ao portal de novo.
+    """
+    import asyncio
+
+    from app.api.v1 import plants
+
+    class PortalLento:
+        idas = 0
+
+        async def micro_usinas(self, ao_vivo: bool, timeout: float):
+            PortalLento.idas += 1
+            await asyncio.sleep(0.3)
+            return [{"id": 7, "power_kw": 9.9, "status": "online"}]
+
+    plants._micro_guardado = None
+    plants._micro_voando = None
+    anterior = plants.PRAZO_DO_MICRO_S
+    plants.PRAZO_DO_MICRO_S = 0.05
+    try:
+        quem = type("_U", (), {"id": 16})()
+
+        async def cenario():
+            with pytest.raises(Exception):
+                await plants._micro_ao_vivo(None, quem)
+            # A busca NÃO morreu com a espera: ela termina e guarda.
+            await asyncio.sleep(0.4)
+            return await plants._micro_ao_vivo(None, quem)
+
+        plants.vinculos = type(
+            "_V", (), {"cliente_meuwatt": staticmethod(lambda db, uid: PortalLento())}
+        )()
+        lido = asyncio.run(cenario())
+    finally:
+        plants.PRAZO_DO_MICRO_S = anterior
+        plants._micro_guardado = None
+        plants._micro_voando = None
+        import importlib
+
+        importlib.reload(plants)
+
+    assert lido[7]["power_kw"] == 9.9, "o valor guardado não chegou à visita seguinte"
+    assert PortalLento.idas == 1, "a segunda visita foi ao portal de novo"
+
+
+def test_a_frase_do_portal_mudo_nao_termina_em_dois_pontos():
+    """O dono leu "Portal do fabricante indisponível: " — com dois-pontos e nada depois.
+
+    O `exc` interpolado era um `httpx.ReadTimeout`, cujo `str()` é vazio. Motivo técnico
+    não ajuda quem lê a tela; a frase diz o que importa, que é o número voltar sozinho.
+    """
+    from app.api.v1.plants import MICRO_MUDO
+
+    assert not MICRO_MUDO.rstrip().endswith(":")
+    assert "{" not in MICRO_MUDO, "a frase voltou a interpolar a exceção"
