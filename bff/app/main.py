@@ -76,6 +76,7 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
 
     Nada aqui derruba a API: uma volta que estoura é registrada e a próxima acontece.
     """
+    from app.api.v1 import plants
     from app.api.v1.avisos import disparar_avisos_de_parada
     from app.core.db import SessionLocal
     from app.services import motor
@@ -109,6 +110,19 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
             raise
         except Exception:  # noqa: BLE001
             _log.exception("motor: a volta falhou; a próxima continua agendada")
+
+        # A leitura ao vivo do MICRO leva ~24 s a frio e 2–3 s em seguida: sem alguém
+        # aquecendo, a PRIMEIRA abertura do aplicativo estoura o prazo da tela e lê "o
+        # portal do fabricante não respondeu" (o que o dono viu em 05/10/2026). Aqui ela
+        # acontece sem ninguém esperando, e dez minutos cabem na validade do guardado.
+        try:
+            with SessionLocal() as db:
+                quantas = await plants.aquecer_micro(db)
+            _log.info("micro/aquecer: %s micro usinas guardadas", quantas)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("micro/aquecer: a volta falhou; a próxima continua agendada")
 
 
 @asynccontextmanager

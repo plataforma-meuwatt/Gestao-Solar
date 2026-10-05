@@ -415,3 +415,35 @@ def test_a_frase_do_portal_mudo_nao_termina_em_dois_pontos():
 
     assert not MICRO_MUDO.rstrip().endswith(":")
     assert "{" not in MICRO_MUDO, "a frase voltou a interpolar a exceção"
+
+
+def test_o_MICRO_e_aquecido_pelo_ciclo_que_ja_roda():
+    """A primeira abertura do aplicativo não pode pagar os ~24 s da volta a frio.
+
+    Sem aquecimento, o valor guardado só nasce de uma visita que ESTOUROU o prazo: a
+    primeira pessoa do dia lê "o portal do fabricante não respondeu" e precisa puxar para
+    atualizar. Em produção `GS_MOTOR_MINUTOS` é 10, e dez minutos cabem dentro de
+    `_MICRO_VALIDADE_S` — então entre duas voltas o guardado nunca vence.
+
+    E o aquecimento não vale para quem não tem micro usina: a leitura é a mais cara do
+    sistema e não se paga sem ninguém a quem servir.
+    """
+    import asyncio
+    from pathlib import Path
+
+    from app.api.v1 import plants
+
+    ciclo = Path(__file__).resolve().parents[1].joinpath("app", "main.py").read_text("utf-8")
+    assert "plants.aquecer_micro(db)" in ciclo, "o aquecimento saiu do ciclo de fundo"
+    assert plants._MICRO_VALIDADE_S >= 600, (
+        "a validade do guardado ficou menor que a volta do ciclo (10 min), e aí ele vence "
+        "entre duas e a primeira tela volta a mentir"
+    )
+
+    class SemMicro:
+        def scalar(self, _):
+            return None
+
+    assert asyncio.run(plants.aquecer_micro(SemMicro())) == 0, (
+        "sem micro usina cadastrada, a leitura mais cara do sistema foi paga à toa"
+    )

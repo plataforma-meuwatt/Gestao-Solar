@@ -31,7 +31,7 @@ from app.core.security import usuario_atual
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import User, UserPlantAccess
-from app.services import vinculos
+from app.services import integracoes, vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · usinas"])
 
@@ -793,6 +793,33 @@ async def _buscar_micro(cliente: Any) -> dict[int, dict[str, Any]]:
     cru = await cliente.micro_usinas(ao_vivo=True, timeout=_MICRO_TETO_S)
     _micro_guardado = (monotonic(), {m.get("id"): m for m in cru})
     return _micro_guardado[1]
+
+
+async def aquecer_micro(db: Session) -> int:
+    """Põe o valor do MICRO no lugar ANTES de alguém abrir a tela. Devolve quantas veio.
+
+    É o que impede a primeira abertura do aplicativo de cair nos ~24 s da volta a frio e
+    ler "o portal do fabricante não respondeu" — o que o dono viu em 05/10/2026. Sem isto
+    o guardado só existe depois de uma visita que estourou o prazo, e a primeira pessoa
+    do dia paga sempre.
+
+    Mora no ciclo que já roda (`GS_MOTOR_MINUTOS`, 10 em produção): dez minutos cabem
+    dentro de `_MICRO_VALIDADE_S`, então o guardado nunca vence entre duas voltas. Fora
+    desse ciclo não há chamada nenhuma — aquecer de minuto em minuto sem ninguém olhando
+    seria pagar a leitura mais cara do sistema o dia inteiro, de graça.
+
+    **Credencial de SERVIÇO**, a exceção do MICRO: ele não é escopado por usina no meuWatt
+    (ver `clients/meuwatt.micro_usinas`), e o valor é o mesmo para qualquer token — medido
+    nos dois em 05/10/2026. Quem filtra continua sendo o chamador, pelos vínculos da
+    pessoa.
+    """
+    tem_micro = db.scalar(
+        select(PlantLink.id).where(PlantLink.mw_micro_plant_id.is_not(None)).limit(1)
+    )
+    if tem_micro is None:
+        # Nenhuma micro usina cadastrada: a leitura mais cara do sistema não se paga.
+        return 0
+    return len(await _buscar_micro(await integracoes.cliente_meuwatt(db)))
 
 
 async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]]:
