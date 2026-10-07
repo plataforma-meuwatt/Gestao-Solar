@@ -79,6 +79,9 @@ O que hoje é uma lista vira **lado + papel**, e é essa separação que acaba c
 e um segundo papel sem ninguém para ocupá-lo é código que envelhece sem uso. Quando a O&M
 pedir um perfil de leitura, ele nasce como uma linha no catálogo — não como uma migração.
 
+⚠ **Em 07/10/2026 o papel ganhou quem o ocupe:** o **técnico**, que entra no painel só
+para conectar o WhatsApp Business dele. Ver [`PLANO_WHATSAPP_TECNICOS.md`](PLANO_WHATSAPP_TECNICOS.md) §5.1.
+
 ### 3.4 Uma porta de login, três portões de rota
 
 Autenticar é uma coisa só; autorizar é que tem três portões. A porta é
@@ -308,7 +311,9 @@ não uma cláusula copiada: uma cópia esquecida não dá erro, dá dado do vizi
 2. **Cadastrar cliente e conceder usina pelo lado da empresa.** Hoje o gerente vê as duas
    listas; quem cria continua sendo a plataforma. É o próximo passo natural, e ele reusa
    `services/clientes` com o recorte — não nasce uma segunda cópia da regra.
-3. **WhatsApp coexistence.** `gs_whatsapp_contas` com `empresa_id`, o webhook roteando por
+3. **WhatsApp coexistence** — refinado em 07/10/2026 para **um número por técnico**, e
+   desenhado em [`PLANO_WHATSAPP_TECNICOS.md`](PLANO_WHATSAPP_TECNICOS.md). O texto
+   original: `gs_whatsapp_contas` com `empresa_id`, o webhook roteando por
    `phone_number_id` e a tela de conectar. **Bloqueado por terceiro**: depende do status de
    Tech Provider na Meta, que leva semanas. É o pedido original, e vem por último de
    propósito — ligado antes da fundação, ele é exatamente o balaio descrito acima.

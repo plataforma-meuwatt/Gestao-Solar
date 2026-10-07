@@ -18,6 +18,8 @@ Três frentes, na ordem de prioridade do dono:
 1. **Notificações do sistema.** É o foco agora.
 2. **IA.** O cliente pede algo, a IA do GS entende e as IAs do MP e do MW respondem. Vem depois da frente 1.
 3. **Atendimento humano.** **Descartado.** Se um dia for preciso, contrata-se serviço pronto.
+   ⚠ **Reaberto em 07/10/2026**, por cima do help-desk que já existe no meuPlano: cada
+   técnico conecta o WhatsApp Business dele. Ver [`PLANO_WHATSAPP_TECNICOS.md`](PLANO_WHATSAPP_TECNICOS.md).
 
 Antes de tudo entra a **Entrega 0**, uma falha de segurança grave achada no caminho.
 
