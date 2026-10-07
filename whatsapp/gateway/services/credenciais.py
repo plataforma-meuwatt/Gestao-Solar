@@ -53,6 +53,12 @@ class Credenciais:
     #: Só a listagem precisa dele: enviar usa o `phone_number_id`. É por isso que o WABA
     #: errado passou despercebido no primeiro cadastro — o teste de envio dizia "ok".
     waba_id: str | None = None
+    #: O app da PLATAFORMA. Com o `app_secret`, é o par que troca o `code` do Embedded
+    #: Signup pelo token do número de cada técnico (`services/contas.py`).
+    app_id: str | None = None
+    #: A configuração do Embedded Signup, que o navegador do técnico usa para abrir a
+    #: janela da Meta.
+    es_config_id: str | None = None
 
     @property
     def envio_pronto(self) -> bool:
@@ -116,6 +122,8 @@ def em_uso(db: Session) -> Credenciais:
     else:
         valor = Credenciais(
             waba_id=linha.waba_id,
+            app_id=linha.app_id,
+            es_config_id=linha.es_config_id,
             phone_number_id=linha.phone_number_id,
             token=cripto.decifrar(linha.token_cifrado) if linha.token_cifrado else None,
             app_secret=(
@@ -149,6 +157,7 @@ def estado(db: Session) -> dict[str, Any]:
         "phone_number_id": linha.phone_number_id,
         "waba_id": linha.waba_id,
         "app_id": linha.app_id,
+        "es_config_id": linha.es_config_id,
         "numero_exibicao": linha.numero_exibicao,
         "token_prefixo": linha.token_prefixo,
         "token_gravado_em": linha.token_gravado_em,
@@ -234,6 +243,7 @@ async def salvar(
     verify_token: str | None,
     waba_id: str | None = None,
     app_id: str | None = None,
+    es_config_id: str | None = None,
     ator: str | None = None,
 ) -> Resultado:
     """Testa e grava. Só persiste depois de a Meta confirmar o par token + número.
@@ -269,6 +279,8 @@ async def salvar(
         linha.waba_id = waba_id.strip() or None
     if app_id is not None:
         linha.app_id = app_id.strip() or None
+    if es_config_id is not None:
+        linha.es_config_id = es_config_id.strip() or None
     if token:
         linha.token_cifrado = cripto.cifrar(token)
         linha.token_prefixo = token[:7]

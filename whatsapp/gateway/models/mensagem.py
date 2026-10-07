@@ -73,6 +73,10 @@ class Mensagem(Base):
     #: `entrada` (o cliente escreveu) ou `saida` (a empresa mandou).
     direcao: Mapped[str] = mapped_column(String(10), index=True)
 
+    #: Por qual dos NOSSOS números a mensagem passou (`value.metadata.phone_number_id`).
+    #: Com um número só ele era implícito; com o número de cada técnico, é o que diz de
+    #: quem é a conversa. Nulo nas linhas anteriores a esta coluna.
+    phone_number_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     #: O identificador do contato no WhatsApp, como a Meta manda — a chave da conversa.
     wa_id: Mapped[str] = mapped_column(String(32), index=True)
     #: O mesmo número em E.164, quando dá para normalizar. Serve para casar com o cadastro.
@@ -95,6 +99,7 @@ class Mensagem(Base):
     erro_detalhe: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     #: Quem pediu o envio: `bff`, `robo`, ou o que mais vier. Vazio na entrada.
+    #: `celular` = o técnico mandou pelo aplicativo do telefone (eco da coexistência).
     origem: Mapped[str | None] = mapped_column(String(40), nullable=True)
     #: Quando o BFF foi avisado desta mensagem. Nulo = a varredura ainda deve avisar.
     notificada_bff_em: Mapped[datetime | None] = mapped_column(

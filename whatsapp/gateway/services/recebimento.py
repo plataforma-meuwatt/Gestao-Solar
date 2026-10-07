@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from gateway.core.telefone import normalizar
 from gateway.meta import payload as parser
 from gateway.models.mensagem import Mensagem, WebhookEvento, avanca
+from gateway.services import contas
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ def _aplicar_mensagem(db: Session, m: parser.MensagemRecebida) -> bool:
         Mensagem(
             wamid=m.wamid,
             direcao="entrada",
+            phone_number_id=m.phone_number_id,
             wa_id=m.wa_id,
             telefone=_telefone(m.wa_id),
             nome_perfil=m.nome_perfil,
@@ -76,6 +78,32 @@ def _aplicar_mensagem(db: Session, m: parser.MensagemRecebida) -> bool:
             # (ninguém do lado de cá leu ainda) e `pendente` faria a tela cobrar um envio.
             status="recebida",
             status_em=m.ocorrida_em,
+        )
+    )
+    return True
+
+
+def _aplicar_eco(db: Session, e: parser.Eco) -> bool:
+    """O técnico mandou pelo celular: entra como SAÍDA, já enviada, com origem `celular`.
+
+    Idempotente pelo `wamid`, como a recebida. `enviada` e não `pendente`: ela já saiu do
+    aparelho, e os status que vierem depois (entregue, lida) só avançam a partir daí.
+    """
+    if db.scalar(select(Mensagem.id).where(Mensagem.wamid == e.wamid)) is not None:
+        return False
+    db.add(
+        Mensagem(
+            wamid=e.wamid,
+            direcao="saida",
+            phone_number_id=e.phone_number_id,
+            wa_id=e.wa_id,
+            telefone=_telefone(e.wa_id),
+            tipo=e.tipo,
+            texto=e.texto,
+            ocorrida_em=e.ocorrida_em,
+            status="enviada",
+            status_em=e.ocorrida_em,
+            origem="celular",
         )
     )
     return True
@@ -107,7 +135,7 @@ def _aplicar_status(db: Session, s: parser.AvisoDeStatus) -> None:
 
 def processar(db: Session, evento: WebhookEvento) -> dict[str, int]:
     """Aplica uma entrega. Idempotente: rodar duas vezes não duplica nada."""
-    contagem = {"mensagens": 0, "novas": 0, "status": 0}
+    contagem = {"mensagens": 0, "novas": 0, "status": 0, "ecos": 0, "desconectadas": 0}
     try:
         leitura = parser.ler(evento.corpo or {})
         for m in leitura.mensagens:
@@ -117,6 +145,11 @@ def processar(db: Session, evento: WebhookEvento) -> dict[str, int]:
         for s in leitura.status:
             contagem["status"] += 1
             _aplicar_status(db, s)
+        for e in leitura.ecos:
+            if _aplicar_eco(db, e):
+                contagem["ecos"] += 1
+        for aviso in leitura.contas:
+            contagem["desconectadas"] += contas.aplicar_aviso(db, aviso)
 
         evento.processado_em = datetime.now(UTC)
         evento.erro = None

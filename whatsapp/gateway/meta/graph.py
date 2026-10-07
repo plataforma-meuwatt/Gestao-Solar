@@ -184,3 +184,96 @@ async def listar_templates(*, token: str, waba_id: str) -> tuple[list[dict], str
         f"{waba_id}/message_templates",
         {"fields": "name,status,category,language,components", "limit": 100},
     )
+
+
+# ── Embedded Signup: o número de cada técnico ───────────────────────────────
+#
+# Mesma regra das leituras acima: `(dados, erro)` em vez de exceção. Cada passo da conexão
+# pode ser recusado pela Meta por um motivo que o técnico precisa ler ("o código expirou",
+# "o app não tem acesso a esta conta"), e um 500 esconderia exatamente isso.
+#
+# Fontes, conferidas em 07/10/2026 (ver docs/PLANO_WHATSAPP_TECNICOS.md §3):
+# troca do code, `subscribed_apps` e `register` em "onboarding customers as a Tech
+# Provider"; `smb_app_data` e a proibição do `register` na coexistência em "onboarding
+# business app users".
+
+
+async def _chamar(
+    metodo: str,
+    caminho: str,
+    *,
+    token: str | None = None,
+    params: dict[str, Any] | None = None,
+    json: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    s = get_settings()
+    cabecalhos = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as cliente:
+            r = await cliente.request(
+                metodo, f"{s.graph_url}/{caminho}", params=params, json=json, headers=cabecalhos
+            )
+    except httpx.HTTPError as e:
+        return {}, f"Não deu para falar com a Meta: {e}"
+
+    try:
+        dados = r.json()
+    except ValueError:
+        dados = {}
+    if not isinstance(dados, dict):
+        dados = {}
+
+    if r.status_code >= 400:
+        _, detalhe = _ler_erro(dados)
+        return dados, detalhe or (r.text or "")[:300] or f"HTTP {r.status_code}"
+    return dados, None
+
+
+async def trocar_code(*, app_id: str, app_secret: str, code: str) -> tuple[str | None, str | None]:
+    """O `code` do Embedded Signup vira o token do número. O code vive 30 SEGUNDOS."""
+    dados, erro = await _chamar(
+        "GET",
+        "oauth/access_token",
+        params={"client_id": app_id, "client_secret": app_secret, "code": code},
+    )
+    if erro:
+        return None, erro
+    token = dados.get("access_token")
+    return (str(token), None) if token else (None, "A Meta não devolveu o token.")
+
+
+async def assinar_waba(*, token: str, waba_id: str) -> str | None:
+    """Liga o webhook do app da plataforma à conta do técnico. Sem isto, nada chega."""
+    _, erro = await _chamar("POST", f"{waba_id}/subscribed_apps", token=token)
+    return erro
+
+
+async def desassinar_waba(*, token: str, waba_id: str) -> str | None:
+    _, erro = await _chamar("DELETE", f"{waba_id}/subscribed_apps", token=token)
+    return erro
+
+
+async def registrar_numero(*, token: str, phone_number_id: str, pin: str) -> str | None:
+    """Só FORA da coexistência: o número que já está no aplicativo já está registrado."""
+    _, erro = await _chamar(
+        "POST",
+        f"{phone_number_id}/register",
+        token=token,
+        json={"messaging_product": "whatsapp", "pin": pin},
+    )
+    return erro
+
+
+async def sincronizar_aplicativo(*, token: str, phone_number_id: str, tipo: str) -> str | None:
+    """Pede os contatos (`smb_app_state_sync`) ou o histórico (`history`) do celular.
+
+    Só na coexistência, e com prazo: se o sync não acontecer em 24 h, o técnico precisa
+    desconectar e refazer o fluxo. O que chega vem pelo webhook, não por esta resposta.
+    """
+    _, erro = await _chamar(
+        "POST",
+        f"{phone_number_id}/smb_app_data",
+        token=token,
+        json={"messaging_product": "whatsapp", "sync_type": tipo},
+    )
+    return erro

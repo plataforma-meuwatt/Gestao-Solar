@@ -4,7 +4,8 @@ Sem isto o `alembic revision --autogenerate` não vê tabela nenhuma e gera uma 
 vazia — falha que não dá erro, só um arquivo inútil que alguém aplica achando que fez algo.
 """
 
+from gateway.models.conta import Conta
 from gateway.models.credencial import Credencial, CredencialEvento
 from gateway.models.mensagem import Mensagem, WebhookEvento
 
-__all__ = ["Credencial", "CredencialEvento", "Mensagem", "WebhookEvento"]
+__all__ = ["Conta", "Credencial", "CredencialEvento", "Mensagem", "WebhookEvento"]

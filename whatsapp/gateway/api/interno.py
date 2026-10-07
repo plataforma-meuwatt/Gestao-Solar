@@ -20,6 +20,7 @@ from gateway.core.config import get_settings
 from gateway.core.db import get_db
 from gateway.core.seguranca import CABECALHO_CHAVE_INTERNA, chave_interna_confere
 from gateway.models.mensagem import Mensagem
+from gateway.services import contas as svc_contas
 from gateway.services import credenciais as svc
 from gateway.services import envio as svc_envio
 
@@ -44,6 +45,8 @@ class CredenciaisIn(BaseModel):
     phone_number_id: str = Field(min_length=1)
     waba_id: str | None = None
     app_id: str | None = None
+    #: A configuração do Embedded Signup — o que abre a janela da Meta para o técnico.
+    es_config_id: str | None = None
     #: Vazio significa "não mexer": o gestor que só corrigiu o WABA não tem mais o token.
     token: str | None = None
     app_secret: str | None = None
@@ -82,6 +85,7 @@ async def gravar_credenciais(corpo: CredenciaisIn, db: Session = Depends(get_db)
         verify_token=corpo.verify_token,
         waba_id=corpo.waba_id,
         app_id=corpo.app_id,
+        es_config_id=corpo.es_config_id,
         ator=corpo.ator,
     )
     return ResultadoOut(ok=r.ok, detalhe=r.detalhe)
@@ -217,3 +221,73 @@ def ler_mensagem(mensagem_id: int, db: Session = Depends(get_db)) -> MensagemOut
         erro_detalhe=m.erro_detalhe,
         ocorrida_em=m.ocorrida_em,
     )
+
+
+# ── contas: o WhatsApp Business de cada técnico ─────────────────────────────
+#
+# `gs_user_id` vem do BFF, que o tira da SESSÃO do técnico — nunca de um campo que o
+# navegador preencheu. Aqui ele é confiado porque só o BFF passa por esta porta.
+
+
+class ConectarIn(BaseModel):
+    #: Vive 30 segundos na Meta: o BFF repassa assim que o navegador entrega.
+    code: str = Field(min_length=1)
+    waba_id: str = Field(min_length=1)
+    phone_number_id: str = Field(min_length=1)
+    business_id: str | None = None
+    #: O evento do Embedded Signup foi `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`.
+    coexistencia: bool = False
+    gs_user_id: int
+    empresa_id: int | None = None
+    ator: str | None = None
+
+
+class ContaOut(BaseModel):
+    phone_number_id: str
+    waba_id: str
+    numero_exibicao: str | None = None
+    nome_verificado: str | None = None
+    coexistencia: bool
+    estado: str
+    detalhe: str | None = None
+    conectada_em: datetime
+    desconectada_em: datetime | None = None
+
+
+@router.get("/contas/configuracao", dependencies=[Depends(_porta)])
+def configuracao_das_contas(db: Session = Depends(get_db)) -> dict:
+    """App e configuração do Embedded Signup — o que o navegador precisa. Sem segredo."""
+    return svc_contas.configuracao(db)
+
+
+@router.get("/contas", response_model=list[ContaOut], dependencies=[Depends(_porta)])
+def listar_contas(gs_user_id: int, db: Session = Depends(get_db)) -> list[ContaOut]:
+    return [ContaOut.model_validate(c, from_attributes=True) for c in svc_contas.listar(db, gs_user_id)]
+
+
+@router.post("/contas", response_model=ResultadoOut, dependencies=[Depends(_porta)])
+async def conectar_conta(corpo: ConectarIn, db: Session = Depends(get_db)) -> ResultadoOut:
+    """Troca o code, confere, assina o webhook e só então grava."""
+    r = await svc_contas.conectar(
+        db,
+        code=corpo.code,
+        waba_id=corpo.waba_id,
+        phone_number_id=corpo.phone_number_id,
+        business_id=corpo.business_id,
+        coexistencia=corpo.coexistencia,
+        gs_user_id=corpo.gs_user_id,
+        empresa_id=corpo.empresa_id,
+        ator=corpo.ator,
+    )
+    return ResultadoOut(ok=r.ok, detalhe=r.detalhe)
+
+
+@router.delete("/contas/{phone_number_id}", status_code=204, dependencies=[Depends(_porta)])
+async def desconectar_conta(
+    phone_number_id: str, gs_user_id: int, ator: str | None = None, db: Session = Depends(get_db)
+) -> None:
+    # 404 sem dizer de quem é: número de outra conta e número inexistente respondem igual.
+    if not await svc_contas.desconectar(
+        db, phone_number_id=phone_number_id, gs_user_id=gs_user_id, ator=ator
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Número não encontrado nesta conta.")

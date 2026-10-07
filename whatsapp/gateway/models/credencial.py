@@ -57,6 +57,10 @@ class Credencial(Base):
     app_secret_cifrado: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: O que a Meta manda em `hub.verify_token` ao registrar a URL de callback.
     verify_token_cifrado: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A configuração do Embedded Signup (Facebook Login for Business → Configurations).
+    #: Em claro: não dá acesso a nada sozinha, e o navegador do técnico precisa dela para
+    #: abrir a janela da Meta. É do APP, por isso mora aqui e não em cada número.
+    es_config_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # ── resultado do último teste ────────────────────────────────────────────
     #: `nunca` | `ok` | `falhou`. Guardado para a tela abrir dizendo o estado sem bater na
