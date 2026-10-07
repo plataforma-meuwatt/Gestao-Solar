@@ -15,7 +15,10 @@ export function Entrada() {
   const [erro, setErro] = useState('')
   const [entrando, setEntrando] = useState(false)
 
-  if (token) return <Navigate to={local.state?.de || '/clientes'} replace />
+  // Sem destino pedido, vai para a RAIZ, onde o `Pouso` escolhe a primeira tela do portão
+  // desta sessão. Era `/clientes` fixo: o gerente e o técnico entravam direto numa tela da
+  // plataforma e liam "Área restrita" como a primeira coisa depois da senha certa.
+  if (token) return <Navigate to={local.state?.de || '/'} replace />
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault()
@@ -23,7 +26,7 @@ export function Entrada() {
     setEntrando(true)
     try {
       await entrar(apelido.trim().toLowerCase(), senha)
-      navegar(local.state?.de || '/clientes', { replace: true })
+      navegar(local.state?.de || '/', { replace: true })
     } catch (err) {
       // Os campos ficam como estão: refazer o apelido por causa de senha errada é o
       // atrito que faz alguém desistir na segunda tentativa.
