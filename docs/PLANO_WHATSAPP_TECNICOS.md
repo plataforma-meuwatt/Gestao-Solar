@@ -104,12 +104,21 @@ cartão** na própria conta de mensagens ([fonte][es]). E na coexistência a Met
 conta nova**: ela converte a conta do número existente — ou seja, **cada técnico tem a sua
 WABA, com a sua cobrança**.
 
-O que isso significa na prática, e que precisa ser confirmado antes de construir:
+O que isso custa na prática ([tabela de preços][preco], conferida em 07/10/2026):
 
-- **Mensagem dentro da janela de 24 h** (o técnico respondendo o fabricante que escreveu) —
-  ⚠ pela tabela atual da Meta, não é cobrada. Se for assim, o cartão quase nunca é usado.
-- **Template** (abrir conversa fria, ou cobrar o fabricante depois de 24 h) — é cobrado,
-  **no cartão do técnico**, não da empresa.
+- ✅ Desde 01/07/2025 a Meta cobra **por mensagem**, não por conversa.
+- ✅ **Mensagem livre dentro da janela de 24 h é grátis** — o técnico respondendo o
+  fabricante que escreveu, ou mandando foto e documento enquanto a conversa está aberta.
+- ✅ **Template de utilidade dentro da janela aberta também é grátis.**
+- ✅ Paga-se o **template fora da janela** — abrir conversa fria, ou cobrar o fabricante
+  que sumiu há mais de 24 h. Esse vai **no cartão do técnico**, não da empresa.
+- ✅ Desde 01/07/2026 a WABA brasileira pode ser cobrada **em reais**, faturada pela
+  Facebook Brasil (e todas precisam migrar até 30/06/2027).
+- ⚠ **Não confirmado se o cartão é exigido para mandar mensagem grátis**, ou só para
+  template. Se for só para template, o técnico que só responde nem precisa cadastrar.
+
+Ou seja: o custo é baixo e concentrado no template fora da janela. O que pesa é o
+**atrito** — cada técnico cadastrando cartão — e a **conta dispersa**, uma fatura por técnico.
 
 Se isso for inaceitável, a alternativa é **um número por empresa** (a WABA da empresa com o
 cartão dela) e os técnicos atendendo por ele — que é o que o `MULTIEMPRESA.md` previa. Mas
@@ -227,3 +236,4 @@ T1 e T2 não dependem da Meta e podem andar já. T3 pode ser escrita, mas só se
 [impl]: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation/
 [onb]: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-customers-as-a-tech-provider/
 [coex]: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users/
+[preco]: https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing
