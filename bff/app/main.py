@@ -56,6 +56,7 @@ from app.api.v1 import (
     relatorios_ano,
     resumo,
     sessao,
+    tecnico,
 )
 from app.clients import http as http_upstream
 from app.core.config import get_settings
@@ -261,6 +262,7 @@ app.include_router(resumo.router)
 app.include_router(relatorio.router)
 app.include_router(relatorios_ano.router)
 app.include_router(carteira.router)
+app.include_router(tecnico.router)
 
 
 @app.get("/health", tags=["infra"])

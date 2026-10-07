@@ -43,6 +43,9 @@ export const api = axios.create({ baseURL: `${base}/api/painel`, timeout: 30000 
  */
 export const apiEmpresa = axios.create({ baseURL: `${base}/api/empresa`, timeout: 30000 })
 
+/** O terceiro portão: o técnico, e só o WhatsApp dele. Mesmo motivo do cliente acima. */
+export const apiTecnico = axios.create({ baseURL: `${base}/api/tecnico`, timeout: 30000 })
+
 let token: string | null = null
 let aoPerder: (() => void) | null = null
 
@@ -72,6 +75,7 @@ export function aplicarInterceptores(cliente: typeof api) {
 
 aplicarInterceptores(api)
 aplicarInterceptores(apiEmpresa)
+aplicarInterceptores(apiTecnico)
 
 /** Mensagem pronta para a tela. O BFF sempre responde `detail`. */
 export function mensagemDeErro(erro: unknown): string {

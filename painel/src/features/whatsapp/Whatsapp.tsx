@@ -413,6 +413,7 @@ function Formulario({
   const [phoneNumberId, setPhoneNumberId] = useState(inicial?.phone_number_id ?? '')
   const [wabaId, setWabaId] = useState(inicial?.waba_id ?? '')
   const [appId, setAppId] = useState(inicial?.app_id ?? '')
+  const [configId, setConfigId] = useState(inicial?.es_config_id ?? '')
   const [token, setToken] = useState('')
   const [appSecret, setAppSecret] = useState('')
   const [verifyToken, setVerifyToken] = useState('')
@@ -423,6 +424,7 @@ function Formulario({
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
         app_id: appId.trim() || null,
+        es_config_id: configId.trim() || null,
         token: token.trim() || null,
         app_secret: appSecret.trim() || null,
         verify_token: verifyToken.trim() || null,
@@ -469,6 +471,17 @@ function Formulario({
           className="mono"
         />
       </div>
+      {/* O que abre a janela da Meta para cada TÉCNICO conectar o número dele. Sem ele (e
+          sem o App ID e o segredo do app), a tela Meu WhatsApp diz que a conexão não está
+          configurada. Para oferecer a coexistência, a configuração precisa incluir o
+          WhatsApp Business app — ver docs/PLANO_WHATSAPP_TECNICOS.md. */}
+      <Campo
+        rotulo="Configuração do Embedded Signup (opcional)"
+        value={configId}
+        onChange={(e) => setConfigId(e.target.value)}
+        className="mono"
+        nota="Facebook Login for Business → Configurações. É o que deixa cada técnico conectar o WhatsApp dele."
+      />
       <Campo
         rotulo="Token de acesso"
         value={token}

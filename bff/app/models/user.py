@@ -43,7 +43,7 @@ class Perfil(StrEnum):
 
     Os perfis estão em dois LADOS, e é essa separação que sustenta o multiempresa:
     `atendimento` e `administrador` são da **plataforma** e não pertencem a empresa
-    nenhuma; `gestor_empresa` e `cliente` pertencem a uma.
+    nenhuma; `gestor_empresa`, `tecnico` e `cliente` pertencem a uma.
     """
 
     CLIENTE = "cliente"
@@ -54,6 +54,12 @@ class Perfil(StrEnum):
     #: de empresa: quem mexe é o gerente, e um perfil sem ninguém para ocupá-lo é código
     #: que envelhece sem uso.
     GESTOR_EMPRESA = "gestor_empresa"
+    #: O técnico da empresa de O&M. Entra no painel só para conectar o WhatsApp Business
+    #: DELE, que passa a ser o número das conversas dos tickets dele no help-desk do
+    #: meuPlano. Não administra nada: tem portão próprio (`escopo=tecnico`, rotas em
+    #: `/api/tecnico/*`), e por isso nenhuma rota do gerente o aceita nem por descuido.
+    #: Criado pelo gerente. Ver `docs/PLANO_WHATSAPP_TECNICOS.md`.
+    TECNICO = "tecnico"
 
 
 class User(Base):
@@ -156,6 +162,11 @@ class User(Base):
     def abre_empresa(self) -> bool:
         """Entra pelo portão `/api/empresa/*` — o gerente da O&M, e só ele."""
         return self.perfil is Perfil.GESTOR_EMPRESA
+
+    @property
+    def abre_tecnico(self) -> bool:
+        """Entra pelo portão `/api/tecnico/*` — e só por ele."""
+        return self.perfil is Perfil.TECNICO
 
 
 class VinculoProduto(Base):

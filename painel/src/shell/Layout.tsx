@@ -126,13 +126,23 @@ const MENU_EMPRESA: ItemMenu[] = [
   { para: '/minha-empresa/vinculos', rotulo: 'Vínculos', icone: Building2 },
 ]
 
+/**
+ * O menu do TERCEIRO portão: o técnico. Uma tela só, e é o pedido inteiro — ele entra no
+ * painel para conectar o WhatsApp Business dele ao help-desk do meuPlano, e para mais nada.
+ * Mesma regra do menu da empresa: o que não está aqui não existe para ele.
+ */
+const MENU_TECNICO: ItemMenu[] = [
+  { para: '/meu-whatsapp', rotulo: 'Meu WhatsApp', icone: MessageCircle },
+]
+
 /** Onde pousa quem entra: a primeira tela que a conta abre, na ordem do menu. */
 export function primeiraTela(
   pode: (a: string) => boolean,
   ehAdmin: boolean,
-  ehEmpresa = false,
+  escopo: Escopo = 'painel',
 ): string | null {
-  if (ehEmpresa) return MENU_EMPRESA[0].para
+  if (escopo === 'tecnico') return MENU_TECNICO[0].para
+  if (escopo === 'empresa') return MENU_EMPRESA[0].para
   const item = MENU.find((i) =>
     i.soAdministrador ? ehAdmin : i.area !== undefined && pode(i.area),
   )
@@ -368,6 +378,7 @@ const PAPEL: Record<Perfil, string> = {
   administrador: 'Administrador do sistema',
   atendimento: 'Atendimento',
   gestor_empresa: 'Gerente da empresa',
+  tecnico: 'Técnico',
 }
 
 /**
@@ -394,7 +405,8 @@ function FaixaDePapel({
   empresa: string | null
   perfil: Perfil | null
 }) {
-  const daEmpresa = escopo === 'empresa'
+  // Técnico e gerente são os dois da EMPRESA: a faixa diz de qual, nos dois casos.
+  const daEmpresa = escopo !== 'painel'
   return (
     <div
       className={`sticky top-0 z-10 flex items-center gap-2.5 px-8 py-2.5 border-b backdrop-blur ${
@@ -408,7 +420,9 @@ function FaixaDePapel({
         {daEmpresa ? `Empresa · ${empresa ?? 'sem nome'}` : 'Plataforma · Gestão Solar'}
       </p>
       <span className="text-xs opacity-80 truncate">
-        {daEmpresa
+        {escopo === 'tecnico'
+          ? 'técnico — você vê apenas o seu WhatsApp'
+          : daEmpresa
           ? 'você vê apenas a carteira desta empresa'
           : perfil === 'administrador'
             ? 'administrador do sistema — você vê todas as empresas'
@@ -467,7 +481,8 @@ export function Layout() {
   const { data: eu } = useQuery({
     queryKey: ['eu'],
     queryFn: meuAcesso,
-    enabled: Boolean(token) && !ehEmpresa(),
+    // `GET /eu` é do portão da PLATAFORMA: as outras sessões tomariam 403 aqui.
+    enabled: Boolean(token) && escopo === 'painel',
     retry: false,
   })
   React.useEffect(() => {
@@ -476,7 +491,9 @@ export function Layout() {
 
   if (!token) return <Navigate to="/entrar" replace state={{ de: local.pathname }} />
 
-  const itens = ehEmpresa()
+  const itens = escopo === 'tecnico'
+    ? MENU_TECNICO
+    : ehEmpresa()
     ? MENU_EMPRESA
     : MENU.filter((i) =>
         i.soAdministrador ? ehAdministrador() : i.area !== undefined && pode(i.area),
@@ -493,7 +510,7 @@ export function Layout() {
               duas contas cadastra o cliente na empresa errada e ninguém descobre no
               mesmo dia. */}
           <p className="text-[11px] text-fraco mt-1 truncate" title={empresa ?? undefined}>
-            {ehEmpresa() ? (empresa ?? 'empresa') : 'painel'}
+            {escopo !== 'painel' ? (empresa ?? 'empresa') : 'painel'}
           </p>
         </div>
 
@@ -571,6 +588,13 @@ export function SoAdministrador({ children }: { children: React.ReactNode }) {
 export function SoEmpresa({ children }: { children: React.ReactNode }) {
   const ehEmpresa = useAuth((s) => s.escopo === 'empresa')
   if (!ehEmpresa) return <SemAcesso />
+  return <>{children}</>
+}
+
+/** Guarda da tela do técnico — mesmo motivo de `SoEmpresa`: é outro cliente HTTP. */
+export function SoTecnico({ children }: { children: React.ReactNode }) {
+  const ehTecnico = useAuth((s) => s.escopo === 'tecnico')
+  if (!ehTecnico) return <SemAcesso />
   return <>{children}</>
 }
 

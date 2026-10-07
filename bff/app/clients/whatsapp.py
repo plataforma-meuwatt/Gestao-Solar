@@ -20,7 +20,15 @@ CABECALHO_CHAVE = "X-Chave-Interna"
 
 
 class GatewayIndisponivel(RuntimeError):
-    """O gateway não está configurado aqui, ou não respondeu. A frase vai para a tela."""
+    """O gateway não está configurado aqui, ou não respondeu. A frase vai para a tela.
+
+    `status` é o HTTP que o gateway respondeu, quando respondeu — é o que deixa a rota
+    devolver um 404 como 404, sem casar frase.
+    """
+
+    def __init__(self, mensagem: str, status: int | None = None) -> None:
+        super().__init__(mensagem)
+        self.status = status
 
 
 def _base() -> str:
@@ -60,7 +68,9 @@ async def _req(metodo: str, caminho: str, **kw: Any) -> Any:
             detalhe = corpo.get("detail") if isinstance(corpo, dict) else ""
         except ValueError:
             detalhe = (r.text or "")[:200]
-        raise GatewayIndisponivel(detalhe or f"O gateway respondeu {r.status_code}.")
+        raise GatewayIndisponivel(
+            detalhe or f"O gateway respondeu {r.status_code}.", status=r.status_code
+        )
 
     if not r.content:
         return None
@@ -98,6 +108,31 @@ async def remover_credenciais(ator: str | None = None) -> None:
 
 async def eventos(limite: int = 30) -> list[dict[str, Any]]:
     return await _req("GET", "/interno/credenciais/eventos", params={"limite": limite}) or []
+
+
+# ── o WhatsApp Business de cada técnico ─────────────────────────────────────
+#
+# `gs_user_id` sai SEMPRE da sessão de quem chama a rota do BFF — o gateway confia nele
+# porque só o BFF passa pela porta interna. Ver `api/v1/tecnico.py`.
+
+
+async def configuracao_das_contas() -> dict[str, Any]:
+    return await _req("GET", "/interno/contas/configuracao")
+
+
+async def contas_de(gs_user_id: int) -> list[dict[str, Any]]:
+    return await _req("GET", "/interno/contas", params={"gs_user_id": gs_user_id}) or []
+
+
+async def conectar_conta(dados: dict[str, Any]) -> dict[str, Any]:
+    return await _req("POST", "/interno/contas", json=dados)
+
+
+async def desconectar_conta(phone_number_id: str, gs_user_id: int, ator: str | None) -> None:
+    params: dict[str, Any] = {"gs_user_id": gs_user_id}
+    if ator:
+        params["ator"] = ator
+    await _req("DELETE", f"/interno/contas/{phone_number_id}", params=params)
 
 
 # ── o que a conta tem ───────────────────────────────────────────────────────

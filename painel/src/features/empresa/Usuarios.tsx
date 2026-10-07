@@ -40,6 +40,7 @@ import { useAuth } from '@/store/auth'
 
 const PAPEL: Record<string, string> = {
   gestor_empresa: 'Gerente da empresa',
+  tecnico: 'Técnico',
   cliente: 'Dono de usina',
 }
 
@@ -143,7 +144,9 @@ function Linha({
                 <Sun size={14} />
                 {usuario.perfil === 'cliente'
                   ? `${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
-                  : 'vê todas as usinas da empresa'}
+                  : usuario.perfil === 'tecnico'
+                    ? 'entra só para o WhatsApp dele'
+                    : 'vê todas as usinas da empresa'}
               </span>
               <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
@@ -475,7 +478,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
   const [nome, setNome] = useState('')
   const [apelido, setApelido] = useState('')
   const [email, setEmail] = useState('')
-  const [perfil, setPerfil] = useState<'cliente' | 'gestor_empresa'>('cliente')
+  const [perfil, setPerfil] = useState<'cliente' | 'gestor_empresa' | 'tecnico'>('cliente')
   const [criado, setCriado] = useState<{ apelido: string; senha: string } | null>(null)
 
   const criar = useMutation({
@@ -518,15 +521,18 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <select
             className="campo h-9 text-sm mt-1"
             value={perfil}
-            onChange={(e) => setPerfil(e.target.value as 'cliente' | 'gestor_empresa')}
+            onChange={(e) => setPerfil(e.target.value as 'cliente' | 'gestor_empresa' | 'tecnico')}
           >
             <option value="cliente">Dono de usina — entra no aplicativo</option>
             <option value="gestor_empresa">Gerente — opera a empresa com você</option>
+            <option value="tecnico">Técnico — conecta o WhatsApp dele aos tickets</option>
           </select>
           <p className="text-xs text-fraco mt-1.5">
             {perfil === 'cliente'
               ? 'Vê apenas as usinas que você conceder a ele.'
-              : 'Vê e opera tudo desta empresa, como você.'}
+              : perfil === 'tecnico'
+                ? 'Entra no painel só para conectar o WhatsApp Business dele. Depois, ligue a conta dele do meuPlano em Token — é ela que diz quais tickets são dele.'
+                : 'Vê e opera tudo desta empresa, como você.'}
           </p>
         </div>
 

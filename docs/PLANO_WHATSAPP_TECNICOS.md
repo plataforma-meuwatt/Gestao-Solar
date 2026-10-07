@@ -100,8 +100,10 @@ A régua do `MULTIEMPRESA.md` §2 continua valendo e fica mais fina:
   `waba_info.waba_id` e, na coexistência, `disconnection_info.reason`
   (`PRIMARY_INACTIVITY` · `CHANGE_NUMBER` · `USER_RE_REGISTERED`). O `ACCOUNT_OFFBOARDED`
   documentado não traz `waba_id`.
-- ⚠ O valor de `featureType` que o `FB.login` precisa para OFERECER a coexistência não
-  está na página de coexistência — verificar na fase T3.
+- ✅ **Na v4 do Embedded Signup não há `featureType` nem `sessionInfoVersion`**: o
+  `extras` é "purposely empty". Oferecer a coexistência é escolher o produto **na
+  configuração do Facebook Login for Business** — é configuração do app, não código. O
+  navegador ouve `message` de origem `*.facebook.com` com `type: 'WA_EMBEDDED_SIGNUP'`.
 - ⚠ Não confirmado se o token do cliente expira.
 - ⚠ Não confirmado se o Embedded Signup roda **antes** da aprovação do App Review, com os
   administradores do próprio app. É o que decide se dá para testar enquanto a Meta analisa.
@@ -220,9 +222,9 @@ A linha `padrao` de hoje continua sendo o número de **notificações** da plata
 | # | Onde | Entrega | Depende de |
 |---|---|---|---|
 | **M** | **Meta — com o dono** | portfólio da **plataforma**, verificação, app nele, config do Embedded Signup, vídeos, App Review | — |
-| T1 | GS `bff/` + `painel/` | perfil `tecnico`, criado pelo gerente, menu só com "Meu WhatsApp", vínculo com o meuPlano | nada |
+| T1 ✅ | GS `bff/` + `painel/` | perfil `tecnico`, criado pelo gerente, menu só com "Meu WhatsApp", vínculo com o meuPlano | **feita em 07/10/2026** — ver §9 |
 | T2 ✅ | GS `whatsapp/` | `wa_contas`, troca do code, `subscribed_apps`, webhook roteado por número | **feita em 07/10/2026** — ver §8 |
-| T3 | GS `painel/` | botão "Conectar WhatsApp" com o SDK, estado, desconectar | `config_id` (fase M) para o teste real |
+| T3 ✅ | GS `painel/` | botão "Conectar WhatsApp" com o SDK, estado, desconectar | **feita em 07/10/2026**; o teste com número real espera a fase M |
 | T4 | MP `backend/` + front | envio pelo gateway, recebimento do gateway, janela por par, echoes na timeline | T2 |
 | T5 | ponta a ponta | um técnico real conecta o número dele e conversa com um ticket | M aprovada |
 
@@ -261,6 +263,41 @@ quem chame as rotas novas até a T1 e a T3:
 
 O `history` (6 meses do celular) chega pelo webhook e fica guardado cru em
 `wa_webhook_eventos` — nada se perde. Transformá-lo em timeline é da T4.
+
+## 9. O que as fases T1 e T3 entregaram
+
+**BFF:** perfil `tecnico` (sem migration — a coluna é `native_enum=False`), portão próprio
+`escopo=tecnico` com a guarda `tecnico_atual`, e as rotas `/api/tecnico/eu`,
+`GET|POST /api/tecnico/whatsapp` e `DELETE /api/tecnico/whatsapp/{phone_number_id}`. O
+login único (`/api/painel/entrar`) emite a sessão do técnico; o gerente o cria em
+Usuários; técnico não recebe usina. 10 testes em `tests/test_tecnico.py` — entre eles, o
+token do técnico recusado nos três outros portões, e nenhuma rota dele aceitando id de
+conta. Suíte do BFF: 1121.
+
+**Painel:** a tela **Meu WhatsApp** (única do menu do técnico), o campo "Configuração do
+Embedded Signup" em Painel → WhatsApp (administrador) e a opção "Técnico" no Novo usuário
+do gerente.
+
+**Conferido com a tela aberta**, num Postgres descartável com BFF, gateway e painel locais:
+o técnico entra pelo formulário e pousa em Meu WhatsApp; os estados sem número, conectado
+e desconectado-pela-Meta aparecem com a frase certa; o gerente cria o técnico pela tela; e
+o botão Conectar carrega o SDK da Meta e abre `facebook.com/v25.0/dialog/oauth` com o
+`config_id` e `response_type=code`. Com App ID falso, é até aí que dá para ir.
+
+**Defeito achado no caminho:** a entrada mandava todo mundo para `/clientes` depois da
+senha — o gerente (e agora o técnico) lia "Área restrita" como primeira tela. Passou a
+mandar para a raiz, onde o `Pouso` escolhe a primeira tela do portão.
+
+### Checklist do administrador, para a fase M fechar
+
+Em Painel → WhatsApp, com o app **da plataforma** (não o da Splendor):
+
+1. App ID e segredo do app — os mesmos que conferem o webhook;
+2. **Configuração do Embedded Signup**: Facebook Login for Business → Configurações →
+   nova configuração com o produto WhatsApp, **incluindo o WhatsApp Business app** (é o que
+   oferece a coexistência na v4);
+3. no app da Meta, os campos do webhook: `messages`, `account_update`, `history`,
+   `smb_app_state_sync` e `smb_message_echoes`.
 
 [tp]: https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/get-started-for-tech-providers
 [es]: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/overview/

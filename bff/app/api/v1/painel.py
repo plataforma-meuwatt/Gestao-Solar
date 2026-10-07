@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.security import (
     conferir_senha,
-    criar_token_empresa,
     criar_token_painel,
     exige_area,
     gestor_atual,
@@ -28,7 +27,7 @@ from app.core.security import (
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import areas_painel, conciliacao, empresas, integracoes, sonda, vinculos
+from app.services import areas_painel, conciliacao, empresas, integracoes, pessoas, sonda, vinculos
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
 
@@ -53,7 +52,8 @@ class EntrarOut(BaseModel):
     nome: str
     apelido: str
     perfil: str
-    #: Qual portão esta sessão abre: `painel` (plataforma) ou `empresa` (gerente da O&M).
+    #: Qual portão esta sessão abre: `painel` (plataforma), `empresa` (gerente da O&M) ou
+    #: `tecnico` (só o WhatsApp dele).
     #: É o que o front usa para escolher o prefixo das chamadas e montar o menu — e é
     #: informação, não permissão: quem decide é o servidor, a cada requisição.
     escopo: str = "painel"
@@ -88,7 +88,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     # custou caro: o dono criou uma conta de dono de usina, anotou a senha, tentou no
     # painel e leu "apelido ou senha inválidos". Passou a procurar defeito na senha, que
     # estava certa — só o endereço é que era outro.
-    if not (usuario.abre_painel or usuario.abre_empresa):
+    if not (usuario.abre_painel or usuario.abre_empresa or usuario.abre_tecnico):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Esta conta é de dono de usina: ela entra pelo aplicativo ou pelo portal do "
@@ -99,7 +99,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     # entrada é única e o que muda é o token que sai dela: o gerente da O&M recebe uma
     # sessão de `escopo=empresa`, que `gestor_atual` recusa em toda rota de painel.
     empresa = None
-    if usuario.abre_empresa:
+    if usuario.abre_empresa or usuario.abre_tecnico:
         empresa = empresas.por_id(db, empresas.empresa_exigida(usuario))
         if not empresa.ativa:
             raise HTTPException(
@@ -111,14 +111,16 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     db.commit()
 
     if empresa is not None:
-        token, expira = criar_token_empresa(usuario.id)
+        # Gerente → `escopo=empresa`; técnico → `escopo=tecnico`. Quem escolhe é
+        # `pessoas.emitir`, o mesmo da troca de papel, para as duas portas nunca divergirem.
+        token, expira = pessoas.emitir(usuario)
         return EntrarOut(
             token=token,
             expira_em=expira,
             nome=usuario.nome,
             apelido=usuario.apelido,
             perfil=usuario.perfil.value,
-            escopo="empresa",
+            escopo=pessoas.escopo_do_perfil(usuario.perfil),
             empresa=empresa.nome,
             empresa_id=empresa.id,
         )

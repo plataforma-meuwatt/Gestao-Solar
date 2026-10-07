@@ -7,7 +7,7 @@
 
 import axios from 'axios'
 
-import { api, apiEmpresa, aplicarInterceptores, baseDaApi } from '@/lib/api'
+import { api, apiEmpresa, apiTecnico, aplicarInterceptores, baseDaApi } from '@/lib/api'
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -336,6 +336,8 @@ export type CredenciaisWhatsapp = {
   phone_number_id?: string | null
   waba_id?: string | null
   app_id?: string | null
+  /** A configuração do Embedded Signup — abre a janela da Meta para cada técnico. */
+  es_config_id?: string | null
   numero_exibicao?: string | null
   token_prefixo?: string | null
   token_gravado_em?: string | null
@@ -367,6 +369,7 @@ export const salvarCredenciaisWhatsapp = (dados: {
   phone_number_id: string
   waba_id?: string | null
   app_id?: string | null
+  es_config_id?: string | null
   token?: string | null
   app_secret?: string | null
   verify_token?: string | null
@@ -960,8 +963,8 @@ export const criarClienteDaEmpresa = (dados: {
   nome: string
   apelido: string
   email?: string | null
-  /** `cliente` (dono de usina) ou `gestor_empresa`. São os dois papéis de uma empresa. */
-  perfil?: 'cliente' | 'gestor_empresa'
+  /** `cliente` (dono de usina), `gestor_empresa` ou `tecnico`. Os papéis de uma empresa. */
+  perfil?: 'cliente' | 'gestor_empresa' | 'tecnico'
 }) =>
   apiEmpresa
     .post<{ id: number; nome: string; apelido: string; senha: string }>('/clientes', dados)
@@ -1030,3 +1033,53 @@ export type Concedida = { plant_link_id: number; nome: string; da_empresa: boole
 
 export const usinasConcedidas = (usuarioId: number) =>
   apiEmpresa.get<Concedida[]>(`/usuarios/${usuarioId}/usinas`).then((r) => r.data)
+
+// ── o técnico: o WhatsApp Business dele ─────────────────────────────────────
+
+export type EuTecnico = {
+  nome: string
+  apelido: string
+  empresa: string | null
+  /** A conta dele no meuPlano — é ela que liga o número aos tickets dele. */
+  meuplano: { vinculado: boolean; nome: string | null; email: string | null }
+}
+
+export type ContaWhatsapp = {
+  phone_number_id: string
+  numero_exibicao: string | null
+  nome_verificado: string | null
+  /** O número continua no aplicativo do celular. */
+  coexistencia: boolean
+  estado: 'conectada' | 'desconectada'
+  detalhe: string | null
+  conectada_em: string
+  desconectada_em: string | null
+}
+
+export type MeuWhatsapp = {
+  app_id: string | null
+  config_id: string | null
+  /** A versão da Graph que o gateway usa — o `FB.init` fala a mesma. */
+  versao: string | null
+  /** Falso enquanto o administrador da plataforma não completou o app da Meta. */
+  pronto: boolean
+  contas: ContaWhatsapp[]
+}
+
+export type ConexaoWhatsappIn = {
+  code: string
+  waba_id: string
+  phone_number_id: string
+  business_id?: string | null
+  evento?: string | null
+}
+
+export const euTecnico = () => apiTecnico.get<EuTecnico>('/eu').then((r) => r.data)
+
+export const meuWhatsapp = () => apiTecnico.get<MeuWhatsapp>('/whatsapp').then((r) => r.data)
+
+export const conectarMeuWhatsapp = (dados: ConexaoWhatsappIn) =>
+  apiTecnico.post<{ ok: boolean; detalhe: string }>('/whatsapp', dados).then((r) => r.data)
+
+export const desconectarMeuWhatsapp = (phoneNumberId: string) =>
+  apiTecnico.delete(`/whatsapp/${encodeURIComponent(phoneNumberId)}`)

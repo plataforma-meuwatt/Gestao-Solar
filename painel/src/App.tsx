@@ -16,9 +16,10 @@ import { ListaClientes } from '@/features/clientes/Lista'
 import { NovoCliente } from '@/features/clientes/Novo'
 import { Rotas } from '@/features/rotas/Rotas'
 import { Usinas } from '@/features/usinas/Usinas'
+import { MeuWhatsapp } from '@/features/tecnico/MeuWhatsapp'
 import { Whatsapp } from '@/features/whatsapp/Whatsapp'
 import { aoPerderSessao } from '@/lib/api'
-import { Layout, SoAdministrador, SoArea, SoEmpresa, primeiraTela } from '@/shell/Layout'
+import { Layout, SoAdministrador, SoArea, SoEmpresa, SoTecnico, primeiraTela } from '@/shell/Layout'
 import { useAuth } from '@/store/auth'
 
 const qc = new QueryClient({
@@ -45,8 +46,8 @@ aoPerderSessao(() => useAuth.getState().sair())
  * lê que falta acesso em vez de rodar entre redirecionamentos.
  */
 function Pouso() {
-  const { pode, ehAdministrador, ehEmpresa } = useAuth()
-  const destino = primeiraTela(pode, ehAdministrador(), ehEmpresa())
+  const { pode, ehAdministrador, escopo } = useAuth()
+  const destino = primeiraTela(pode, ehAdministrador(), escopo)
   if (destino) return <Navigate to={destino} replace />
   return (
     <div className="cartao p-8 max-w-lg">
@@ -187,6 +188,15 @@ export function App() {
                 <SoEmpresa>
                   <VinculosDaEmpresa />
                 </SoEmpresa>
+              }
+            />
+            {/* O terceiro portão: o técnico, e só o WhatsApp dele. */}
+            <Route
+              path="/meu-whatsapp"
+              element={
+                <SoTecnico>
+                  <MeuWhatsapp />
+                </SoTecnico>
               }
             />
             <Route

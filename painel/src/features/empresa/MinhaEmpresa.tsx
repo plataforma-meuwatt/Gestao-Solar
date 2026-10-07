@@ -142,6 +142,7 @@ export function ClientesDaEmpresa() {
 
 const PAPEL: Record<string, string> = {
   gestor_empresa: 'Gerente da empresa',
+  tecnico: 'Técnico',
   cliente: 'Dono de usina',
 }
 

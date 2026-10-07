@@ -872,10 +872,10 @@ class ClienteIn(BaseModel):
     nome: str = Field(min_length=2)
     apelido: str = Field(min_length=3)
     email: EmailStr | None = None
-    #: `cliente` (dono de usina, entra no app) ou `gestor_empresa` (opera a empresa com
-    #: você). São os dois únicos papéis que existem dentro de uma empresa — os da
-    #: plataforma não se criam daqui, e pedi-los aqui seria dar a um inquilino a chave do
-    #: sistema inteiro.
+    #: `cliente` (dono de usina, entra no app), `gestor_empresa` (opera a empresa com
+    #: você) ou `tecnico` (entra no painel só para conectar o WhatsApp dele). São os
+    #: únicos papéis que existem dentro de uma empresa — os da plataforma não se criam
+    #: daqui, e pedi-los aqui seria dar a um inquilino a chave do sistema inteiro.
     perfil: Perfil = Perfil.CLIENTE
 
 
@@ -892,7 +892,7 @@ class ClienteCriadoOut(BaseModel):
 def criar_cliente(
     body: ClienteIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> ClienteCriadoOut:
-    """Cadastra alguém DESTA empresa: um dono de usina ou outro gerente.
+    """Cadastra alguém DESTA empresa: um dono de usina, outro gerente ou um técnico.
 
     Reusa `services/clientes.criar`, que é onde moram as regras do cadastro (apelido
     normalizado, e-mail repetido entre clientes, senha provisória). Uma segunda cópia aqui
@@ -902,10 +902,10 @@ def criar_cliente(
     este gerente e para mais ninguém.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    if body.perfil not in (Perfil.CLIENTE, Perfil.GESTOR_EMPRESA):
+    if body.perfil not in (Perfil.CLIENTE, Perfil.GESTOR_EMPRESA, Perfil.TECNICO):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Dentro da empresa só existem dono de usina e gerente.",
+            "Dentro da empresa só existem dono de usina, gerente e técnico.",
         )
     try:
         criado = clientes.criar(
@@ -961,6 +961,13 @@ def definir_usinas_do_cliente(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "O gerente já vê todas as usinas da empresa — não há o que conceder a ele.",
+        )
+    # O técnico não entra no aplicativo do dono: conceder-lhe usina disputaria a usina com
+    # o cliente dela ("cada usina pertence a UM cliente só") por uma tela que ele não abre.
+    if cliente.abre_tecnico:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "O técnico não recebe usinas: ele entra no painel só para o WhatsApp dele.",
         )
 
     if body.plant_link_ids:

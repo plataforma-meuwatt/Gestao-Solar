@@ -31,6 +31,7 @@ from app.core.security import (
     criar_token,
     criar_token_empresa,
     criar_token_painel,
+    criar_token_tecnico,
 )
 from app.models.empresa import Empresa
 from app.models.pessoa import Pessoa
@@ -64,6 +65,8 @@ def escopo_do_perfil(perfil: Perfil) -> str:
         return "painel"
     if perfil is Perfil.GESTOR_EMPRESA:
         return "empresa"
+    if perfil is Perfil.TECNICO:
+        return "tecnico"
     return "cliente"
 
 
@@ -74,6 +77,8 @@ def emitir(usuario: User) -> tuple[str, object]:
         return criar_token_painel(usuario.id)
     if escopo == "empresa":
         return criar_token_empresa(usuario.id)
+    if escopo == "tecnico":
+        return criar_token_tecnico(usuario.id)
     return criar_token(usuario.id)
 
 
@@ -107,10 +112,10 @@ def trocar(db: Session, atual: User, apelido: str, senha: str | None) -> User:
     if not destino.ativo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conta está desativada.")
 
-    if destino.perfil is Perfil.GESTOR_EMPRESA and destino.empresa_id is None:
+    if destino.perfil in (Perfil.GESTOR_EMPRESA, Perfil.TECNICO) and destino.empresa_id is None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Esta conta de gerente não está ligada a nenhuma empresa.",
+            "Esta conta não está ligada a nenhuma empresa.",
         )
 
     if destino.perfil in DA_PLATAFORMA and not conferir_senha(senha or "", destino.senha_hash):

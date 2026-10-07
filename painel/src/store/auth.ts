@@ -20,13 +20,13 @@ import { api, definirToken } from '@/lib/api'
 
 const CHAVE = 'gs_painel_sessao'
 
-export type Perfil = 'atendimento' | 'administrador' | 'gestor_empresa'
+export type Perfil = 'atendimento' | 'administrador' | 'gestor_empresa' | 'tecnico'
 
 /**
  * Qual portão esta sessão abre. Quem manda é o servidor — o campo vem do login e é
  * repetido em `GET /eu`; aqui ele só escolhe o menu e o cliente HTTP.
  */
-export type Escopo = 'painel' | 'empresa'
+export type Escopo = 'painel' | 'empresa' | 'tecnico'
 
 type Sessao = {
   token: string
@@ -57,6 +57,8 @@ type Estado = Omit<Sessao, 'token' | 'perfil'> & {
   ehAdministrador: () => boolean
   /** A sessão é do gerente da empresa de O&M — o outro portão, o outro menu. */
   ehEmpresa: () => boolean
+  /** A sessão é do técnico: um portão só dele, com uma tela só — o WhatsApp dele. */
+  ehTecnico: () => boolean
   /** Abre esta tela do painel da plataforma? Administrador abre tudo, aqui e no servidor. */
   pode: (area: string) => boolean
 }
@@ -161,6 +163,8 @@ export const useAuth = create<Estado>((set, get) => ({
   ehAdministrador: () => get().perfil === 'administrador',
 
   ehEmpresa: () => get().escopo === 'empresa',
+
+  ehTecnico: () => get().escopo === 'tecnico',
 
   // As ÁREAS são do painel da plataforma. Numa sessão de empresa elas não existem, e
   // responder `true` aqui abriria itens de menu que o servidor recusa — a pessoa clicaria

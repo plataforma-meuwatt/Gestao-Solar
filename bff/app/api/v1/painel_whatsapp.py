@@ -35,6 +35,9 @@ class CredenciaisIn(BaseModel):
     phone_number_id: str = Field(min_length=1)
     waba_id: str | None = None
     app_id: str | None = None
+    #: A configuração do Embedded Signup (Facebook Login for Business → Configurations). É o
+    #: que abre a janela da Meta para cada técnico conectar o número dele.
+    es_config_id: str | None = None
     #: Vazio significa "não mexer": quem só corrigiu o WABA não tem mais o token para colar.
     token: str | None = None
     app_secret: str | None = None

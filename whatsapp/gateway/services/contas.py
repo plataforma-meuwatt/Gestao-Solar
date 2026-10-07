@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gateway.core import cripto
+from gateway.core.config import get_settings
 from gateway.meta import graph
 from gateway.meta.payload import AvisoDeConta
 from gateway.models.conta import Conta
@@ -65,6 +66,9 @@ def configuracao(db: Session) -> dict[str, Any]:
     return {
         "app_id": p.app_id,
         "config_id": p.es_config_id,
+        # A MESMA versão da Graph que o gateway usa: o `FB.init` do navegador e as chamadas
+        # daqui falando versões diferentes da API seria um defeito sem mensagem.
+        "versao": get_settings().graph_api_version,
         "pronto": bool(p.app_id and p.app_secret and p.es_config_id),
     }
 
