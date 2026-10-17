@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     # `api.meuplano.com.br` não resolve — o domínio nunca foi apontado. O host real é o do
     # Railway, e deixar o padrão errado fazia a primeira conexão falhar com "não foi
     # possível alcançar o endereço" antes mesmo de o gestor ter chance de suspeitar da URL.
-    meuplano_api_url: str = "https://meuplano.up.railway.app"
+    meuplano_api_url: str = "https://api.meuplano.solar"
 
     # ── gateway de WhatsApp ─────────────────────────────────────────────────
     # O serviço que fala com a Meta (`whatsapp/`). O BFF não conhece o token da Meta: ele

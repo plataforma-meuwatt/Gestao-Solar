@@ -34,7 +34,7 @@ import { useAuth } from '@/store/auth'
 const NOME: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
 const ENDERECO_SUGERIDO: Record<Produto, string> = {
   meuwatt: 'https://api.meuwatt.com.br',
-  meuplano: 'https://meuplano.up.railway.app',
+  meuplano: 'https://api.meuplano.solar',
 }
 
 export function ConexoesDaEmpresa() {
