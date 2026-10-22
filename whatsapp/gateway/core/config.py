@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     #: Para onde o gateway avisa que chegou mensagem. Vazio = não avisa ninguém, e a
     #: varredura para de tentar (estado legítimo enquanto o motor não existe).
     bff_url: str = ""
+    #: Cópia da entrega da Meta, com a assinatura original, para quem atende a conversa
+    #: (hoje o bot do meuPlano: `https://api.meuplano.solar/api/whatsapp/webhook`). Vírgula
+    #: separa várias. O webhook da Meta é um só por app; quem mais precisa ler, lê daqui.
+    encaminhar_urls: str = ""
 
     #: Versão da Graph. Fica no ambiente porque é decisão de OPERAÇÃO, não credencial: subir
     #: de versão é um deploy consciente, não um campo que alguém muda na tela sem querer.

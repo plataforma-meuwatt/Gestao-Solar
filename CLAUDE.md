@@ -723,6 +723,25 @@ Trabalhar em `main`. Repositório: `https://github.com/plataforma-meuwatt/Gestao
 **Sempre commitar, sempre publicar, sempre mandar o OTA.** Não deixar trabalho parado no
 working tree. Um push que muda o `app/` sem OTA correspondente não chegou em ninguém.
 
+### ⛔ Desde 22/10/2026 a produção é o COOLIFY da KingHost, não o Railway
+
+Tudo o que este arquivo diz sobre Railway abaixo é HISTÓRICO (o projeto do Railway vai ser
+apagado). Projeto "Gestão Solar" no Coolify (`https://coolify.squeezefit.com.br`), quatro
+apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do GitHub,
+`watch_paths` por pasta — acabou o `railway up` à mão do portal e do painel):
+
+| App | Pasta | Endereço |
+|---|---|---|
+| `gestaosolar-api` | `bff/` | `https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io` |
+| `gestaosolar-painel` | `painel/` | `https://0d03gwcnyqsbjwmi3i9okjzv.177.153.20.214.sslip.io` |
+| `gestaosolar-portal` | `portal/` | `https://9fcdxv79fxpksjyglggvs8b7.177.153.20.214.sslip.io` |
+| `gestaosolar-whatsapp` | `whatsapp/` | `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io` (callback da Meta: `/webhook`) |
+
+Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM
+srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco continua o Supabase de antes.
+O gateway ENCAMINHA cada entrega da Meta, crua e com a assinatura, para `ENCAMINHAR_URLS`
+(hoje o bot do meuPlano, que responde pelo mesmo número com as credenciais da plataforma).
+
 ### As credenciais já estão na máquina — não peça login
 
 `C:\dev\Gestao Solar\.env.txt` (fora do git, coberto por `.env.*` no `.gitignore`) guarda o

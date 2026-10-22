@@ -18,14 +18,14 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://gestao-solar-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io"
       },
       "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://gestao-solar-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io"
       },
       "channel": "production"
     }

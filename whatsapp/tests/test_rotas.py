@@ -101,6 +101,29 @@ def test_entrega_assinada_e_aceita_e_gravada(cliente, credencial, db):
     assert db.query(WebhookEvento).count() == 1
 
 
+def test_entrega_e_encaminhada_crua_com_a_assinatura_da_meta(cliente, credencial, monkeypatch):
+    """Quem recebe a cópia confere o HMAC com o segredo do app: só funciona com os MESMOS
+    bytes e o MESMO cabeçalho que a Meta mandou."""
+    from gateway.core.config import get_settings
+
+    recebidos = []
+
+    class _Falso:
+        def __init__(self, **_): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): ...
+        async def post(self, url, content, headers):
+            recebidos.append((url, content, headers[CABECALHO_ASSINATURA]))
+
+    monkeypatch.setattr(webhook.httpx, "AsyncClient", _Falso)
+    monkeypatch.setattr(get_settings(), "encaminhar_urls", "https://a/w, https://b/w")
+    corpo = _corpo()
+    assinatura = assinatura_da_meta(APP_SECRET, corpo)
+    r = cliente.post("/webhook", content=corpo, headers={CABECALHO_ASSINATURA: assinatura})
+    assert r.status_code == 200
+    assert recebidos == [("https://a/w", corpo, assinatura), ("https://b/w", corpo, assinatura)]
+
+
 def test_entrega_sem_assinatura_ou_com_assinatura_errada_e_recusada(cliente, credencial, db):
     corpo = _corpo()
     assert cliente.post("/webhook", content=corpo).status_code == 401

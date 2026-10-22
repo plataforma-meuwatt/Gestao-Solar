@@ -20,9 +20,11 @@ reenvia o que demora, e reenvio é mensagem repetida no celular de alguém.
 
 import logging
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from gateway.core.config import get_settings
 from gateway.core.db import SessionLocal, get_db
 from gateway.core.seguranca import CABECALHO_ASSINATURA, assinatura_confere
 from gateway.models.mensagem import WebhookEvento
@@ -52,6 +54,18 @@ def verificar(request: Request, db: Session = Depends(get_db)) -> Response:
     credenciais.registrar(db, "webhook_verificado", detalhe="A Meta confirmou a URL.")
     db.commit()
     return Response(content=desafio, media_type="text/plain")
+
+
+async def _encaminhar(corpo: bytes, assinatura: str) -> None:
+    """Repassa os BYTES CRUS com a assinatura da Meta: quem recebe confere o HMAC com o
+    mesmo segredo do app, como se viesse dela. Melhor esforço — o evento já está guardado."""
+    for url in filter(None, (u.strip() for u in get_settings().encaminhar_urls.split(","))):
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.post(url, content=corpo, headers={
+                    CABECALHO_ASSINATURA: assinatura, "Content-Type": "application/json"})
+        except httpx.HTTPError:
+            log.warning("webhook: encaminhar para %s falhou", url, exc_info=True)
 
 
 def _processar_depois(evento_id: int) -> None:
@@ -93,4 +107,5 @@ async def receber(
 
     evento = recebimento.guardar(db, dados)
     tarefas.add_task(_processar_depois, evento.id)
+    tarefas.add_task(_encaminhar, corpo, assinatura)
     return {"ok": True}
