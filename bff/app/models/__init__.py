@@ -8,6 +8,7 @@ equipamentos, cronograma e OS não são replicados — vêm por API, sempre.
 from app.models.acesso_painel import AcessoPainel
 from app.models.billing import Invoice, Subscription
 from app.models.contato import ContatoPreferencia, ContatoUsina
+from app.models.conversa_whatsapp import ConversaWhatsapp
 from app.models.empresa import Empresa
 from app.models.integracao import EstadoTeste, Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia

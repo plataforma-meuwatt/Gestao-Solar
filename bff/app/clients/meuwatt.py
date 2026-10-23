@@ -481,6 +481,28 @@ class MeuWattClient:
             f"/plants/{slug}/paradas-timeline", year=int(ano), month=int(mes)
         )
 
+    # ------------------------------------------------- assistente do WhatsApp
+
+    async def grandezas(self, slugs: list[str], grandezas: tuple[str, ...], inicio: date, fim: date,
+                        passo: str = "1d") -> dict[str, Any]:
+        """Série de grandezas (`/grandezas/series`): `{timestamps[], series[{plant, grandeza, values[]}]}`.
+        Dia sem leitura vem `null` — ausência, nunca zero."""
+        return await self._get("/grandezas/series", plants=",".join(slugs), grandezas=",".join(grandezas),
+                               start=inicio.isoformat(), end=fim.isoformat(), step=passo)
+
+    async def paradas_detector(self, plant_id: int, inicio: str, fim: str) -> dict[str, Any]:
+        """O detector NOVO de paradas (o da tela de Paradas): `{rows[], groups[]}`. Pede o id
+        NUMÉRICO da usina, não o slug. O coletor antigo (`breakdowns/range`) não serve."""
+        return await self._get("/shadow-breakdowns/queue", plantId=plant_id, start=inicio, end=fim)
+
+    async def relatorio_existente(self, slug: str, periodo: str, de: date) -> dict[str, Any] | None:
+        """O relatório já emitido daquele período (com `files[]`), ou `null`."""
+        return await self._get("/reports/existing", plant_slug=slug, period=periodo, date_from=de.isoformat())
+
+    async def resumo_executivo(self, slug: str, mes: str) -> dict[str, Any]:
+        """`/plants/{slug}/executive-summary/{AAAA-MM}`: briefing da O&M + a análise gerada."""
+        return await self._get(f"/plants/{slug}/executive-summary/{mes}")
+
     async def portal_relatorios(self, token: str | None = None) -> dict[str, Any]:
         """Portal do Cliente: relatórios publicados.
 

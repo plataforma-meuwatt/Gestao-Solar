@@ -184,6 +184,69 @@ async def enviar_template(corpo: TemplateIn, db: Session = Depends(get_db)) -> E
     return EnvioOut(id=r.id, ok=r.ok, wamid=r.wamid, status=r.status, erro=r.erro)
 
 
+class ConteudoIn(BaseModel):
+    """A RESPOSTA do assistente: texto, ou um arquivo (documento/imagem) em base64."""
+    telefone: str
+    tipo: str = Field(pattern="^(text|document|image)$")
+    texto: str | None = Field(default=None, max_length=4096)
+    arquivo_b64: str | None = None
+    filename: str | None = None
+    mime: str | None = None
+    origem: str | None = None
+
+
+@router.post("/conteudo", response_model=EnvioOut, dependencies=[Depends(_porta)])
+async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> EnvioOut:
+    """Responde dentro da janela de 24 h. Arquivo sobe na Meta antes e vai pelo `media_id`."""
+    import base64
+    from gateway.meta import graph
+    try:
+        if corpo.tipo == "text":
+            if not (corpo.texto or "").strip():
+                raise ValueError("Texto vazio.")
+            conteudo = {"body": corpo.texto, "preview_url": False}
+        else:
+            if not corpo.arquivo_b64:
+                raise ValueError("Falta o arquivo.")
+            cred = svc_envio.credencial_de_envio(db)
+            media_id, erro = await graph.subir_midia(
+                token=cred.token or "", phone_number_id=cred.phone_number_id or "",
+                raw=base64.b64decode(corpo.arquivo_b64), mime=corpo.mime or "application/pdf",
+                filename=corpo.filename or "arquivo")
+            if not media_id:
+                return EnvioOut(id=0, ok=False, status="falhou", erro=erro)
+            conteudo = {"id": media_id}
+            if corpo.tipo == "document":
+                conteudo["filename"] = corpo.filename or "arquivo"
+            if corpo.texto:
+                conteudo["caption"] = corpo.texto[:1024]
+        r = await svc_envio.enviar_conteudo(
+            db, telefone=corpo.telefone, tipo=corpo.tipo, conteudo=conteudo,
+            texto=corpo.texto if corpo.tipo == "text" else (corpo.filename or corpo.texto),
+            origem=corpo.origem)
+    except svc_envio.EnvioIndisponivel as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return EnvioOut(id=r.id, ok=r.ok, wamid=r.wamid, status=r.status, erro=r.erro)
+
+
+class DigitandoIn(BaseModel):
+    wamid: str
+
+
+@router.post("/digitando", status_code=204, dependencies=[Depends(_porta)])
+async def digitando(corpo: DigitandoIn, db: Session = Depends(get_db)) -> None:
+    """Lida + "digitando…" na mensagem recebida. Sem credencial, não faz nada."""
+    from gateway.meta import graph
+    try:
+        cred = svc_envio.credencial_de_envio(db)
+    except svc_envio.EnvioIndisponivel:
+        return
+    await graph.digitando(token=cred.token or "", phone_number_id=cred.phone_number_id or "",
+                          wamid=corpo.wamid)
+
+
 class MensagemOut(BaseModel):
     id: int
     wamid: str | None = None

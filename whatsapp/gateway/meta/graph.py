@@ -5,10 +5,9 @@ cadastradas pela tela (`services/credenciais.py`). Ler configuração aqui dentr
 módulo depender do banco e, pior, esconderia de quem chama que existe um estado que pode
 não estar configurado.
 
-**Só template, por enquanto.** Mensagem iniciada pela empresa exige modelo aprovado; texto
-livre só vale dentro da janela de 24 h depois de o cliente escrever, que é a frente
-seguinte. Deixar a função pronta convidaria a usá-la fora da janela, e a recusa só
-apareceria na hora do envio real.
+**Template e RESPOSTA.** Mensagem iniciada pela empresa exige modelo aprovado. Texto livre,
+documento e imagem (`enviar_conteudo`) só valem dentro da janela de 24 h depois de o
+cliente escrever — é o assistente respondendo, nunca puxando assunto.
 
 As duas funções de LEITURA no fim do arquivo (`listar_numeros`, `listar_templates`)
 existem para a tela não pedir que alguém saiba de cabeça os identificadores da Meta. Elas
@@ -86,10 +85,51 @@ async def enviar_template(
     mensagem; um 500 aqui viraria "erro interno" numa tela que precisava dizer "o cliente
     bloqueou o seu número".
     """
+    return await _enviar(token, phone_number_id, _corpo_do_template(telefone, template, idioma, parametros))
+
+
+async def enviar_conteudo(*, token: str, phone_number_id: str, telefone: str, tipo: str,
+                          conteudo: dict[str, Any]) -> Resposta:
+    """Texto livre, documento ou imagem — RESPOSTA dentro da janela de 24 h."""
+    return await _enviar(token, phone_number_id, {
+        "messaging_product": "whatsapp", "to": para_envio(telefone), "type": tipo, tipo: conteudo})
+
+
+async def subir_midia(*, token: str, phone_number_id: str, raw: bytes, mime: str,
+                      filename: str) -> tuple[str | None, str | None]:
+    """Sobe o arquivo na Meta e devolve `(media_id, erro)` — o envio referencia o id."""
+    s = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=120) as cliente:
+            r = await cliente.post(f"{s.graph_url}/{phone_number_id}/media",
+                                   headers={"Authorization": f"Bearer {token}"},
+                                   data={"messaging_product": "whatsapp", "type": mime},
+                                   files={"file": (filename, raw, mime)})
+        dados = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        return None, str(e)
+    if r.status_code >= 400 or not dados.get("id"):
+        return None, (_ler_erro(dados)[1] or r.text[:300])
+    return str(dados["id"]), None
+
+
+async def digitando(*, token: str, phone_number_id: str, wamid: str) -> None:
+    """Marca a mensagem recebida como LIDA e mostra "digitando…" (a Meta apaga aos 25 s
+    ou quando a resposta sai). Melhor esforço: falhar aqui não pode atrasar a resposta."""
+    s = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as cliente:
+            await cliente.post(f"{s.graph_url}/{phone_number_id}/messages",
+                               headers={"Authorization": f"Bearer {token}"},
+                               json={"messaging_product": "whatsapp", "status": "read",
+                                     "message_id": wamid, "typing_indicator": {"type": "text"}})
+    except httpx.HTTPError:
+        pass
+
+
+async def _enviar(token: str, phone_number_id: str, corpo: dict[str, Any]) -> Resposta:
     s = get_settings()
     url = f"{s.graph_url}/{phone_number_id}/messages"
-    corpo = _corpo_do_template(telefone, template, idioma, parametros)
-
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as cliente:
             r = await cliente.post(url, json=corpo, headers={"Authorization": f"Bearer {token}"})

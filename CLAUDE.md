@@ -739,8 +739,14 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 
 Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM
 srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco continua o Supabase de antes.
-O gateway ENCAMINHA cada entrega da Meta, crua e com a assinatura, para `ENCAMINHAR_URLS`
-(hoje o bot do meuPlano, que responde pelo mesmo número com as credenciais da plataforma).
+**O assistente do WhatsApp é do Gestão Solar (o guardião)** — `bff/app/services/assistente.py`.
+O número casa com UMA conta daqui (`gs_users.telefone`); sem conta, não há conversa. Um
+orquestrador (DeepSeek, `DEEPSEEK_API_KEY`) usa as ferramentas de GERAÇÃO
+(`assistente_geracao.py`: API do meuWatt com `token_do_cliente`, só usinas concedidas) e a de
+MANUTENÇÃO (o assistente do meuPlano, falando como a pessoa). Responde, manda PDF e gráfico
+pelo gateway (`/interno/conteudo`, `/interno/digitando`). O `ENCAMINHAR_URLS` do gateway (cópia
+crua da entrega para outro sistema) existe, mas está VAZIO: dois bots no mesmo número
+responderiam em dobro.
 
 ### As credenciais já estão na máquina — não peça login
 

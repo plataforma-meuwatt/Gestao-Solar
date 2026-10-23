@@ -15,7 +15,7 @@ São duas rotas, e elas respondem perguntas diferentes:
 import hmac
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,7 @@ class EventoIn(BaseModel):
 
 
 @router.post("/evento", status_code=202, dependencies=[Depends(_porta)])
-def receber_evento(corpo: EventoIn) -> dict[str, bool]:
+def receber_evento(corpo: EventoIn, tarefas: BackgroundTasks) -> dict[str, bool]:
     """Aceita o aviso e registra. 202: recebido, ainda não há o que fazer com ele.
 
     O 202 não é enfeite — ele diz ao gateway "não precisa reenviar", e ao mesmo tempo não
@@ -64,6 +64,9 @@ def receber_evento(corpo: EventoIn) -> dict[str, bool]:
         corpo.tipo,
         corpo.id,
     )
+    # O assistente responde em segundo plano: o 202 sai já, e o gateway não reenvia.
+    from app.services import assistente
+    tarefas.add_task(assistente.atender, corpo.model_dump())
     return {"ok": True}
 
 

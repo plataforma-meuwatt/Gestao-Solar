@@ -101,7 +101,7 @@ MEUWATT: list[Rota] = [
     Rota("mw.me", "GET", "/auth/me", "De quem é o token — o nome que aparece em Conexões",
          captura={"email": "email"}),
     Rota("mw.plants", "GET", "/plants", "A lista de usinas do app",
-         captura={"slug": "slug"}),
+         captura={"slug": "slug", "mw_plant_id": "id"}),
     Rota("mw.plant", "GET", "/plants/{slug}", "Cabeçalho da tela da usina"),
     Rota("mw.enterprises", "GET", "/enterprises",
          "As empresas de O&M de lá, para casar com as daqui"),
@@ -231,6 +231,21 @@ MEUWATT: list[Rota] = [
     # fechamentos de todas as usinas. Esse recorte é do BFF, por `mw_plant_slug`, e é o
     # `documents.py` que o faz. Secundária de propósito: forma quebrada é alarme, não
     # ponte caída.
+    # ── assistente do WhatsApp (services/assistente_geracao.py) ──────────────
+    Rota("mw.grandezas", "GET", "/grandezas/series",
+         "Irradiação diária (estação e satélite) no assistente do WhatsApp", essencial=False,
+         params={"plants": "{slug}", "grandezas": "irradiacao_ghi_sat_dia", "start": "{semana_passada}",
+                 "end": "{hoje}", "step": "1d"}),
+    Rota("mw.shadow_queue", "GET", "/shadow-breakdowns/queue",
+         "Paradas (detector novo) no assistente do WhatsApp", essencial=False,
+         params={"plantId": "{mw_plant_id}", "start": "{semana_passada}", "end": "{hoje}"}),
+    Rota("mw.report_existing", "GET", "/reports/existing",
+         "O PDF do relatório mensal que o assistente do WhatsApp manda", essencial=False,
+         sonda=False, nao_sondada_porque="Precisa de um mês com relatório emitido; um mês qualquer "
+         "responde vazio e não prova nada."),
+    Rota("mw.executive_summary", "GET", "/plants/{slug}/executive-summary/{mes}",
+         "O resumo executivo que o assistente do WhatsApp lê", essencial=False,
+         sonda=False, nao_sondada_porque="O marcador {mes} não existe na sonda; mês sem resumo responde vazio."),
     Rota("mw.portal", "GET", "/reports/portal",
          "Relatórios publicados no Portal do Cliente", essencial=False,
          campos_exigidos=(

@@ -194,3 +194,34 @@ def test_envio_com_recusa_da_meta_responde_200_com_o_motivo(cliente, credencial,
 def test_mensagem_inexistente_responde_404(cliente, credencial):
     r = cliente.get("/interno/mensagens/9999", headers={CABECALHO_CHAVE_INTERNA: CHAVE})
     assert r.status_code == 404
+
+
+def test_resposta_em_texto_e_documento_sai_pela_graph_e_fica_registrada(cliente, credencial, monkeypatch, db):
+    """A RESPOSTA do assistente: texto vai direto; documento sobe na Meta e vai pelo id."""
+    import base64
+
+    from gateway.meta import graph
+
+    enviados = []
+
+    async def _subir(**k):
+        assert k["raw"] == b"%PDF-1" and k["filename"] == "a.pdf"
+        return "MEDIA1", None
+
+    async def _enviar(**k):
+        enviados.append((k["tipo"], k["conteudo"]))
+        return graph.Resposta(ok=True, wamid=f"wamid.{len(enviados)}")
+
+    monkeypatch.setattr(graph, "subir_midia", _subir)
+    monkeypatch.setattr(graph, "enviar_conteudo", _enviar)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    r1 = cliente.post("/interno/conteudo", headers=h,
+                      json={"telefone": "+5516999998888", "tipo": "text", "texto": "oi"})
+    r2 = cliente.post("/interno/conteudo", headers=h,
+                      json={"telefone": "+5516999998888", "tipo": "document", "texto": "Relatório",
+                            "arquivo_b64": base64.b64encode(b"%PDF-1").decode(), "filename": "a.pdf"})
+    assert r1.json()["ok"] and r2.json()["ok"]
+    assert enviados == [("text", {"body": "oi", "preview_url": False}),
+                        ("document", {"id": "MEDIA1", "filename": "a.pdf", "caption": "Relatório"})]
+    assert db.get(Mensagem, r2.json()["id"]).status == "enviada"
+    assert cliente.post("/interno/conteudo", json={"telefone": "+55", "tipo": "text", "texto": "x"}).status_code == 401

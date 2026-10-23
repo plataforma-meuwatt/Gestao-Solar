@@ -674,14 +674,16 @@ class MeuPlanoClient:
 
     # ------------------------------------------------------------- assistente
 
-    async def assistente_chat(self, token: str, mensagem: str, usina_id: int | None) -> str:
+    async def assistente_chat(self, token: str | None, mensagens: list[dict[str, str]]) -> int:
+        """Começa um turno do assistente do meuPlano. O contrato de lá é `{messages}` (o
+        histórico; a API é sem estado) — o antigo `{message, usina_id}` dava 422."""
         r = await self._req(
             "POST",
             "/api/v1/meuacesso/assistant/chat",
             token=token,
-            json={"message": mensagem, "usina_id": usina_id},
+            json={"messages": mensagens},
         )
         return r.json()["run_id"]
 
-    async def assistente_run(self, token: str, run_id: str) -> dict[str, Any]:
+    async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)

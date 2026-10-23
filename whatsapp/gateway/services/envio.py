@@ -45,28 +45,54 @@ async def enviar_template(
     idioma: str = "pt_BR",
     origem: str | None = None,
 ) -> Envio:
+    return await _registrar_e_enviar(
+        db, telefone, tipo="template", template=template,
+        texto=" · ".join(str(p) for p in parametros) or None, origem=origem,
+        chamada=lambda cred, destino: graph.enviar_template(
+            token=cred.token or "", phone_number_id=cred.phone_number_id or "", telefone=destino,
+            template=template, parametros=parametros, idioma=idioma),
+    )
+
+
+async def enviar_conteudo(
+    db: Session, *, telefone: str, tipo: str, conteudo: dict, texto: str | None, origem: str | None = None,
+) -> Envio:
+    """Texto, documento ou imagem — a RESPOSTA do assistente (janela de 24 h)."""
+    return await _registrar_e_enviar(
+        db, telefone, tipo=tipo, template=None, texto=texto, origem=origem,
+        chamada=lambda cred, destino: graph.enviar_conteudo(
+            token=cred.token or "", phone_number_id=cred.phone_number_id or "", telefone=destino,
+            tipo=tipo, conteudo=conteudo),
+    )
+
+
+def credencial_de_envio(db: Session):
     cred = credenciais.em_uso(db)
     if not cred.envio_pronto:
         raise EnvioIndisponivel(
             "WhatsApp ainda não configurado: cadastre o token e o número na tela de "
             "administração do WhatsApp, no painel."
         )
+    return cred
 
+
+async def _registrar_e_enviar(db: Session, telefone: str, *, tipo: str, template: str | None,
+                              texto: str | None, origem: str | None, chamada) -> Envio:
+    cred = credencial_de_envio(db)
     try:
         destino = normalizar(telefone)
     except TelefoneInvalido as exc:
         raise ValueError(str(exc)) from exc
     if not destino:
         raise ValueError("Telefone vazio.")
-
     agora = datetime.now(UTC)
     mensagem = Mensagem(
         direcao="saida",
         wa_id=destino.lstrip("+"),
         telefone=destino,
-        tipo="template",
+        tipo=tipo,
         template=template,
-        texto=" · ".join(str(p) for p in parametros) or None,
+        texto=texto,
         ocorrida_em=agora,
         status="pendente",
         status_em=agora,
@@ -76,14 +102,7 @@ async def enviar_template(
     db.commit()
     db.refresh(mensagem)
 
-    r = await graph.enviar_template(
-        token=cred.token or "",
-        phone_number_id=cred.phone_number_id or "",
-        telefone=destino,
-        template=template,
-        parametros=parametros,
-        idioma=idioma,
-    )
+    r = await chamada(cred, destino)
 
     if r.ok:
         mensagem.wamid = r.wamid

@@ -164,3 +164,22 @@ async def enviar_template(
             "origem": origem,
         },
     )
+
+
+# ── assistente (resposta dentro da janela de 24 h) ───────────────────────────
+
+
+async def enviar_conteudo(
+    *, telefone: str, tipo: str, texto: str | None = None, arquivo: bytes | None = None,
+    filename: str | None = None, mime: str | None = None, origem: str = "assistente",
+) -> dict[str, Any]:
+    """`tipo`: text | document | image. Arquivo vai em base64 para o gateway subir na Meta."""
+    import base64
+    return await _req("POST", "/interno/conteudo", json={
+        "telefone": telefone, "tipo": tipo, "texto": texto, "filename": filename, "mime": mime,
+        "arquivo_b64": base64.b64encode(arquivo).decode() if arquivo else None, "origem": origem,
+    })
+
+
+async def digitando(wamid: str) -> None:
+    await _req("POST", "/interno/digitando", json={"wamid": wamid})

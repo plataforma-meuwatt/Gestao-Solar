@@ -91,7 +91,7 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/auth/me").respond(
         200, json={"name": "Fulano", "email": "fulano@empresa.com.br"}
     )
-    mock.get(f"{BASE}/plants").respond(200, json=[{"slug": "porto-ferreira", "name": "Porto"}])
+    mock.get(f"{BASE}/plants").respond(200, json=[{"slug": "porto-ferreira", "name": "Porto", "id": 9378}])
     # A lista de slots antes do curinga (o respx casa na ordem de registro): é dela que
     # sai o `slot_id` da rota de detalhe — sem um item com `id`, a dependente fica pulada.
     mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(
@@ -116,6 +116,9 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/admin/users").respond(200, json=[{"id": 1, "email": "a@b.com"}])
     mock.get(f"{BASE}/admin/user-plants").respond(200, json=[{"user_id": 1, "plant_id": 1}])
     mock.get(f"{BASE}/reports/portal").respond(200, json=PORTAL_COMO_HOJE)
+    # O assistente do WhatsApp: irradiação diária e a fila do detector de paradas.
+    mock.get(f"{BASE}/grandezas/series").respond(200, json={"timestamps": [], "series": []})
+    mock.get(f"{BASE}/shadow-breakdowns/queue").respond(200, json={"rows": [], "groups": []})
     # MICRO: a forma medida em 28/09/2026 — envelope `{plants, errors}` no catálogo e lista
     # na raiz nos alertas (vazia é o normal: nenhuma micro usina parada).
     mock.get(f"{BASE}/micro/plants").respond(
@@ -259,7 +262,7 @@ async def test_a_forma_da_resposta_e_registrada_sem_o_conteudo(db, conectado):
     v = await sonda.varrer(db, Produto.MEUWATT)
 
     plants = next(r for r in v.rotas if r.chave == "mw.plants")
-    assert set(plants.campos) == {"slug", "name"}
+    assert set(plants.campos) == {"slug", "name", "id"}
     assert plants.itens == 1
     assert "porto-ferreira" not in str(plants.campos)
 

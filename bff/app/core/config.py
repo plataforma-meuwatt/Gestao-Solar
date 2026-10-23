@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     #: mundo na hora de mandar mensagem — e o gateway do resto do mundo na hora de avisar.
     whatsapp_chave_interna: str = ""
 
+    # ── assistente do WhatsApp ──────────────────────────────────────────────
+    #: DeepSeek (API compatível com a da OpenAI). Vazia = o assistente responde que está
+    #: desligado, em vez de ficar mudo.
+    deepseek_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-v4-flash"
+
     environment: str = "development"
 
     @property

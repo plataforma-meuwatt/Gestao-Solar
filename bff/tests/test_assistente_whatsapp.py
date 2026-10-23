@@ -1,0 +1,103 @@
+"""O assistente do WhatsApp: quem é a pessoa, e o atalho da manutenção.
+
+O Gestão Solar é o guardião: o número tem de casar com UMA conta daqui, ou não há conversa.
+"""
+
+import pytest
+
+from app.models.user import Perfil, User
+from app.services import assistente
+from app.services import assistente_geracao as ger
+
+
+def _conta(db, apelido, telefone, ativo=True):
+    u = User(apelido=apelido, email=f"{apelido}@x.com", nome=apelido.title(), perfil=Perfil.CLIENTE,
+             telefone=telefone, ativo=ativo)
+    db.add(u)
+    db.commit()
+    return u
+
+
+def test_o_numero_casa_com_a_conta_mesmo_sem_o_nono_digito(db):
+    dono = _conta(db, "dono", "+5517997377626")
+    assert assistente.conta_do_telefone(db, "+5517997377626").id == dono.id
+    # o WhatsApp às vezes entrega o número antigo, sem o 9
+    assert assistente.conta_do_telefone(db, "+551797377626").id == dono.id
+    assert assistente.conta_do_telefone(db, "+5516997377626") is None   # outro DDD
+
+
+def test_numero_ambiguo_ou_de_conta_inativa_nao_e_atendido(db):
+    _conta(db, "a", "+5517997377626")
+    _conta(db, "b", "+551797377626")          # mesmo DDD e 8 finais
+    assert assistente.conta_do_telefone(db, "+5517997377626") is not None  # exato desempata
+    _conta(db, "c", "+5511912345678", ativo=False)
+    assert assistente.conta_do_telefone(db, "+5511912345678") is None
+
+
+async def test_numero_desconhecido_recebe_o_aviso_e_nada_mais(db, monkeypatch):
+    enviados = []
+
+    async def _enviar(**k):
+        enviados.append(k)
+        return {"ok": True}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    await assistente.atender({"telefone": "+5511900000000", "tipo": "text", "texto": "oi", "wamid": "w1"})
+    assert [e["texto"] for e in enviados] == [assistente.DESCONHECIDO]
+
+
+async def test_pergunta_so_de_manutencao_volta_direto_do_meuplano(db, monkeypatch):
+    """Velocidade: o orquestrador decide numa rodada e a resposta do meuPlano É a resposta."""
+    chamadas_llm = []
+
+    async def _llm(msgs):
+        chamadas_llm.append(msgs)
+        return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "manutencao", "arguments": '{"pergunta": "OS abertas de Pereiras"}'}}]}
+
+    async def _manutencao(ctx, a):
+        assert a["pergunta"] == "OS abertas de Pereiras"
+        return {"texto": "Pereiras tem 2 OS abertas."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "manutencao", (_manutencao, assistente._MANUTENCAO))
+    ctx = ger.Contexto(db=db, user=_conta(db, "dono", "+5517997377626"), telefone="+5517997377626")
+    r = await assistente.responder(ctx, [{"role": "user", "content": "tem OS aberta em Pereiras?"}])
+    assert r == "Pereiras tem 2 OS abertas." and len(chamadas_llm) == 1
+
+
+async def test_erro_de_uma_ferramenta_vira_frase_para_o_modelo(db, monkeypatch):
+    rodadas = iter([
+        {"content": "", "tool_calls": [{"id": "c1", "type": "function",
+                                        "function": {"name": "geracao", "arguments": '{"usina": "x"}'}}]},
+        {"content": "Não achei essa usina."},
+    ])
+    vistos = []
+
+    async def _llm(msgs):
+        vistos.append(msgs[-1])
+        return next(rodadas)
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    ctx = ger.Contexto(db=db, user=_conta(db, "dono", "+5517997377626"), telefone="+5517997377626")
+    assert await assistente.responder(ctx, [{"role": "user", "content": "geração da x"}]) == "Não achei essa usina."
+    assert vistos[-1]["role"] == "tool" and "erro" in vistos[-1]["content"]
+
+
+@pytest.mark.parametrize("vivo,parcial,esperado", [(12375.0, 641.5, 12375.0)])
+def test_hoje_sai_da_leitura_ao_vivo(vivo, parcial, esperado):
+    h = ger.hoje().isoformat()
+    r = {"start_date": h, "total_generation_kwh": parcial, "total_capacity_kwp": 1000,
+         "daily_summaries": [{"date": h, "generation_kwh": parcial}],
+         "inverters": [{"sn": "A", "total_yield_kwh": parcial}],
+         "chart_data": {"daily_generation": {"A": [{"t": h, "y": parcial}]}}}
+    ger._hoje_ao_vivo(r, {"energy_today_kwh": vivo, "inverters": [{"serial_number": "A", "energy_today_kwh": vivo}]})
+    assert r["total_generation_kwh"] == esperado and r["inverters"][0]["total_yield_kwh"] == esperado
+    assert r["daily_summaries"][0]["generation_kwh"] == esperado
+
+
+def test_markdown_do_meuplano_vira_formato_de_whatsapp():
+    t = "# OS na Pirapozinho\n\n**2 abertas**\n\n| Nº | Status |\n|:--:|:---|\n| 1601 | PROGRAMADA |"
+    assert assistente.para_whatsapp(t) == "*OS na Pirapozinho*\n\n*2 abertas*\n\nNº · Status\n1601 · PROGRAMADA"
