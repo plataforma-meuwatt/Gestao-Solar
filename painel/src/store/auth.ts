@@ -108,7 +108,7 @@ export const useAuth = create<Estado>((set, get) => ({
       empresa?: string | null
     }>('/entrar', { apelido, senha })
     // Senha certa na porta errada: a sessão NÃO é guardada aqui — a pessoa é mandada ao
-    // endereço do perfil dela (o gerente no adm-oem, o administrador no adm-gs).
+    // endereço do perfil dela (o gerente no oem-gs, o administrador no adm-gs).
     if (!aceita(data.escopo ?? 'painel')) throw new Error(fraseDaPortaErrada(data.escopo ?? 'painel'))
     const sessao: Sessao = {
       token: data.token,

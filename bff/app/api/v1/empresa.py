@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import gerar_hash_senha, gestor_empresa_atual
+from app.core.telefone import exibir as exibir_telefone
 from app.core.tokens_produto import NOME
 from app.models.empresa import Empresa
 from app.models.integracao import Produto
@@ -1249,6 +1250,9 @@ class UsuarioDetalhado(BaseModel):
     #: Em quais produtos a conta DELA está conectada. Vazio é o normal: o cliente lê com
     #: o token da empresa, e o dele só existe quando ele tem conta lá.
     produtos: list[str] = []
+    #: Celular, para a tela: `(17) 9 9737-7626`.
+    telefone: str | None = None
+    bot_whatsapp: bool = False
 
 
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
@@ -1295,6 +1299,8 @@ def usuarios_detalhados(
             email=c.email,
             usinas=quantas.get(c.id, 0),
             produtos=sorted(conectados.get(c.id, [])),
+            telefone=exibir_telefone(c.telefone),
+            bot_whatsapp=c.bot_whatsapp,
         )
         for c in contas
     ]
@@ -1356,6 +1362,10 @@ def desconectar_conta_do_cliente(
 class ContaPatch(BaseModel):
     ativo: bool | None = None
     senha: str | None = None
+    #: Celular. Vazio ("") apaga — e apagar o celular desliga o bot junto.
+    telefone: str | None = None
+    #: Acesso ao assistente do WhatsApp. Só liga com celular cadastrado.
+    bot_whatsapp: bool | None = None
 
 
 @router.patch("/usuarios/{usuario_id}", response_model=UsuarioDetalhado)
@@ -1385,6 +1395,15 @@ def editar_conta_da_empresa(
                 status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
             )
         conta.senha_hash = gerar_hash_senha(body.senha)
+    if body.telefone is not None:
+        conta.telefone = _celular_unico(db, body.telefone, conta.id)
+        if conta.telefone is None:
+            conta.bot_whatsapp = False
+    if body.bot_whatsapp is not None:
+        if body.bot_whatsapp and not conta.telefone:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Cadastre o celular antes de liberar o assistente do WhatsApp.")
+        conta.bot_whatsapp = body.bot_whatsapp
     db.commit()
 
     return UsuarioDetalhado(
@@ -1400,7 +1419,27 @@ def editar_conta_da_empresa(
             .where(UserPlantAccess.user_id == conta.id)
         )
         or 0,
+        telefone=exibir_telefone(conta.telefone),
+        bot_whatsapp=conta.bot_whatsapp,
     )
+
+
+def _celular_unico(db: Session, valor: str, conta_id: int) -> str | None:
+    """Normaliza e confere que o celular não é de outra conta ATIVA — em QUALQUER empresa.
+    Um número com dois donos deixaria o assistente sem saber com quem está falando."""
+    from app.core.telefone import TelefoneInvalido, e_celular, normalizar
+    try:
+        tel = normalizar(valor)
+    except TelefoneInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if tel is None:
+        return None
+    if not e_celular(tel):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Informe um CELULAR (o WhatsApp não chega em fixo).")
+    outra = db.scalar(select(User.id).where(User.telefone == tel, User.ativo, User.id != conta_id))
+    if outra is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este celular já está em outra conta do Gestão Solar.")
+    return tel
 
 
 class ConcedidaOut(BaseModel):

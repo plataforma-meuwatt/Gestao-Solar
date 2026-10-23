@@ -232,7 +232,7 @@ function TrocarPapel() {
                   ) : ehCliente ? (
                     <span className="text-[11px] text-fraco shrink-0">no app</span>
                   ) : !aceita(p.escopo) ? (
-                    // O outro papel mora em OUTRO endereço (adm-gs × adm-oem): a sessão de
+                    // O outro papel mora em OUTRO endereço (adm-gs × oem-gs): a sessão de
                     // um não vale no outro, então o caminho é entrar lá.
                     <a className="btn-fantasma shrink-0" href={`${enderecoDe(p.escopo)}/entrar`}>
                       Abrir

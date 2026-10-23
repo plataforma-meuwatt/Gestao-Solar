@@ -3,7 +3,7 @@
  * (`PORTAO`, ver `entrypoint.sh`). O mesmo bundle serve os dois endereços:
  *
  * - `plataforma` → adm-gs: só o administrador/atendimento da plataforma;
- * - `empresa`    → adm-oem: só o gerente da empresa de O&M (e o técnico dela);
+ * - `empresa`    → oem-gs: só o gerente da empresa de O&M (e o técnico dela);
  * - vazio        → desenvolvimento e os endereços provisórios: aceita todos.
  *
  * Isto é ORGANIZAÇÃO, não segurança: quem separa os perfis de verdade é a API, que só abre

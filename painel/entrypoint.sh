@@ -26,7 +26,7 @@ API_URL=$(printf '%s' "$API_URL" | sed 's:/*$::')
 
 echo "painel: API em ${API_URL}, escutando na porta ${PORT}"
 
-# PORTAO: qual porta este endereço é — `plataforma` (adm-gs) ou `empresa` (adm-oem). Vazio
+# PORTAO: qual porta este endereço é — `plataforma` (adm-gs) ou `empresa` (oem-gs). Vazio
 # aceita todos os perfis (desenvolvimento). Ver src/lib/portao.ts.
 cat > /usr/share/nginx/html/config.js <<EOF
 // Gerado na subida do contêiner. Não editar — ver painel/entrypoint.sh.

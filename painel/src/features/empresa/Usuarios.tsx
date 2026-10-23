@@ -19,7 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Link2, Sun, UserCog, UserPlus } from 'lucide-react'
+import { KeyRound, Link2, MessageCircle, Sun, UserCog, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
@@ -114,12 +114,16 @@ function Linha({
   const qc = useQueryClient()
   const [senhaAberta, setSenhaAberta] = useState(false)
   const [senha, setSenha] = useState('')
+  const [whatsAberto, setWhatsAberto] = useState(false)
+  const [telefone, setTelefone] = useState(usuario.telefone ?? '')
+  const [bot, setBot] = useState(usuario.bot_whatsapp)
 
   const editar = useMutation({
-    mutationFn: (dados: { ativo?: boolean; senha?: string }) =>
+    mutationFn: (dados: { ativo?: boolean; senha?: string; telefone?: string; bot_whatsapp?: boolean }) =>
       editarContaDaEmpresa(usuario.id, dados),
     onSuccess: () => {
       setSenhaAberta(false)
+      setWhatsAberto(false)
       setSenha('')
       qc.invalidateQueries({ queryKey: ['empresa'] })
     },
@@ -149,6 +153,12 @@ function Linha({
                     : 'vê todas as usinas da empresa'}
               </span>
               <span className="flex items-center gap-1.5">
+                <MessageCircle size={14} />
+                {usuario.telefone
+                  ? `${usuario.telefone} · ${usuario.bot_whatsapp ? 'assistente liberado' : 'assistente bloqueado'}`
+                  : 'sem celular'}
+              </span>
+              <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
                 {usuario.produtos.length
                   ? `conta própria: ${usuario.produtos.map((p) => NOME_DO_PRODUTO[p]).join(' · ')}`
@@ -173,6 +183,10 @@ function Linha({
           ) : null}
           <button className="btn-fantasma" onClick={aoAbrirTokens}>
             Token
+          </button>
+          <button className="btn-fantasma" onClick={() => setWhatsAberto((v) => !v)}>
+            <MessageCircle size={13} />
+            WhatsApp
           </button>
           <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
             <KeyRound size={13} />
@@ -206,6 +220,30 @@ function Linha({
             onClick={() => editar.mutate({ senha })}
           >
             Definir
+          </button>
+        </div>
+      ) : null}
+
+      {whatsAberto ? (
+        <div className="flex gap-3 mt-3 items-center flex-wrap">
+          <input
+            className="campo h-9 text-sm w-48"
+            type="tel"
+            placeholder="(16) 99999-8888"
+            value={telefone}
+            onChange={(e) => setTelefone(e.target.value)}
+            autoFocus
+          />
+          <label className="flex items-center gap-2 text-sm text-corpo">
+            <input type="checkbox" checked={bot} onChange={(e) => setBot(e.target.checked)} />
+            Acesso ao assistente do WhatsApp
+          </label>
+          <button
+            className="btn-secundario shrink-0"
+            disabled={editar.isPending}
+            onClick={() => editar.mutate({ telefone: telefone.trim(), bot_whatsapp: bot && Boolean(telefone.trim()) })}
+          >
+            Salvar
           </button>
         </div>
       ) : null}

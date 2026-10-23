@@ -102,6 +102,9 @@ class User(Base):
     #: Em E.164 (`+5516999998888`), normalizado em `core/telefone.py` — um número, um
     #: formato. É para onde as notificações vão; sem ele não há destino.
     telefone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Liberado para conversar com o assistente do WhatsApp — decisão do gerente da O&M
+    #: (oem-gs). O bot só atende quem tem o celular cadastrado E esta chave ligada.
+    bot_whatsapp: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     #: Quando o gestor registrou que o cliente aceitou receber mensagens no WhatsApp. A
     #: autorização é a cláusula do contrato; esta coluna é o registro de que ela existe.
     #: Nulo = não recebe nada, por mais que esteja marcado na central.

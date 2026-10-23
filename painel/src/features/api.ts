@@ -1010,6 +1010,10 @@ export type UsuarioDetalhado = {
   email: string | null
   usinas: number
   produtos: Produto[]
+  /** Celular, já formatado: `(17) 9 9737-7626`. */
+  telefone: string | null
+  /** Liberado para o assistente do WhatsApp (precisa do celular). */
+  bot_whatsapp: boolean
 }
 
 export const usuariosDetalhados = () =>
@@ -1025,7 +1029,7 @@ export const desconectarContaDoCliente = (usuarioId: number, produto: Produto) =
 
 export const editarContaDaEmpresa = (
   usuarioId: number,
-  dados: { ativo?: boolean; senha?: string },
+  dados: { ativo?: boolean; senha?: string; telefone?: string; bot_whatsapp?: boolean },
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 
 /** As usinas que esta conta recebe hoje — a tela precisa antes de salvar a lista completa. */

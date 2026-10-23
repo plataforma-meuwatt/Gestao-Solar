@@ -46,6 +46,10 @@ async def test_numero_desconhecido_recebe_o_aviso_e_nada_mais(db, monkeypatch):
     monkeypatch.setattr(db, "close", lambda: None)
     await assistente.atender({"telefone": "+5511900000000", "tipo": "text", "texto": "oi", "wamid": "w1"})
     assert [e["texto"] for e in enviados] == [assistente.DESCONHECIDO]
+    # cadastrado mas sem a chave do gerente: nem chega à IA
+    _conta(db, "sem.bot", "+5511900000000")
+    await assistente.atender({"telefone": "+5511900000000", "tipo": "text", "texto": "oi", "wamid": "w2"})
+    assert enviados[-1]["texto"] == assistente.NAO_LIBERADO
 
 
 async def test_pergunta_so_de_manutencao_volta_direto_do_meuplano(db, monkeypatch):
@@ -123,3 +127,31 @@ async def test_admin_da_plataforma_ve_todas_as_usinas_e_le_com_a_conexao_da_plat
     ctx = ger.Contexto(db=db, user=adm, telefone=adm.telefone)
     await ger.preparar(ctx)
     assert set(ctx.usinas) == {"porto-ferreira", "ribeirao-bonito"}
+
+
+def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
+    """Celular de outra conta é recusado (o bot ficaria sem saber quem é); sem celular não libera."""
+    from fastapi import HTTPException
+
+    from app.api.v1.empresa import ContaPatch, editar_conta_da_empresa
+    from app.models.empresa import Empresa
+
+    emp = Empresa(nome="O&M")
+    db.add(emp)
+    db.commit()
+    gerente = User(apelido="ger", email="g@x.com", nome="Ger", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id)
+    cli = User(apelido="cli", email="c@x.com", nome="Cli", perfil=Perfil.CLIENTE, empresa_id=emp.id)
+    db.add_all([gerente, cli])
+    db.commit()
+    _conta(db, "outro", "+5517997377626")
+
+    with pytest.raises(HTTPException) as e:
+        editar_conta_da_empresa(cli.id, ContaPatch(bot_whatsapp=True), db, gerente)
+    assert e.value.status_code == 400
+    with pytest.raises(HTTPException) as e:
+        editar_conta_da_empresa(cli.id, ContaPatch(telefone="(17) 99737-7626"), db, gerente)
+    assert e.value.status_code == 409
+    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_whatsapp=True), db, gerente)
+    assert r.telefone == "(16) 9 9999-8888" and r.bot_whatsapp
+    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone=""), db, gerente)
+    assert r.telefone is None and not r.bot_whatsapp

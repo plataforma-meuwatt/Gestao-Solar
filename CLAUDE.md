@@ -733,8 +733,9 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 | App | Pasta | Endereço |
 |---|---|---|
 | `gestaosolar-api` | `bff/` | `https://api-gs.meuplano.solar` |
-| `gestaosolar-painel` | `painel/` | `https://0d03gwcnyqsbjwmi3i9okjzv.177.153.20.214.sslip.io` |
-| `gestaosolar-portal` | `portal/` | `https://9fcdxv79fxpksjyglggvs8b7.177.153.20.214.sslip.io` |
+| `gestaosolar-portal` | `portal/` | `https://gs.meuplano.solar` — o CLIENTE (dono de usina) |
+| `gestaosolar-painel` | `painel/`, `PORTAO=plataforma` | `https://adm-gs.meuplano.solar` — SÓ a administração da plataforma |
+| `gestaosolar-adm-oem` | `painel/`, `PORTAO=empresa` | `https://oem-gs.meuplano.solar` — SÓ o gerente (e o técnico) da O&M |
 | `gestaosolar-whatsapp` | `whatsapp/` | `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io` (callback da Meta: `/webhook`) |
 
 Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM

@@ -38,6 +38,8 @@ TETO_RESULTADO = 14000        # caracteres de cada resultado de ferramenta que v
 
 DESCONHECIDO = ("Este é o assistente do Gestão Solar e só atende números cadastrados. "
                 "Peça à sua empresa de O&M para cadastrar este telefone na sua conta do Gestão Solar.")
+NAO_LIBERADO = ("Seu acesso ao assistente do WhatsApp ainda não foi liberado. "
+                "Peça ao gerente da sua empresa de O&M para liberar na sua conta.")
 LIMPAR = {"/novo", "novo", "/reset", "zerar", "limpar", "limpar contexto"}
 
 
@@ -205,6 +207,9 @@ async def atender(evento: dict) -> None:
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):
                 await _texto(telefone, DESCONHECIDO)
+            return
+        if not user.bot_whatsapp:
+            await _texto(telefone, NAO_LIBERADO)
             return
         if not texto:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
