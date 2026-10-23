@@ -18,14 +18,14 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io"
+        "EXPO_PUBLIC_API_URL": "https://api-gs.meuplano.solar"
       },
       "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io"
+        "EXPO_PUBLIC_API_URL": "https://api-gs.meuplano.solar"
       },
       "channel": "production"
     }

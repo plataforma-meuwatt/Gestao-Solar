@@ -38,7 +38,7 @@
     ],
     "extra": {
       "_apiUrl": "O endereço de produção mora AQUI porque o app.json é embutido em todo bundle — build e update. Deixá-lo em localhost fazia o OTA sair apontando para o próprio celular, já que `eas update` não injeta EXPO_PUBLIC_API_URL. Em desenvolvimento este valor é ignorado: lá o app usa o IP de quem serve o bundle, na porta 8100.",
-      "apiUrl": "https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io",
+      "apiUrl": "https://api-gs.meuplano.solar",
       "router": {},
       "eas": {
         "projectId": "b29e156d-c235-4323-91d2-e96a952fd363"

@@ -732,7 +732,7 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 
 | App | Pasta | Endereço |
 |---|---|---|
-| `gestaosolar-api` | `bff/` | `https://xdvig6kzxa8etla4noobfdx7.177.153.20.214.sslip.io` |
+| `gestaosolar-api` | `bff/` | `https://api-gs.meuplano.solar` |
 | `gestaosolar-painel` | `painel/` | `https://0d03gwcnyqsbjwmi3i9okjzv.177.153.20.214.sslip.io` |
 | `gestaosolar-portal` | `portal/` | `https://9fcdxv79fxpksjyglggvs8b7.177.153.20.214.sslip.io` |
 | `gestaosolar-whatsapp` | `whatsapp/` | `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io` (callback da Meta: `/webhook`) |
