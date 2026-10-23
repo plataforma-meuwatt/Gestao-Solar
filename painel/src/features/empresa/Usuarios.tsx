@@ -107,14 +107,14 @@ export function UsuariosDaEmpresa() {
 
 /** O assistente do WhatsApp, por produto — o gerente libera um, dois ou todos. Cada parte
  *  responde com o token PRÓPRIO da pessoa (`token`); o helper a reconhece pelo do meuWatt. */
-export const BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
+const BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
   { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
   { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
   { campo: 'bot_helper', rotulo: 'Usina (helper)', token: 'meuwatt' },
 ]
 
 /** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */
-export function textoDoBot(u: Pick<UsuarioDetalhado, ProdutoDoBot | 'produtos'>): string {
+function textoDoBot(u: Pick<UsuarioDetalhado, ProdutoDoBot | 'produtos'>): string {
   return (
     BOT.filter((b) => u[b.campo])
       .map((b) => (u.produtos.includes(b.token) ? b.rotulo : `${b.rotulo} (falta o token)`))
@@ -124,7 +124,7 @@ export function textoDoBot(u: Pick<UsuarioDetalhado, ProdutoDoBot | 'produtos'>)
 
 /** As caixinhas do assistente. Ligar exige celular e o token dela naquele produto; o que já
  *  está ligado sem token pode ser desligado. */
-export function CaixasDoBot({
+function CaixasDoBot({
   bot,
   produtos,
   temCelular,

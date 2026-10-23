@@ -117,8 +117,9 @@ def test_markdown_do_meuplano_vira_formato_de_whatsapp():
     assert assistente.para_whatsapp(t) == "*OS na Pirapozinho*\n\n*2 abertas*\n\nNº · Status\n1601 · PROGRAMADA"
 
 
-async def test_admin_da_plataforma_ve_todas_as_usinas_e_le_com_a_conexao_da_plataforma(db, monkeypatch, usinas):
-    """O bot mora no ADM: sem empresa e sem concessão, ele vê as usinas todas — como no painel."""
+async def test_o_bot_le_com_o_token_dela_e_so_o_que_o_gs_concede(db, monkeypatch, usinas):
+    """O token PRÓPRIO enxerga duas usinas; o GS concedeu uma: o bot fala só da concedida."""
+    from app.models.user import UserPlantAccess
     from app.services import integracoes, vinculos
 
     class _MW:
@@ -126,25 +127,21 @@ async def test_admin_da_plataforma_ve_todas_as_usinas_e_le_com_a_conexao_da_plat
             return [{"slug": "porto-ferreira", "name": "Porto", "id": 1},
                     {"slug": "ribeirao-bonito", "name": "RB", "id": 2}]
 
-    async def _plataforma(*_a, **_k):
+    async def _da_plataforma(*_a, **_k):
         raise AssertionError("o bot não lê com a credencial da plataforma")
 
-    def _o_dele(db_, conta_id, *, so_proprio=False):
-        assert so_proprio and conta_id == adm.id
+    def _o_dela(db_, conta_id, *, so_proprio=False):
+        assert so_proprio and conta_id == dono.id
         return _MW()
 
-    monkeypatch.setattr(integracoes, "cliente_meuwatt", _plataforma)
-    monkeypatch.setattr(vinculos, "cliente_meuwatt", _o_dele)
-    adm = User(apelido="adm", email="adm@x.com", nome="Adm", perfil=Perfil.ADMINISTRADOR,
-               telefone="+5517997377626", bot_meuwatt=True)
-    db.add(adm)
+    monkeypatch.setattr(integracoes, "cliente_meuwatt", _da_plataforma)
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", _o_dela)
+    dono = _conta(db, "dono", "+5517997377626")
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=usinas[0].id))
     db.commit()
-    ctx = ger.Contexto(db=db, user=adm, telefone=adm.telefone)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
     await ger.preparar(ctx)
-    assert ctx.usinas == {} and not adm.bot_liberado      # sem o token DELE, nada
-    _token(db, adm, "meuwatt")
-    await ger.preparar(ctx)
-    assert set(ctx.usinas) == {"porto-ferreira", "ribeirao-bonito"}
+    assert set(ctx.usinas) == {"porto-ferreira"}
 
 
 async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
@@ -250,34 +247,3 @@ def test_sem_o_token_a_parte_liberada_fica_parada_e_o_resto_do_cadastro_salva(db
     assert u.bot_ativo == {"bot_meuwatt"} and assistente.permitidas(u) == list(ger.FERRAMENTAS)
     cadastro.liberar_bot(u, "bot_meuplano", True)          # já estava ligada: não reconfere
     assert u.bot_meuplano
-
-
-async def test_a_plataforma_poe_celular_token_e_libera_o_bot_da_propria_conta(db, monkeypatch):
-    """adm-gs: a conta da plataforma também usa o bot com o token DELA."""
-    from fastapi import HTTPException
-
-    from app.api.v1 import painel_usuarios as pu
-    from app.services import vinculos
-
-    adm = User(apelido="adm", email="a@x.com", nome="Adm", perfil=Perfil.ADMINISTRADOR)
-    db.add(adm)
-    db.commit()
-    with pytest.raises(HTTPException) as e:
-        pu.editar(adm.id, pu.MembroPatch(telefone="(17) 99737-7626", bot_meuwatt=True), db, adm)
-    assert e.value.status_code == 400
-    db.rollback()
-
-    async def _conectar(db_, conta, produto, token, *, por):
-        _token(db_, conta, produto.value)
-        return vinculos.ResultadoConexao(ok=True, detalhe="Conectado")
-
-    monkeypatch.setattr(vinculos, "conectar", _conectar)
-    from app.models.integracao import Produto
-    r = await pu.conectar_token(adm.id, Produto.MEUWATT, pu.TokenIn(token="mw_pat_x"), db, adm)
-    assert r.ok
-    m = pu.editar(adm.id, pu.MembroPatch(telefone="(17) 99737-7626", bot_meuwatt=True), db, adm)
-    assert m.telefone == "(17) 9 9737-7626" and m.bot_meuwatt and m.produtos == ["meuwatt"]
-    assert adm.bot_liberado
-    pu.remover_token(adm.id, Produto.MEUWATT, db, adm)
-    db.refresh(adm)
-    assert not adm.bot_liberado

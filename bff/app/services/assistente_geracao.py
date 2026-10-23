@@ -52,28 +52,15 @@ class Contexto:
     enviados: list[str] = field(default_factory=list)
 
 
-def da_plataforma(user) -> bool:
-    """Administrador/atendimento da PLATAFORMA (sem empresa): o recorte são todas as usinas,
-    como no painel. Lê com o token DELE, como todo mundo."""
-    from app.services.pessoas import DA_PLATAFORMA
-    return user.perfil in DA_PLATAFORMA and user.empresa_id is None
-
-
 async def preparar(ctx: Contexto) -> None:
-    """Liga o contexto ao meuWatt: o token PRÓPRIO da pessoa e o recorte de usinas do GS —
-    vale o que os dois deixam ver."""
-    from sqlalchemy import select
-
+    """Liga o contexto ao meuWatt: o token PRÓPRIO da pessoa e o recorte de usinas do GS
+    (gerente: a carteira da empresa; cliente: o concedido) — vale o que os dois deixam ver.
+    O administrador da plataforma não usa o bot: não tem token (decisão do dono, 23/10/2026)."""
     from app.api.v1.plants import usinas_do_usuario
-    from app.models.plant import PlantLink
     from app.services.vinculos import SemConexao, cliente_meuwatt
     if "bot_meuwatt" not in ctx.user.bot_ativo:
         return
-    if da_plataforma(ctx.user):
-        links = ctx.db.scalars(select(PlantLink).where(PlantLink.ativo)).all()
-    else:
-        links = usinas_do_usuario(ctx.db, ctx.user)
-    concedidas = {p.mw_plant_slug: p for p in links if p.mw_plant_slug}
+    concedidas = {p.mw_plant_slug: p for p in usinas_do_usuario(ctx.db, ctx.user) if p.mw_plant_slug}
     if not concedidas:
         return
     try:
