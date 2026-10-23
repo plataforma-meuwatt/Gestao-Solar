@@ -73,10 +73,12 @@ _MANUTENCAO = {"type": "function", "function": {
 
 
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
+    from app.services import integracoes
     from app.services.vinculos import SemConexao, cliente_meuplano
     try:
-        mp = cliente_meuplano(ctx.db, ctx.user.id)
-    except SemConexao as e:
+        mp = (await integracoes.cliente_meuplano(ctx.db) if ger.da_plataforma(ctx.user)
+              else cliente_meuplano(ctx.db, ctx.user.id))
+    except (SemConexao, RuntimeError) as e:
         return {"erro": f"Manutenção indisponível: {e}"}
     pergunta = (a.get("pergunta") or "") + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
     run_id = await mp.assistente_chat(None, [{"role": "user", "content": pergunta}])

@@ -52,16 +52,32 @@ class Contexto:
     enviados: list[str] = field(default_factory=list)
 
 
+def da_plataforma(user) -> bool:
+    """Administrador/atendimento da PLATAFORMA (sem empresa): vê todas as usinas e lê os
+    produtos com a conexão da plataforma — como no painel."""
+    from app.services.pessoas import DA_PLATAFORMA
+    return user.perfil in DA_PLATAFORMA and user.empresa_id is None
+
+
 async def preparar(ctx: Contexto) -> None:
-    """Liga o contexto ao meuWatt: token da pessoa e o recorte de usinas do GS."""
+    """Liga o contexto ao meuWatt: a credencial e o recorte de usinas do GS."""
+    from sqlalchemy import select
+
     from app.api.v1.plants import usinas_do_usuario
+    from app.models.plant import PlantLink
+    from app.services import integracoes
     from app.services.vinculos import SemConexao, cliente_meuwatt
-    concedidas = {p.mw_plant_slug: p for p in usinas_do_usuario(ctx.db, ctx.user) if p.mw_plant_slug}
+    if da_plataforma(ctx.user):
+        links = ctx.db.scalars(select(PlantLink).where(PlantLink.ativo)).all()
+    else:
+        links = usinas_do_usuario(ctx.db, ctx.user)
+    concedidas = {p.mw_plant_slug: p for p in links if p.mw_plant_slug}
     if not concedidas:
         return
     try:
-        ctx.mw = cliente_meuwatt(ctx.db, ctx.user.id)
-    except SemConexao:
+        ctx.mw = (await integracoes.cliente_meuwatt(ctx.db) if da_plataforma(ctx.user)
+                  else cliente_meuwatt(ctx.db, ctx.user.id))
+    except (SemConexao, RuntimeError):
         return
     for p in await ctx.mw.usinas():
         link = concedidas.get(p.get("slug"))

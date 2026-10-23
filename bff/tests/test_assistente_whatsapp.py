@@ -101,3 +101,25 @@ def test_hoje_sai_da_leitura_ao_vivo(vivo, parcial, esperado):
 def test_markdown_do_meuplano_vira_formato_de_whatsapp():
     t = "# OS na Pirapozinho\n\n**2 abertas**\n\n| Nº | Status |\n|:--:|:---|\n| 1601 | PROGRAMADA |"
     assert assistente.para_whatsapp(t) == "*OS na Pirapozinho*\n\n*2 abertas*\n\nNº · Status\n1601 · PROGRAMADA"
+
+
+async def test_admin_da_plataforma_ve_todas_as_usinas_e_le_com_a_conexao_da_plataforma(db, monkeypatch, usinas):
+    """O bot mora no ADM: sem empresa e sem concessão, ele vê as usinas todas — como no painel."""
+    from app.services import integracoes
+
+    class _MW:
+        async def usinas(self):
+            return [{"slug": "porto-ferreira", "name": "Porto", "id": 1},
+                    {"slug": "ribeirao-bonito", "name": "RB", "id": 2}]
+
+    async def _plataforma(db_, empresa_id=None):
+        assert empresa_id is None
+        return _MW()
+
+    monkeypatch.setattr(integracoes, "cliente_meuwatt", _plataforma)
+    adm = User(apelido="adm", email="adm@x.com", nome="Adm", perfil=Perfil.ADMINISTRADOR, telefone="+5517997377626")
+    db.add(adm)
+    db.commit()
+    ctx = ger.Contexto(db=db, user=adm, telefone=adm.telefone)
+    await ger.preparar(ctx)
+    assert set(ctx.usinas) == {"porto-ferreira", "ribeirao-bonito"}
