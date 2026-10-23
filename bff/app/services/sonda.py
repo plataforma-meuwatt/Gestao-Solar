@@ -351,6 +351,12 @@ MEUPLANO: list[Rota] = [
          "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma",
          "Cronograma consolidado do contrato, com a cor de cada célula",
          params={"container_id": "{vc_container_id}"}),
+    # ── cadastro com o meuPlano como base (oem-gs) ──────────────────────────
+    Rota("mp.admin_users", "GET", "/api/v1/meuacesso/admin/users",
+         "As pessoas do meuPlano que o oem-gs lista para puxar/ligar o cadastro", essencial=False),
+    Rota("mp.admin_user_patch", "PATCH", "/api/v1/meuacesso/admin/users/{usuario_remoto_id}",
+         "Gravar nome/e-mail/telefone no meuPlano quando o cadastro muda no GS", essencial=False,
+         sonda=False, nao_sondada_porque="Escreve: a sonda só lê."),
     Rota("mp.lookup", "GET", "/api/v1/meuacesso/admin/users/lookup",
          "Achar a conta do cliente por e-mail, ao vincular",
          params={"email": "{email}"}),

@@ -129,7 +129,7 @@ async def test_admin_da_plataforma_ve_todas_as_usinas_e_le_com_a_conexao_da_plat
     assert set(ctx.usinas) == {"porto-ferreira", "ribeirao-bonito"}
 
 
-def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
+async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
     """Celular de outra conta é recusado (o bot ficaria sem saber quem é); sem celular não libera."""
     from fastapi import HTTPException
 
@@ -146,14 +146,14 @@ def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
     _conta(db, "outro", "+5517997377626")
 
     with pytest.raises(HTTPException) as e:
-        editar_conta_da_empresa(cli.id, ContaPatch(bot_meuplano=True), db, gerente)
+        await editar_conta_da_empresa(cli.id, ContaPatch(bot_meuplano=True), db, gerente)
     assert e.value.status_code == 400
     with pytest.raises(HTTPException) as e:
-        editar_conta_da_empresa(cli.id, ContaPatch(telefone="(17) 99737-7626"), db, gerente)
+        await editar_conta_da_empresa(cli.id, ContaPatch(telefone="(17) 99737-7626"), db, gerente)
     assert e.value.status_code == 409
-    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_meuwatt=True), db, gerente)
+    r = await editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_meuwatt=True), db, gerente)
     assert r.telefone == "(16) 9 9999-8888" and r.bot_meuwatt and not r.bot_meuplano
-    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone=""), db, gerente)
+    r = await editar_conta_da_empresa(cli.id, ContaPatch(telefone=""), db, gerente)
     assert r.telefone is None and not (r.bot_meuwatt or r.bot_meuplano or r.bot_helper)
 
 

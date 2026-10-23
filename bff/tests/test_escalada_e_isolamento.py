@@ -57,7 +57,7 @@ def cenario(db):
 # ------------------------------------------------- 1. a escalada de privilégio
 
 
-def test_o_gerente_nao_troca_a_senha_de_uma_conta_da_PLATAFORMA(db, cenario):
+async def test_o_gerente_nao_troca_a_senha_de_uma_conta_da_PLATAFORMA(db, cenario):
     """O furo: `PATCH /api/empresa/usuarios/{id}` conferia só a empresa, e a rota-irmã da
     plataforma já recusava perfil de plataforma desde sempre. Com a senha trocada, o
     gerente entrava em `/api/painel/entrar` como administrador — a conta que guarda as
@@ -68,7 +68,7 @@ def test_o_gerente_nao_troca_a_senha_de_uma_conta_da_PLATAFORMA(db, cenario):
     antes = admin.senha_hash
 
     with pytest.raises(HTTPException) as erro:
-        editar_conta_da_empresa(
+        await editar_conta_da_empresa(
             admin.id, ContaPatch(senha="escolhida-pelo-atacante"), db=db, gerente=gerente
         )
     assert erro.value.status_code == 404
@@ -77,7 +77,7 @@ def test_o_gerente_nao_troca_a_senha_de_uma_conta_da_PLATAFORMA(db, cenario):
     assert admin.senha_hash == antes
 
 
-def test_o_gerente_nao_desativa_nem_conecta_token_em_conta_da_PLATAFORMA(db, cenario):
+async def test_o_gerente_nao_desativa_nem_conecta_token_em_conta_da_PLATAFORMA(db, cenario):
     """As rotas-irmãs do mesmo arquivo, com a mesma raiz: todas conferiam só a empresa."""
     from app.api.v1.empresa import (
         ContaPatch,
@@ -98,13 +98,15 @@ def test_o_gerente_nao_desativa_nem_conecta_token_em_conta_da_PLATAFORMA(db, cen
         ),
     ):
         with pytest.raises(HTTPException) as erro:
-            chamada()
+            r = chamada()
+            if hasattr(r, "__await__"):
+                await r
         assert erro.value.status_code == 404
     db.refresh(admin)
     assert admin.ativo is True
 
 
-def test_conta_da_plataforma_nao_aparece_na_lista_do_gerente(db, cenario):
+async def test_conta_da_plataforma_nao_aparece_na_lista_do_gerente(db, cenario):
     """O gerente descobria o alvo sozinho: as duas listagens recortavam por `empresa_id` e
     o docstring afirmava que conta de plataforma tem `empresa_id` nulo — o que a carteira
     desmentia."""
@@ -113,7 +115,7 @@ def test_conta_da_plataforma_nao_aparece_na_lista_do_gerente(db, cenario):
     _emp, gerente, admin = cenario
     for lista in (
         listar_usuarios(db=db, gerente=gerente),
-        usuarios_detalhados(db=db, gerente=gerente),
+        await usuarios_detalhados(db=db, gerente=gerente),
     ):
         apelidos = {u.apelido for u in lista}
         assert "gerente" in apelidos

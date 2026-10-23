@@ -170,6 +170,20 @@ class MeuPlanoClient:
             return dados.get("items") or dados.get("results") or []
         return dados or []
 
+    # ---------------------------------------------------- cadastro (base única)
+
+    async def usuarios_admin(self) -> list[dict[str, Any]]:
+        """As pessoas que esta credencial administra no meuPlano: `[{id, name, email, phone,
+        active, ...}]`. Exige a permissão de usuários lá; um gerente comum vê só as pessoas das
+        empresas dele. É daqui que o oem-gs puxa o cadastro."""
+        dados = await self._get("/api/v1/meuacesso/admin/users")
+        return dados if isinstance(dados, list) else (dados or {}).get("items") or []
+
+    async def atualizar_usuario_admin(self, user_id: int, dados: dict[str, Any]) -> dict[str, Any]:
+        """Grava nome/e-mail/telefone de uma pessoa no meuPlano — o lado de lá da base única."""
+        r = await self._req("PATCH", f"/api/v1/meuacesso/admin/users/{int(user_id)}", json=dados)
+        return r.json()
+
     async def procurar_usuario_por_email(self, email: str) -> dict[str, Any] | None:
         """Busca exata. Este sistema tem o endpoint de lookup; o meuWatt não."""
         try:

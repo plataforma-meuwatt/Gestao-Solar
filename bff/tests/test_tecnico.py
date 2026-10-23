@@ -117,11 +117,11 @@ def test_o_login_unico_emite_a_sessao_do_tecnico(db, cenario):
 # ── o gerente cria; o técnico não recebe usina ─────────────────────────────
 
 
-def test_o_gerente_cria_tecnico_na_empresa_dele(db, cenario, monkeypatch):
+async def test_o_gerente_cria_tecnico_na_empresa_dele(db, cenario, monkeypatch):
     from app.api.v1.empresa import ClienteIn, criar_cliente
 
     emp, gerente, _ = cenario
-    criado = criar_cliente(
+    criado = await criar_cliente(
         ClienteIn(nome="Técnico B", apelido="tecnico.b", perfil=Perfil.TECNICO),
         db=db, gerente=gerente,
     )

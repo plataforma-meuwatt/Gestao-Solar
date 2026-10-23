@@ -735,7 +735,7 @@ async def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
     a, _b, gerente = carteiras
     usina = await salvar_usina(UsinaIn(mw_slug="nova-1", nome="Nova 1"), db=db, gerente=gerente)
 
-    criado = criar_cliente(ClienteIn(nome="Dona Maria", apelido="dona.maria"), db=db, gerente=gerente)
+    criado = await criar_cliente(ClienteIn(nome="Dona Maria", apelido="dona.maria"), db=db, gerente=gerente)
     assert criado.senha
 
     definir_usinas_do_cliente(
@@ -751,14 +751,14 @@ async def test_o_gerente_cadastra_cliente_e_concede_usinas(db, carteiras):
     assert conta.empresa_id == a.id
 
 
-def test_nao_se_concede_usina_de_outra_empresa(db, carteiras):
+async def test_nao_se_concede_usina_de_outra_empresa(db, carteiras):
     """Defeito guardado: um id na requisição concederia a usina de outra empresa, e o dono
     dela veria no aplicativo dados de uma carteira que não é a sua."""
     from app.api.v1.empresa import ClienteIn, UsinasDoClienteIn, criar_cliente, definir_usinas_do_cliente
 
     _a, b, gerente = carteiras
     da_b = db.scalar(select(PlantLink).where(PlantLink.empresa_id == b.id))
-    criado = criar_cliente(ClienteIn(nome="Cliente Novo", apelido="cli.novo"), db=db, gerente=gerente)
+    criado = await criar_cliente(ClienteIn(nome="Cliente Novo", apelido="cli.novo"), db=db, gerente=gerente)
 
     with pytest.raises(HTTPException) as erro:
         definir_usinas_do_cliente(
@@ -1066,7 +1066,7 @@ def test_nao_se_le_a_concessao_de_conta_de_outra_empresa(db, carteiras, duas_emp
     assert erro.value.status_code == 404
 
 
-def test_a_lista_de_usuarios_aguenta_conta_com_token_proprio(db, carteiras, duas_empresas):
+async def test_a_lista_de_usuarios_aguenta_conta_com_token_proprio(db, carteiras, duas_empresas):
     """Defeito guardado, e derrubou a tela inteira com 500 em produção:
     `VinculoProduto.produto` é TEXTO no banco, e não o enum `Produto` — diferente de
     `Integracao.produto`, que é `Enum(...)`. O código chamou `.value` nele.
@@ -1094,7 +1094,7 @@ def test_a_lista_de_usuarios_aguenta_conta_com_token_proprio(db, carteiras, duas
     )
     db.commit()
 
-    por_apelido = {u.apelido: u for u in usuarios_detalhados(db=db, gerente=gerente)}
+    por_apelido = {u.apelido: u for u in await usuarios_detalhados(db=db, gerente=gerente)}
     assert por_apelido["com.conta"].produtos == ["meuwatt"]
     # E quem não tem token próprio diz isso com uma lista vazia — é o caso comum.
     assert por_apelido[gerente.apelido].produtos == []
@@ -1206,15 +1206,15 @@ async def test_a_tela_enxerga_a_concessao_herdada(db, carteiras):
     assert por_nome["Herdada"].da_empresa is False
 
 
-def test_o_gerente_cria_dono_de_usina_e_outro_gerente(db, carteiras):
+async def test_o_gerente_cria_dono_de_usina_e_outro_gerente(db, carteiras):
     """O botão que faltava na tela de Usuários. São os dois únicos papéis que existem
     dentro de uma empresa — os da plataforma não se criam daqui, e pedi-los seria dar a um
     inquilino a chave do sistema inteiro."""
     from app.api.v1.empresa import ClienteIn, criar_cliente
 
     a, _b, gerente = carteiras
-    dono = criar_cliente(ClienteIn(nome="Dono Novo", apelido="dono.novo"), db=db, gerente=gerente)
-    colega = criar_cliente(
+    dono = await criar_cliente(ClienteIn(nome="Dono Novo", apelido="dono.novo"), db=db, gerente=gerente)
+    colega = await criar_cliente(
         ClienteIn(nome="Colega", apelido="colega.om", perfil=Perfil.GESTOR_EMPRESA),
         db=db,
         gerente=gerente,
@@ -1227,7 +1227,7 @@ def test_o_gerente_cria_dono_de_usina_e_outro_gerente(db, carteiras):
     assert dono.senha and colega.senha
 
     with pytest.raises(HTTPException) as erro:
-        criar_cliente(
+        await criar_cliente(
             ClienteIn(nome="Chefe", apelido="chefe", perfil=Perfil.ADMINISTRADOR),
             db=db,
             gerente=gerente,

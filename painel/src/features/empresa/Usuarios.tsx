@@ -22,7 +22,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Link2, MessageCircle, Sun, UserCog, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
-import { Aviso, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
+import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
   catalogoDeUsinas,
   conectarContaDoCliente,
@@ -32,6 +32,10 @@ import {
   criarClienteDaEmpresa,
   usinasConcedidas,
   usuariosDetalhados,
+  desligarDoMeuPlano,
+  ligarAoMeuPlano,
+  pessoasDoMeuPlano,
+  type PessoaMeuPlano,
   type Produto,
   type ProdutoDoBot,
   type UsuarioDetalhado,
@@ -122,20 +126,13 @@ function Linha({
   const qc = useQueryClient()
   const [senhaAberta, setSenhaAberta] = useState(false)
   const [senha, setSenha] = useState('')
-  const [whatsAberto, setWhatsAberto] = useState(false)
-  const [telefone, setTelefone] = useState(usuario.telefone ?? '')
-  const [bot, setBot] = useState<Record<ProdutoDoBot, boolean>>({
-    bot_meuplano: usuario.bot_meuplano,
-    bot_meuwatt: usuario.bot_meuwatt,
-    bot_helper: usuario.bot_helper,
-  })
+  const [cadastroAberto, setCadastroAberto] = useState(false)
 
   const editar = useMutation({
     mutationFn: (dados: Parameters<typeof editarContaDaEmpresa>[1]) =>
       editarContaDaEmpresa(usuario.id, dados),
     onSuccess: () => {
       setSenhaAberta(false)
-      setWhatsAberto(false)
       setSenha('')
       qc.invalidateQueries({ queryKey: ['empresa'] })
     },
@@ -173,6 +170,10 @@ function Linha({
                   : 'sem celular'}
               </span>
               <span className="flex items-center gap-1.5">
+                <UserCog size={14} />
+                {usuario.meuplano ? `cadastro ligado a ${usuario.meuplano} no meuPlano` : 'cadastro só do Gestão Solar'}
+              </span>
+              <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
                 {usuario.produtos.length
                   ? `conta própria: ${usuario.produtos.map((p) => NOME_DO_PRODUTO[p]).join(' · ')}`
@@ -198,9 +199,9 @@ function Linha({
           <button className="btn-fantasma" onClick={aoAbrirTokens}>
             Token
           </button>
-          <button className="btn-fantasma" onClick={() => setWhatsAberto((v) => !v)}>
-            <MessageCircle size={13} />
-            WhatsApp
+          <button className="btn-fantasma" onClick={() => setCadastroAberto(true)}>
+            <UserCog size={13} />
+            Cadastro
           </button>
           <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
             <KeyRound size={13} />
@@ -238,47 +239,186 @@ function Linha({
         </div>
       ) : null}
 
-      {whatsAberto ? (
-        <div className="flex gap-3 mt-3 items-center flex-wrap">
-          <input
-            className="campo h-9 text-sm w-48"
+      {editar.error ? <Erro className="mt-2">{mensagemDeErro(editar.error)}</Erro> : null}
+      {cadastroAberto ? (
+        <CadastroDoUsuario usuario={usuario} aoFechar={() => setCadastroAberto(false)} />
+      ) : null}
+    </Cartao>
+  )
+}
+
+/**
+ * A pessoa do meuPlano, numa lista suspensa PESQUISÁVEL (nada de chips). Só oferece quem
+ * ainda não está ligado a outra conta daqui.
+ */
+function EscolherPessoaMeuPlano({ aoEscolher }: { aoEscolher: (p: PessoaMeuPlano) => void }) {
+  const [filtro, setFiltro] = useState('')
+  const { data, error, isLoading } = useQuery({
+    queryKey: ['empresa', 'meuplano-pessoas'],
+    queryFn: pessoasDoMeuPlano,
+    retry: false,
+  })
+  if (isLoading) return <Carregando texto="Lendo as pessoas do meuPlano…" />
+  if (error) return <Erro>{mensagemDeErro(error)}</Erro>
+  const f = filtro.trim().toLowerCase()
+  const livres = (data ?? []).filter(
+    (p) => !p.ligada_a && (!f || `${p.nome} ${p.email} ${p.telefone}`.toLowerCase().includes(f)),
+  )
+  return (
+    <div className="grid gap-2">
+      <input
+        className="campo h-9 text-sm"
+        placeholder="buscar por nome, e-mail ou telefone"
+        value={filtro}
+        onChange={(e) => setFiltro(e.target.value)}
+      />
+      <select
+        className="campo text-sm"
+        size={Math.min(6, Math.max(2, livres.length))}
+        onChange={(e) => {
+          const p = livres.find((x) => x.id === Number(e.target.value))
+          if (p) aoEscolher(p)
+        }}
+      >
+        {livres.map((p) => (
+          <option key={p.id} value={p.id}>
+            {[p.nome, p.email, p.telefone].filter(Boolean).join(' · ')}
+          </option>
+        ))}
+      </select>
+      {!livres.length ? <p className="text-xs text-fraco">Ninguém livre com esse filtro.</p> : null}
+    </div>
+  )
+}
+
+/**
+ * O cadastro da pessoa: nome, e-mail, celular, o que o assistente responde e a ligação com o
+ * meuPlano. Ligada, o que se grava aqui grava lá também (uma base só).
+ */
+function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [nome, setNome] = useState(usuario.nome)
+  const [email, setEmail] = useState(usuario.email ?? '')
+  const [telefone, setTelefone] = useState(usuario.telefone ?? '')
+  const [bot, setBot] = useState<Record<ProdutoDoBot, boolean>>({
+    bot_meuplano: usuario.bot_meuplano,
+    bot_meuwatt: usuario.bot_meuwatt,
+    bot_helper: usuario.bot_helper,
+  })
+  const [ligadoA, setLigadoA] = useState(usuario.meuplano)
+  const [ligando, setLigando] = useState(false)
+  const [avisos, setAvisos] = useState<string[]>([])
+  const atualizar = () => qc.invalidateQueries({ queryKey: ['empresa'] })
+
+  const salvar = useMutation({
+    mutationFn: () => {
+      const temCelular = Boolean(telefone.trim())
+      return editarContaDaEmpresa(usuario.id, {
+        nome: nome.trim(),
+        email: email.trim() || undefined,
+        telefone: telefone.trim(),
+        bot_meuplano: temCelular && bot.bot_meuplano,
+        bot_meuwatt: temCelular && bot.bot_meuwatt,
+        bot_helper: temCelular && bot.bot_helper,
+      })
+    },
+    onSuccess: () => {
+      atualizar()
+      aoFechar()
+    },
+  })
+  const ligar = useMutation({
+    mutationFn: (p: PessoaMeuPlano) => ligarAoMeuPlano(usuario.id, p.id),
+    onSuccess: (r) => {
+      setNome(r.usuario.nome)
+      setEmail(r.usuario.email ?? '')
+      setTelefone(r.usuario.telefone ?? '')
+      setLigadoA(r.usuario.meuplano)
+      setAvisos(r.avisos)
+      setLigando(false)
+      atualizar()
+    },
+  })
+  const desligar = useMutation({
+    mutationFn: () => desligarDoMeuPlano(usuario.id),
+    onSuccess: () => {
+      setLigadoA(null)
+      atualizar()
+    },
+  })
+
+  return (
+    <Modal titulo={`Cadastro de ${usuario.nome}`} aoFechar={aoFechar} largura="max-w-2xl">
+      <div className="grid gap-4">
+        <Cartao>
+          {ligadoA ? (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm text-corpo">
+                Ligado a <b>{ligadoA}</b> no meuPlano — nome, e-mail e celular valem nos dois.
+              </p>
+              <button className="btn-fantasma" disabled={desligar.isPending} onClick={() => desligar.mutate()}>
+                Desligar
+              </button>
+            </div>
+          ) : ligando ? (
+            <div className="grid gap-2">
+              <p className="text-sm text-corpo">Escolha a pessoa no meuPlano — os dados de lá vêm para cá.</p>
+              <EscolherPessoaMeuPlano aoEscolher={(p) => ligar.mutate(p)} />
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm text-corpo">Cadastro só do Gestão Solar.</p>
+              <button className="btn-secundario" onClick={() => setLigando(true)}>
+                Ligar ao meuPlano
+              </button>
+            </div>
+          )}
+          {ligar.error ? <Erro className="mt-2">{mensagemDeErro(ligar.error)}</Erro> : null}
+          {desligar.error ? <Erro className="mt-2">{mensagemDeErro(desligar.error)}</Erro> : null}
+          {avisos.map((a) => (
+            <p key={a} className="text-xs text-fraco mt-2">{a}</p>
+          ))}
+        </Cartao>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} />
+          <Campo rotulo="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Campo
+            rotulo="Celular (o assistente reconhece a pessoa por ele)"
             type="tel"
             placeholder="(16) 99999-8888"
             value={telefone}
             onChange={(e) => setTelefone(e.target.value)}
-            autoFocus
           />
-          <span className="text-sm text-rotulo">Assistente responde:</span>
-          {BOT.map((b) => (
-            <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
-              <input
-                type="checkbox"
-                checked={bot[b.campo]}
-                onChange={(e) => setBot((v) => ({ ...v, [b.campo]: e.target.checked }))}
-              />
-              {b.rotulo}
-            </label>
-          ))}
-          <button
-            className="btn-secundario shrink-0"
-            disabled={editar.isPending}
-            onClick={() => {
-              const temCelular = Boolean(telefone.trim())
-              editar.mutate({
-                telefone: telefone.trim(),
-                bot_meuplano: temCelular && bot.bot_meuplano,
-                bot_meuwatt: temCelular && bot.bot_meuwatt,
-                bot_helper: temCelular && bot.bot_helper,
-              })
-            }}
-          >
-            Salvar
+        </div>
+
+        <div>
+          <p className="rotulo-campo">O assistente do WhatsApp responde a esta pessoa sobre</p>
+          <div className="flex gap-4 flex-wrap mt-1.5">
+            {BOT.map((b) => (
+              <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
+                <input
+                  type="checkbox"
+                  checked={bot[b.campo]}
+                  disabled={!telefone.trim()}
+                  onChange={(e) => setBot((v) => ({ ...v, [b.campo]: e.target.checked }))}
+                />
+                {b.rotulo}
+              </label>
+            ))}
+          </div>
+          {!telefone.trim() ? <p className="text-xs text-fraco mt-1">Cadastre o celular para liberar.</p> : null}
+        </div>
+
+        {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+        <div className="flex justify-end gap-2">
+          <button className="btn-secundario" onClick={aoFechar}>Cancelar</button>
+          <button className="btn-primario" disabled={nome.trim().length < 2 || salvar.isPending} onClick={() => salvar.mutate()}>
+            {salvar.isPending ? 'Salvando…' : ligadoA ? 'Salvar nos dois' : 'Salvar'}
           </button>
         </div>
-      ) : null}
-
-      {editar.error ? <Erro className="mt-2">{mensagemDeErro(editar.error)}</Erro> : null}
-    </Cartao>
+      </div>
+    </Modal>
   )
 }
 
@@ -546,12 +686,23 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
   const [apelido, setApelido] = useState('')
   const [email, setEmail] = useState('')
   const [perfil, setPerfil] = useState<'cliente' | 'gestor_empresa' | 'tecnico'>('cliente')
-  const [criado, setCriado] = useState<{ apelido: string; senha: string } | null>(null)
+  const [telefone, setTelefone] = useState('')
+  const [origem, setOrigem] = useState<'zero' | 'meuplano'>('zero')
+  const [pessoa, setPessoa] = useState<PessoaMeuPlano | null>(null)
+  const [criado, setCriado] = useState<{ apelido: string; senha: string; avisos: string[] } | null>(null)
 
   const criar = useMutation({
-    mutationFn: () => criarClienteDaEmpresa({ nome, apelido, email: email || null, perfil }),
+    mutationFn: () =>
+      criarClienteDaEmpresa({
+        nome,
+        apelido,
+        email: email || null,
+        perfil,
+        telefone: telefone.trim() || null,
+        mp_user_id: origem === 'meuplano' ? pessoa?.id ?? null : null,
+      }),
     onSuccess: (r) => {
-      setCriado({ apelido: r.apelido, senha: r.senha })
+      setCriado({ apelido: r.apelido, senha: r.senha, avisos: r.avisos ?? [] })
       qc.invalidateQueries({ queryKey: ['empresa'] })
     },
   })
@@ -570,6 +721,9 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <p className="text-xs text-fraco">
             Entregue as duas juntas. O e-mail é só contato — quem autentica é o apelido.
           </p>
+          {criado.avisos.map((a) => (
+            <p key={a} className="text-xs text-fraco">{a}</p>
+          ))}
           <div className="flex justify-end">
             <button className="btn-primario" onClick={aoFechar}>
               Fechar
@@ -604,6 +758,44 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
         </div>
 
         <div>
+          <p className="rotulo-campo">Cadastro</p>
+          <div className="mt-1 flex gap-1">
+            {(
+              [
+                ['zero', 'Do zero'],
+                ['meuplano', 'Puxar do meuPlano'],
+              ] as const
+            ).map(([v, rotulo]) => (
+              <button
+                key={v}
+                type="button"
+                className={origem === v ? 'btn-secundario' : 'btn-fantasma'}
+                onClick={() => setOrigem(v)}
+              >
+                {rotulo}
+              </button>
+            ))}
+          </div>
+          {origem === 'meuplano' ? (
+            <div className="mt-2">
+              <EscolherPessoaMeuPlano
+                aoEscolher={(p) => {
+                  setPessoa(p)
+                  setNome(p.nome ?? '')
+                  setEmail(p.email ?? '')
+                  setTelefone(p.telefone ?? '')
+                }}
+              />
+              {pessoa ? (
+                <p className="text-xs text-fraco mt-1">
+                  Nasce ligado a {pessoa.nome} no meuPlano: mudanças passam a valer nos dois.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div>
           <p className="rotulo-campo">Nome</p>
           <input className="campo mt-1" value={nome} onChange={(e) => setNome(e.target.value)} />
         </div>
@@ -619,6 +811,16 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <p className="rotulo-campo">E-mail (opcional)</p>
           <input className="campo mt-1" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
+        <div>
+          <p className="rotulo-campo">Celular (opcional — o assistente do WhatsApp reconhece por ele)</p>
+          <input
+            className="campo mt-1"
+            type="tel"
+            placeholder="(16) 99999-8888"
+            value={telefone}
+            onChange={(e) => setTelefone(e.target.value)}
+          />
+        </div>
 
         {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
         {!nome.trim() || !apelido.trim() ? (
@@ -632,7 +834,9 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <button
             className="btn-primario"
             onClick={() => criar.mutate()}
-            disabled={!nome.trim() || !apelido.trim() || criar.isPending}
+            disabled={
+              !nome.trim() || !apelido.trim() || criar.isPending || (origem === 'meuplano' && !pessoa)
+            }
           >
             {criar.isPending ? 'Criando…' : 'Criar'}
           </button>

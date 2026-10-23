@@ -878,6 +878,11 @@ class ClienteIn(BaseModel):
     #: únicos papéis que existem dentro de uma empresa — os da plataforma não se criam
     #: daqui, e pedi-los aqui seria dar a um inquilino a chave do sistema inteiro.
     perfil: Perfil = Perfil.CLIENTE
+    #: Celular (opcional). É o que o assistente do WhatsApp usa para reconhecer a pessoa.
+    telefone: str | None = None
+    #: Puxar do meuPlano: a pessoa de lá a que esta conta nasce LIGADA (nome, e-mail e
+    #: celular vêm de lá, e mudanças passam a valer nos dois). Vazio = cadastro do zero.
+    mp_user_id: int | None = None
 
 
 class ClienteCriadoOut(BaseModel):
@@ -887,10 +892,12 @@ class ClienteCriadoOut(BaseModel):
     #: A senha provisória, mostrada UMA vez. Entregue com o APELIDO, que é o que autentica
     #: — mandar o e-mail junto convida a tentar entrar com ele, que é o que não funciona.
     senha: str
+    #: o que não pôde vir do meuPlano ao puxar o cadastro
+    avisos: list[str] = []
 
 
 @router.post("/clientes", response_model=ClienteCriadoOut, status_code=201)
-def criar_cliente(
+async def criar_cliente(
     body: ClienteIn, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> ClienteCriadoOut:
     """Cadastra alguém DESTA empresa: um dono de usina, outro gerente ou um técnico.
@@ -908,6 +915,9 @@ def criar_cliente(
             status.HTTP_400_BAD_REQUEST,
             "Dentro da empresa só existem dono de usina, gerente e técnico.",
         )
+    from app.services import cadastro
+    # O celular é conferido ANTES de criar: recusado depois, a conta já existiria pela metade.
+    telefone = cadastro.celular_livre(db, body.telefone, None) if body.telefone else None
     try:
         criado = clientes.criar(
             db,
@@ -922,13 +932,22 @@ def criar_cliente(
 
     criado.usuario.empresa_id = empresa_id
     criado.usuario.perfil = body.perfil
+    criado.usuario.telefone = telefone
     db.commit()
+
+    avisos: list[str] = []
+    if body.mp_user_id is not None:
+        avisos = await cadastro.ligar(db, criado.usuario, empresa_id, body.mp_user_id)
+        if telefone and criado.usuario.telefone != telefone:
+            await cadastro.gravar(db, criado.usuario, empresa_id, telefone=body.telefone)
+            db.commit()
 
     return ClienteCriadoOut(
         id=criado.usuario.id,
         nome=criado.usuario.nome,
         apelido=criado.usuario.apelido,
         senha=criado.senha_provisoria,
+        avisos=avisos,
     )
 
 
@@ -1256,14 +1275,19 @@ class UsuarioDetalhado(BaseModel):
     bot_meuplano: bool = False
     bot_meuwatt: bool = False
     bot_helper: bool = False
+    #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
+    meuplano: str | None = None
 
 
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
-def usuarios_detalhados(
+async def usuarios_detalhados(
     db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> list[UsuarioDetalhado]:
-    """Quem é da empresa, com concessões e conexões — a lista que a tela opera."""
+    """Quem é da empresa, com concessões e conexões — a lista que a tela opera. Antes, traz
+    do meuPlano o que mudou lá no cadastro de quem está ligado (base única)."""
+    from app.services import cadastro
     empresa_id = svc.empresa_exigida(gerente)
+    await cadastro.sincronizar(db, empresa_id)
     contas = list(
         db.scalars(
             select(User)
@@ -1286,7 +1310,14 @@ def usuarios_detalhados(
         ).all()
     )
     conectados: dict[int, list[str]] = {}
+    ligado_mp: dict[int, str] = {}
     for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
+        if v.produto == Produto.MEUPLANO.value:
+            ligado_mp[v.gs_user_id] = v.usuario_remoto_nome or v.usuario_remoto_email or v.usuario_remoto_id
+        # Só TOKEN é conta própria: ligar o cadastro à pessoa do meuPlano não muda com que
+        # credencial se lê (continua a da empresa).
+        if not v.token_cifrado:
+            continue
         # `VinculoProduto.produto` é TEXTO no banco, e não o enum `Produto` — diferente de
         # `Integracao.produto`, que é `Enum(...)`. Chamar `.value` aqui estourava 500 na
         # tela inteira, e o traço dos dois modelos é parecido o bastante para enganar.
@@ -1304,6 +1335,7 @@ def usuarios_detalhados(
             produtos=sorted(conectados.get(c.id, [])),
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
+            meuplano=ligado_mp.get(c.id),
         )
         for c in contas
     ]
@@ -1365,6 +1397,9 @@ def desconectar_conta_do_cliente(
 class ContaPatch(BaseModel):
     ativo: bool | None = None
     senha: str | None = None
+    #: Cadastro. Ligado ao meuPlano, grava lá também (ver services/cadastro).
+    nome: str | None = Field(default=None, min_length=2)
+    email: EmailStr | None = None
     #: Celular. Vazio ("") apaga — e apagar o celular desliga o bot junto.
     telefone: str | None = None
     #: Acesso ao assistente do WhatsApp, por produto. Só liga com celular cadastrado.
@@ -1374,7 +1409,7 @@ class ContaPatch(BaseModel):
 
 
 @router.patch("/usuarios/{usuario_id}", response_model=UsuarioDetalhado)
-def editar_conta_da_empresa(
+async def editar_conta_da_empresa(
     usuario_id: int,
     body: ContaPatch,
     db: Session = Depends(get_db),
@@ -1400,10 +1435,10 @@ def editar_conta_da_empresa(
                 status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
             )
         conta.senha_hash = gerar_hash_senha(body.senha)
-    if body.telefone is not None:
-        conta.telefone = _celular_unico(db, body.telefone, conta.id)
-        if conta.telefone is None:
-            conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
+    if body.nome is not None or body.email is not None or body.telefone is not None:
+        from app.services import cadastro
+        await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
+                              email=str(body.email) if body.email else None, telefone=body.telefone)
     for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper"):
         valor = getattr(body, campo)
         if valor is None:
@@ -1429,25 +1464,70 @@ def editar_conta_da_empresa(
         or 0,
         telefone=exibir_telefone(conta.telefone),
         bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
+        meuplano=_nome_no_meuplano(db, conta.id),
     )
 
 
-def _celular_unico(db: Session, valor: str, conta_id: int) -> str | None:
-    """Normaliza e confere que o celular não é de outra conta ATIVA — em QUALQUER empresa.
-    Um número com dois donos deixaria o assistente sem saber com quem está falando."""
-    from app.core.telefone import TelefoneInvalido, e_celular, normalizar
-    try:
-        tel = normalizar(valor)
-    except TelefoneInvalido as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
-    if tel is None:
-        return None
-    if not e_celular(tel):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Informe um CELULAR (o WhatsApp não chega em fixo).")
-    outra = db.scalar(select(User.id).where(User.telefone == tel, User.ativo, User.id != conta_id))
-    if outra is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Este celular já está em outra conta do Gestão Solar.")
-    return tel
+def _nome_no_meuplano(db: Session, conta_id: int) -> str | None:
+    from app.services import cadastro
+    v = cadastro.vinculo_meuplano(db, conta_id)
+    return (v.usuario_remoto_nome or v.usuario_remoto_email or v.usuario_remoto_id) if v else None
+
+
+# ── cadastro com o meuPlano como base (ver services/cadastro) ────────────────
+
+
+class PessoaMeuPlanoOut(BaseModel):
+    id: int
+    nome: str | None = None
+    email: str | None = None
+    telefone: str | None = None
+    ativo: bool = True
+    #: apelido da conta daqui já ligada a esta pessoa, ou nulo
+    ligada_a: str | None = None
+
+
+@router.get("/meuplano/pessoas", response_model=list[PessoaMeuPlanoOut])
+async def pessoas_do_meuplano(
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> list[PessoaMeuPlanoOut]:
+    """As pessoas que a empresa administra no meuPlano — para puxar o cadastro."""
+    from app.services import cadastro
+    return [PessoaMeuPlanoOut(**p) for p in await cadastro.pessoas_do_meuplano(db, svc.empresa_exigida(gerente))]
+
+
+class LigarIn(BaseModel):
+    mp_user_id: int
+
+
+class LigarOut(BaseModel):
+    usuario: UsuarioDetalhado
+    #: o que não pôde vir do meuPlano (ex.: celular já usado por outra conta)
+    avisos: list[str] = []
+
+
+@router.put("/usuarios/{usuario_id}/meuplano", response_model=LigarOut)
+async def ligar_ao_meuplano(
+    usuario_id: int, body: LigarIn, db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> LigarOut:
+    """Liga o cadastro desta conta à pessoa do meuPlano e puxa nome, e-mail e celular de lá."""
+    from app.services import cadastro
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
+    avisos = await cadastro.ligar(db, conta, empresa_id, body.mp_user_id)
+    return LigarOut(usuario=await editar_conta_da_empresa(usuario_id, ContaPatch(), db, gerente), avisos=avisos)
+
+
+@router.delete("/usuarios/{usuario_id}/meuplano", response_model=UsuarioDetalhado)
+async def desligar_do_meuplano(
+    usuario_id: int, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual),
+) -> UsuarioDetalhado:
+    """Desfaz a ligação do cadastro (o cadastro daqui fica como está)."""
+    from app.services import cadastro
+    conta = _conta_da_empresa(db, usuario_id, svc.empresa_exigida(gerente))
+    cadastro.desligar(db, conta)
+    return await editar_conta_da_empresa(usuario_id, ContaPatch(), db, gerente)
 
 
 class ConcedidaOut(BaseModel):

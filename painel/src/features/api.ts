@@ -965,9 +965,12 @@ export const criarClienteDaEmpresa = (dados: {
   email?: string | null
   /** `cliente` (dono de usina), `gestor_empresa` ou `tecnico`. Os papéis de uma empresa. */
   perfil?: 'cliente' | 'gestor_empresa' | 'tecnico'
+  telefone?: string | null
+  /** Puxar do meuPlano: a pessoa de lá a que a conta nasce ligada. */
+  mp_user_id?: number | null
 }) =>
   apiEmpresa
-    .post<{ id: number; nome: string; apelido: string; senha: string }>('/clientes', dados)
+    .post<{ id: number; nome: string; apelido: string; senha: string; avisos?: string[] }>('/clientes', dados)
     .then((r) => r.data)
 
 export const definirUsinasDoCliente = (clienteId: number, plant_link_ids: number[]) =>
@@ -1016,7 +1019,33 @@ export type UsuarioDetalhado = {
   bot_meuplano: boolean
   bot_meuwatt: boolean
   bot_helper: boolean
+  /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
+  meuplano: string | null
 }
+
+/** Uma pessoa que a empresa administra no meuPlano — de onde o cadastro pode ser puxado. */
+export type PessoaMeuPlano = {
+  id: number
+  nome: string | null
+  email: string | null
+  telefone: string | null
+  ativo: boolean
+  /** apelido da conta daqui já ligada a ela, ou nulo */
+  ligada_a: string | null
+}
+
+export const pessoasDoMeuPlano = () =>
+  apiEmpresa.get<PessoaMeuPlano[]>('/meuplano/pessoas').then((r) => r.data)
+
+export const ligarAoMeuPlano = (usuarioId: number, mpUserId: number) =>
+  apiEmpresa
+    .put<{ usuario: UsuarioDetalhado; avisos: string[] }>(`/usuarios/${usuarioId}/meuplano`, {
+      mp_user_id: mpUserId,
+    })
+    .then((r) => r.data)
+
+export const desligarDoMeuPlano = (usuarioId: number) =>
+  apiEmpresa.delete<UsuarioDetalhado>(`/usuarios/${usuarioId}/meuplano`).then((r) => r.data)
 
 export type ProdutoDoBot = 'bot_meuplano' | 'bot_meuwatt' | 'bot_helper'
 
@@ -1033,7 +1062,8 @@ export const desconectarContaDoCliente = (usuarioId: number, produto: Produto) =
 
 export const editarContaDaEmpresa = (
   usuarioId: number,
-  dados: { ativo?: boolean; senha?: string; telefone?: string } & Partial<Record<ProdutoDoBot, boolean>>,
+  dados: { ativo?: boolean; senha?: string; nome?: string; email?: string; telefone?: string } &
+    Partial<Record<ProdutoDoBot, boolean>>,
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 
 /** As usinas que esta conta recebe hoje — a tela precisa antes de salvar a lista completa. */

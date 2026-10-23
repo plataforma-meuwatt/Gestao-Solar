@@ -15,6 +15,8 @@ Contrato completo em `docs/CONTRATO_API.md`.
 """
 
 import asyncio
+
+from sqlalchemy import select
 import logging
 import traceback
 import uuid
@@ -143,6 +145,20 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
             raise
         except Exception:  # noqa: BLE001
             _log.exception("motor: a volta falhou; a próxima continua agendada")
+
+        # Base única do cadastro: o que mudou no meuPlano (nome, e-mail, CELULAR) chega às
+        # contas ligadas daqui. Sem isto, celular trocado lá só valia para o assistente do
+        # WhatsApp quando alguém abrisse a tela de Usuários no oem-gs.
+        try:
+            from app.models.empresa import Empresa
+            from app.services import cadastro
+            with SessionLocal() as db:
+                for empresa_id in db.scalars(select(Empresa.id).where(Empresa.ativa)).all():
+                    await cadastro.sincronizar(db, empresa_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("cadastro/sincronizar: a volta falhou; a próxima continua agendada")
 
 
 @asynccontextmanager

@@ -1,0 +1,207 @@
+"""O cadastro da pessoa — o Gestão Solar é a BASE de todos, e o meuPlano é um vínculo.
+
+Decisão do dono (23/10/2026):
+
+- **Quem tem conta no meuPlano** fica LIGADO à pessoa de lá (`gs_vinculos_produto`, produto
+  meuplano, `usuario_remoto_id`). Nome, e-mail e celular viram UMA base: editar aqui grava lá
+  (`gravar`), e o que mudar lá chega aqui (`sincronizar`).
+- **Quem só tem meuWatt** (comum — o cadastro do meuWatt não tem telefone) ou nada: cadastrado
+  do zero aqui. Não há o que sincronizar.
+
+Ligar sem token NÃO dá login no meuPlano: o "Entrar com Gestão Solar" de lá só aceita quem
+foi registrado pelo fluxo do token (`login_externo.habilitar`). Aqui é só o cadastro.
+
+A credencial que lê e grava no meuPlano é a DA EMPRESA (o gerente opera as pessoas dela), e
+precisa da permissão de usuários lá — sem ela, a frase do meuPlano chega ao gerente.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.telefone import TelefoneInvalido, e_celular, exibir, normalizar
+from app.models.integracao import Produto
+from app.models.user import User, VinculoProduto
+
+log = logging.getLogger("gs.cadastro")
+
+
+async def _mp(db: Session, empresa_id: int):
+    from app.services import integracoes
+    try:
+        return await integracoes.cliente_meuplano(db, empresa_id)
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(exc)) from None
+
+
+def _falha_do_meuplano(exc: Exception) -> HTTPException:
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            detalhe = (exc.response.json() or {}).get("detail")
+        except ValueError:
+            detalhe = None
+        if exc.response.status_code in (401, 403):
+            return HTTPException(status.HTTP_424_FAILED_DEPENDENCY, detalhe or (
+                "A conta da sua empresa no meuPlano não pode administrar usuários lá. "
+                "Use o token de quem tem essa permissão em Conexões."))
+        return HTTPException(status.HTTP_502_BAD_GATEWAY, f"O meuPlano recusou: {detalhe or exc.response.status_code}")
+    return HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível falar com o meuPlano.")
+
+
+def vinculo_meuplano(db: Session, conta_id: int) -> VinculoProduto | None:
+    return db.scalar(select(VinculoProduto).where(
+        VinculoProduto.gs_user_id == conta_id, VinculoProduto.produto == Produto.MEUPLANO.value))
+
+
+def celular_livre(db: Session, valor: str | None, conta_id: int | None) -> str | None:
+    """Normaliza e confere que o celular não é de outra conta ATIVA — em QUALQUER empresa.
+    Um número com dois donos deixaria o assistente sem saber com quem está falando."""
+    try:
+        tel = normalizar(valor)
+    except TelefoneInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if tel is None:
+        return None
+    if not e_celular(tel):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Informe um CELULAR (o WhatsApp não chega em fixo).")
+    q = select(User.id).where(User.telefone == tel, User.ativo)
+    if conta_id is not None:
+        q = q.where(User.id != conta_id)
+    if db.scalar(q) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este celular já está em outra conta do Gestão Solar.")
+    return tel
+
+
+# --------------------------------------------------------------------------- leitura
+async def pessoas_do_meuplano(db: Session, empresa_id: int) -> list[dict[str, Any]]:
+    """As pessoas que a empresa administra no meuPlano, e a quem cada uma já está ligada aqui."""
+    mp = await _mp(db, empresa_id)
+    try:
+        pessoas = await mp.usuarios_admin()
+    except Exception as exc:                               # noqa: BLE001
+        raise _falha_do_meuplano(exc) from None
+    ligadas = dict(db.execute(
+        select(VinculoProduto.usuario_remoto_id, User.apelido)
+        .join(User, User.id == VinculoProduto.gs_user_id)
+        .where(VinculoProduto.produto == Produto.MEUPLANO.value, User.empresa_id == empresa_id)).all())
+    return [{"id": p.get("id"), "nome": p.get("name") or p.get("username") or p.get("email"),
+             "email": p.get("email"), "telefone": p.get("phone"), "ativo": p.get("active", True),
+             "ligada_a": ligadas.get(str(p.get("id")))} for p in pessoas]
+
+
+# --------------------------------------------------------------------------- vínculo
+def _aplicar_da_pessoa(db: Session, conta: User, p: dict[str, Any]) -> list[str]:
+    """Traz nome/e-mail/celular do meuPlano para cá. Devolve o que NÃO pôde vir (e por quê)."""
+    avisos: list[str] = []
+    if p.get("name"):
+        conta.nome = p["name"]
+    if p.get("email"):
+        conta.email = p["email"]
+    if p.get("phone"):
+        try:
+            conta.telefone = celular_livre(db, p["phone"], conta.id)
+        except HTTPException as exc:
+            avisos.append(f"Celular do meuPlano não veio: {exc.detail}")
+    return avisos
+
+
+async def ligar(db: Session, conta: User, empresa_id: int, mp_user_id: int) -> list[str]:
+    """Liga a conta daqui à pessoa do meuPlano e puxa o cadastro de lá."""
+    try:
+        pessoas = await (await _mp(db, empresa_id)).usuarios_admin()
+    except HTTPException:
+        raise
+    except Exception as exc:                               # noqa: BLE001
+        raise _falha_do_meuplano(exc) from None
+    pessoa = next((p for p in pessoas if p.get("id") == mp_user_id), None)
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Essa pessoa não está entre as que a sua empresa administra no meuPlano.")
+    ja = db.scalar(select(User.apelido).join(VinculoProduto, VinculoProduto.gs_user_id == User.id).where(
+        VinculoProduto.produto == Produto.MEUPLANO.value, VinculoProduto.usuario_remoto_id == str(mp_user_id),
+        User.id != conta.id))
+    if ja:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Essa pessoa do meuPlano já está ligada a '{ja}'.")
+    v = vinculo_meuplano(db, conta.id)
+    if v is not None and v.token_cifrado and v.usuario_remoto_id != str(mp_user_id):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "O token desta conta é de OUTRA pessoa no meuPlano. Remova o token antes de ligar.")
+    if v is None:
+        v = VinculoProduto(gs_user_id=conta.id, produto=Produto.MEUPLANO.value, usuario_remoto_id=str(mp_user_id))
+        db.add(v)
+    v.usuario_remoto_id = str(mp_user_id)
+    v.usuario_remoto_email = pessoa.get("email")
+    v.usuario_remoto_nome = pessoa.get("name")
+    avisos = _aplicar_da_pessoa(db, conta, pessoa)
+    db.commit()
+    return avisos
+
+
+def desligar(db: Session, conta: User) -> None:
+    v = vinculo_meuplano(db, conta.id)
+    if v is None:
+        return
+    if v.token_cifrado:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Esta conta tem o token do meuPlano: remova o token (botão Token) para desligar.")
+    db.delete(v)
+    db.commit()
+
+
+# --------------------------------------------------------------------------- escrita
+async def gravar(db: Session, conta: User, empresa_id: int, *, nome: str | None = None,
+                 email: str | None = None, telefone: str | None = None) -> None:
+    """Muda o cadastro. Ligada ao meuPlano: grava LÁ primeiro — se o meuPlano recusar, nada
+    muda aqui, e as duas bases continuam iguais."""
+    novo_tel = celular_livre(db, telefone, conta.id) if telefone is not None else conta.telefone
+    v = vinculo_meuplano(db, conta.id)
+    if v is not None:
+        corpo = {k: val for k, val in (("name", nome), ("email", email)) if val is not None}
+        if telefone is not None:
+            corpo["phone"] = exibir(novo_tel) or ""
+        if corpo:
+            try:
+                await (await _mp(db, empresa_id)).atualizar_usuario_admin(int(v.usuario_remoto_id), corpo)
+            except HTTPException:
+                raise
+            except Exception as exc:                       # noqa: BLE001
+                raise _falha_do_meuplano(exc) from None
+    if nome is not None:
+        conta.nome = nome
+    if email is not None:
+        conta.email = email or None
+    if telefone is not None:
+        conta.telefone = novo_tel
+        if novo_tel is None:
+            conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
+
+
+async def sincronizar(db: Session, empresa_id: int) -> int:
+    """O que mudou no meuPlano chega aqui (nome, e-mail, celular das contas LIGADAS). Melhor
+    esforço: sem o meuPlano, a tela mostra o que está guardado. Devolve quantas mudaram."""
+    ligadas = db.execute(
+        select(User, VinculoProduto.usuario_remoto_id).join(VinculoProduto, VinculoProduto.gs_user_id == User.id)
+        .where(VinculoProduto.produto == Produto.MEUPLANO.value, User.empresa_id == empresa_id)).all()
+    if not ligadas:
+        return 0
+    try:
+        pessoas = {str(p.get("id")): p for p in await (await _mp(db, empresa_id)).usuarios_admin()}
+    except Exception:                                      # noqa: BLE001
+        log.warning("cadastro: sincronizar com o meuPlano falhou (empresa %s)", empresa_id, exc_info=True)
+        return 0
+    mudou = 0
+    for conta, remoto in ligadas:
+        p = pessoas.get(remoto)
+        if p is None:
+            continue
+        antes = (conta.nome, conta.email, conta.telefone)
+        for aviso in _aplicar_da_pessoa(db, conta, p):
+            log.info("cadastro: %s — %s", conta.apelido, aviso)
+        mudou += antes != (conta.nome, conta.email, conta.telefone)
+    if mudou:
+        db.commit()
+    return mudou
