@@ -100,11 +100,28 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO)}
 
 
+def permitidas(user) -> list[str]:
+    """As ferramentas que a IA RECEBE para esta pessoa — o gerente libera por produto. A
+    ferramenta que não vem na lista não existe para o modelo (nem para `_executar`)."""
+    nomes: list[str] = []
+    if user.bot_meuwatt:
+        nomes += list(ger.FERRAMENTAS)
+    if user.bot_meuplano:
+        nomes.append("manutencao")
+    # helper: a chave já existe; as ferramentas de atuar na usina entram quando ficarem prontas
+    return nomes
+
+
 # --------------------------------------------------------------------------- orquestrador
 def _sistema(ctx: ger.Contexto) -> str:
     usinas = ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento"
+    areas = [n for n, ok in (("geração/monitoramento (meuWatt)", ctx.user.bot_meuwatt),
+                             ("manutenção (meuPlano)", ctx.user.bot_meuplano),
+                             ("atuação na usina (helper)", ctx.user.bot_helper)) if ok]
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
+Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
+a essa parte não está liberado e que o gerente da O&M pode liberar — não tente responder de outro jeito.
 
 - Geração, inversores, PR, produtividade, irradiação, PVsyst, paradas de inversor, relatório/gráfico do
   monitoramento → ferramentas de geração. Manutenção (OS, cronograma, pendências, estoque, documentos,
@@ -117,19 +134,22 @@ Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberada
 - Fora dessas duas áreas, diga com gentileza que não consegue ajudar."""
 
 
-async def _llm(mensagens: list[dict]) -> dict:
+async def _llm(mensagens: list[dict], ferramentas: list[dict]) -> dict:
     s = get_settings()
+    corpo: dict[str, Any] = {"model": s.llm_model, "messages": mensagens, "temperature": 0.2}
+    if ferramentas:
+        corpo.update(tools=ferramentas, tool_choice="auto")
     async with httpx.AsyncClient(timeout=90) as c:
         r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions",
-                         headers={"Authorization": f"Bearer {s.deepseek_api_key}"},
-                         json={"model": s.llm_model, "messages": mensagens, "temperature": 0.2,
-                               "tools": [f for _, f in FERRAMENTAS.values()], "tool_choice": "auto"})
+                         headers={"Authorization": f"Bearer {s.deepseek_api_key}"}, json=corpo)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]
 
 
 async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
     nome = chamada["function"]["name"]
+    if nome not in permitidas(ctx.user):
+        return {"erro": "Essa parte não está liberada para você. O gerente da sua O&M pode liberar."}
     try:
         args = json.loads(chamada["function"].get("arguments") or "{}")
         fn = FERRAMENTAS[nome][0]
@@ -145,8 +165,9 @@ async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
 
 async def responder(ctx: ger.Contexto, historico: list[dict]) -> str:
     msgs: list[dict] = [{"role": "system", "content": _sistema(ctx)}, *historico]
+    ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
     for _ in range(MAX_RODADAS):
-        m = await _llm(msgs)
+        m = await _llm(msgs, ferramentas)
         chamadas = m.get("tool_calls") or []
         if not chamadas:
             return (m.get("content") or "").strip() or "Não consegui montar a resposta. Pode reformular?"
@@ -208,7 +229,7 @@ async def atender(evento: dict) -> None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):
                 await _texto(telefone, DESCONHECIDO)
             return
-        if not user.bot_whatsapp:
+        if not user.bot_liberado:
             await _texto(telefone, NAO_LIBERADO)
             return
         if not texto:

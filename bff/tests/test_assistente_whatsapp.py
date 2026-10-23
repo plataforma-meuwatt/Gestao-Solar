@@ -10,9 +10,9 @@ from app.services import assistente
 from app.services import assistente_geracao as ger
 
 
-def _conta(db, apelido, telefone, ativo=True):
+def _conta(db, apelido, telefone, ativo=True, bot=True):
     u = User(apelido=apelido, email=f"{apelido}@x.com", nome=apelido.title(), perfil=Perfil.CLIENTE,
-             telefone=telefone, ativo=ativo)
+             telefone=telefone, ativo=ativo, bot_meuplano=bot, bot_meuwatt=bot)
     db.add(u)
     db.commit()
     return u
@@ -47,7 +47,7 @@ async def test_numero_desconhecido_recebe_o_aviso_e_nada_mais(db, monkeypatch):
     await assistente.atender({"telefone": "+5511900000000", "tipo": "text", "texto": "oi", "wamid": "w1"})
     assert [e["texto"] for e in enviados] == [assistente.DESCONHECIDO]
     # cadastrado mas sem a chave do gerente: nem chega à IA
-    _conta(db, "sem.bot", "+5511900000000")
+    _conta(db, "sem.bot", "+5511900000000", bot=False)
     await assistente.atender({"telefone": "+5511900000000", "tipo": "text", "texto": "oi", "wamid": "w2"})
     assert enviados[-1]["texto"] == assistente.NAO_LIBERADO
 
@@ -56,7 +56,7 @@ async def test_pergunta_so_de_manutencao_volta_direto_do_meuplano(db, monkeypatc
     """Velocidade: o orquestrador decide numa rodada e a resposta do meuPlano É a resposta."""
     chamadas_llm = []
 
-    async def _llm(msgs):
+    async def _llm(msgs, ferramentas=None):
         chamadas_llm.append(msgs)
         return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
             "name": "manutencao", "arguments": '{"pergunta": "OS abertas de Pereiras"}'}}]}
@@ -80,7 +80,7 @@ async def test_erro_de_uma_ferramenta_vira_frase_para_o_modelo(db, monkeypatch):
     ])
     vistos = []
 
-    async def _llm(msgs):
+    async def _llm(msgs, ferramentas=None):
         vistos.append(msgs[-1])
         return next(rodadas)
 
@@ -146,12 +146,33 @@ def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
     _conta(db, "outro", "+5517997377626")
 
     with pytest.raises(HTTPException) as e:
-        editar_conta_da_empresa(cli.id, ContaPatch(bot_whatsapp=True), db, gerente)
+        editar_conta_da_empresa(cli.id, ContaPatch(bot_meuplano=True), db, gerente)
     assert e.value.status_code == 400
     with pytest.raises(HTTPException) as e:
         editar_conta_da_empresa(cli.id, ContaPatch(telefone="(17) 99737-7626"), db, gerente)
     assert e.value.status_code == 409
-    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_whatsapp=True), db, gerente)
-    assert r.telefone == "(16) 9 9999-8888" and r.bot_whatsapp
+    r = editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_meuwatt=True), db, gerente)
+    assert r.telefone == "(16) 9 9999-8888" and r.bot_meuwatt and not r.bot_meuplano
     r = editar_conta_da_empresa(cli.id, ContaPatch(telefone=""), db, gerente)
-    assert r.telefone is None and not r.bot_whatsapp
+    assert r.telefone is None and not (r.bot_meuwatt or r.bot_meuplano or r.bot_helper)
+
+
+
+async def test_so_as_ferramentas_dos_produtos_liberados_chegam_a_ia(db, monkeypatch):
+    """Liberado só meuWatt: a IA nem recebe a de manutenção — e se pedir, é recusada."""
+    so_mw = _conta(db, "so.mw", "+5511911112222")
+    so_mw.bot_meuplano = False
+    db.commit()
+    vistas = []
+
+    async def _llm(msgs, ferramentas=None):
+        vistas.append({f["function"]["name"] for f in ferramentas or []})
+        if len(vistas) == 1:
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "manutencao", "arguments": '{"pergunta": "OS"}'}}]}
+        return {"content": "Manutenção não liberada."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    ctx = ger.Contexto(db=db, user=so_mw, telefone=so_mw.telefone)
+    assert await assistente.responder(ctx, [{"role": "user", "content": "tem OS?"}]) == "Manutenção não liberada."
+    assert "manutencao" not in vistas[0] and "geracao" in vistas[0]

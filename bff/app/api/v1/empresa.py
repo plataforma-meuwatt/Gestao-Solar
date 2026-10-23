@@ -1252,7 +1252,10 @@ class UsuarioDetalhado(BaseModel):
     produtos: list[str] = []
     #: Celular, para a tela: `(17) 9 9737-7626`.
     telefone: str | None = None
-    bot_whatsapp: bool = False
+    #: O que o assistente do WhatsApp responde a esta pessoa, por produto.
+    bot_meuplano: bool = False
+    bot_meuwatt: bool = False
+    bot_helper: bool = False
 
 
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
@@ -1300,7 +1303,7 @@ def usuarios_detalhados(
             usinas=quantas.get(c.id, 0),
             produtos=sorted(conectados.get(c.id, [])),
             telefone=exibir_telefone(c.telefone),
-            bot_whatsapp=c.bot_whatsapp,
+            bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
         )
         for c in contas
     ]
@@ -1364,8 +1367,10 @@ class ContaPatch(BaseModel):
     senha: str | None = None
     #: Celular. Vazio ("") apaga — e apagar o celular desliga o bot junto.
     telefone: str | None = None
-    #: Acesso ao assistente do WhatsApp. Só liga com celular cadastrado.
-    bot_whatsapp: bool | None = None
+    #: Acesso ao assistente do WhatsApp, por produto. Só liga com celular cadastrado.
+    bot_meuplano: bool | None = None
+    bot_meuwatt: bool | None = None
+    bot_helper: bool | None = None
 
 
 @router.patch("/usuarios/{usuario_id}", response_model=UsuarioDetalhado)
@@ -1398,12 +1403,15 @@ def editar_conta_da_empresa(
     if body.telefone is not None:
         conta.telefone = _celular_unico(db, body.telefone, conta.id)
         if conta.telefone is None:
-            conta.bot_whatsapp = False
-    if body.bot_whatsapp is not None:
-        if body.bot_whatsapp and not conta.telefone:
+            conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
+    for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper"):
+        valor = getattr(body, campo)
+        if valor is None:
+            continue
+        if valor and not conta.telefone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "Cadastre o celular antes de liberar o assistente do WhatsApp.")
-        conta.bot_whatsapp = body.bot_whatsapp
+        setattr(conta, campo, valor)
     db.commit()
 
     return UsuarioDetalhado(
@@ -1420,7 +1428,7 @@ def editar_conta_da_empresa(
         )
         or 0,
         telefone=exibir_telefone(conta.telefone),
-        bot_whatsapp=conta.bot_whatsapp,
+        bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
     )
 
 

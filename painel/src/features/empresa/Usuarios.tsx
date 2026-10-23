@@ -33,6 +33,7 @@ import {
   usinasConcedidas,
   usuariosDetalhados,
   type Produto,
+  type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
@@ -100,6 +101,13 @@ export function UsuariosDaEmpresa() {
   )
 }
 
+/** O assistente do WhatsApp, por produto — o gerente libera um, dois ou todos. */
+const BOT: { campo: ProdutoDoBot; rotulo: string }[] = [
+  { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)' },
+  { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)' },
+  { campo: 'bot_helper', rotulo: 'Usina (helper)' },
+]
+
 function Linha({
   usuario,
   souEu,
@@ -116,10 +124,14 @@ function Linha({
   const [senha, setSenha] = useState('')
   const [whatsAberto, setWhatsAberto] = useState(false)
   const [telefone, setTelefone] = useState(usuario.telefone ?? '')
-  const [bot, setBot] = useState(usuario.bot_whatsapp)
+  const [bot, setBot] = useState<Record<ProdutoDoBot, boolean>>({
+    bot_meuplano: usuario.bot_meuplano,
+    bot_meuwatt: usuario.bot_meuwatt,
+    bot_helper: usuario.bot_helper,
+  })
 
   const editar = useMutation({
-    mutationFn: (dados: { ativo?: boolean; senha?: string; telefone?: string; bot_whatsapp?: boolean }) =>
+    mutationFn: (dados: Parameters<typeof editarContaDaEmpresa>[1]) =>
       editarContaDaEmpresa(usuario.id, dados),
     onSuccess: () => {
       setSenhaAberta(false)
@@ -155,7 +167,9 @@ function Linha({
               <span className="flex items-center gap-1.5">
                 <MessageCircle size={14} />
                 {usuario.telefone
-                  ? `${usuario.telefone} · ${usuario.bot_whatsapp ? 'assistente liberado' : 'assistente bloqueado'}`
+                  ? `${usuario.telefone} · assistente: ${
+                      BOT.filter((b) => usuario[b.campo]).map((b) => b.rotulo).join(' · ') || 'bloqueado'
+                    }`
                   : 'sem celular'}
               </span>
               <span className="flex items-center gap-1.5">
@@ -234,14 +248,29 @@ function Linha({
             onChange={(e) => setTelefone(e.target.value)}
             autoFocus
           />
-          <label className="flex items-center gap-2 text-sm text-corpo">
-            <input type="checkbox" checked={bot} onChange={(e) => setBot(e.target.checked)} />
-            Acesso ao assistente do WhatsApp
-          </label>
+          <span className="text-sm text-rotulo">Assistente responde:</span>
+          {BOT.map((b) => (
+            <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
+              <input
+                type="checkbox"
+                checked={bot[b.campo]}
+                onChange={(e) => setBot((v) => ({ ...v, [b.campo]: e.target.checked }))}
+              />
+              {b.rotulo}
+            </label>
+          ))}
           <button
             className="btn-secundario shrink-0"
             disabled={editar.isPending}
-            onClick={() => editar.mutate({ telefone: telefone.trim(), bot_whatsapp: bot && Boolean(telefone.trim()) })}
+            onClick={() => {
+              const temCelular = Boolean(telefone.trim())
+              editar.mutate({
+                telefone: telefone.trim(),
+                bot_meuplano: temCelular && bot.bot_meuplano,
+                bot_meuwatt: temCelular && bot.bot_meuwatt,
+                bot_helper: temCelular && bot.bot_helper,
+              })
+            }}
           >
             Salvar
           </button>
