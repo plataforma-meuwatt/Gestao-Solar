@@ -62,6 +62,11 @@ class Perfil(StrEnum):
     TECNICO = "tecnico"
 
 
+#: O token PRÓPRIO que cada parte do assistente exige. O helper reconhece a pessoa pelo token
+#: do meuWatt dela (contrato `docs/bot.md` do mw-modbus-helper).
+BOT_TOKEN = {"bot_meuwatt": "meuwatt", "bot_meuplano": "meuplano", "bot_helper": "meuwatt"}
+
+
 class User(Base):
     __tablename__ = "gs_users"
 
@@ -108,9 +113,20 @@ class User(Base):
     bot_meuwatt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_helper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
+    def tem_token(self, produto: str) -> bool:
+        """Tem o token PRÓPRIO naquele produto (`gs_vinculos_produto`), não o da empresa."""
+        return any(v.produto == produto and v.token_cifrado for v in self.vinculos)
+
+    @property
+    def bot_ativo(self) -> set[str]:
+        """O que o assistente responde DE FATO: liberado pelo gerente E com o token da pessoa.
+        Regra do dono (23/10/2026): cada um usa o bot com o SEU token — nunca o da empresa
+        nem o da plataforma. Liberado sem token fica parado, e a tela diz que falta o token."""
+        return {c for c, p in BOT_TOKEN.items() if getattr(self, c) and self.tem_token(p)}
+
     @property
     def bot_liberado(self) -> bool:
-        return bool(self.telefone) and (self.bot_meuplano or self.bot_meuwatt or self.bot_helper)
+        return bool(self.telefone) and bool(self.bot_ativo)
     #: Quando o gestor registrou que o cliente aceitou receber mensagens no WhatsApp. A
     #: autorização é a cláusula do contrato; esta coluna é o registro de que ela existe.
     #: Nulo = não recebe nada, por mais que esteja marcado na central.

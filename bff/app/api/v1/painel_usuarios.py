@@ -25,10 +25,12 @@ from app.core.apelido import ApelidoInvalido
 from app.core.apelido import normalizar as normalizar_apelido
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha
+from app.core.telefone import exibir
 from app.models.empresa import Empresa
+from app.models.integracao import Produto
 from app.models.pessoa import Pessoa
-from app.models.user import Perfil, User
-from app.services import areas_painel, pessoas
+from app.models.user import BOT_TOKEN, Perfil, User
+from app.services import areas_painel, cadastro, pessoas, vinculos
 
 #: Os perfis desta tela. Cliente tem a tela dele; gerente de empresa, a da empresa —
 #: e essa separação é a mesma dos portões: o que não é da plataforma não se administra aqui.
@@ -68,6 +70,12 @@ class MembroOut(BaseModel):
     #: O que está GRAVADO para esta pessoa. Vem vazio para administrador, que abre tudo
     #: por perfil — ver o docstring do módulo.
     areas: list[str] = []
+    #: O assistente do WhatsApp desta conta: celular, os tokens DELA e o que está liberado.
+    telefone: str | None = None
+    produtos: list[str] = []
+    bot_meuplano: bool = False
+    bot_meuwatt: bool = False
+    bot_helper: bool = False
 
 
 def _membro_out(db: Session, m: User) -> MembroOut:
@@ -80,6 +88,9 @@ def _membro_out(db: Session, m: User) -> MembroOut:
         ativo=m.ativo,
         ultimo_login=m.ultimo_login,
         areas=sorted(areas_painel.concedidas(db, m)),
+        telefone=exibir(m.telefone),
+        produtos=sorted(p.value for p in Produto if m.tem_token(p.value)),
+        bot_meuplano=m.bot_meuplano, bot_meuwatt=m.bot_meuwatt, bot_helper=m.bot_helper,
     )
 
 
@@ -166,6 +177,12 @@ class MembroPatch(BaseModel):
     #: contrato da tela de permissões do cliente — a tela manda o estado das caixinhas.
     #: Ausente (`None`) não mexe em acesso nenhum.
     areas: list[str] | None = None
+    #: Assistente do WhatsApp. Celular vazio ("") apaga e desliga o bot junto; liberar uma
+    #: parte exige o token da própria conta (`cadastro.liberar_bot`).
+    telefone: str | None = None
+    bot_meuplano: bool | None = None
+    bot_meuwatt: bool | None = None
+    bot_helper: bool | None = None
 
 
 @router.patch("/usuarios/{membro_id}", response_model=MembroOut)
@@ -198,6 +215,14 @@ def editar(
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    if body.telefone is not None:
+        membro.telefone = cadastro.celular_livre(db, body.telefone, membro.id)
+        if membro.telefone is None:
+            membro.bot_meuplano = membro.bot_meuwatt = membro.bot_helper = False
+    for campo in BOT_TOKEN:
+        if getattr(body, campo) is not None:
+            cadastro.liberar_bot(membro, campo, getattr(body, campo))
+
     restantes = db.scalar(
         select(User).where(
             User.perfil == Perfil.ADMINISTRADOR, User.ativo, User.id != membro.id
@@ -212,6 +237,51 @@ def editar(
     db.commit()
     db.refresh(membro)
     return _membro_out(db, membro)
+
+
+class TokenIn(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+class ConexaoOut(BaseModel):
+    ok: bool
+    detalhe: str
+
+
+def _membro(db: Session, membro_id: int) -> User:
+    membro = db.get(User, membro_id)
+    if membro is None or membro.perfil not in DA_PLATAFORMA:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado")
+    return membro
+
+
+@router.put("/usuarios/{membro_id}/conexoes/{produto}", response_model=ConexaoOut)
+async def conectar_token(
+    membro_id: int,
+    produto: Produto,
+    body: TokenIn,
+    db: Session = Depends(get_db),
+    admin: User = Depends(administrador_atual),
+) -> ConexaoOut:
+    """O token PESSOAL desta conta no produto — é com ele que o assistente lê para ela (a
+    credencial da plataforma, em Conexões, é do painel, não do bot). Conferido antes de gravar."""
+    r = await vinculos.conectar(db, _membro(db, membro_id), produto, body.token, por=admin)
+    return ConexaoOut(ok=r.ok, detalhe=r.detalhe)
+
+
+@router.delete("/usuarios/{membro_id}/conexoes/{produto}", status_code=204)
+def remover_token(
+    membro_id: int,
+    produto: Produto,
+    db: Session = Depends(get_db),
+    _: User = Depends(administrador_atual),
+) -> None:
+    """Para de usar o token desta conta — e o assistente deixa de responder o que dependia
+    dele. **Não revoga nada** no produto de origem."""
+    vinculo = vinculos.obter(db, _membro(db, membro_id).id, produto)
+    if vinculo is not None:
+        db.delete(vinculo)
+        db.commit()
 
 
 class SenhaIn(BaseModel):

@@ -207,6 +207,12 @@ export type Membro = {
    *  a tela desenha as caixinhas dele marcadas e desligadas, em vez de fingir que dá
    *  para desmarcar. */
   areas: string[]
+  /** O assistente do WhatsApp desta conta: celular, os tokens DELA e o que está liberado. */
+  telefone: string | null
+  produtos: Produto[]
+  bot_meuplano: boolean
+  bot_meuwatt: boolean
+  bot_helper: boolean
 }
 
 /** Uma tela do painel que se concede a alguém. O catálogo vem do BFF. */
@@ -637,8 +643,18 @@ export const criarUsuario = (dados: {
 /** `areas` é a lista COMPLETA: o que não vier é revogado. Omitir não mexe em acesso. */
 export const editarUsuario = (
   id: number,
-  dados: { perfil?: Perfil; ativo?: boolean; areas?: string[] },
+  dados: { perfil?: Perfil; ativo?: boolean; areas?: string[]; telefone?: string } &
+    Partial<Record<ProdutoDoBot, boolean>>,
 ) => api.patch<Membro>(`/usuarios/${id}`, dados).then((r) => r.data)
+
+/** O token PESSOAL da conta da plataforma no produto — é com ele que o assistente lê para ela. */
+export const conectarTokenDoMembro = (id: number, produto: Produto, token: string) =>
+  api
+    .put<{ ok: boolean; detalhe: string }>(`/usuarios/${id}/conexoes/${produto}`, { token })
+    .then((r) => r.data)
+
+export const removerTokenDoMembro = (id: number, produto: Produto) =>
+  api.delete<void>(`/usuarios/${id}/conexoes/${produto}`).then(() => undefined)
 
 /** O administrador define a senha nova. Não é a provisória do cliente: o staff não tem
  *  tela de troca, então o que for definido aqui é a senha dele. */

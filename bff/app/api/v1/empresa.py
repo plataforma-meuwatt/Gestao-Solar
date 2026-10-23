@@ -1266,8 +1266,8 @@ class UsuarioDetalhado(BaseModel):
     email: str | None = None
     #: Quantas usinas esta pessoa recebe no aplicativo.
     usinas: int = 0
-    #: Em quais produtos a conta DELA está conectada. Vazio é o normal: o cliente lê com
-    #: o token da empresa, e o dele só existe quando ele tem conta lá.
+    #: Em quais produtos a conta DELA está conectada. Vazio é o normal no aplicativo (o
+    #: cliente lê com o token da empresa); o ASSISTENTE só responde com o token dela.
     produtos: list[str] = []
     #: Celular, para a tela: `(17) 9 9737-7626`.
     telefone: str | None = None
@@ -1360,8 +1360,9 @@ async def conectar_conta_do_cliente(
 ) -> ConexaoDoClienteOut:
     """Cola o token PESSOAL deste cliente no produto.
 
-    É opcional — sem ele, o Gestão Solar lê os dados dele com a credencial da empresa, e a
-    concessão é que decide o que aparece. Com ele, a leitura passa a acontecer **como o
+    Opcional no aplicativo — sem ele, o Gestão Solar lê os dados dele com a credencial da
+    empresa, e a concessão é que decide o que aparece. OBRIGATÓRIO no assistente do
+    WhatsApp, que só lê com o token da própria pessoa (`cadastro.liberar_bot`). Com ele, a leitura passa a acontecer **como o
     cliente**: as usinas que ele enxergaria lá, pela regra de lá, e o produto passa a
     aceitar que ele ENTRE com a senha daqui.
 
@@ -1439,14 +1440,10 @@ async def editar_conta_da_empresa(
         from app.services import cadastro
         await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
                               email=str(body.email) if body.email else None, telefone=body.telefone)
+    from app.services import cadastro
     for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper"):
-        valor = getattr(body, campo)
-        if valor is None:
-            continue
-        if valor and not conta.telefone:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                "Cadastre o celular antes de liberar o assistente do WhatsApp.")
-        setattr(conta, campo, valor)
+        if getattr(body, campo) is not None:
+            cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
 
     return UsuarioDetalhado(

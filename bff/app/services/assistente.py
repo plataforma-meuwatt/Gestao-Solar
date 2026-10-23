@@ -6,6 +6,8 @@
 3. Um orquestrador (DeepSeek, uma chamada por rodada) escolhe as ferramentas:
    - GERAÇÃO → API do meuWatt (`assistente_geracao`), só das usinas concedidas;
    - MANUTENÇÃO → o assistente do meuPlano, falando como esta pessoa (`manutencao`).
+   Sempre com o token PRÓPRIO da pessoa (regra do dono, 23/10/2026): sem o dela, aquela
+   parte não responde — nunca cai no da empresa nem no da plataforma.
 4. A resposta, os PDFs e os gráficos saem pelo gateway.
 
 Velocidade: pergunta de manutenção que só precisou do meuPlano volta DIRETO — a resposta
@@ -39,7 +41,8 @@ TETO_RESULTADO = 14000        # caracteres de cada resultado de ferramenta que v
 DESCONHECIDO = ("Este é o assistente do Gestão Solar e só atende números cadastrados. "
                 "Peça à sua empresa de O&M para cadastrar este telefone na sua conta do Gestão Solar.")
 NAO_LIBERADO = ("Seu acesso ao assistente do WhatsApp ainda não foi liberado. "
-                "Peça ao gerente da sua empresa de O&M para liberar na sua conta.")
+                "Peça ao gerente da sua empresa de O&M para liberar na sua conta, "
+                "com o seu token do meuWatt ou do meuPlano.")
 LIMPAR = {"/novo", "novo", "/reset", "zerar", "limpar", "limpar contexto"}
 
 
@@ -75,12 +78,10 @@ _MANUTENCAO = {"type": "function", "function": {
 
 
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
-    from app.services import integracoes
     from app.services.vinculos import SemConexao, cliente_meuplano
     try:
-        mp = (await integracoes.cliente_meuplano(ctx.db) if ger.da_plataforma(ctx.user)
-              else cliente_meuplano(ctx.db, ctx.user.id))
-    except (SemConexao, RuntimeError) as e:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
         return {"erro": f"Manutenção indisponível: {e}"}
     pergunta = (a.get("pergunta") or "") + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
     run_id = await mp.assistente_chat(None, [{"role": "user", "content": pergunta}])
@@ -101,12 +102,14 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO)}
 
 
 def permitidas(user) -> list[str]:
-    """As ferramentas que a IA RECEBE para esta pessoa — o gerente libera por produto. A
-    ferramenta que não vem na lista não existe para o modelo (nem para `_executar`)."""
+    """As ferramentas que a IA RECEBE para esta pessoa — liberadas pelo gerente, por produto,
+    E com o token dela (`User.bot_ativo`). A que não vem na lista não existe para o modelo
+    (nem para `_executar`)."""
     nomes: list[str] = []
-    if user.bot_meuwatt:
+    ativo = user.bot_ativo
+    if "bot_meuwatt" in ativo:
         nomes += list(ger.FERRAMENTAS)
-    if user.bot_meuplano:
+    if "bot_meuplano" in ativo:
         nomes.append("manutencao")
     # helper: a chave já existe; as ferramentas de atuar na usina entram quando ficarem prontas
     return nomes
@@ -115,9 +118,10 @@ def permitidas(user) -> list[str]:
 # --------------------------------------------------------------------------- orquestrador
 def _sistema(ctx: ger.Contexto) -> str:
     usinas = ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento"
-    areas = [n for n, ok in (("geração/monitoramento (meuWatt)", ctx.user.bot_meuwatt),
-                             ("manutenção (meuPlano)", ctx.user.bot_meuplano),
-                             ("atuação na usina (helper)", ctx.user.bot_helper)) if ok]
+    ativo = ctx.user.bot_ativo
+    areas = [n for n, c in (("geração/monitoramento (meuWatt)", "bot_meuwatt"),
+                            ("manutenção (meuPlano)", "bot_meuplano"),
+                            ("atuação na usina (helper)", "bot_helper")) if c in ativo]
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso

@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 from app.core.telefone import TelefoneInvalido, e_celular, exibir, normalizar
 from app.models.integracao import Produto
-from app.models.user import User, VinculoProduto
+from app.core.tokens_produto import NOME
+from app.models.user import BOT_TOKEN, User, VinculoProduto
 
 log = logging.getLogger("gs.cadastro")
 
@@ -75,6 +76,22 @@ def celular_livre(db: Session, valor: str | None, conta_id: int | None) -> str |
     if db.scalar(q) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Este celular já está em outra conta do Gestão Solar.")
     return tel
+
+
+def liberar_bot(conta: User, campo: str, valor: bool) -> None:
+    """Liga/desliga uma parte do assistente. LIGAR exige o celular e o token PRÓPRIO da pessoa
+    naquele produto (regra do dono, 23/10/2026). Manter ligada não reconfere: o que ficou sem
+    token já está parado (`User.bot_ativo`), e reconferir travaria salvar o resto do cadastro."""
+    if valor and not getattr(conta, campo):
+        if not conta.telefone:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Cadastre o celular antes de liberar o assistente do WhatsApp.")
+        produto = BOT_TOKEN[campo]
+        if not conta.tem_token(produto):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"Cole o token do {NOME[Produto(produto)]} desta pessoa antes de liberar: "
+                                "o assistente só responde com o token dela.")
+    setattr(conta, campo, valor)
 
 
 # --------------------------------------------------------------------------- leitura

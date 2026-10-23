@@ -11,12 +11,17 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, KeyRound, UserPlus, Users } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, KeyRound, MessageCircle, UserPlus, Users } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor } from '@/components/base'
 import { Conexoes } from '@/features/conexoes/Conexoes'
+import { CaixasDoBot, textoDoBot } from '@/features/empresa/Usuarios'
 import {
+  conectarTokenDoMembro,
+  removerTokenDoMembro,
+  type Produto,
+  type ProdutoDoBot,
   desagruparConta,
   contasParaAgrupar,
   agruparContas,
@@ -34,11 +39,13 @@ export function Usuarios() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
   const [senhaDe, setSenhaDe] = useState<Membro | null>(null)
+  const [assistenteDe, setAssistenteDe] = useState<number | null>(null)
   const [agrupando, setAgrupando] = useState(false)
   const [erro, setErro] = useState('')
 
   const { data, isLoading } = useQuery({ queryKey: ['usuarios'], queryFn: listarUsuarios })
   const { data: areas } = useQuery({ queryKey: ['areas'], queryFn: catalogoDeAreas })
+  const membroDoAssistente = (data ?? []).find((m) => m.id === assistenteDe)
 
   const editar = useMutation({
     mutationFn: ({ id, dados }: { id: number; dados: Parameters<typeof editarUsuario>[1] }) =>
@@ -83,6 +90,7 @@ export function Usuarios() {
             salvando={editar.isPending}
             aoMudar={(dados) => editar.mutate({ id: m.id, dados })}
             aoRedefinirSenha={() => setSenhaDe(m)}
+            aoAbrirAssistente={() => setAssistenteDe(m.id)}
           />
         ))}
       </Cartao>
@@ -91,6 +99,9 @@ export function Usuarios() {
 
       {novo ? <ModalNovoUsuario areas={areas ?? []} aoFechar={() => setNovo(false)} /> : null}
       {senhaDe ? <ModalRedefinirSenha membro={senhaDe} aoFechar={() => setSenhaDe(null)} /> : null}
+      {membroDoAssistente ? (
+        <ModalAssistente membro={membroDoAssistente} aoFechar={() => setAssistenteDe(null)} />
+      ) : null}
           {agrupando ? <MesmaPessoa aoFechar={() => setAgrupando(false)} /> : null}
 </Pagina>
   )
@@ -103,6 +114,7 @@ function LinhaMembro({
   salvando,
   aoMudar,
   aoRedefinirSenha,
+  aoAbrirAssistente,
 }: {
   membro: Membro
   areas: Area[]
@@ -110,6 +122,7 @@ function LinhaMembro({
   salvando: boolean
   aoMudar: (dados: { perfil?: Membro['perfil']; ativo?: boolean; areas?: string[] }) => void
   aoRedefinirSenha: () => void
+  aoAbrirAssistente: () => void
 }) {
   const [aberto, setAberto] = useState(false)
   const ehAdmin = membro.perfil === 'administrador'
@@ -124,6 +137,9 @@ function LinhaMembro({
                 se confere de quem é a conta quando dois membros têm nomes parecidos. */}
             {membro.apelido}
             {membro.email ? ` · ${membro.email}` : ''}
+          </p>
+          <p className="text-xs text-rotulo truncate mt-0.5">
+            WhatsApp: {membro.telefone ? `${membro.telefone} · ${textoDoBot(membro)}` : 'sem celular'}
           </p>
         </div>
 
@@ -144,6 +160,11 @@ function LinhaMembro({
           <option value="atendimento">Atendimento</option>
           <option value="administrador">Administrador</option>
         </select>
+
+        <button onClick={aoAbrirAssistente} className="btn-fantasma" title="Celular, tokens e assistente do WhatsApp">
+          <MessageCircle size={13} />
+          Assistente
+        </button>
 
         <button
           onClick={aoRedefinirSenha}
@@ -622,6 +643,118 @@ function MesmaPessoa({ aoFechar }: { aoFechar: () => void }) {
           </div>
         </div>
       )}
+    </Modal>
+  )
+}
+
+const NOME: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
+
+/**
+ * O assistente do WhatsApp de uma conta da PLATAFORMA: o celular por onde o bot a reconhece, os
+ * tokens DELA (o bot lê só com eles — a credencial da plataforma em Conexões é do painel) e o
+ * que ele responde.
+ */
+function ModalAssistente({ membro, aoFechar }: { membro: Membro; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [telefone, setTelefone] = useState(membro.telefone ?? '')
+  const [bot, setBot] = useState<Record<ProdutoDoBot, boolean>>({
+    bot_meuplano: membro.bot_meuplano,
+    bot_meuwatt: membro.bot_meuwatt,
+    bot_helper: membro.bot_helper,
+  })
+  const [tokens, setTokens] = useState<Record<Produto, string>>({ meuwatt: '', meuplano: '' })
+  const [resultado, setResultado] = useState<{ ok: boolean; detalhe: string } | null>(null)
+  const atualizar = () => qc.invalidateQueries({ queryKey: ['usuarios'] })
+
+  const conectar = useMutation({
+    mutationFn: (p: Produto) => conectarTokenDoMembro(membro.id, p, tokens[p]),
+    onSuccess: (r, p) => {
+      setResultado(r)
+      if (r.ok) setTokens((t) => ({ ...t, [p]: '' }))
+      atualizar()
+    },
+  })
+  const remover = useMutation({
+    mutationFn: (p: Produto) => removerTokenDoMembro(membro.id, p),
+    onSuccess: atualizar,
+  })
+  const salvar = useMutation({
+    mutationFn: () => {
+      const temCelular = Boolean(telefone.trim())
+      return editarUsuario(membro.id, {
+        telefone: telefone.trim(),
+        bot_meuplano: temCelular && bot.bot_meuplano,
+        bot_meuwatt: temCelular && bot.bot_meuwatt,
+        bot_helper: temCelular && bot.bot_helper,
+      })
+    },
+    onSuccess: () => {
+      atualizar()
+      aoFechar()
+    },
+  })
+
+  return (
+    <Modal titulo={`Assistente de ${membro.nome}`} aoFechar={aoFechar} largura="max-w-2xl">
+      <div className="grid gap-4">
+        <Campo
+          rotulo="Celular (o assistente reconhece a pessoa por ele)"
+          type="tel"
+          placeholder="(17) 99999-8888"
+          value={telefone}
+          onChange={(e) => setTelefone(e.target.value)}
+        />
+
+        <div className="grid gap-2">
+          <p className="rotulo-campo">Tokens desta conta — o assistente lê só com eles</p>
+          {(['meuwatt', 'meuplano'] as Produto[]).map((p) =>
+            membro.produtos.includes(p) ? (
+              <div key={p} className="flex items-center justify-between gap-2">
+                <span className="text-sm text-forte">Token do {NOME[p]} colado</span>
+                <button className="btn-fantasma" disabled={remover.isPending} onClick={() => remover.mutate(p)}>
+                  Remover
+                </button>
+              </div>
+            ) : (
+              <div key={p} className="flex gap-2">
+                <input
+                  className="campo h-9 text-sm"
+                  placeholder={`token do ${NOME[p]} gerado na conta dela`}
+                  value={tokens[p]}
+                  onChange={(e) => setTokens((t) => ({ ...t, [p]: e.target.value }))}
+                />
+                <button
+                  className="btn-secundario shrink-0"
+                  disabled={!tokens[p].trim() || conectar.isPending}
+                  onClick={() => conectar.mutate(p)}
+                >
+                  {conectar.isPending && conectar.variables === p ? 'Conferindo…' : 'Conectar'}
+                </button>
+              </div>
+            ),
+          )}
+          {resultado ? (
+            resultado.ok ? <p className="text-sm text-ok">{resultado.detalhe}</p> : <Erro>{resultado.detalhe}</Erro>
+          ) : null}
+          {conectar.error ? <Erro>{mensagemDeErro(conectar.error)}</Erro> : null}
+          {remover.error ? <Erro>{mensagemDeErro(remover.error)}</Erro> : null}
+        </div>
+
+        <CaixasDoBot
+          bot={bot}
+          produtos={membro.produtos}
+          temCelular={Boolean(telefone.trim())}
+          aoMudar={(campo, valor) => setBot((v) => ({ ...v, [campo]: valor }))}
+        />
+
+        {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+        <div className="flex justify-end gap-2">
+          <button className="btn-secundario" onClick={aoFechar}>Cancelar</button>
+          <button className="btn-primario" disabled={salvar.isPending} onClick={() => salvar.mutate()}>
+            {salvar.isPending ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </div>
     </Modal>
   )
 }

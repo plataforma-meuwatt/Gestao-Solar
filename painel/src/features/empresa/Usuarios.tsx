@@ -7,9 +7,9 @@
  *
  * - **Usinas** — o que ela vê no aplicativo. É a concessão, e é ela que manda: o token
  *   diz com que credencial se lê, a concessão diz o que aparece.
- * - **Token** — opcional, e a tela explica por quê: sem ele o Gestão Solar lê com a
- *   credencial da EMPRESA. Com ele, a leitura passa a acontecer como a pessoa, e o produto
- *   aceita que ela entre com a senha daqui.
+ * - **Token** — opcional no aplicativo (sem ele o Gestão Solar lê com a credencial da
+ *   EMPRESA) e OBRIGATÓRIO no assistente do WhatsApp: o bot só responde com o token da
+ *   própria pessoa (regra do dono, 23/10/2026).
  * - **Senha e acesso** — redefinir e desativar.
  *
  * O gerente aparece na lista junto dos clientes, e é de propósito: ele também recebe
@@ -105,12 +105,63 @@ export function UsuariosDaEmpresa() {
   )
 }
 
-/** O assistente do WhatsApp, por produto — o gerente libera um, dois ou todos. */
-const BOT: { campo: ProdutoDoBot; rotulo: string }[] = [
-  { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)' },
-  { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)' },
-  { campo: 'bot_helper', rotulo: 'Usina (helper)' },
+/** O assistente do WhatsApp, por produto — o gerente libera um, dois ou todos. Cada parte
+ *  responde com o token PRÓPRIO da pessoa (`token`); o helper a reconhece pelo do meuWatt. */
+export const BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
+  { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
+  { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
+  { campo: 'bot_helper', rotulo: 'Usina (helper)', token: 'meuwatt' },
 ]
+
+/** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */
+export function textoDoBot(u: Pick<UsuarioDetalhado, ProdutoDoBot | 'produtos'>): string {
+  return (
+    BOT.filter((b) => u[b.campo])
+      .map((b) => (u.produtos.includes(b.token) ? b.rotulo : `${b.rotulo} (falta o token)`))
+      .join(' · ') || 'bloqueado'
+  )
+}
+
+/** As caixinhas do assistente. Ligar exige celular e o token dela naquele produto; o que já
+ *  está ligado sem token pode ser desligado. */
+export function CaixasDoBot({
+  bot,
+  produtos,
+  temCelular,
+  aoMudar,
+}: {
+  bot: Record<ProdutoDoBot, boolean>
+  produtos: Produto[]
+  temCelular: boolean
+  aoMudar: (campo: ProdutoDoBot, valor: boolean) => void
+}) {
+  const faltam = [...new Set(BOT.filter((b) => !produtos.includes(b.token)).map((b) => b.token))]
+  return (
+    <div>
+      <p className="rotulo-campo">O assistente do WhatsApp responde a esta pessoa sobre</p>
+      <div className="flex gap-4 flex-wrap mt-1.5">
+        {BOT.map((b) => (
+          <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
+            <input
+              type="checkbox"
+              checked={bot[b.campo]}
+              disabled={!bot[b.campo] && (!temCelular || !produtos.includes(b.token))}
+              onChange={(e) => aoMudar(b.campo, e.target.checked)}
+            />
+            {b.rotulo}
+          </label>
+        ))}
+      </div>
+      {!temCelular ? <p className="text-xs text-fraco mt-1">Cadastre o celular para liberar.</p> : null}
+      {faltam.length ? (
+        <p className="text-xs text-fraco mt-1">
+          O assistente só responde com o token da própria pessoa. Falta o do{' '}
+          {faltam.map((p) => NOME_DO_PRODUTO[p]).join(' e do ')} (botão Token).
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
 function Linha({
   usuario,
@@ -163,11 +214,7 @@ function Linha({
               </span>
               <span className="flex items-center gap-1.5">
                 <MessageCircle size={14} />
-                {usuario.telefone
-                  ? `${usuario.telefone} · assistente: ${
-                      BOT.filter((b) => usuario[b.campo]).map((b) => b.rotulo).join(' · ') || 'bloqueado'
-                    }`
-                  : 'sem celular'}
+                {usuario.telefone ? `${usuario.telefone} · assistente: ${textoDoBot(usuario)}` : 'sem celular'}
               </span>
               <span className="flex items-center gap-1.5">
                 <UserCog size={14} />
@@ -392,23 +439,12 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
           />
         </div>
 
-        <div>
-          <p className="rotulo-campo">O assistente do WhatsApp responde a esta pessoa sobre</p>
-          <div className="flex gap-4 flex-wrap mt-1.5">
-            {BOT.map((b) => (
-              <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
-                <input
-                  type="checkbox"
-                  checked={bot[b.campo]}
-                  disabled={!telefone.trim()}
-                  onChange={(e) => setBot((v) => ({ ...v, [b.campo]: e.target.checked }))}
-                />
-                {b.rotulo}
-              </label>
-            ))}
-          </div>
-          {!telefone.trim() ? <p className="text-xs text-fraco mt-1">Cadastre o celular para liberar.</p> : null}
-        </div>
+        <CaixasDoBot
+          bot={bot}
+          produtos={usuario.produtos}
+          temCelular={Boolean(telefone.trim())}
+          aoMudar={(campo, valor) => setBot((v) => ({ ...v, [campo]: valor }))}
+        />
 
         {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
         <div className="flex justify-end gap-2">
@@ -572,11 +608,12 @@ export function UsinasDoUsuario({
 }
 
 /**
- * O token pessoal desta pessoa em cada produto — **opcional**.
+ * O token pessoal desta pessoa em cada produto — opcional no aplicativo, OBRIGATÓRIO no
+ * assistente do WhatsApp.
  *
  * Sem ele, o Gestão Solar lê os dados dela com a credencial da EMPRESA, e a concessão
  * decide o que aparece. É o caso comum: o dono de usina costuma não ter conta no meuWatt
- * nem no meuPlano.
+ * nem no meuPlano. O bot, não: ele só responde com o token da própria pessoa.
  *
  * Com ele, a leitura passa a acontecer **como ela**: as usinas que ela enxergaria lá, pela
  * regra de lá — e o produto passa a aceitar que ela entre com a senha daqui.
@@ -605,10 +642,10 @@ function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: ()
     <Modal titulo={`Token de ${usuario.nome}`} aoFechar={aoFechar}>
       <div className="grid gap-4">
         <Aviso>
-          O token é <strong>opcional</strong>. Sem ele, os dados desta pessoa são lidos com a
-          conta da <strong>empresa</strong>, e o que ela vê continua sendo o que você
-          concedeu. Com ele, a leitura acontece como ela — e ela passa a poder entrar no
-          meuWatt/meuPlano com a senha daqui.
+          No aplicativo o token é <strong>opcional</strong>: sem ele, os dados desta pessoa são
+          lidos com a conta da <strong>empresa</strong>, e o que ela vê continua sendo o que você
+          concedeu. O <strong>assistente do WhatsApp</strong> só responde com o token dela — sem o
+          do meuWatt, nada de geração nem helper; sem o do meuPlano, nada de manutenção.
         </Aviso>
 
         {usuario.produtos.length ? (

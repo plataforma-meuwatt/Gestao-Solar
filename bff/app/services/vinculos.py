@@ -133,9 +133,15 @@ class SemConexao(HTTPException):
         return str(self.detail)
 
 
-def token_do_cliente(db: Session, cliente_id: int, produto: Produto) -> str:
+def token_do_cliente(
+    db: Session, cliente_id: int, produto: Produto, *, so_proprio: bool = False
+) -> str:
     """O token com que se lê os dados DESTE cliente. O dele, de preferência; o da empresa
     que o atende, quando ele não tem conta no produto.
+
+    `so_proprio`: SÓ o dele, sem atalho nenhum — é o do assistente do WhatsApp (regra do
+    dono, 23/10/2026: cada um usa o bot com o SEU token). O assistente do meuPlano responde
+    como quem o token é; com o da empresa, responderia ao cliente com a carteira inteira.
 
     ## Por que o da empresa serve
 
@@ -172,6 +178,9 @@ def token_do_cliente(db: Session, cliente_id: int, produto: Produto) -> str:
                 f"O token do {NOME[produto]} deste cliente não abre com a chave atual. "
                 f"Cole o token de novo na ficha dele."
             ) from exc
+
+    if so_proprio:
+        raise SemConexao(f"Falta o token do {NOME[produto]} desta pessoa na conta dela do Gestão Solar.")
 
     da_empresa = _token_da_empresa(db, cliente_id, produto)
     if da_empresa is not None:
@@ -227,21 +236,21 @@ def _endereco(db: Session, produto: Produto) -> str:
     return integracao.base_url
 
 
-def cliente_meuwatt(db: Session, cliente_id: int) -> MeuWattClient:
+def cliente_meuwatt(db: Session, cliente_id: int, *, so_proprio: bool = False) -> MeuWattClient:
     """Um cliente da mw-api que fala **como** este cliente."""
     return MeuWattClient(
         base_url=_endereco(db, Produto.MEUWATT),
-        token=token_do_cliente(db, cliente_id, Produto.MEUWATT),
+        token=token_do_cliente(db, cliente_id, Produto.MEUWATT, so_proprio=so_proprio),
     )
 
 
-def cliente_meuplano(db: Session, cliente_id: int) -> MeuPlanoClient:
+def cliente_meuplano(db: Session, cliente_id: int, *, so_proprio: bool = False) -> MeuPlanoClient:
     """O gêmeo do meuPlano. Sem cache por configuração como em `integracoes`: ali o cliente
     de serviço é um só e valia guardar; aqui é um por pessoa, e o token fixo não faz login
     nenhum — não há sessão a reaproveitar."""
     return MeuPlanoClient(
         base_url=_endereco(db, Produto.MEUPLANO),
-        token=token_do_cliente(db, cliente_id, Produto.MEUPLANO),
+        token=token_do_cliente(db, cliente_id, Produto.MEUPLANO, so_proprio=so_proprio),
     )
 
 

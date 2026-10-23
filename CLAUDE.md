@@ -743,8 +743,12 @@ srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco continua o Supabase
 **O assistente do WhatsApp é do Gestão Solar (o guardião)** — `bff/app/services/assistente.py`.
 O número casa com UMA conta daqui (`gs_users.telefone`); sem conta, não há conversa. Um
 orquestrador (DeepSeek, `DEEPSEEK_API_KEY`) usa as ferramentas de GERAÇÃO
-(`assistente_geracao.py`: API do meuWatt com `token_do_cliente`, só usinas concedidas) e a de
-MANUTENÇÃO (o assistente do meuPlano, falando como a pessoa). Responde, manda PDF e gráfico
+(`assistente_geracao.py`: API do meuWatt, só usinas concedidas) e a de MANUTENÇÃO (o assistente
+do meuPlano, falando como a pessoa). ⛔ **Regra do dono (23/10/2026): cada um usa o bot com o
+SEU token** (`gs_vinculos_produto`, `so_proprio=True`) — nunca o da empresa nem o da plataforma,
+nem para o administrador. Liberar uma parte exige o token dela (`cadastro.liberar_bot`; o helper
+pede o do meuWatt), e liberada sem token fica parada (`User.bot_ativo`). O aplicativo continua
+caindo no token da empresa; o bot, não. Responde, manda PDF e gráfico
 pelo gateway (`/interno/conteudo`, `/interno/digitando`). O `ENCAMINHAR_URLS` do gateway (cópia
 crua da entrega para outro sistema) existe, mas está VAZIO: dois bots no mesmo número
 responderiam em dobro.

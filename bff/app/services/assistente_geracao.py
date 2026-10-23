@@ -53,20 +53,22 @@ class Contexto:
 
 
 def da_plataforma(user) -> bool:
-    """Administrador/atendimento da PLATAFORMA (sem empresa): vê todas as usinas e lê os
-    produtos com a conexão da plataforma — como no painel."""
+    """Administrador/atendimento da PLATAFORMA (sem empresa): o recorte são todas as usinas,
+    como no painel. Lê com o token DELE, como todo mundo."""
     from app.services.pessoas import DA_PLATAFORMA
     return user.perfil in DA_PLATAFORMA and user.empresa_id is None
 
 
 async def preparar(ctx: Contexto) -> None:
-    """Liga o contexto ao meuWatt: a credencial e o recorte de usinas do GS."""
+    """Liga o contexto ao meuWatt: o token PRÓPRIO da pessoa e o recorte de usinas do GS —
+    vale o que os dois deixam ver."""
     from sqlalchemy import select
 
     from app.api.v1.plants import usinas_do_usuario
     from app.models.plant import PlantLink
-    from app.services import integracoes
     from app.services.vinculos import SemConexao, cliente_meuwatt
+    if "bot_meuwatt" not in ctx.user.bot_ativo:
+        return
     if da_plataforma(ctx.user):
         links = ctx.db.scalars(select(PlantLink).where(PlantLink.ativo)).all()
     else:
@@ -75,9 +77,8 @@ async def preparar(ctx: Contexto) -> None:
     if not concedidas:
         return
     try:
-        ctx.mw = (await integracoes.cliente_meuwatt(ctx.db) if da_plataforma(ctx.user)
-                  else cliente_meuwatt(ctx.db, ctx.user.id))
-    except (SemConexao, RuntimeError):
+        ctx.mw = cliente_meuwatt(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao:
         return
     for p in await ctx.mw.usinas():
         link = concedidas.get(p.get("slug"))
