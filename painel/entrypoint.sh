@@ -26,9 +26,14 @@ API_URL=$(printf '%s' "$API_URL" | sed 's:/*$::')
 
 echo "painel: API em ${API_URL}, escutando na porta ${PORT}"
 
+# PORTAO: qual porta este endereço é — `plataforma` (adm-gs) ou `empresa` (adm-oem). Vazio
+# aceita todos os perfis (desenvolvimento). Ver src/lib/portao.ts.
 cat > /usr/share/nginx/html/config.js <<EOF
 // Gerado na subida do contêiner. Não editar — ver painel/entrypoint.sh.
 window.__GS_API__ = '${API_URL}'
+window.__GS_PORTAO__ = '${PORTAO:-}'
+window.__GS_ENDERECO_GS__ = '${ENDERECO_GS:-}'
+window.__GS_ENDERECO_OEM__ = '${ENDERECO_OEM:-}'
 EOF
 
 # `envsubst` limitado a \$PORT: sem a lista, ele engoliria as variáveis do próprio nginx

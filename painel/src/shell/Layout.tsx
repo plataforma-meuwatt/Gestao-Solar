@@ -36,6 +36,7 @@ import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
 import { meuAcesso, meusPapeis, trocarDePapel, trocarMinhaSenha } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
+import { aceita, enderecoDe, fraseDaPortaErrada } from '@/lib/portao'
 import { useAuth, type Escopo, type Perfil } from '@/store/auth'
 
 type ItemMenu = {
@@ -230,6 +231,12 @@ function TrocarPapel() {
                     <span className="text-[11px] text-ok shrink-0">atual</span>
                   ) : ehCliente ? (
                     <span className="text-[11px] text-fraco shrink-0">no app</span>
+                  ) : !aceita(p.escopo) ? (
+                    // O outro papel mora em OUTRO endereço (adm-gs × adm-oem): a sessão de
+                    // um não vale no outro, então o caminho é entrar lá.
+                    <a className="btn-fantasma shrink-0" href={`${enderecoDe(p.escopo)}/entrar`}>
+                      Abrir
+                    </a>
                   ) : (
                     <button
                       className="btn-fantasma shrink-0"
@@ -490,6 +497,18 @@ export function Layout() {
   }, [eu, atualizar])
 
   if (!token) return <Navigate to="/entrar" replace state={{ de: local.pathname }} />
+  // Sessão de antes da separação dos endereços (ex.: o gerente logado no adm-gs): sai e diz
+  // para onde ir, em vez de abrir um menu que não é deste endereço.
+  if (!aceita(escopo)) {
+    return (
+      <div className="h-full grid place-items-center px-4">
+        <div className="cartao p-5 max-w-sm text-center flex flex-col gap-3">
+          <p className="text-forte">{fraseDaPortaErrada(escopo)}</p>
+          <button className="btn-primario" onClick={sair}>Sair</button>
+        </div>
+      </div>
+    )
+  }
 
   const itens = escopo === 'tecnico'
     ? MENU_TECNICO

@@ -92,5 +92,6 @@ export function mensagemDeErro(erro: unknown): string {
     if (!erro.response) return 'Sem conexão com o servidor.'
     return `Erro ${erro.response.status}.`
   }
+  if (erro instanceof Error && erro.message) return erro.message
   return 'Não foi possível completar a operação.'
 }

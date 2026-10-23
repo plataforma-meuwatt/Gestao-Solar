@@ -17,6 +17,7 @@
 import { create } from 'zustand'
 
 import { api, definirToken } from '@/lib/api'
+import { aceita, fraseDaPortaErrada } from '@/lib/portao'
 
 const CHAVE = 'gs_painel_sessao'
 
@@ -106,6 +107,9 @@ export const useAuth = create<Estado>((set, get) => ({
       escopo?: Escopo
       empresa?: string | null
     }>('/entrar', { apelido, senha })
+    // Senha certa na porta errada: a sessão NÃO é guardada aqui — a pessoa é mandada ao
+    // endereço do perfil dela (o gerente no adm-oem, o administrador no adm-gs).
+    if (!aceita(data.escopo ?? 'painel')) throw new Error(fraseDaPortaErrada(data.escopo ?? 'painel'))
     const sessao: Sessao = {
       token: data.token,
       nome: data.nome,

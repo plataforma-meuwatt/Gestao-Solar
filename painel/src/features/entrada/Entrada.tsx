@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { Campo, Erro } from '@/components/base'
 import { mensagemDeErro } from '@/lib/api'
+import { TITULO } from '@/lib/portao'
 import { useAuth } from '@/store/auth'
 
 export function Entrada() {
@@ -43,7 +44,7 @@ export function Entrada() {
           <p className="text-3xl font-bold text-forte tracking-tight">
             Gestão <span className="text-ambar">Solar</span>
           </p>
-          <p className="text-sm text-rotulo mt-1">Painel de administração</p>
+          <p className="text-sm text-rotulo mt-1">{TITULO}</p>
         </div>
 
         <div className="cartao p-5 flex flex-col gap-4">
