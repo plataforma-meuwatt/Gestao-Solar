@@ -111,6 +111,18 @@ HISTORICO_MEUPLANO = 8
 PRAZO_PROPOSTA_MP_S = 600
 
 
+def _o_que_nasceu(dados: Any) -> str:
+    """O número do que o meuPlano criou ("OS 1639, PROGRAMADA") — sem ele a pessoa não acha
+    na tela o que acabou de pedir."""
+    if not isinstance(dados, dict):
+        return ""
+    partes = [f"OS {dados['os_id']}"] if dados.get("os_id") else []
+    partes += [f"{k}: {v}" for k, v in dados.items() if k.endswith("_id") and k != "os_id" and v]
+    if dados.get("status"):
+        partes.append(str(dados["status"]))
+    return f" ({', '.join(partes)})" if partes else ""
+
+
 def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
     """Ação do assistente do meuPlano (criar OS, lançar o dia, lembrete…) volta como PROPOSTA:
     nada foi gravado lá. Vira o mesmo CONFIRMO <código> do helper; confirmada pela pessoa, o
@@ -127,7 +139,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
         try:
             mp = cliente_meuplano(db, user.id, so_proprio=True)
             db.commit()                                   # solta a conexão enquanto o meuPlano grava
-            await mp.assistente_aplicar(None, acao, args)
+            feito = await mp.assistente_aplicar(None, acao, args)
         except SemConexao as e:
             return f"❌ Não executado: {e}"
         except httpx.HTTPStatusError as e:
@@ -135,7 +147,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
         except httpx.HTTPError:
             return ("⚠️ O meuPlano não respondeu a tempo — a ação PODE ter sido gravada. "
                     "Confira no meuPlano antes de pedir de novo.")
-        return f"✅ Feito no meuPlano: {resumo}"
+        return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"))
 
     proposta = helper.propor(ctx.user, resumo, PRAZO_PROPOSTA_MP_S, executar)
     proposta["detalhes"] = [ln.get("text") for ln in previa.get("lines") or []][:15]
@@ -368,7 +380,7 @@ async def _atender(evento: dict) -> None:
     texto = (evento.get("texto") or "").strip()
     enviada = _enviada_em(evento.get("ocorrida_em"))      # o log mostra quando a pessoa MANDOU
     # Mensagem com cara de senha nunca vai em claro ao log, nem se der erro no meio.
-    pergunta = helper.OCULTA if helper.SENHA.match(texto) else texto
+    pergunta = helper.OCULTA if helper.parece_senha(texto) else texto
     db = SessionLocal()
     # O turno solta a conexão antes de cada espera longa (IA, meuPlano, helper): sem expirar
     # os objetos, o commit não custa uma ida ao banco (~200 ms) para reler a conta.

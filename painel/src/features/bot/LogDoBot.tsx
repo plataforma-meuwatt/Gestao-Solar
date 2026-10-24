@@ -132,6 +132,14 @@ function SaudeDoCanalCartao() {
         <Selo tom={data.ouvindo ? 'ok' : 'parado'}>{data.ouvindo ? 'Bot ouvindo' : 'Bot NÃO está ouvindo'}</Selo>
         <span className={`text-sm ${data.ouvindo ? 'text-rotulo' : 'text-parado'}`}>{data.resumo}</span>
       </div>
+      {data.helper_alcancavel !== null ? (
+        <div className="flex items-center gap-3 flex-wrap mt-2">
+          <Selo tom={data.helper_alcancavel ? 'ok' : 'parado'}>
+            {data.helper_alcancavel ? 'Helper alcançável' : 'Helper fora'}
+          </Selo>
+          <span className={`text-sm ${data.helper_alcancavel ? 'text-rotulo' : 'text-parado'}`}>{data.helper_resumo}</span>
+        </div>
+      ) : null}
       <p className="text-xs text-fraco mt-2">
         última mensagem recebida: {quando(data.ultima_recebida_em)} · última resposta do bot:{' '}
         {quando(data.ultima_resposta_em)} · última entrega confirmada pela Meta: {quando(data.ultima_entregue_em)}

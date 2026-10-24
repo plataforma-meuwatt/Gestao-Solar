@@ -70,7 +70,7 @@ def _erro(exc: gateway.GatewayIndisponivel) -> HTTPException:
 
 
 @router.get("")
-async def ler(_: User = Depends(EXIGE_WHATSAPP)) -> dict:
+async def ler(db: Session = Depends(get_db), _: User = Depends(EXIGE_WHATSAPP)) -> dict:
     """O que está configurado hoje. Nenhum segredo sai daqui."""
     try:
         estado = await gateway.estado()
@@ -79,6 +79,11 @@ async def ler(_: User = Depends(EXIGE_WHATSAPP)) -> dict:
         estado["webhook_url"] = gateway.url_do_webhook()
     except gateway.GatewayIndisponivel as exc:
         raise _erro(exc) from exc
+    # O autor é o que a conta era quando gravou (e-mail ou apelido): se ela não existe mais
+    # (a conta "renanmarquezini" foi juntada à de hoje em 28/09/2026), a tela diz isso.
+    autor = estado.get("atualizada_por")
+    if autor and db.scalar(select(User.id).where((User.email == autor) | (User.apelido == autor))) is None:
+        estado["atualizada_por"] = f"{autor} (conta que não existe mais)"
     return estado
 
 
@@ -339,6 +344,9 @@ class SaudeDoCanalOut(BaseModel):
     ultima_entregue_em: datetime | None = None
     #: A última vez que o BOT respondeu alguém (o log daqui).
     ultima_resposta_em: datetime | None = None
+    #: O helper responde ao bot agora? `None` = não configurado neste ambiente.
+    helper_alcancavel: bool | None = None
+    helper_resumo: str | None = None
 
 
 @router.get("/saude", response_model=SaudeDoCanalOut)
@@ -348,6 +356,14 @@ async def saude_do_canal(db: Session = Depends(get_db), _: User = Depends(EXIGE_
 
 async def saude_atual(db: Session) -> SaudeDoCanalOut:
     """A conta do canal inteiro (o número é UM, o da plataforma) — o oem-gs lê o `ouvindo`."""
+    saida = await _saude_do_canal(db)
+    from app.services import assistente_helper
+
+    saida.helper_alcancavel, saida.helper_resumo = await assistente_helper.alcancavel()
+    return saida
+
+
+async def _saude_do_canal(db: Session) -> SaudeDoCanalOut:
     ultima_resposta = db.scalar(
         select(func.max(RegistroBot.em)).where(RegistroBot.resultado == "respondeu")
     )

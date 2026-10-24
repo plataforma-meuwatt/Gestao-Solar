@@ -168,7 +168,7 @@ function Linha({
   })
 
   return (
-    <Cartao>
+    <Cartao className="px-5 py-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3 min-w-0">
           <UserCog size={18} className="text-rotulo mt-1 shrink-0" />
@@ -791,7 +791,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
       <Modal titulo="Usuário criado" aoFechar={aoFechar}>
         <div className="grid gap-4">
           <Aviso>Anote agora: a senha não é guardada em texto e não dá para vê-la de novo.</Aviso>
-          <Cartao>
+          <Cartao className="p-4">
             <p className="text-sm text-rotulo">Entra com o apelido</p>
             <p className="text-forte font-semibold text-lg mt-1">{criado.apelido}</p>
             <p className="text-sm text-rotulo mt-4">Senha provisória</p>

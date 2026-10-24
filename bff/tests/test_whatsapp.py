@@ -261,3 +261,14 @@ async def test_o_gerente_ve_se_o_bot_esta_ouvindo_sem_o_detalhe_tecnico(db, conf
         "eventos_parados": 2, "eventos_com_erro": 2, "mensagens_sem_aviso": 0, "ultimo_erro": "StringDataRightTruncation"}))
     r = await bot_ouvindo(db=db, _gerente=None)
     assert r.ouvindo is False and "não o cadastro" in r.resumo and "StringData" not in r.resumo
+
+
+@respx.mock
+def test_autor_das_credenciais_que_nao_existe_mais_vem_marcado(cliente_http, administrador, configurado):
+    """A tela dizia "Gravado por renanmarquezini" — a conta foi juntada à de hoje em 28/09."""
+    rota = respx.get(f"{GW}/interno/credenciais")
+    rota.respond(200, json={**ESTADO, "atualizada_por": "renanmarquezini"})
+    r = cliente_http.get("/api/painel/whatsapp", headers=_sessao(administrador)).json()
+    assert r["atualizada_por"] == "renanmarquezini (conta que não existe mais)"
+    rota.respond(200, json={**ESTADO, "atualizada_por": administrador.apelido})
+    assert cliente_http.get("/api/painel/whatsapp", headers=_sessao(administrador)).json()["atualizada_por"] == administrador.apelido

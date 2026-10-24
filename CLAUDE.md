@@ -786,7 +786,13 @@ do histórico e do gateway (`POST /interno/mensagens/{id}/ocultar`, que limpa ta
 crua da Meta). Ao helper vai `confirmado_por: "pin"` (o contrato dele: quem pede a senha é o
 chamador). O ajuste em massa do helper (2.26.0) volta item por item com a conferência da
 leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter chegado", nunca
-"falhou". **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
+"falhou"; comando único volta com o MOTIVO da falha e a releitura do equipamento. A ferramenta
+`usina_helper` tem `metodo` (GET é leitura no helper: `/api/devices`, `/api/healthcheck/state?id=`
+— POST ali virava "escrita", pedia senha e dava 404) e respeita o recorte de usinas do GS
+(`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. Com ação esperando, a senha
+escrita numa frase ("a senha é 4821") também é tentativa e some do log. Selo "Helper alcançável"
+no adm (Log do bot) e no oem (Bot do WhatsApp), pelo `ferramentas` do helper, que só confere a
+chave do chamador. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
 lançar o dia, lembrete) espera a senha, e confirmada o BFF chama o `/assistant/apply` de lá com
 o token da pessoa (10 min); a conversa vai junto ao meuPlano, que é sem estado. **Empresa
 desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a

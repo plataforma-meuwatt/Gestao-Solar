@@ -755,6 +755,9 @@ export type SaudeDoCanal = {
   ultima_recebida_em: string | null
   ultima_entregue_em: string | null
   ultima_resposta_em: string | null
+  /** O helper responde ao bot agora? `null` = não configurado neste ambiente. */
+  helper_alcancavel: boolean | null
+  helper_resumo: string | null
 }
 
 export const saudeDoCanal = () => api.get<SaudeDoCanal>('/whatsapp/saude').then((r) => r.data)
@@ -765,7 +768,11 @@ export const logDoBotDaEmpresa = () =>
 
 /** Se o bot está recebendo as mensagens (o canal é da plataforma; o detalhe fica no adm-gs). */
 export const botOuvindo = () =>
-  apiEmpresa.get<{ ouvindo: boolean; resumo: string }>('/bot/saude').then((r) => r.data)
+  apiEmpresa
+    .get<{ ouvindo: boolean; resumo: string; helper_alcancavel: boolean | null; helper_resumo: string | null }>(
+      '/bot/saude',
+    )
+    .then((r) => r.data)
 
 /* ------------------------------------------------ um usuário em mais de uma empresa */
 

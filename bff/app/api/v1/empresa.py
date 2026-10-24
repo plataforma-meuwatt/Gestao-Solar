@@ -1669,6 +1669,9 @@ def usinas_do_usuario(
 class BotOuvindoOut(BaseModel):
     ouvindo: bool
     resumo: str
+    #: O helper (ler e comandar as usinas pelo bot) responde agora? `None` = não configurado.
+    helper_alcancavel: bool | None = None
+    helper_resumo: str | None = None
 
 
 @router.get("/bot/saude", response_model=BotOuvindoOut)
@@ -1679,12 +1682,14 @@ async def bot_ouvindo(
     ao gerente basta saber que a falta de resposta NÃO é o cadastro dele (o detalhe técnico
     fica no Log do bot do adm-gs)."""
     s = await saude_atual(db)
+    helper = {"helper_alcancavel": s.helper_alcancavel, "helper_resumo": s.helper_resumo}
     if s.ouvindo:
-        return BotOuvindoOut(ouvindo=True, resumo="O bot está recebendo as mensagens.")
+        return BotOuvindoOut(ouvindo=True, resumo="O bot está recebendo as mensagens.", **helper)
     return BotOuvindoOut(
         ouvindo=False,
         resumo=("O bot não está recebendo as mensagens agora. É o canal da plataforma, não o "
                 "cadastro de vocês — a administração do Gestão Solar vê o mesmo aviso."),
+        **helper,
     )
 
 

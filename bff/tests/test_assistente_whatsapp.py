@@ -364,13 +364,13 @@ async def test_acao_do_helper_so_roda_com_a_senha_de_atuacao_da_propria_pessoa(d
     assert "codigo" not in proposta and helper_ligado.confirmadas == []
 
     # Outra pessoa, com a MESMA senha, não executa a ação de ninguém.
-    assert "Não há ação esperando" in await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")
+    assert "não há ação esperando" in (await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")).lower()
     assert "não confere" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "483913")
     assert helper_ligado.confirmadas == []
     # A senha certa, da própria pessoa: executa UMA vez, e diz ao helper como confirmou.
     assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "confirmo 482913")).startswith("✅")
     assert helper_ligado.confirmadas == [("P-1", "pin")]
-    assert "Não há ação esperando" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert "não há ação esperando" in (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).lower()
     # Mensagem comum não é senha.
     assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "qual a geração de hoje?") is None
 
@@ -490,7 +490,7 @@ class _MeuPlanoFalso:
 
     async def assistente_aplicar(self, token, acao, args):
         self.aplicadas.append((acao, args))
-        return {"ok": True, "message": "Ação aplicada."}
+        return {"ok": True, "message": "Ação aplicada.", "data": {"os_id": 1639, "status": "PROGRAMADA"}}
 
 
 async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_a_senha_da_pessoa(db, monkeypatch):
@@ -522,10 +522,11 @@ async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_a_senha_da_pessoa(db, 
     assert "NADA foi executado" in proposta["instrucao"] and proposta["detalhes"] == ["Técnico: Michel"]
     assert falso.aplicadas == []
 
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")
-    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).startswith("✅ Feito no meuPlano")
+    assert "não há ação" in (await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")).lower()
+    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert feito.startswith("✅ Feito no meuPlano") and "(OS 1639, PROGRAMADA)" in feito
     assert falso.aplicadas == [("criar_ordem_servico", {"usina_id": 37, "nome": "Roçagem de 5 ruas"})]
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert "não há ação" in (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).lower()
 
 
 def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
@@ -735,3 +736,128 @@ async def test_o_helper_que_nao_responde_a_tempo_e_incerto_e_nao_falha():
         r = await bot.confirmar("P-1", "pin", "whatsapp")
         assert r["incerto"] and not r["ok"]
         assert (await bot.chamar("/api/read", {}, "whatsapp"))["reason"] == "helper_fora"
+
+
+# ── avaliação de 24/10/2026 (5ª): GET no helper, senha em frase, motivo e releitura, recorte ──
+
+
+class _HelperComGet(_HelperFalso):
+    def __init__(self):
+        super().__init__()
+        self.chamadas = []
+
+    async def chamar(self, rota, corpo, origem, metodo="POST"):
+        self.chamadas.append((metodo, rota))
+        if metodo == "GET":
+            return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": {"drivers": ["huawei"]}}
+        if rota == "/api/registry/plants":
+            return {"ok": True, "tipo": "leitura", "status_http": 200,
+                    "resposta": {"plants": [{"api_slug": "pirapozinho"}, {"api_slug": "de-outro"}]}}
+        return await super().chamar(rota, corpo, origem, metodo)
+
+
+@pytest.fixture
+def helper_com_get(monkeypatch):
+    from app.services import assistente_helper
+
+    falso = _HelperComGet()
+    monkeypatch.setattr(assistente_helper, "_cliente", lambda db, user: falso)
+    monkeypatch.setattr(assistente_helper, "configurado", lambda: True)
+    return falso
+
+
+def _dono_com_usina(db, slug="pirapozinho"):
+    from app.core.security import gerar_hash_senha
+    from app.models.plant import PlantLink
+    from app.models.user import UserPlantAccess
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_helper, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
+    usina = PlantLink(nome="Pirapozinho", mw_plant_slug=slug, empresa_id=dono.empresa_id)
+    db.add(usina)
+    db.commit()
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=usina.id))
+    db.commit()
+    return dono
+
+
+async def test_leitura_get_do_helper_nao_pede_senha(db, helper_com_get):
+    """`GET /api/devices` (o catálogo de ações) ia como POST: o helper o tomava por escrita, o
+    bot pedia a senha e o helper respondia 404."""
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await h.usina_helper(ctx, {"rota": "/api/devices", "metodo": "GET"})
+    assert r["status_http"] == 200 and "proposta_pendente" not in r and dono.id not in h.PENDENTES
+    assert helper_com_get.chamadas == [("GET", "/api/devices")]
+
+
+async def test_o_helper_respeita_as_usinas_liberadas_no_gestao_solar(db, helper_com_get):
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    lista = await h.usina_helper(ctx, {"rota": "/api/registry/plants"})
+    assert [p["api_slug"] for p in lista["resposta"]["plants"]] == ["pirapozinho"]
+    recusa = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {"plant_id": "de-outro"}})
+    assert "não liberada" in recusa["erro"]
+    recusa_get = await h.usina_helper(ctx, {"rota": "/api/healthcheck/state?plant_id=de-outro", "metodo": "GET"})
+    assert "não liberada" in recusa_get["erro"]
+    assert ("POST", "/api/read") not in helper_com_get.chamadas
+
+
+async def test_a_senha_escrita_numa_frase_e_tentativa_e_some_do_log(db, bot_local, helper_com_get):
+    """"a senha é 482913" ia à IA e ao log em claro."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await h.usina_helper(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
+                         {"rota": "/api/act", "corpo": {"plant_id": "pirapozinho", "acao": "off"}})
+    await assistente.atender({"id": 9, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
+                              "texto": "a senha é 482913"})
+    assert bot_local.llm == [] and helper_com_get.confirmadas == [("P-1", "pin")]
+    assert bot_local.ocultadas == [9]
+    assert "482913" not in db.query(RegistroBot).one().pergunta
+    assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
+
+
+def test_a_falha_diz_o_motivo_e_o_sucesso_traz_a_releitura():
+    from app.services.assistente_helper import _desfecho
+
+    falha = _desfecho("Desligar INV-03", {"ok": False, "resposta": {"ok": False, "error": "write-protect ATIVO"},
+                                          "releitura": {"status_http": 200, "resposta": {"status": "ligado"}}})
+    assert "write-protect ATIVO" in falha and "Releitura do equipamento: status: ligado" in falha
+    ok = _desfecho("Desligar INV-03", {"ok": True, "resumo": "Desligar INV-03",
+                                       "releitura": {"status_http": 200, "resposta": {"ok": True, "status": "desligado",
+                                                                                      "potencia_kw": 0}}})
+    assert ok.startswith("✅ Executado") and "status: desligado · potencia_kw: 0" in ok
+    assert "expirou" in _desfecho("Desligar INV-03", {"ok": False, "reason": "proposta_inexistente"})
+
+
+async def test_ferramenta_nao_liberada_nao_roda_mesmo_que_a_ia_peca(db):
+    """A IA só recebe as ferramentas liberadas; se ainda assim pedir outra, `_executar` recusa."""
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_meuwatt = False
+    db.commit()
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await assistente._executar(ctx, {"id": "c1", "function": {"name": "geracao", "arguments": "{}"}})
+    assert "não está liberada" in r["erro"]
+
+
+async def test_o_selo_do_helper_sem_token_de_ninguem(monkeypatch):
+    from app.services import assistente_helper as h
+
+    monkeypatch.setattr(h, "configurado", lambda: True)
+    pedidos = []
+
+    class _Falso:
+        def __init__(self, url, chamador, chave, token):
+            pedidos.append(token)
+
+        async def ferramentas(self, espera_s=120):
+            return {"ok": True}
+
+    monkeypatch.setattr(h, "HelperBot", _Falso)
+    assert (await h.alcancavel())[0] is True and pedidos == [""]

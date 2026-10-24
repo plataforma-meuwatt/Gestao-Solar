@@ -31,6 +31,9 @@ from app.services import assistente_geracao as ger
 #: Mensagem que é uma SENHA: só números (4 a 8), com ou sem "confirmo"/"senha" na frente.
 SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{4,8})\s*[.!]?\s*$", re.IGNORECASE)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
+#: Um número de 4 a 8 dígitos solto numa frase ("a senha é 4821", "sim, 4821").
+NUMERO = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
+FRASE_CURTA = 80
 #: O que fica no log, no histórico e no gateway no lugar da senha digitada.
 OCULTA = "[senha de atuação]"
 TENTATIVAS = 5
@@ -56,6 +59,12 @@ PENDENTES: dict[int, Pendente] = {}
 #: reinício zera — e ainda é preciso o celular da pessoa para cada tentativa.
 _ERROS: dict[int, int] = {}
 _BLOQUEIO: dict[int, float] = {}
+
+
+def parece_senha(texto: str) -> bool:
+    """Mensagem que PODE ser a senha: nunca vai em claro ao log, nem se der erro no meio."""
+    texto = texto or ""
+    return SENHA.match(texto) is not None or (len(texto) <= FRASE_CURTA and len(NUMERO.findall(texto)) == 1)
 
 
 def validar_senha_atuacao(senha: str) -> str:
@@ -100,6 +109,18 @@ _catalogo: tuple[float, dict[str, Any]] | None = None
 def configurado() -> bool:
     s = get_settings()
     return bool(s.helper_bot_url and s.helper_bot_chave)
+
+
+async def alcancavel() -> tuple[bool | None, str]:
+    """Se o helper responde agora (túnel + filtro + serviço). `None` = não configurado aqui.
+    Usa o `ferramentas`, que só confere a chave do chamador: a plataforma não tem token."""
+    if not configurado():
+        return None, "O helper não está configurado neste ambiente."
+    s = get_settings()
+    d = await HelperBot(s.helper_bot_url, s.helper_bot_chamador, s.helper_bot_chave, "").ferramentas(espera_s=6)
+    if d.get("ok"):
+        return True, "Helper alcançável: o bot lê e comanda as usinas por ele."
+    return False, f"Helper fora do alcance do bot: {d.get('error') or d.get('reason') or 'sem resposta'}"
 
 
 def _cliente(ctx_ou_db, user) -> HelperBot:
@@ -155,11 +176,33 @@ async def usina_helper_catalogo(ctx: ger.Contexto, a: dict) -> dict:
     return _catalogo[1]
 
 
+def _usinas_pedidas(rota: str, corpo: dict) -> set[str]:
+    """As usinas que o pedido toca (`slug`, `plant_id`, `slugs`, e o mesmo na query do GET)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    nomes = [corpo.get("slug"), corpo.get("plant_id"), *(corpo.get("slugs") or [])]
+    for k, v in parse_qs(urlsplit(rota).query).items():
+        if k in ("slug", "plant_id", "slugs"):
+            nomes += v
+    return {str(n).strip() for n in nomes if n not in (None, "")}
+
+
 async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     rota = (a.get("rota") or "").strip()
     if not rota.startswith("/api/"):
         return {"erro": "Informe a rota do helper, começando com /api/ (veja usina_helper_catalogo)."}
     corpo = a.get("corpo") if isinstance(a.get("corpo"), dict) else {}
+    # GET é leitura no helper (o catálogo `/api/devices`, `/api/healthcheck/state?id=…`): POST
+    # numa rota GET virava "escrita", pedia senha e dava 404 (avaliação de 24/10/2026).
+    metodo = "GET" if str(a.get("metodo") or "").upper() == "GET" else "POST"
+    # O recorte do Gestão Solar vale aqui também: o token do meuWatt pode enxergar mais usinas
+    # do que o gerente (ou o dono) liberou para esta conta.
+    from app.api.v1.plants import usinas_do_usuario
+
+    liberadas = {p.mw_plant_slug for p in usinas_do_usuario(ctx.db, ctx.user) if p.mw_plant_slug}
+    fora = _usinas_pedidas(rota, corpo) - liberadas
+    if fora:
+        return {"erro": f"Usina não liberada para você no Gestão Solar: {', '.join(sorted(fora))}."}
     from app.services.vinculos import SemConexao
 
     try:
@@ -167,9 +210,13 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     except SemConexao as e:
         return {"erro": f"Helper indisponível: {e}"}
     ctx.db.commit()                                       # solta a conexão enquanto o helper lê
-    d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}")
+    d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):
         return {"erro": d.get("error") or d.get("reason") or "O helper recusou.", "motivo": d.get("reason")}
+    if d.get("tipo") == "leitura" and rota.split("?")[0] == "/api/registry/plants":
+        resposta = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
+        resposta["plants"] = [p for p in resposta.get("plants") or []
+                              if isinstance(p, dict) and p.get("api_slug") in liberadas]
     if d.get("tipo") == "proposta":
         proposta, resumo = d["proposta"], d.get("resumo") or rota
 
@@ -207,9 +254,45 @@ def _desfecho(resumo: str, r: dict) -> str:
         else:
             fim = "⚠️ A leitura final NÃO confere em tudo — veja os itens."
         return "\n".join([f"{resumo}:", *linhas, fim])
+    if r.get("reason") == "proposta_inexistente":
+        return ("⌛ O pedido expirou no helper (ele vale 2 minutos) — nada foi feito. Peça de novo e mande "
+                "a senha logo em seguida.")
+    releitura = _leitura_curta((r.get("releitura") or {}).get("resposta"))
     if not r.get("ok"):
-        return f"❌ Não executado: {resumo}. {r.get('error') or r.get('reason') or ''}".strip()
-    return f"✅ Executado: {r.get('resumo') or resumo}."
+        resposta = r.get("resposta") if isinstance(r.get("resposta"), dict) else {}
+        motivo = r.get("error") or resposta.get("error") or r.get("reason") or ""
+        texto = f"❌ Não executado: {resumo}. {motivo}".strip()
+    else:
+        texto = f"✅ Executado: {r.get('resumo') or resumo}."
+    return texto + (f"\nReleitura do equipamento: {releitura}" if releitura else "")
+
+
+#: Chaves de leitura que não dizem nada a quem lê no celular.
+_RUIDO = {"ok", "raw", "regs", "registers", "hex", "bytes", "debug", "ms", "duracao_ms", "host", "port", "slave"}
+
+
+def _leitura_curta(dados: Any, limite: int = 10) -> str:
+    """A releitura em uma linha: até `limite` valores simples (`chave: valor`). O formato de
+    cada driver é dele; aqui só se evita mandar o JSON cru ao WhatsApp."""
+    pares: list[str] = []
+
+    def andar(v: Any, prefixo: str = "") -> None:
+        if len(pares) >= limite:
+            return
+        if isinstance(v, dict):
+            for k, x in v.items():
+                if str(k).lower() not in _RUIDO:
+                    andar(x, f"{prefixo}{k}" if not prefixo else f"{prefixo}.{k}")
+        elif isinstance(v, list):
+            for i, x in enumerate(v[:limite]):
+                andar(x, f"{prefixo}[{i}]")
+        elif v is not None and prefixo:
+            pares.append(f"{prefixo}: {v}")
+
+    if isinstance(dados, dict) and dados.get("ok") is False:
+        return f"falhou — {dados.get('error') or 'sem detalhe'}"
+    andar(dados)
+    return " · ".join(pares)
 
 
 async def confirmar_por_mensagem(db, user, telefone: str, texto: str) -> str | None:
@@ -220,21 +303,29 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str) -> str | N
     Sem ação esperando, a resposta é a mesma com a senha certa ou errada: senão, mandar
     números até a frase mudar descobriria a senha. Com ação esperando, cada erro conta, e
     `TENTATIVAS` erros bloqueiam as ações por `BLOQUEIO_S`."""
-    m = SENHA.match(texto or "")
-    if m is None:
-        return None
+    texto = texto or ""
     pendente = PENDENTES.get(user.id)
     if pendente is not None and monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
         pendente = None
+    m = SENHA.match(texto)
+    if m is not None:
+        tentativa = m.group(1)
+    elif pendente is not None and user.senha_atuacao_hash and parece_senha(texto):
+        # Com ação esperando, a senha escrita numa frase ("a senha é 4821", "sim, 4821") é
+        # tentativa também — senão ela ia à IA e ao log em claro (avaliação de 24/10/2026).
+        tentativa = NUMERO.findall(texto)[0]
+    else:
+        return None
     if not user.senha_atuacao_hash:
         # Número solto de quem não tem senha é só um número: segue a conversa.
         return SEM_SENHA if pendente is not None or COM_PALAVRA.match(texto) else None
     if pendente is None:
-        return "Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — peça de novo."
+        return ("Recebi só um número. Se era a senha de atuação: não há ação esperando (o pedido vale "
+                "poucos minutos) e nada foi feito. Se era outra coisa, escreva com palavras.")
     if monotonic() < _BLOQUEIO.get(user.id, 0):
         return "Ações bloqueadas por senha errada. Tente de novo mais tarde. Nada foi feito."
-    if not conferir_senha(m.group(1), user.senha_atuacao_hash):
+    if not conferir_senha(tentativa, user.senha_atuacao_hash):
         erros = _ERROS[user.id] = _ERROS.get(user.id, 0) + 1
         if erros < TENTATIVAS:
             return f"Senha não confere ({erros} de {TENTATIVAS}). Nada foi feito."
@@ -249,7 +340,8 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str) -> str | N
 
 
 _ROTA = {"type": "string", "description": "Rota do helper, ex.: /api/registry/plants, /api/registry/devices, "
-         "/api/read, /api/healthcheck/start, /api/healthcheck/state, /api/alarms/feed, /api/abs/status."}
+         "/api/read, /api/healthcheck/start, /api/alarms/feed, /api/abs/status; GET com a consulta na própria "
+         "rota: /api/devices, /api/healthcheck/state?id=<id>."}
 
 FERRAMENTAS = {
     "usina_helper_catalogo": (usina_helper_catalogo, {"type": "function", "function": {
@@ -269,6 +361,10 @@ FERRAMENTAS = {
                         "proposta, e só roda com a SENHA DE ATUAÇÃO que a pessoa manda."),
         "parameters": {"type": "object", "properties": {
             "rota": _ROTA,
+            "metodo": {"type": "string", "enum": ["POST", "GET"],
+                       "description": "POST (padrão) ou GET — use o método que o catálogo diz para a rota. "
+                                      "GET é sempre leitura: /api/devices (os comandos e ações de cada equipamento), "
+                                      "/api/healthcheck/state?id=<id> (o resultado do teste de comunicação)."},
             "corpo": {"type": "object", "description": "O JSON que a tela da web mandaria (ex.: {\"slug\": \"pirapozinho\"})."},
         }, "required": ["rota"]}}}),
 }

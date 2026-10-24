@@ -93,7 +93,7 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
   const ligada = conexao.configurada && conexao.propria
 
   return (
-    <Cartao>
+    <Cartao className="px-5 py-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-forte font-semibold">{NOME[conexao.produto]}</p>

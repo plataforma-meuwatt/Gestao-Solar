@@ -195,7 +195,7 @@ function LinhaUsina({
   }
 
   return (
-    <Cartao>
+    <Cartao className="px-5 py-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           {jaEstaAqui ? (
@@ -228,7 +228,13 @@ function LinhaUsina({
               <button
                 className="btn-fantasma"
                 disabled={ocupado}
-                onClick={() => aoSalvar({ ...base, no_app: !linha.no_app })}
+                onClick={() =>
+                  (!linha.no_app ||
+                    window.confirm(
+                      `Desligar ${linha.nome} do aplicativo? Ela some do app de todos os donos que a recebem. Vínculos e concessões ficam guardados; religar devolve.`,
+                    )) &&
+                  aoSalvar({ ...base, no_app: !linha.no_app })
+                }
               >
                 {linha.no_app ? 'Desligar' : 'Religar'}
               </button>

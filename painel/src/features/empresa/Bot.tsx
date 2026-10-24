@@ -73,6 +73,14 @@ export function BotDaEmpresa() {
         <div className="flex items-center gap-3 flex-wrap mb-2">
           <Selo tom={canal.ouvindo ? 'ok' : 'parado'}>{canal.ouvindo ? 'Bot ouvindo' : 'Bot NÃO está ouvindo'}</Selo>
           <span className={`text-sm ${canal.ouvindo ? 'text-rotulo' : 'text-parado'}`}>{canal.resumo}</span>
+          {canal.helper_alcancavel !== null ? (
+            <>
+              <Selo tom={canal.helper_alcancavel ? 'ok' : 'parado'}>
+                {canal.helper_alcancavel ? 'Helper alcançável' : 'Helper fora'}
+              </Selo>
+              {!canal.helper_alcancavel ? <span className="text-sm text-parado">{canal.helper_resumo}</span> : null}
+            </>
+          ) : null}
         </div>
       ) : null}
       {log?.length ? (

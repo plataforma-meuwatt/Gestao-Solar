@@ -46,8 +46,9 @@ class HelperBot:
             return {"ok": False, "reason": "resposta_invalida", "error": f"HTTP {r.status_code}"}
         return dados if isinstance(dados, dict) else {"ok": False, "reason": "resposta_invalida"}
 
-    async def ferramentas(self) -> dict[str, Any]:
-        return await self._post("ferramentas", {})
+    async def ferramentas(self, espera_s: float = 120) -> dict[str, Any]:
+        """O catálogo — e a prova de vida: só pede a chave do chamador, não o token de ninguém."""
+        return await self._post("ferramentas", {}, espera_s=espera_s)
 
     async def chamar(self, rota: str, corpo: dict[str, Any], origem: str, metodo: str = "POST") -> dict[str, Any]:
         return await self._post("chamar", {"rota": rota, "metodo": metodo, "corpo": corpo, "origem": origem})
