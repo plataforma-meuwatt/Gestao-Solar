@@ -794,11 +794,16 @@ escrita numa frase também é tentativa. **Desde a 8ª avaliação: SÓ a mensag
 senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dígitos são juntados
 antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem
 (o bloco promete "qualquer outra mensagem cancela", e "não faça! senha 482913" executava).
-Todo número de 6 a 8 dígitos de quem tem senha vira "[número oculto]" para a IA, o histórico e
-o log, e a mensagem some do gateway, em todos os caminhos — mas número dentro de frase NÃO é
-conferido (UC, CEP e protocolo não contam erro, não bloqueiam e não viram oráculo). A tentativa
-(a mensagem que é só o número) é conferida com `to_thread`; cada erro conta; 5 em 15 min
-bloqueiam. Na hora da senha, a parte do bot da ação é conferida de novo. O
+Numa FRASE, cada número que pode ser a senha (6 a 8 dígitos solto — IP, data, hora, CEP e
+valor com ponto ficam fora — ou os grupos logo depois de "senha/confirmo/pin") é conferido, até
+20 por pessoa por hora, e SÓ a senha some ("[senha oculta]", com aviso à pessoa e à IA): UC,
+protocolo e IP seguem legíveis (avaliação 9). Frase nunca conta erro nem bloqueia; passado o
+teto da hora, todo candidato vira "[número oculto]" sem conferir (o oráculo para ali). O
+gateway guarda a frase SEM a senha (não a mensagem inteira). A tentativa (a mensagem que é só o
+número, com até 3 grupos separados por espaço, ponto, vírgula, hífen ou sublinhado) é conferida
+com `to_thread`; cada erro conta; 5 em 15 min bloqueiam. O número que ganha conta leva para ela
+as mensagens que mandou antes (`cadastro.adotar_mensagens`). O log mascara "senha … é/:/= X",
+"senha … para X" e "PIN 1234". Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele. Qualquer outra

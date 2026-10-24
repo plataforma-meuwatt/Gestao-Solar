@@ -6,8 +6,9 @@ constante, e **sem a chave configurada a rota recusa tudo**.
 
 São duas rotas, e elas respondem perguntas diferentes:
 
-- **`/evento`** — chegou mensagem DE um cliente. Nesta fase o BFF só registra: responder é
-  a frente do atendimento, e atender número desconhecido é decisão de negócio.
+- **`/evento`** — chegou mensagem de alguém. O BFF entrega ao bot (`assistente.atender`), em
+  segundo plano e uma por número de cada vez: ele casa o número com uma conta, confere a
+  senha de atuação e responde pelo gateway.
 - **`/status`** — o que aconteceu com o que NÓS mandamos: entregue, lida, falhou. Esta
   fecha o log de notificações, que sem ela pararia em "mandei" e nunca saberia se chegou.
 """

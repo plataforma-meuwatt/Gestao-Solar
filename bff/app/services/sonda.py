@@ -112,7 +112,7 @@ MEUWATT: list[Rota] = [
     Rota("mw.range", "GET", "/plants/{slug}/generation/range",
          "Gráfico do mês e do ano", params={"start": "{semana_passada}", "end": "{hoje}"}),
     Rota("mw.pvsyst", "GET", "/plants/{slug}/pvsyst",
-         "A meta do projeto (diária) — o 'esperado' do portal do cliente",
+         "A meta do projeto (diária) — o 'esperado' do portal do dono de usina",
          essencial=False, params={"start": "{semana_passada}", "end": "{hoje}"}),
     Rota("mw.pvsyst_manual", "GET", "/plants/{slug}/pvsyst/manual/{ano}",
          "A meta do projeto (mensal, digitada) — segunda fonte do 'esperado'",
@@ -168,7 +168,7 @@ MEUWATT: list[Rota] = [
     Rota("mw.bills", "GET", "/plants/{slug}/utility-bills",
          "Faturas da concessionária — o MWh faturado por UC, na conciliação do Painel",
          essencial=False, params={"year": "{ano}"}),
-    # A aba "Baixar dados" do portal do cliente: as opções dizem o que ESTA usina tem
+    # A aba "Baixar dados" do portal do dono de usina: as opções dizem o que ESTA usina tem
     # (inversores, colunas da estação, leitores da fronteira, PR, retenção e tetos), e é
     # o que permite a tela desabilitar o impossível com o motivo escrito em vez de
     # oferecer e devolver 400 depois da espera. Secundária: é uma aba a menos, não uma
@@ -209,7 +209,7 @@ MEUWATT: list[Rota] = [
          "Aviso de usina parada das micro usinas (motor, tipo parada)", essencial=False,
          params={"active": "true"}),
     Rota("mw.users", "GET", "/admin/users",
-         "Achar a conta do cliente para vincular (o meuWatt não tem busca por e-mail)"),
+         "Achar a conta do dono de usina para vincular (o meuWatt não tem busca por e-mail)"),
     Rota("mw.user_plants", "GET", "/admin/user-plants",
          "Quais usinas cada conta enxerga — as sugestões de concessão"),
     # ⚠ A razão escrita aqui até 05/09/2026 era FALSA — dizia que a rota é restrita a
@@ -233,21 +233,21 @@ MEUWATT: list[Rota] = [
     # ponte caída.
     # ── assistente do WhatsApp (services/assistente_geracao.py) ──────────────
     Rota("mw.grandezas", "GET", "/grandezas/series",
-         "Irradiação diária (estação e satélite) no assistente do WhatsApp", essencial=False,
+         "Irradiação diária (estação e satélite) no bot do WhatsApp", essencial=False,
          params={"plants": "{slug}", "grandezas": "irradiacao_ghi_sat_dia", "start": "{semana_passada}",
                  "end": "{hoje}", "step": "1d"}),
     Rota("mw.shadow_queue", "GET", "/shadow-breakdowns/queue",
-         "Paradas (detector novo) no assistente do WhatsApp", essencial=False,
+         "Paradas (detector novo) no bot do WhatsApp", essencial=False,
          params={"plantId": "{mw_plant_id}", "start": "{semana_passada}", "end": "{hoje}"}),
     Rota("mw.report_existing", "GET", "/reports/existing",
-         "O PDF do relatório mensal que o assistente do WhatsApp manda", essencial=False,
+         "O PDF do relatório mensal que o bot do WhatsApp manda", essencial=False,
          sonda=False, nao_sondada_porque="Precisa de um mês com relatório emitido; um mês qualquer "
          "responde vazio e não prova nada."),
     Rota("mw.executive_summary", "GET", "/plants/{slug}/executive-summary/{mes}",
-         "O resumo executivo que o assistente do WhatsApp lê", essencial=False,
+         "O resumo executivo que o bot do WhatsApp lê", essencial=False,
          sonda=False, nao_sondada_porque="O marcador {mes} não existe na sonda; mês sem resumo responde vazio."),
     Rota("mw.portal", "GET", "/reports/portal",
-         "Relatórios publicados no Portal do Cliente", essencial=False,
+         "Relatórios publicados no portal do dono de usina", essencial=False,
          campos_exigidos=(
              "reports[].id",
              "reports[].plant_slug",
@@ -265,7 +265,7 @@ MEUWATT: list[Rota] = [
          "Os PDFs de um fechamento publicado: geração, paradas e o resumo executivo",
          essencial=False,
          sonda=False,
-         nao_sondada_porque="É o PDF de um cliente, baixado inteiro a cada varredura — e o "
+         nao_sondada_porque="É o PDF de um dono de usina, baixado inteiro a cada varredura — e o "
                             "id sai de dentro de `reports[]`, que a conferência de forma "
                             "lê mas não colhe. A tela de Relatórios exercita sob demanda, "
                             "com o fechamento que a pessoa abriu."),
@@ -283,10 +283,10 @@ MEUPLANO: list[Rota] = [
          "De quem é o token, com nome — o que Conexões mostra",
          captura={"email": "email"}),
     Rota("mp.me", "GET", "/api/v1/meuacesso/auth/me",
-         "O id do dono do token — sem ele não há como vincular a conta de um cliente",
+         "O id do dono do token — sem ele não há como vincular a conta de um dono de usina",
          captura={"user_id": "user_id"}),
     Rota("mp.session", "GET", "/api/v1/meuacesso/auth/me/session",
-         "Permissões e nível de acesso, que limitam o assistente"),
+         "Permissões e nível de acesso, que limitam o assistente do meuPlano"),
     Rota("mp.owners", "GET", "/api/v1/meuacesso/owners/",
          "As empresas de O&M (organizações PRESTADORAS) de lá, para casar com as daqui",
          params={"kind": "PRESTADORA"}),
@@ -346,7 +346,7 @@ MEUPLANO: list[Rota] = [
     Rota("mp.vc_contratos", "GET",
          "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/contratos",
          "Os contratos da usina com a versão consolidada de cada um — o seletor de "
-         "contrato do portal do cliente",
+         "contrato do portal do dono de usina",
          captura={"vc_container_id": "id"}, captura_exige="versao_consolidada"),
     Rota("mp.cronograma", "GET",
          "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/cronograma",
@@ -359,24 +359,24 @@ MEUPLANO: list[Rota] = [
          "Gravar nome/e-mail/telefone no meuPlano quando o cadastro muda no GS", essencial=False,
          sonda=False, nao_sondada_porque="Escreve: a sonda só lê."),
     Rota("mp.lookup", "GET", "/api/v1/meuacesso/admin/users/lookup",
-         "Achar a conta do cliente por e-mail, ao vincular",
+         "Achar a conta do dono de usina por e-mail, ao vincular",
          params={"email": "{email}"}),
     Rota("mp.usinas_do_usuario", "GET",
          "/api/v1/meuacesso/admin/users/{usuario_remoto_id}/usinas",
-         "As usinas que a conta do cliente enxerga — as sugestões de concessão",
+         "As usinas que a conta do dono de usina enxerga — as sugestões de concessão",
          sonda=False,
          nao_sondada_porque="Depende de um id de usuário do meuPlano, que só existe no "
-                            "contexto de um cliente já vinculado. A tela de Diagnóstico "
+                            "contexto de um dono de usina já vinculado. A tela de Diagnóstico "
                             "exercita este caminho com o cliente escolhido."),
     Rota("mp.notificacoes", "GET", "/api/v1/meuacesso/me/notifications",
          "Notificações do app", essencial=False),
     Rota("mp.nao_lidas", "GET", "/api/v1/meuacesso/me/notifications/unread-count",
          "O contador na aba", essencial=False),
-    # Pendências do portal do cliente: a rota `visao-cliente` recorta pelo `shareable` sempre,
+    # Pendências do portal do dono de usina: a rota `visao-cliente` recorta pelo `shareable` sempre,
     # e o BFF recorta de novo. Não essenciais — sem elas o portal perde uma aba, não a ponte.
     Rota("mp.vc_pendencias", "GET",
          "/api/v1/meuacesso/visao-cliente/usinas/{usina_id}/pendencias",
-         "As pendências compartilháveis, na aba Pendências do portal do cliente",
+         "As pendências compartilháveis, na aba Pendências do portal do dono de usina",
          essencial=False, captura={"pendencia_id": "id"}),
     Rota("mp.vc_pendencia", "GET",
          "/api/v1/meuacesso/visao-cliente/pendencias/{pendencia_id}",
@@ -504,15 +504,15 @@ MEUPLANO: list[Rota] = [
                             "num período que tenha ficha pronta. A tela de Relatórios "
                             "exercita sob demanda, depois do inventário."),
     Rota("mp.assistente", "POST", "/api/v1/meuacesso/assistant/chat",
-         "O assistente", essencial=False,
+         "O assistente do meuPlano — a manutenção do bot do WhatsApp", essencial=False,
          sonda=False,
          nao_sondada_porque="Abre uma conversa e consome cota do modelo lá."),
     Rota("mp.assistente_aplicar", "POST", "/api/v1/meuacesso/assistant/apply",
-         "A ação proposta pelo assistente, confirmada pela pessoa com a senha de atuação (WhatsApp)",
+         "A ação proposta pelo assistente do meuPlano, confirmada pela pessoa com a senha de atuação (WhatsApp)",
          essencial=False, sonda=False,
          nao_sondada_porque="Grava no meuPlano (cria OS, lança dia…) — só roda com a confirmação da pessoa."),
     Rota("mp.assistente_run", "GET", "/api/v1/meuacesso/assistant/runs/{run_id}",
-         "A resposta do assistente, por polling", essencial=False,
+         "A resposta do assistente do meuPlano, por polling", essencial=False,
          sonda=False,
          nao_sondada_porque="O id do run só existe depois do POST que abre a conversa — "
                             "e esse a sonda não chama."),

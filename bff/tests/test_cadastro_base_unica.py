@@ -176,3 +176,24 @@ def test_tirar_o_token_do_meuplano_nao_desliga_o_cadastro(cenario):
     desconectar_conta_do_cliente(conta.id, Produto.MEUPLANO, db=db, gerente=gerente)
     v = cadastro.vinculo_meuplano(db, conta.id)
     assert v is not None and v.usuario_remoto_id == "7" and v.token_cifrado is None
+
+
+async def test_o_numero_que_ganha_conta_leva_as_mensagens_de_antes(db):
+    """As 17 mensagens do celular do Kewyn ficavam como número solto no Log do bot."""
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.models.empresa import Empresa
+    from app.models.user import Perfil, User
+    from app.services import cadastro
+
+    emp = Empresa(nome="Splendor O&M")
+    db.add(emp)
+    db.commit()
+    kewyn = User(apelido="kewyn", nome="Kewyn", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id)
+    db.add_all([kewyn, RegistroBot(telefone="+5517997367733", resultado="sem_conta", pergunta="oi"),
+                RegistroBot(telefone="+5517990000000", resultado="sem_conta", pergunta="outro")])
+    db.commit()
+    await cadastro.gravar(db, kewyn, emp.id, telefone="(17) 99736-7733")
+    db.commit()
+    dele = db.query(RegistroBot).filter_by(telefone="+5517997367733").one()
+    assert (dele.gs_user_id, dele.empresa_id) == (kewyn.id, emp.id)
+    assert db.query(RegistroBot).filter_by(telefone="+5517990000000").one().gs_user_id is None

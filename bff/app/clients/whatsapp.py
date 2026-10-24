@@ -206,9 +206,10 @@ async def saude() -> dict[str, Any]:
     return await _req("GET", "/interno/saude")
 
 
-async def ocultar_texto(mensagem_id: int) -> None:
-    """Apaga do gateway o texto de uma mensagem recebida (a senha de atuação digitada)."""
-    await _req("POST", f"/interno/mensagens/{mensagem_id}/ocultar")
+async def ocultar_texto(mensagem_id: int, texto: str | None = None) -> None:
+    """Troca no gateway o texto de uma mensagem recebida pelo `texto` sem a senha de atuação
+    (sem `texto`, apaga a mensagem inteira)."""
+    await _req("POST", f"/interno/mensagens/{mensagem_id}/ocultar", json={"texto": texto})
 
 
 async def digitando(wamid: str) -> None:

@@ -187,11 +187,17 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
                       r"((?:\s+d[eoa]s?\s+[^\n:=]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)([^\s,;]+?)(?=[.!?]*(?:\s|$|[,;]))")
 _SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
+#: "Altere a senha do cadeado de pirapozinho para 3262" (estava em claro no log de produção,
+#: avaliação 9). Com "para/pra" o valor precisa ter dígito: "senha para o gerente" é prosa.
+_SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
+                           r"((?:\s+d[eoa]s?\s+[^\n:=]{1,40}?)?\s+(?:para|pra)\s+)"
+                           r"([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
 
 
 def _sem_segredos(texto: str) -> str:
-    texto = _SEGREDO.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
-    return _SEGREDO_NUM.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
+    for padrao in (_SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
+        texto = padrao.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
+    return texto
 
 
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
@@ -254,6 +260,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo e já confirmado pela pessoa.
+- "[senha oculta]" numa mensagem = a pessoa escreveu a senha de atuação no meio da frase: ela foi escondida e
+  NÃO confirma nada (a senha só vale sozinha, numa mensagem só dela). "[número oculto]" = número escondido por
+  segurança: peça para a pessoa reescrever separando os grupos (ex.: 123.456).
 - Ação (helper ou meuPlano: ligar, desligar, gravar, criar) NUNCA é executada por você: a ferramenta devolve
   `proposta_pendente`. Mostre o resumo (e os detalhes) e peça a SENHA DE ATUAÇÃO da pessoa — quem confere é o
   sistema. Nunca peça a senha de login, nunca escreva uma senha, nunca diga que fez. Ler não pede senha.
@@ -262,7 +271,7 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
 - Responda curto, em português do Brasil, formato WhatsApp (*negrito*, listas curtas): o número pedido
   primeiro, depois 2–4 linhas de contexto. Sem bastidor de dados, sem menu de opções no fim.
 - Arquivo/gráfico com `enviado_no_chat: true` já chegou: só confirme, não repita link.
-- Fora dessas duas áreas, diga com gentileza que não consegue ajudar."""
+- Fora dessas áreas, diga com gentileza que não consegue ajudar."""
 
 
 async def _llm(mensagens: list[dict], ferramentas: list[dict]) -> dict:
@@ -380,12 +389,13 @@ def _empresa_fora(db: Session, user: User) -> str | None:
     return None
 
 
-async def _ocultar_no_gateway(mensagem_id: Any) -> None:
-    """A senha digitada sai também do gateway (a linha da mensagem e a entrega crua da Meta)."""
+async def _ocultar_no_gateway(mensagem_id: Any, texto: str) -> None:
+    """A senha digitada sai também do gateway (a linha da mensagem e a entrega crua da Meta):
+    fica o texto sem ela — a frase continua legível."""
     if not mensagem_id:
         return
     try:
-        await whatsapp.ocultar_texto(int(mensagem_id))
+        await whatsapp.ocultar_texto(int(mensagem_id), texto)
     except Exception:                                      # noqa: BLE001 — não derruba a resposta
         log.warning("assistente: não ocultou a senha no gateway (mensagem %s)", mensagem_id, exc_info=True)
 
@@ -406,15 +416,14 @@ async def _atender(evento: dict) -> None:
     ctx: ger.Contexto | None = None
     try:
         user = conta_do_telefone(db, telefone)
-        # A senha, conferida UMA vez e fora do laço da API: todo número de 6 a 8 dígitos de
-        # quem tem senha de atuação é candidato — certo ou errado, não vai à IA, ao log, ao
-        # histórico nem ao gateway, em nenhum caminho (nem nos que saem logo abaixo).
+        # A senha, conferida UMA vez e fora do laço da API, antes de qualquer saída: a mensagem
+        # que É a senha some inteira; numa frase, só a senha some ("[senha oculta]") — e do
+        # gateway sai só ela, não a frase.
         analise = await helper.analisar(user, texto)
-        seguro = texto
-        if analise.candidatos:
-            seguro = helper.mascarar(texto)
+        seguro = helper.OCULTA if analise.pura else helper.mascarar(texto, analise)
+        if seguro != texto:
             pergunta = seguro
-            await _ocultar_no_gateway(evento.get("id"))
+            await _ocultar_no_gateway(evento.get("id"), seguro)
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
@@ -439,7 +448,7 @@ async def _atender(evento: dict) -> None:
             return
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha derruba a ação
         # que a esperava — antes de "limpar" e de áudio/imagem, que saem logo abaixo.
-        esperava = False if analise.pura or helper.SENHA.match(helper.normalizar(texto)) else helper.desarmar(user.id)
+        esperava = False if helper.digitos_da_senha(texto) is not None else helper.desarmar(user.id)
         nota = f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""
         if not texto:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto." + nota)
@@ -468,7 +477,7 @@ async def _atender(evento: dict) -> None:
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava)
-        if resposta is not None and helper.SENHA.match(helper.normalizar(texto)):
+        if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
@@ -478,6 +487,9 @@ async def _atender(evento: dict) -> None:
             else:
                 resposta = await responder(ctx, historico)
             resposta += nota
+            if analise.escondeu_senha:
+                resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa "
+                             "mensagem só dela. Nada foi executado.)")
             if ctx.proposta is not None:
                 # O que a pessoa confirma com a senha é texto do SISTEMA, não da IA.
                 resposta += "\n\n" + helper.bloco_da_proposta(ctx.proposta)

@@ -274,3 +274,14 @@ def test_a_senha_digitada_sai_da_mensagem_e_da_entrega_crua(cliente, db):
     msgs = db.get(WebhookEvento, ev.id).corpo["entry"][0]["changes"][0]["value"]["messages"]
     assert [x["text"]["body"] for x in msgs] == ["[senha de atuação]", "bom dia"]
     assert "482913" not in str(db.get(WebhookEvento, ev.id).corpo)
+
+    # Numa frase, fica o texto sem a senha — a frase continua legível.
+    m2 = Mensagem(wamid="wamid.FRASE", direcao="entrada", wa_id="5517997377626", tipo="text",
+                  texto="pode ligar, senha 482913", ocorrida_em=datetime.now(UTC))
+    db.add(m2)
+    db.commit()
+    r = cliente.post(f"/interno/mensagens/{m2.id}/ocultar", headers={"X-Chave-Interna": "chave-interna-de-teste"},
+                     json={"texto": "pode ligar, senha [senha oculta]"})
+    assert r.status_code == 204
+    db.expire_all()
+    assert db.get(Mensagem, m2.id).texto == "pode ligar, senha [senha oculta]"

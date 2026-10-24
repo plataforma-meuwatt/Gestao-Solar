@@ -975,6 +975,7 @@ async def criar_cliente(
     criado.usuario.empresa_id = empresa_id
     criado.usuario.perfil = body.perfil
     criado.usuario.telefone = telefone
+    cadastro.adotar_mensagens(db, criado.usuario)
     db.commit()
 
     avisos: list[str] = []

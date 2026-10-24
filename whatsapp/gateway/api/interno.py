@@ -362,7 +362,7 @@ async def desconectar_conta(
 OCULTO = "[senha de atuação]"
 
 
-def _sem_o_texto(corpo, wamid: str):
+def _sem_o_texto(corpo, wamid: str, texto: str):
     """A entrega crua da Meta com o texto da mensagem `wamid` trocado (cópia nova: a coluna
     é JSON, e só uma atribuição faz o SQLAlchemy gravar)."""
     import copy
@@ -372,28 +372,34 @@ def _sem_o_texto(corpo, wamid: str):
         for mudanca in entrada.get("changes") or []:
             for msg in ((mudanca.get("value") or {}).get("messages") or []):
                 if msg.get("id") == wamid and isinstance(msg.get("text"), dict):
-                    msg["text"]["body"] = OCULTO
+                    msg["text"]["body"] = texto
     return novo
+
+
+class OcultarIn(BaseModel):
+    #: O texto SEM a senha ("pode ligar, senha [senha oculta]"). Ausente: some a mensagem inteira.
+    texto: str | None = Field(default=None, max_length=4096)
 
 
 @router.post("/mensagens/{mensagem_id}/ocultar", status_code=status.HTTP_204_NO_CONTENT,
              dependencies=[Depends(_porta)])
-def ocultar_texto(mensagem_id: int, db: Session = Depends(get_db)) -> None:
-    """Apaga o texto de uma mensagem RECEBIDA — a linha e a entrega crua da Meta. O BFF chama
-    logo depois de tratar a mensagem como a senha de atuação da pessoa (pedido do dono,
-    24/10/2026: o bot pede senha para atuar); guardada aqui, ela ficaria em claro no banco."""
+def ocultar_texto(mensagem_id: int, corpo: OcultarIn | None = None, db: Session = Depends(get_db)) -> None:
+    """Tira a senha de atuação de uma mensagem RECEBIDA — da linha e da entrega crua da Meta. O
+    BFF chama logo depois de achar a senha (pedido do dono, 24/10/2026: o bot pede senha para
+    atuar); guardada aqui, ela ficaria em claro no banco. Fica o texto sem a senha."""
     from sqlalchemy import Text, cast
 
     m = db.get(Mensagem, mensagem_id)
     if m is None or m.direcao != "entrada":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mensagem recebida não encontrada.")
-    m.texto = OCULTO
+    texto = (corpo.texto if corpo and corpo.texto else None) or OCULTO
+    m.texto = texto
     if m.wamid:
         desde = datetime.now(UTC) - timedelta(days=2)
         for ev in db.scalars(select(WebhookEvento).where(
             WebhookEvento.recebido_em >= desde, cast(WebhookEvento.corpo, Text).contains(m.wamid)
         )):
-            ev.corpo = _sem_o_texto(ev.corpo, m.wamid)
+            ev.corpo = _sem_o_texto(ev.corpo, m.wamid, texto)
     db.commit()
 
 

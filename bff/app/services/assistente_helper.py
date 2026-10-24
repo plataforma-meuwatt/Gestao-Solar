@@ -30,17 +30,26 @@ from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
 #: A mensagem INTEIRA é uma tentativa de senha: só o número, ou "senha 482913", "confirmo 482913".
-SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{6,8})\s*[.!]?\s*$", re.IGNORECASE)  # sobre `normalizar`
+#: A mensagem INTEIRA é a senha: o número (6 a 8 dígitos, em até 3 grupos com espaço, ponto,
+#: vírgula, hífen ou sublinhado — "482 913", "482,913", "482  913"), com ou sem "senha"/
+#: "confirmo" na frente. Um IP (4 grupos) ou "24/10/2026" (barra) não são.
+SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})\s*[.!]?\s*$",
+                   re.IGNORECASE)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
-#: CANDIDATO a senha: número de 6 a 8 dígitos solto em qualquer ponto da mensagem (a senha tem
-#: 6 a 8). "OS 1639" e "2025" não são candidatos e seguem para a conversa como sempre.
-CANDIDATO = re.compile(r"(?<!\d)(\d{6,8})(?!\d)")
-#: O que a IA, o histórico e o log veem no lugar de um candidato (certo OU errado: um dígito
-#: errado entregaria os outros cinco).
+#: Numa FRASE, o que pode ser a senha: um número solto de 6 a 8 dígitos — não pedaço de IP,
+#: data, hora ou valor com ponto ("10.1.130.2", "24/10/2026", "1.500.000" ficam como estão) —,
+#: ou os grupos logo depois de "senha"/"confirmo"/"pin" ("a senha é 482 913").
+CANDIDATO = re.compile(r"(?<![\d./:,])(\d{6,8})(?![\d./:,]\d|\d)")
+CANDIDATO_DEPOIS_DE_SENHA = re.compile(
+    r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}(\d{2,4}(?:[ .,_\-]{1,2}\d{2,4}){1,2})(?!\d)")
+#: O que a IA, o histórico, o log e o gateway veem no lugar da senha escrita numa frase.
+SENHA_OCULTA = "[senha oculta]"
+#: …e no lugar de todo candidato quando a pessoa passou do limite de conferências por hora.
 OCULTO = "[número oculto]"
-#: Para a pessoa SEM cadastro (a conta não foi conferida): mensagem que pode ser senha.
-NUMERO = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
-FRASE_CURTA = 80
+#: Conferências de números em frase por pessoa e por hora: o que separa "esconder só a senha"
+#: (UC, protocolo e IP continuam legíveis) de um oráculo — mandar números numa frase até a
+#: resposta mudar. Passou disso, todo candidato é escondido, sem conferir.
+CONFERENCIAS_POR_HORA = 20
 #: Números conferidos por mensagem: cada conferência custa ~0,45 s (pbkdf2, 600 mil voltas).
 MAX_CONFERIDOS = 3
 #: "não", "cancela", "esquece"… com uma ação esperando: desarma, e o SISTEMA responde.
@@ -92,42 +101,79 @@ _BLOQUEIO: dict[int, float] = {}
 class Analise:
     """O que a mensagem tem de senha, olhado UMA vez por mensagem."""
 
-    #: Números de 6 a 8 dígitos (depois de juntar "482 913"): escondidos, certos ou errados.
-    candidatos: list[str] = field(default_factory=list)
     #: A mensagem é APENAS a senha ("482913", "senha 482-913") — a única que é tentativa.
     pura: bool = False
     acertou: bool = False
     bloqueada: bool = False
+    #: Trechos (início, fim, marcador) a esconder numa FRASE: a senha conferida, ou todo
+    #: candidato quando a pessoa passou do limite de conferências.
+    trechos: list[tuple[int, int, str]] = field(default_factory=list)
+
+    @property
+    def escondeu_senha(self) -> bool:
+        return any(m == SENHA_OCULTA for _, _, m in self.trechos)
 
 
-#: "482 913", "482-913", "482.913" → "482913": a senha com separador vazava inteira.
-_SEPARADOR = re.compile(r"(?<=\d)[ .\-](?=\d)")
+#: Quando cada pessoa conferiu um número em frase (para o limite por hora).
+_CONFERENCIAS: dict[int, list[float]] = {}
 
 
-def normalizar(texto: str) -> str:
-    return _SEPARADOR.sub("", texto or "")
+def digitos_da_senha(texto: str) -> str | None:
+    """Os dígitos, se a mensagem INTEIRA é a senha; senão `None`."""
+    m = SENHA.match(texto or "")
+    if m is None:
+        return None
+    digitos = re.sub(r"\D", "", m.group(1))
+    return digitos if 6 <= len(digitos) <= 8 else None
+
+
+def _pode_conferir(user_id: int) -> bool:
+    agora = monotonic()
+    recentes = [t for t in _CONFERENCIAS.get(user_id, []) if agora - t < 3600]
+    _CONFERENCIAS[user_id] = recentes
+    if len(recentes) >= CONFERENCIAS_POR_HORA:
+        return False
+    recentes.append(agora)
+    return True
 
 
 async def analisar(user, texto: str) -> Analise:
-    """Esconde todo candidato e confere a senha SÓ quando a mensagem é apenas ela — fora do
-    laço da API (`to_thread`: o pbkdf2 leva ~0,45 s). Número dentro de frase (UC, CEP,
-    protocolo… ou a senha escrita no meio de "não faça") nunca é conferido: não conta erro, não
-    bloqueia ninguém e não vira oráculo; só some da IA, do log, do histórico e do gateway."""
+    """A senha conferida UMA vez por mensagem, fora do laço da API (`to_thread`: o pbkdf2 leva
+    ~0,45 s).
+
+    - A mensagem que é APENAS a senha é tentativa (conta erro e bloqueia).
+    - Numa frase, cada número que pode ser a senha é conferido — até `CONFERENCIAS_POR_HORA`
+      por pessoa —, e SÓ a senha é escondida ("[senha oculta]"): UC, protocolo, IP, data e CEP
+      seguem legíveis para a IA (avaliação 9). Frase nunca conta erro nem bloqueia. Passado o
+      limite, todo candidato é escondido sem conferir — o oráculo para ali."""
     if user is None or not user.senha_atuacao_hash:
         return Analise()
-    normal = normalizar(texto)
-    candidatos = list(dict.fromkeys(CANDIDATO.findall(normal)))
-    m = SENHA.match(normal)
-    if m is None:
-        return Analise(candidatos)
-    if monotonic() < _BLOQUEIO.get(user.id, 0):
-        return Analise(candidatos, pura=True, bloqueada=True)
-    acertou = await asyncio.to_thread(conferir_senha, m.group(1), user.senha_atuacao_hash)
-    return Analise(candidatos, pura=True, acertou=acertou)
+    texto = texto or ""
+    digitos = digitos_da_senha(texto)
+    if digitos is not None:
+        if monotonic() < _BLOQUEIO.get(user.id, 0):
+            return Analise(pura=True, bloqueada=True)
+        acertou = await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash)
+        return Analise(pura=True, acertou=acertou)
+    candidatos = [(m.start(1), m.end(1), m.group(1)) for m in CANDIDATO.finditer(texto)]
+    candidatos += [(m.start(1), m.end(1), re.sub(r"\D", "", m.group(1)))
+                   for m in CANDIDATO_DEPOIS_DE_SENHA.finditer(texto)]
+    candidatos = [c for c in candidatos if 6 <= len(c[2]) <= 8]
+    trechos: list[tuple[int, int, str]] = []
+    for ini, fim, digitos in candidatos[:MAX_CONFERIDOS]:
+        if not _pode_conferir(user.id):
+            return Analise(trechos=[(i, f, OCULTO) for i, f, _ in candidatos])
+        if await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash):
+            trechos.append((ini, fim, SENHA_OCULTA))
+    return Analise(trechos=trechos)
 
 
-def mascarar(texto: str) -> str:
-    return CANDIDATO.sub(OCULTO, normalizar(texto))
+def mascarar(texto: str, analise: Analise) -> str:
+    """O texto com os trechos da análise escondidos (de trás para a frente, sem deslocar)."""
+    texto = texto or ""
+    for ini, fim, marcador in sorted(set(analise.trechos), reverse=True):
+        texto = texto[:ini] + marcador + texto[fim:]
+    return texto
 
 
 def desarmar(user_id: int) -> bool:
@@ -153,10 +199,9 @@ def _contar_falhas(user_id: int, falhas: int) -> int:
 
 
 def parece_senha(texto: str) -> bool:
-    """Mensagem que PODE ser a senha, para os caminhos em que a conta ainda não foi conferida
-    (número sem cadastro, erro no meio): nunca vai em claro ao log."""
-    texto = texto or ""
-    return SENHA.match(texto) is not None or (len(texto) <= FRASE_CURTA and len(NUMERO.findall(texto)) == 1)
+    """Para quem não tem conta conferida: a mensagem inteira parece uma senha — nunca vai em
+    claro ao log."""
+    return digitos_da_senha(texto) is not None
 
 
 def validar_senha_atuacao(senha: str) -> str:
@@ -468,16 +513,15 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
       é a mesma da certa.
     - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
-    normal = normalizar(texto)
-    if SENHA.match(normal) is None:
-        return CANCELADO if esperava and CANCELA.match(normal) else None
+    if digitos_da_senha(texto) is None:
+        return CANCELADO if esperava and CANCELA.match(texto or "") else None
     analise = analise or await analisar(user, texto)
     pendente = PENDENTES.get(user.id)
     if pendente is not None and monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
         pendente = None
     if not user.senha_atuacao_hash:
-        return SEM_SENHA if pendente is not None or COM_PALAVRA.match(normal) else None
+        return SEM_SENHA if pendente is not None or COM_PALAVRA.match(texto or "") else None
     if analise.bloqueada:
         return BLOQUEADO
     if analise.acertou:
@@ -490,8 +534,8 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
         return await pendente.executar(db, user, telefone)
     total = _contar_falhas(user.id, 1)
     if total >= TENTATIVAS:
-        return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
-                f"{BLOQUEIO_S // 60} min. Nada foi feito.")
+        return (f"Senha errada {TENTATIVAS} vezes: " + ("o pedido foi descartado e " if pendente else "")
+                + f"as ações ficam bloqueadas por {BLOQUEIO_S // 60} min. Nada foi feito.")
     return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else NADA_ESPERANDO
 
 

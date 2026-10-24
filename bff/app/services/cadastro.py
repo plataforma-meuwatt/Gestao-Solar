@@ -154,9 +154,24 @@ def _aplicar_da_pessoa(db: Session, conta: User, p: dict[str, Any]) -> list[str]
     if p.get("phone"):
         try:
             conta.telefone = celular_livre(db, p["phone"], conta.id)
+            adotar_mensagens(db, conta)
         except HTTPException as exc:
             avisos.append(f"Celular do meuPlano não veio: {exc.detail}")
     return avisos
+
+
+def adotar_mensagens(db: Session, conta: User) -> None:
+    """O número ganhou conta: as mensagens que ele mandou ao bot ANTES (sem cadastro) passam a
+    ser desta pessoa no Log do bot — e aparecem no oem da empresa dela. As 17 do celular do
+    Kewyn ficavam como número solto (avaliação de 24/10/2026)."""
+    from sqlalchemy import update
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    if conta.telefone:
+        db.execute(update(RegistroBot)
+                   .where(RegistroBot.telefone == conta.telefone, RegistroBot.gs_user_id.is_(None))
+                   .values(gs_user_id=conta.id, empresa_id=conta.empresa_id))
 
 
 async def ligar(db: Session, conta: User, empresa_id: int, mp_user_id: int) -> list[str]:
@@ -226,6 +241,7 @@ async def gravar(db: Session, conta: User, empresa_id: int, *, nome: str | None 
         conta.email = email or None
     if telefone is not None:
         conta.telefone = novo_tel
+        adotar_mensagens(db, conta)
         if novo_tel is None:
             conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
 

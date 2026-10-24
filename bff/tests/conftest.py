@@ -42,7 +42,7 @@ def _memoria_do_bot_limpa():
     from app.services import assistente_geracao, assistente_helper
 
     for guardado in (assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
-                     assistente_geracao._USINAS_MW):
+                     assistente_helper._CONFERENCIAS, assistente_geracao._USINAS_MW):
         guardado.clear()
     yield
 
