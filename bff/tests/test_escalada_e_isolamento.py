@@ -177,6 +177,26 @@ def test_conta_da_plataforma_nao_e_barrada_por_empresa(db, administrador):
     assert usuario_atual(cred=_cred(token), db=db).id == administrador.id
 
 
+def test_cada_requisicao_le_conta_e_empresa_numa_ida_so(db, cenario):
+    """Toda requisição autenticada pagava duas idas ao banco — a conta e a empresa —, ~200 ms
+    cada com o banco nos EUA (avaliação 10). É uma; a empresa desativada continua barrando
+    (`test_empresa_desativada_para_de_ler_pelo_aplicativo`)."""
+    from sqlalchemy import event
+
+    emp, gerente, _admin = cenario
+    cliente = User(apelido="dono", nome="Dono", perfil=Perfil.CLIENTE, empresa_id=emp.id)
+    db.add(cliente)
+    db.commit()
+    tokens = ((usuario_atual, criar_token(cliente.id)[0]), (gestor_empresa_atual, criar_token_empresa(gerente.id)[0]))
+    idas = []
+    event.listen(db.bind, "before_cursor_execute", lambda *a: idas.append(a[2]))
+    for guarda, token in tokens:
+        db.expunge_all()                                   # requisição nova: nada carregado
+        idas.clear()
+        guarda(cred=_cred(token), db=db)
+        assert len(idas) == 1, idas
+
+
 # ------------------------------------------------- 3. identidade e recorte das pontes
 
 

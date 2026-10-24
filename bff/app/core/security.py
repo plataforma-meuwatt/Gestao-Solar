@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -108,10 +109,24 @@ def usuario_atual(
             status.HTTP_401_UNAUTHORIZED, "Esta sessão é do painel do gestor"
         )
 
-    usuario = db.get(User, user_id)
+    usuario = _conta_com_empresa(db, user_id)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
     _empresa_ativa(db, usuario)
+    return usuario
+
+
+def _conta_com_empresa(db: Session, user_id: int) -> User | None:
+    """A conta e a empresa de origem dela numa ida só ao banco — eram duas, ~200 ms cada (o
+    banco está nos EUA), em TODA requisição autenticada. A empresa fica presa à conta, e o
+    `db.get` de `_empresa_ativa` a acha no mapa de identidade em vez de voltar ao banco."""
+    linha = db.execute(
+        select(User, Empresa).outerjoin(Empresa, Empresa.id == User.empresa_id).where(User.id == user_id)
+    ).first()
+    if linha is None:
+        return None
+    usuario = linha[0]
+    usuario.empresa_lida = linha[1]
     return usuario
 
 
@@ -232,7 +247,7 @@ def _conta_do_escopo(
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
 
-    usuario = db.get(User, user_id)
+    usuario = _conta_com_empresa(db, user_id)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à empresa")
     if dados.get("empresa") is not None:
