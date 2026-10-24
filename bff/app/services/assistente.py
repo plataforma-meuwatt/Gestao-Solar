@@ -227,7 +227,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
 
     detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
     proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
-                             parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos)
+                             parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos,
+                             acao=(acao, args))
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
@@ -408,8 +409,16 @@ async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
         return {"erro": f"{type(e).__name__}: {str(e)[:300]}"}
 
 
-async def responder(ctx: ger.Contexto, historico: list[dict]) -> str:
-    msgs: list[dict] = [{"role": "system", "content": _sistema(ctx)}, *historico]
+#: O que a IA ouve quando a mensagem desta vez derrubou a ação que esperava: sem isso ela podia
+#: responder "vou fechar a OS" com "(foi cancelada)" logo embaixo (avaliação 16).
+CANCELADA_PARA_A_IA = ("\n- NESTA MENSAGEM: a ação «{resumo}», que esperava a confirmação da pessoa, foi CANCELADA por "
+                       "esta mensagem — nada foi feito. Não diga que vai executá-la nem que a fez; se a pessoa ainda "
+                       "quiser (ou corrigiu algo), proponha de novo pela ferramenta.")
+
+
+async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -> str:
+    """`aviso`: o que o sistema diz à IA só nesta mensagem (`CANCELADA_PARA_A_IA`)."""
+    msgs: list[dict] = [{"role": "system", "content": _sistema(ctx) + aviso}, *historico]
     ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
     for _ in range(MAX_RODADAS):
         ctx.db.commit()                                   # solta a conexão enquanto a IA pensa
@@ -589,6 +598,11 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     if r.get("erro"):
         return nao_seguiu(str(r["erro"]).rstrip(". "))
     if r.get("type") == "proposal":
+        if p.acao is not None and (r.get("action") or "", r.get("args") or {}) == p.acao:
+            # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos argumentos):
+            # oferecer seria pedir à pessoa para fazê-lo duas vezes. É o fim do pedido (avaliação 16).
+            log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
+            return ""
         ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
         _proposta_do_meuplano(ctx, r, conversa, feitos=(*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
         return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
@@ -719,7 +733,7 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, f"🎙️ _{seguro}_")
                 seguro = pergunta = f"🎙️ {seguro}"
             else:
-                desarmada = helper.desarmar(user.id)
+                desarmada = helper.desarmar(user.id, "[áudio]")
                 await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
@@ -732,13 +746,22 @@ async def _atender(evento: dict) -> None:
             _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=aviso_do_botao,
                        ferramentas=["confirmacao"], inicio=inicio, em=enviada)
             return
-        # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
-        # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
-        # …a não ser o "valeu" (só ciência) que saiu do celular ANTES de o resumo chegar: não é
-        # resposta a ele (avaliação 14). "Cancela" e "não, é o 12" de antes derrubam (avaliação 15).
+        # Toda mensagem que não é APENAS a senha (ou o SIM da ação do meuPlano) derruba a ação que a
+        # esperava — antes de "limpar" e de áudio/imagem. Menos:
+        # - o "valeu" (só ciência) que saiu do celular ANTES de o resumo chegar: não é resposta a ele
+        #   (avaliação 14). "Cancela" e "não, é o 12" de antes derrubam (avaliação 15);
+        # - a afirmativa que não é um SIM limpo ("Sim, pode deixar") com a ação do meuPlano esperando:
+        #   nem confirma nem derruba — o sistema pergunta de novo, sem ir à IA (avaliação 16).
         confirma = helper.responde_sim(user.id, texto)
         antes = helper.mandada_antes_do_resumo(user.id, texto, evento.get("_chegou"), enviada)
-        desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id)
+        de_novo = None if confirma or antes else helper.pergunta_de_novo(user.id, texto)
+        if de_novo is not None:
+            esperando = helper.PENDENTES.get(user.id)       # vencida, já saiu: vai só o texto
+            await (_botoes(telefone, de_novo, esperando.codigo) if esperando is not None else _texto(telefone, de_novo))
+            _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=de_novo,
+                       ferramentas=["confirmacao"], inicio=inicio, em=enviada)
+            return
+        desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
         if not texto:
@@ -795,7 +818,8 @@ async def _atender(evento: dict) -> None:
             if not get_settings().deepseek_api_key:
                 resposta = "O bot está desligado neste ambiente (falta a chave da IA)."
             else:
-                resposta = await responder(ctx, historico)
+                resposta = await responder(ctx, historico, CANCELADA_PARA_A_IA.format(resumo=desarmada.resumo)
+                                           if desarmada is not None else "")
             resposta += nota
             if analise.escondeu_senha:
                 resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela é só para equipamento — "

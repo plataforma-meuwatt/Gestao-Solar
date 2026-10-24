@@ -173,6 +173,9 @@ class Pendente:
     #: O que a ação confirmada deu (`_rodar`). Enquanto roda, a frase do "pode ter sido feita": se
     #: a execução estoura no meio, é ela que a pessoa recebe — nunca "tente de novo".
     desfecho: str | None = None
+    #: A ação do meuPlano e os argumentos dela, (ação, args): o passo seguinte do pedido que repete
+    #: o que acabou de ser feito não é oferecido (`assistente._seguir_no_meuplano`).
+    acao: tuple[str, dict] | None = None
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -300,10 +303,16 @@ def mascarar(texto: str, analise: Analise) -> str:
     return texto
 
 
-def desarmar(user_id: int) -> "Pendente | None":
-    """Tira a ação que esperava a senha/o SIM. Devolve a que havia (valendo), ou `None`."""
+def desarmar(user_id: int, motivo: str | None = None) -> "Pendente | None":
+    """Tira a ação que esperava a senha/o SIM. Devolve a que havia (valendo), ou `None`. `motivo`: a
+    mensagem da pessoa que a derrubou (já sem a senha) — o toque depois no Sim/Não daquele resumo
+    diz isso, e não "venceu ou o bot foi atualizado" (avaliação 16)."""
     p = PENDENTES.pop(user_id, None)
-    return p if p is not None and monotonic() <= p.expira else None
+    if p is None or monotonic() > p.expira:
+        return None
+    if motivo is not None:
+        _lembrar(_CANCELADAS, (user_id, p.codigo), motivo[:80] + ("…" if len(motivo) > 80 else ""))
+    return p
 
 
 def _contar_falhas(user_id: int, falhas: int) -> int:
@@ -354,7 +363,14 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "certo", "isso", "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado",
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
-           "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima"}
+           "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
+           "afirmativo", "tranquilo"}
+#: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
+#: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
+#: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
+#: tinha "com").
+_EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: nenhum)?|sem d[úu]vidas?(?: nenhuma)?|"
+                             r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza))\b")
 #: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
 #: "Opa, pode", "Valeu, pode fazer").
 _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
@@ -387,30 +403,67 @@ def _tem(lista, palavra: str) -> bool:
     return palavra in lista or re.sub(r"([a-zà-ú])\1+", r"\1", palavra) in lista
 
 
-def e_sim(texto: str, acao: str = "") -> bool:
-    """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa curta ou só o 👍/✅.
-    Pergunta nunca confirma, nem frase com palavra de parar (`_PARAR`). Depois da afirmativa, só
-    palavra neutra ou do texto da ação (`acao`: "Sim, pode criar a OS de Ibitinga") — e número, só
-    o que está nele: "Pode fechar a 1640" não confirma "Fechar a OS 1638" (avaliação 15)."""
+def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
+    """Como a mensagem responde ao resumo que espera o SIM (`acao`: o texto dele):
+    - "sim": o 👍/✅, ou uma afirmativa e depois só palavra neutra ou do resumo ("Sim, pode criar a OS
+      de Ibitinga") — e número, só o que está nele ("Pode fechar a 1640" não confirma "Fechar a OS
+      1638", avaliação 15);
+    - "outra": pergunta, negação, parada, restrição, troca fora do resumo, número fora dele, ou o que
+      não começa por afirmativa — derruba a ação;
+    - "duvida": começa como afirmativa, sem nada disso, mas não é um SIM limpo ("Sim, pode deixar") —
+      não confirma nem derruba: o sistema pergunta de novo (avaliação 16)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
-        return True
+        return "sim"
     if t.endswith("?"):
-        return False
-    palavras, da_acao = _palavras(t), set(_palavras(acao))
-    if any(_tem(_PARAR, p) for p in palavras):
-        return False
+        return "outra"
+    palavras, da_acao = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower())), set(_palavras(acao))
+    # A palavra de TROCAR que está no próprio resumo ("Pode trocar" para "Trocar o equipamento…") não
+    # impede; negar, parar e restringir, nunca — nem no resumo ("Mover a OS 1638 PARA concluída").
+    if any(_tem(_PARAR, p) and not (_tem(_TROCA, p) and _tem(da_acao, p)) for p in palavras):
+        return "outra"
     while len(palavras) > 1 and _tem(_ANTES, palavras[0]) and not _tem(_AFIRMA, palavras[0]):
         palavras = palavras[1:]
-    return (0 < len(palavras) <= 8 and _tem(_AFIRMA, palavras[0])
-            and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) for p in palavras[1:]))
+    if not palavras or not _tem(_AFIRMA, palavras[0]) or any(p.isdigit() and p not in da_acao for p in palavras):
+        return "outra"
+    if len(palavras) <= 8 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) for p in palavras[1:]):
+        return "sim"
+    return "duvida"
+
+
+def e_sim(texto: str, acao: str = "") -> bool:
+    """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa ou só o 👍/✅
+    (`_resposta_ao_resumo`)."""
+    return _resposta_ao_resumo(texto, acao) == "sim"
+
+
+def _texto_da_acao(p: Pendente) -> str:
+    return " ".join([p.resumo, *p.detalhes])
 
 
 def responde_sim(user_id: int, texto: str) -> bool:
     """A mensagem é o SIM da ação do meuPlano esperando (vencida ou não: o "sim" tardio ouve que
     venceu), conferida contra o que o resumo dela diz (`e_sim`)."""
     p = PENDENTES.get(user_id)
-    return p is not None and p.confirmacao == "sim" and e_sim(texto, " ".join([p.resumo, *p.detalhes]))
+    return p is not None and p.confirmacao == "sim" and e_sim(texto, _texto_da_acao(p))
+
+
+#: A afirmativa que não é um SIM limpo, com a ação do meuPlano esperando: nem confirma nem cancela.
+DE_NOVO = ("Para confirmar «{resumo}», toque em *Sim* (ou responda só SIM) até as {limite} — ainda não foi feito. "
+           "Se quiser mudar algo, diga o que mudar.")
+
+
+def pergunta_de_novo(user_id: int, texto: str) -> str | None:
+    """A afirmativa ambígua ("Sim, pode deixar") com a ação do meuPlano esperando o SIM: a ação
+    continua armada e o SISTEMA pergunta de novo, sem ir à IA — antes, ela era derrubada, o
+    contrário do que a pessoa disse (avaliação 16). Vencida, diz que venceu. `None` = não é o caso."""
+    p = PENDENTES.get(user_id)
+    if p is None or p.confirmacao != "sim" or _resposta_ao_resumo(texto, _texto_da_acao(p)) != "duvida":
+        return None
+    if monotonic() > p.expira:
+        PENDENTES.pop(user_id, None)
+        return VENCEU.format(limite=_limite(p))
+    return DE_NOVO.format(resumo=p.resumo, limite=_limite(p))
 
 
 def so_ciencia(texto: str) -> bool:
@@ -430,14 +483,18 @@ _CANCELA_PALAVRAS = {"não", "nao", "n", "cancela", "cancele", "cancelar", "desi
 
 _CANCELA_NEUTRAS = _CANCELA_PALAVRAS | {"quero", "obrigado", "obrigada", "precisa", "pra", "lá", "la", "isso",
                                         "agora", "valeu", "mais", "nada", "por", "enquanto", "faça", "faz", "pode"}
-#: Parar, negar, esperar, restringir ou trocar: com qualquer uma, a frase nunca confirma — nem
-#: quando a palavra está no resumo ("Mover a OS 1638 PARA concluída" e "Ok, para tudo!"). Lista
+#: Trocar ou corrigir: não confirma — a não ser a palavra que está no PRÓPRIO resumo ("Pode trocar"
+#: para "Trocar o equipamento…" nunca confirmava — avaliação 16).
+_TROCA = {"outro", "outra", "outros", "outras", "troca", "troque", "trocar", "muda", "mude", "mudar", "corrige",
+          "corrija"}
+#: Parar, negar, esperar, restringir ou trocar: com qualquer uma, a frase nunca confirma. Parar, negar
+#: e esperar nem quando a palavra está no resumo ("Mover a OS 1638 PARA concluída" e "Ok, para tudo!");
+#: restringir também não: "Pode, só a 1638" fecharia a 1640 de "Fechar só a OS 1638 e a 1640". Lista
 #: fechada; nenhuma entra nas neutras nem na ciência (há teste).
-_PARAR = _CANCELA_PALAVRAS | {"parar", "parem", "nem", "nunca", "nada", "jamais", "mas", "porém", "porem", "espera",
-                              "espere", "esperar", "pera", "peraí", "perai", "calma", "segura", "aguarde", "errado",
-                              "errada", "outro", "outra", "outros", "outras", "troca", "troque", "trocar", "muda",
-                              "mude", "mudar", "corrige", "corrija", "sem", "exceto", "menos", "só", "so", "apenas",
-                              "somente"}
+_PARAR = _CANCELA_PALAVRAS | _TROCA | {"parar", "parem", "nem", "nunca", "nada", "jamais", "mas", "porém", "porem",
+                                       "espera", "espere", "esperar", "pera", "peraí", "perai", "calma", "segura",
+                                       "aguarde", "errado", "errada", "sem", "exceto", "menos", "só", "so", "apenas",
+                                       "somente"}
 
 
 def so_cancela(texto: str) -> bool:
@@ -473,9 +530,21 @@ BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot f
 JA_CONFIRMADA = "Essa ação já foi confirmada e não roda de novo. O que houve: {desfecho}"
 #: O desfecho de uma ação que estourou no meio da execução.
 INCERTA = "⚠️ A ação «{resumo}» deu erro no meio — ela PODE ter sido feita. Confira antes de pedir de novo."
-#: O desfecho das ações já confirmadas, pelo código do resumo (conta, código).
-#: ponytail: em memória, as últimas 500; o deploy esquece, e aí vale BOTAO_SEM_ACAO.
+#: O toque no Sim/Não de um resumo que a PRÓPRIA mensagem da pessoa derrubou ("esta ação", e não "nada
+#: foi feito": no pedido de vários passos, o passo anterior foi — avaliação 15).
+CANCELADA_PELA_MENSAGEM = ("Essa ação foi cancelada pela sua mensagem «{trecho}» e não foi feita. Se ainda quiser, "
+                           "peça de novo.")
+#: O desfecho das ações já confirmadas, e a mensagem que derrubou as canceladas, pelo código do
+#: resumo (conta, código).
+#: ponytail: em memória, as últimas 500 de cada; o deploy esquece, e aí vale BOTAO_SEM_ACAO.
 _CONFIRMADAS: OrderedDict[tuple[int, str], str] = OrderedDict()
+_CANCELADAS: OrderedDict[tuple[int, str], str] = OrderedDict()
+
+
+def _lembrar(guardadas: OrderedDict, chave: tuple[int, str], valor: str) -> None:
+    guardadas[chave] = valor
+    while len(guardadas) > 500:
+        guardadas.popitem(last=False)
 
 
 async def _rodar(p: Pendente, db, user, telefone: str) -> str:
@@ -484,9 +553,8 @@ async def _rodar(p: Pendente, db, user, telefone: str) -> str:
     if p.parte not in user.bot_ativo:
         return PARTE_DESLIGADA
     chave = (user.id, p.codigo)
-    _CONFIRMADAS[chave] = p.desfecho = INCERTA.format(resumo=p.resumo)
-    while len(_CONFIRMADAS) > 500:
-        _CONFIRMADAS.popitem(last=False)
+    p.desfecho = INCERTA.format(resumo=p.resumo)
+    _lembrar(_CONFIRMADAS, chave, p.desfecho)
     _CONFIRMADAS[chave] = p.desfecho = await p.executar(db, user, telefone)
     return p.desfecho
 
@@ -497,9 +565,12 @@ def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
     antigas, e o id leva o código do resumo ("sim:<código>"); sem o código (botão de antes desta
     versão), não há como saber de qual resumo veio. O Não de um resumo vencido ouve que venceu,
     como o Sim (ia à IA)."""
-    feita = _CONFIRMADAS.get((user_id, (botao or "").partition(":")[2]))
+    codigo = (botao or "").partition(":")[2]
+    feita = _CONFIRMADAS.get((user_id, codigo))
     if feita is not None:
         return JA_CONFIRMADA.format(desfecho=feita.split("\n")[0])
+    if (user_id, codigo) in _CANCELADAS:
+        return CANCELADA_PELA_MENSAGEM.format(trecho=_CANCELADAS[(user_id, codigo)])
     p = PENDENTES.get(user_id)
     if p is None:
         return BOTAO_SEM_ACAO
@@ -529,7 +600,8 @@ def espera_sim(user_id: int) -> bool:
 
 
 def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper",
-           confirmacao: str = "senha", conversa: list[dict] | None = None, feitos: tuple[str, ...] = ()) -> dict:
+           confirmacao: str = "senha", conversa: list[dict] | None = None, feitos: tuple[str, ...] = (),
+           acao: tuple[str, dict] | None = None) -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
 
     - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
@@ -552,7 +624,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
     p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
                  parte, confirmacao=confirmacao, conversa=conversa, pedido=getattr(ctx, "pedido", "") or "",
-                 feitos=tuple(feitos))
+                 feitos=tuple(feitos), acao=acao)
     PENDENTES[user.id] = ctx.proposta = p
     if confirmacao == "sim":
         return {
@@ -578,8 +650,8 @@ def bloco_da_proposta(p: Pendente) -> str:
               f"• {p.resumo}"]
     linhas += [f"  – {d}" for d in p.detalhes]
     linhas += [f"⚠️ {a}" for a in p.avisos]
-    linhas.append(f"Para fazer, toque em *Sim* (ou responda SIM) até as {_limite(p)}. Qualquer outra mensagem "
-                  "cancela." if sim else
+    linhas.append(f"Para fazer, toque em *Sim* (ou responda SIM) até as {_limite(p)}. Um não, uma correção ou "
+                  "outro assunto cancela; na dúvida, pergunto de novo." if sim else
                   f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
 

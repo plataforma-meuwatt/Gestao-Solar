@@ -106,7 +106,7 @@ export default function Conta() {
         </>
       }
       titulo="Minha conta"
-      subtitulo="Quem está logado, quais usinas enxergo e como troco minha senha"
+      subtitulo="Com que conta entrei, quais usinas enxergo e como troco minha senha"
       acoes={acoes}
     >
       <div className="space-y-4">
@@ -138,7 +138,7 @@ export default function Conta() {
             */}
             <p className="mt-2 text-xs leading-relaxed text-fraco">
               A conexão com o monitoramento e com a manutenção é mantida pelo seu gestor de
-              conta. Os atalhos no topo abrem os dois produtos já autenticado.
+              conta. Os atalhos no topo abrem os dois produtos sem pedir a senha de novo.
             </p>
           </Cartao>
 

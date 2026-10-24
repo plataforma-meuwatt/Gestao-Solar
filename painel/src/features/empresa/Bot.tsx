@@ -117,7 +117,7 @@ export function BotDaEmpresa() {
         )}
         {deOutra.length ? (
           <p className="px-5 py-3 border-t border-borda text-xs text-fraco">
-            Também da empresa, cuidados por outra (o bot deles é configurado lá):{' '}
+            Pessoas também desta empresa, mas cuidadas por outra (o bot delas é configurado lá):{' '}
             {deOutra.map((u) => `${u.nome} (${u.cuidada_por})`).join(', ')}.
           </p>
         ) : null}

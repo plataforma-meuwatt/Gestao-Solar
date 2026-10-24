@@ -298,7 +298,7 @@ function FormularioContato({
         <span className="text-sm text-corpo">
           Aceite registrado no contrato
           <span className="block text-xs text-fraco">
-            A cláusula que ele assinou é a autorização. Sem esta marca, nada é enviado.
+            A cláusula que a pessoa assinou é a autorização. Sem esta marca, nada é enviado.
           </span>
         </span>
       </label>

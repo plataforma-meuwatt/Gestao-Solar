@@ -825,7 +825,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
     <Modal titulo="Novo usuário" aoFechar={aoFechar}>
       <div className="grid gap-4">
         <div>
-          <p className="rotulo-campo">O que ele é</p>
+          <p className="rotulo-campo">O que a pessoa é</p>
           <select
             className="campo h-9 text-sm mt-1"
             value={perfil}

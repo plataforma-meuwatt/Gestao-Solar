@@ -116,6 +116,14 @@ describe('tela Minha conta', () => {
     expect(screen.getByText('cliente@empresa.com.br')).toBeTruthy()
   })
 
+  it('não trata a pessoa no masculino ("Quem está logado", "já autenticado" — avaliação 16)', async () => {
+    responder([USUARIO])
+    const { container } = montar()
+
+    expect(await screen.findByText('UFV Porto Ferreira')).toBeTruthy()
+    expect(container.textContent).not.toMatch(/\b(logado|autenticado)\b/i)
+  })
+
   it('sem usina concedida, explica em vez de mostrar uma tabela vazia', async () => {
     let i = 0
     vi.spyOn(api, 'get').mockImplementation(((caminho: string) => {

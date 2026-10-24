@@ -844,10 +844,12 @@ trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do t
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele (`_CAMPOS_DE_USINA`: `api_slug`, `slug`, `plant_id` e `plant` —
 o da trilha `/api/audit/list`, que passava inteira; avaliação 15). Qualquer outra
-mensagem DESARMA a ação: "não", "cancela", "não quero" SOZINHOS respondem "Cancelado" pelo
+mensagem DESARMA a ação (menos a afirmativa ambígua com o SIM esperando, abaixo): "não", "cancela", "não quero" SOZINHOS respondem "Cancelado" pelo
 sistema — no passo 2 de um pedido, dizendo o que os passos de antes JÁ fizeram (`_o_que_ficou`;
 "Nada foi feito" escondia a OS 1843, avaliação 15); "Não, o técnico é o Diogo" é correção — a
-ação cai e a frase vai à IA (`so_cancela`; avaliação 12: a correção se perdia). UMA ação por
+ação cai e a frase vai à IA (`so_cancela`; avaliação 12: a correção se perdia), que ouve, só
+naquela mensagem, que a ação «…» foi cancelada por ela: não diz que vai fazê-la, propõe de novo
+(`CANCELADA_PARA_A_IA`; avaliação 16: respondia "vou fechar" com "(foi cancelada)" embaixo). UMA ação por
 mensagem (a 2ª chamada ouve "esperando o Sim" na do meuPlano — "a senha" só na do helper),
 e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
@@ -865,7 +867,9 @@ memória), "Essa confirmação não vale mais…"; e o Não de um resumo vencido
 Sim (`helper.resposta_ao_botao`; o gateway guarda o id em `wa_mensagens.botao`, migração
 `e2b4d6f8a0c1`); o toque de novo num resumo JÁ confirmado ouve "Essa ação já foi confirmada e não
 roda de novo. O que houve: …" (`_CONFIRMADAS`; avaliação 15: ouvia "Nada foi feito — peça de
-novo" logo abaixo do ✅). Só a mensagem de CIÊNCIA ("valeu", "obrigado", "ok, aguardo", 👍 — lista
+novo" logo abaixo do ✅); e o toque no Sim/Não do resumo que a PRÓPRIA mensagem da pessoa derrubou
+diz isso, com o trecho dela já sem a senha (`_CANCELADAS`; avaliação 16: ouvia "o pedido venceu ou
+o bot foi atualizado"). Só a mensagem de CIÊNCIA ("valeu", "obrigado", "ok, aguardo", 👍 — lista
 fechada `_CIENCIA`) que saiu do celular ANTES de o resumo chegar não derruba a ação
 (`helper.mandada_antes_do_resumo`); "cancela", "não" e a correção ("não, é o 12") derrubam como
 qualquer mensagem (avaliação 15: a senha seguinte desligava o 13). Confirma o toque, "sim" ou uma afirmativa curta
@@ -875,8 +879,16 @@ correção. Depois da afirmativa, só palavra neutra ou do RESUMO ("Sim, pode cr
 Ibitinga"), e NÚMERO só o do resumo: "Pode fechar a 1640" não confirma "Fechar a OS 1638"
 (avaliação 15). Palavra de parar, negar, esperar ou restringir (`_PARAR`: "para", "não", "mas",
 "espera", "só", "sem"…) nunca confirma, nem quando está no resumo ("Mover a OS 1638 PARA
-concluída"), e nunca entra nas listas de neutras e de ciência — há teste ("Ok, para tudo!"
-executava — avaliação 14) (`e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
+concluída"; e "Pode, só a 1638" fecharia a 1640 de "Fechar só a OS 1638 e a 1640"); a de TROCAR
+("trocar", "mudar", "outro" — `_TROCA`) só quando está no próprio resumo ("Pode trocar" para
+"Trocar o equipamento…"); e nenhuma entra nas listas de neutras e de ciência — há teste ("Ok, para
+tudo!" executava — avaliação 14). A afirmativa de mais de uma palavra ("Sim, com certeza", "Sem
+problema", "Sem dúvida", "Claro que sim", "Sim senhor", "Por favor") é lista FECHADA e vale para
+qualquer resumo (`_EXPRESSOES_SIM`; avaliação 16: cancelavam, e "com certeza" só confirmava resumo
+com "com"). A que começa como afirmativa sem negação nem correção, mas não é um SIM limpo ("Sim,
+pode deixar"), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões, sem ir à IA
+(`pergunta_de_novo`) — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
+pergunto de novo" (`_resposta_ao_resumo`, `e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
 UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —
 a senha não confirma ação do meuPlano. E confirmada o BFF chama o
@@ -884,7 +896,8 @@ a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
 passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
-avaliação 15), com o
+avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
+não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o
 "digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). **O resultado de
 uma ação confirmada sempre chega:** falhar ao gravar a conversa não derruba o turno (`_guardar`), e
 erro depois de a ação rodar nunca vira "Tente de novo" (repetir criaria a OS em dobro) — vai o

@@ -2021,9 +2021,11 @@ async def test_o_botao_de_um_resumo_antigo_nao_confirma_a_acao_de_agora(db, bot_
     await assistente.atender(_toque(dono, 3, sim=False))   # desistiu de A
     assert bot_local.enviados[-1] == h.CANCELADO
     await assistente.atender(_ev(dono, 4, "crie: feche a 1638"))   # resumo B: fechar a OS 1638
-    for velho in (toque_a, {**_ev(dono, 5, "Sim"), "tipo": "interactive"}):   # o de A e um sem código
+    # O Sim de A diz que a própria pessoa o cancelou (avaliação 16); o sem código, que é de um resumo antigo.
+    for velho, aviso in ((toque_a, h.CANCELADA_PELA_MENSAGEM.format(trecho="Não")),
+                         ({**_ev(dono, 5, "Sim"), "tipo": "interactive"}, h.BOTAO_ANTIGO)):
         await assistente.atender(velho)
-        assert bot_local.enviados[-1] == h.BOTAO_ANTIGO and falso.aplicadas == []
+        assert bot_local.enviados[-1] == aviso and falso.aplicadas == []
     assert dono.id in h.PENDENTES                          # a ação de agora continua esperando
     await assistente.atender(_toque(dono, 6))
     assert falso.aplicadas == ["fechar_os"]
@@ -2485,3 +2487,168 @@ async def test_a_trilha_de_auditoria_do_helper_so_traz_as_usinas_liberadas(db, h
     r = await h.usina_helper(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
                              {"rota": "/api/audit/list?limit=50", "metodo": "GET"})
     assert [e["id"] for e in r["resposta"]["events"]] == [1, 3]
+
+
+# ── avaliação 16 (24/10/2026): o sim do jeito que se fala, a afirmativa ambígua, a IA avisada do
+#    cancelamento, o toque depois de a própria mensagem cancelar, o passo que se repete ──
+
+
+class _MeuPlanoQueRepete:
+    """O assistente do meuPlano que propõe `acao` com os argumentos de cada vez (`args_por_vez`), e
+    depois "Pronto." — o resumo é o de lá, montado com os argumentos."""
+
+    def __init__(self, *args_por_vez, acao="fechar_os", resumo="Fechar a OS {os_id} (Roçagem)"):
+        self.args_por_vez, self.acao, self.resumo = args_por_vez, acao, resumo
+        self.aplicadas, self.conversas = [], []
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        return len(self.conversas)
+
+    async def assistente_run(self, token, run_id):
+        if run_id > len(self.args_por_vez):
+            return {"status": "DONE", "type": "message", "text": "Pronto."}
+        args = self.args_por_vez[run_id - 1]
+        return {"status": "DONE", "type": "proposal", "action": self.acao, "args": dict(args),
+                "preview": {"summary": self.resumo.format(**args), "lines": [], "warnings": []}}
+
+    async def assistente_aplicar(self, token, acao, args):
+        self.aplicadas.append((acao, args))
+        return {"ok": True, "data": {}}
+
+
+TROCAR = "Trocar o equipamento de 1 ponto(s) por Huawei SUN2000-100KTL."
+
+
+def test_as_afirmativas_comuns_confirmam_qualquer_resumo_e_trocar_so_o_do_resumo():
+    """"Sim, com certeza", "Sim, sem problema", "Claro que sim" e "Sim senhor" CANCELAVAM a ação ("com", "que",
+    "senhor" não eram neutras; "sem" é de restringir) — e "Sim, com certeza" confirmava "Criar OS… com…" só
+    porque o resumo tinha "com". "Pode trocar" nunca confirmava "Trocar o equipamento…"."""
+    from app.services import assistente_helper as h
+
+    resumos = ("Fechar a OS 1638", "Criar OS em UFV Ibitinga com 1 tarefa(s)", TROCAR)
+    for frase in ("Sim, com certeza", "Com certeza", "Sim, sem problema", "Sem problemas", "Pode sim, sem problemas",
+                  "Sim, sem problema nenhum", "Sim, sem dúvida", "Sem duvida", "Claro que sim", "Claro que pode",
+                  "Sim senhor", "Sim, senhora", "Por favor", "Sim, por favor", "Afirmativo", "Tranquilo, pode"):
+        for resumo in resumos:
+            assert h.e_sim(frase, resumo), (frase, resumo)
+    for frase in ("Com certeza não", "Sem problema, mas amanhã", "Claro que não", "Sim senhor, cancela",
+                  "Sem dúvida nenhuma, só a 1638", "Por favor, para", "Sim, sem a tarefa"):
+        for resumo in resumos:
+            assert not h.e_sim(frase, resumo), (frase, resumo)
+    for frase in ("Pode trocar", "Sim, pode trocar", "Pode trocar o equipamento"):
+        assert h.e_sim(frase, TROCAR) and not h.e_sim(frase, "Fechar a OS 1638"), frase   # fora do resumo, é correção
+    # Negar, parar e restringir nunca são isentados, nem quando estão no resumo.
+    for frase, resumo in (("Ok, para tudo!", "Mover a OS 1638 para CONCLUÍDA"), ("Sim, nada pendente", "Fechar: nada pendente"),
+                          ("Pode, só a 1638", "Fechar só a OS 1638 e a 1640"), ("Pode, sem a tarefa", "Criar OS sem tarefa"),
+                          ("Pode trocar por outro", TROCAR), ("Sim, mas pode trocar", TROCAR)):
+        assert not h.e_sim(frase, resumo), frase
+    for lista in (h._AFIRMA, h._ANTES, h._NEUTRAS, h._CIENCIA):
+        assert lista.isdisjoint(h._PARAR), lista & h._PARAR
+
+
+async def test_o_sim_do_jeito_que_se_fala_confirma_a_acao_no_turno(db, bot_local, monkeypatch):
+    from app.services import assistente_helper as h
+
+    for i, (frase, acao, args, resumo) in enumerate((
+            ("Sim, com certeza", "fechar_os", {"os_id": 1638}, "Fechar a OS {os_id} (Roçagem)"),
+            ("Pode trocar", "trocar_equipamento", {"node_ids": [11260], "model_id": 7}, TROCAR)), start=1):
+        h.PENDENTES.clear()
+        falso = _MeuPlanoQueRepete(args, acao=acao, resumo=resumo)
+        _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        dono = _conta(db, f"dono{i}", f"+551799737000{i}")
+        await assistente.atender(_ev(dono, 10 * i, "crie"))
+        await assistente.atender(_ev(dono, 10 * i + 1, frase))
+        assert falso.aplicadas == [(acao, args)], frase
+    assert not any("foi cancelada" in (m or "") for m in bot_local.enviados)
+
+
+async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):
+    """"Sim, pode deixar" — começa como sim, mas não é um SIM limpo — DERRUBAVA a ação: o contrário do que a
+    pessoa disse. Agora ela continua esperando, e o SISTEMA (não a IA) diz como confirmar, com os botões."""
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    assert "na dúvida, pergunto de novo" in bot_local.enviados[-1] and "Qualquer outra mensagem" not in bot_local.enviados[-1]
+    codigo, n = h.PENDENTES[dono.id].codigo, len(vistos)
+    await assistente.atender(_ev(dono, 2, "Sim, pode deixar"))
+    assert dono.id in h.PENDENTES and len(vistos) == n and falso.aplicadas == []      # armada; a IA nem soube
+    assert bot_local.enviados[-1] == h.DE_NOVO.format(resumo="Criar OS em UFV Ibitinga com 1 tarefa(s)",
+                                                       limite=h._limite(h.PENDENTES[dono.id]))
+    assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]               # os do MESMO resumo
+    await assistente.atender(_toque(dono, 3))
+    assert falso.aplicadas == ["criar_ordem_servico"]
+    from time import monotonic
+
+    h.PENDENTES[dono.id].expira = monotonic() - 1                                  # o 2º passo venceu
+    await assistente.atender(_ev(dono, 4, "Sim, pode deixar"))
+    assert bot_local.enviados[-1].startswith("A ação esperava a sua resposta até as") and dono.id not in h.PENDENTES
+
+
+async def test_a_ia_sabe_que_a_mensagem_cancelou_a_acao(db, bot_local, monkeypatch):
+    """A correção derruba a ação e vai à IA — que não sabia: podia responder "vou fechar" com "(foi
+    cancelada)" logo embaixo. O sistema diz a ela, só naquela mensagem, o que foi cancelado."""
+    falso, sistemas = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    ia = assistente._llm
+
+    async def _llm(msgs, ferramentas=None):
+        sistemas.append(msgs[0]["content"])
+        return await ia(msgs, ferramentas)
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    assert not any("foi CANCELADA" in s for s in sistemas)
+    await assistente.atender(_ev(dono, 2, "Não, o técnico é o Diogo"))
+    assert ("a ação «Criar OS em UFV Ibitinga com 1 tarefa(s)», que esperava a confirmação da pessoa, foi CANCELADA "
+            "por esta mensagem") in sistemas[-1]
+    await assistente.atender(_ev(dono, 3, "e a geração de hoje?"))
+    assert "foi CANCELADA" not in sistemas[-1]
+
+
+async def test_o_toque_depois_de_a_propria_mensagem_cancelar_diz_isso(db, bot_local, monkeypatch):
+    """A correção derrubou a ação e a pessoa, vendo que não foi feita, tocou no Sim daquele resumo: ouvia "o
+    pedido venceu ou o bot foi atualizado" — quem derrubou foi a mensagem dela, um minuto antes. O trecho
+    citado é o que já saiu sem a senha."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    for i, (frase, trecho) in enumerate((("Não, o técnico é o Diogo", "Não, o técnico é o Diogo"),
+                                         ("Não, a senha é 482913", "Não, a senha é [senha oculta]")), start=1):
+        await assistente.atender(_ev(dono, 10 * i, "crie a OS"))
+        sim, nao = _toque(dono, 10 * i + 1), _toque(dono, 10 * i + 2, sim=False)
+        await assistente.atender(_ev(dono, 10 * i + 3, frase))
+        for toque in (sim, nao):
+            await assistente.atender(toque)
+            assert bot_local.enviados[-1] == h.CANCELADA_PELA_MENSAGEM.format(trecho=trecho)
+    assert falso.aplicadas == [] and not any("482913" in (m or "") for m in bot_local.enviados)
+
+
+async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_oferecido(db, bot_local, monkeypatch):
+    """Num pedido de vários passos, nada impedia o meuPlano de repropor a MESMA ação que acabou de ser feita
+    — e o próximo Sim a faria duas vezes. Mesma ação e mesmos argumentos: é o fim do pedido. Outros
+    argumentos são outro passo."""
+    from app.services import assistente_helper as h
+
+    for i, (segundo, oferecido) in enumerate((({"os_id": 1638}, False), ({"os_id": 1640}, True)), start=1):
+        h.PENDENTES.clear()
+        falso = _MeuPlanoQueRepete({"os_id": 1638}, segundo)
+        _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        dono = _conta(db, f"dono{i}", f"+551799737000{i}")
+        await assistente.atender(_ev(dono, 10 * i, "crie: feche a 1638"))
+        await assistente.atender(_toque(dono, 10 * i + 1))
+        assert falso.aplicadas == [("fechar_os", {"os_id": 1638})] and len(falso.conversas) == 2   # perguntou
+        if oferecido:
+            assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)"
+        else:
+            assert dono.id not in h.PENDENTES
+            assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")

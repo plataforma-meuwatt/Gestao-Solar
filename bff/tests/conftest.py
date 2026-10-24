@@ -47,7 +47,7 @@ def _memoria_do_bot_limpa():
     from app.services import assistente, assistente_geracao, assistente_helper
 
     for guardado in (assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
-                     assistente_helper._CONFERENCIAS, assistente_helper._CONFIRMADAS,
+                     assistente_helper._CONFERENCIAS, assistente_helper._CONFIRMADAS, assistente_helper._CANCELADAS,
                      assistente_geracao._USINAS_MW, assistente._ATENDIDAS,
                      # a trava por número presa ao laço de eventos do teste anterior estoura no seguinte
                      assistente._TRAVAS):
