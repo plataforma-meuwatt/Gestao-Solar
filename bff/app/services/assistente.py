@@ -32,6 +32,7 @@ from app.core.telefone import normalizar
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 from app.models.user import User
 from app.services import assistente_geracao as ger
+from app.services import assistente_helper as helper
 
 log = logging.getLogger("gs.assistente")
 
@@ -99,7 +100,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     return {"erro": "O meuPlano demorou demais para responder."}
 
 
-FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO)}
+FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO), **helper.FERRAMENTAS}
 
 
 # --------------------------------------------------------------------------- log
@@ -137,7 +138,8 @@ def permitidas(user) -> list[str]:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
         nomes.append("manutencao")
-    # helper: a chave já existe; as ferramentas de atuar na usina entram quando ficarem prontas
+    if "bot_helper" in ativo and helper.configurado():
+        nomes += list(helper.FERRAMENTAS)
     return nomes
 
 
@@ -145,10 +147,10 @@ def permitidas(user) -> list[str]:
 def _sistema(ctx: ger.Contexto) -> str:
     usinas = ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento"
     ativo = ctx.user.bot_ativo
-    # O helper (atuar na usina) fica FORA até as ferramentas dele existirem: dizer ao modelo
-    # que está liberado o convidaria a confirmar uma ação que não aconteceu.
     areas = [n for n, c in (("geração/monitoramento (meuWatt)", "bot_meuwatt"),
-                            ("manutenção (meuPlano)", "bot_meuplano")) if c in ativo]
+                            ("manutenção (meuPlano)", "bot_meuplano"),
+                            ("a usina ao vivo pelo helper", "bot_helper")) if c in ativo
+             and (c != "bot_helper" or helper.configurado())]
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
@@ -157,6 +159,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
 - Geração, inversores, PR, produtividade, irradiação, PVsyst, paradas de inversor, relatório/gráfico do
   monitoramento → ferramentas de geração. Manutenção (OS, cronograma, pendências, estoque, documentos,
   projetos) → `manutencao`. Pergunta que mistura → chame as duas.
+- Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
+  `usina_helper`. Ação NUNCA é executada por você: a ferramenta devolve um código; mostre o resumo e peça para a
+  pessoa responder CONFIRMO <código>. Nunca diga que executou.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
 - Período: calcule as datas a partir de hoje. Compare usinas pela produtividade (kWh/kWp).
 - Responda curto, em português do Brasil, formato WhatsApp (*negrito*, listas curtas): o número pedido
@@ -273,6 +278,15 @@ async def atender(evento: dict) -> None:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]")
             return
+        # A confirmação de uma AÇÃO do helper é conferida aqui, por código — antes de qualquer
+        # modelo. A IA nunca confirma: ela só mostra o resumo e o código à pessoa.
+        if "bot_helper" in user.bot_ativo:
+            confirmacao = await helper.confirmar_por_mensagem(db, user, telefone, texto)
+            if confirmacao is not None:
+                await _texto(telefone, confirmacao)
+                _registrar(db, telefone, user, "respondeu", pergunta=texto, resposta=confirmacao,
+                           ferramentas=["helper_confirmar"], inicio=inicio)
+                return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
         if conv is None:

@@ -16,16 +16,11 @@ export const PAPEL: Record<string, string> = {
 export const NOME_DO_PRODUTO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
 
 /** As partes do assistente do WhatsApp. Cada uma responde com o token PRÓPRIO da pessoa
- *  (`token`); o helper ainda não tem ferramenta no bot (`emBreve`). */
-export const PARTES_DO_BOT: {
-  campo: ProdutoDoBot
-  rotulo: string
-  token: Produto
-  emBreve?: boolean
-}[] = [
+ *  (`token`); o helper reconhece a pessoa pelo do meuWatt. */
+export const PARTES_DO_BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
   { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
   { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
-  { campo: 'bot_helper', rotulo: 'Usina (helper)', token: 'meuwatt', emBreve: true },
+  { campo: 'bot_helper', rotulo: 'Usina ao vivo (helper)', token: 'meuwatt' },
 ]
 
 /** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */

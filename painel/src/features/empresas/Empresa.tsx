@@ -212,7 +212,10 @@ function LinhaDoUsuario({
           {!daqui ? (
             <p className="text-xs text-alerta mt-1.5">
               Também é de {usuario.cuidada_por}, que cuida da conta (senha, celular, tokens e bot).
-              Aqui ela recebe só o que esta empresa der.
+              Aqui ela recebe só o que esta empresa der
+              {usuario.perfil === 'cliente'
+                ? ' — e, no aplicativo, as usinas daqui só trazem dado com o token próprio dela.'
+                : '.'}
             </p>
           ) : usuario.outras_empresas.length ? (
             <p className="text-xs text-rotulo mt-1.5">
@@ -227,7 +230,11 @@ function LinhaDoUsuario({
             <select
               className="campo h-9 w-44 text-xs"
               value={usuario.perfil}
-              onChange={(e) => editar.mutate({ perfil: e.target.value as PapelNaEmpresa })}
+              onChange={(e) => {
+                const novo = e.target.value as PapelNaEmpresa
+                if (window.confirm(`Mudar ${usuario.nome} para “${PAPEL[novo]}”? Muda o que a pessoa abre na hora.`))
+                  editar.mutate({ perfil: novo })
+              }}
               aria-label={`Papel de ${usuario.nome}`}
             >
               <option value="gestor_empresa">{PAPEL.gestor_empresa}</option>

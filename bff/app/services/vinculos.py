@@ -345,7 +345,36 @@ async def conectar(
     if not resultado.ok:
         return resultado
 
+    # O token é da PESSOA (regra do dono: cada um com o SEU token). Duas travas, achadas pela
+    # auditoria de 24/10/2026: a mesma pessoa de lá não serve a duas contas daqui, e colar o
+    # token de OUTRA pessoa numa conta já ligada não troca a identidade em silêncio — a
+    # sincronização do cadastro reescreveria nome e e-mail da conta com os da outra.
+    remoto = resultado.usuario_remoto_id or ""
+    quem = resultado.nome or resultado.email or f"id {remoto}"
+    outra = db.scalar(
+        select(User.apelido)
+        .join(VinculoProduto, VinculoProduto.gs_user_id == User.id)
+        .where(
+            VinculoProduto.produto == produto.value,
+            VinculoProduto.usuario_remoto_id == remoto,
+            User.id != cliente.id,
+        )
+    )
+    if remoto and outra:
+        return ResultadoConexao(
+            ok=False,
+            detalhe=(f"Este token é de {quem} no {NOME[produto]}, que já está na conta “{outra}” do "
+                     "Gestão Solar. Cada pessoa usa o SEU token — o mesmo não serve a duas contas."),
+        )
     vinculo = obter(db, cliente.id, produto)
+    if vinculo is not None and vinculo.usuario_remoto_id and remoto and vinculo.usuario_remoto_id != remoto:
+        ligada = vinculo.usuario_remoto_nome or vinculo.usuario_remoto_email or f"id {vinculo.usuario_remoto_id}"
+        return ResultadoConexao(
+            ok=False,
+            detalhe=(f"Este token é de {quem}, e esta conta está ligada a {ligada} no {NOME[produto]}. "
+                     "Cole o token dela — ou desconecte/desligue a ligação antes de trocar de pessoa."),
+        )
+
     if vinculo is None:
         vinculo = VinculoProduto(gs_user_id=cliente.id, produto=produto.value)
         db.add(vinculo)

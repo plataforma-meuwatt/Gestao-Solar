@@ -110,3 +110,41 @@ async def test_sem_a_organizacao_casada_nao_se_puxa_ninguem(cenario):
     with pytest.raises(HTTPException) as e:
         await cadastro.pessoas_do_meuplano(db, emp.id)
     assert e.value.status_code == 424 and "Vínculos" in e.value.detail
+
+
+async def test_o_celular_do_adm_passa_pela_mesma_trava_e_grava_no_meuplano(cenario):
+    """Auditoria de 24/10/2026: a central de notificações do adm gravava o celular direto —
+    sem conferir se o número já era de outra conta (o bot deixava de reconhecer as duas) e
+    sem gravar no meuPlano. Agora é o mesmo caminho do oem-gs."""
+    from app.api.v1.painel_notificacoes import ContatoIn, salvar_contato
+
+    db, emp, conta, mp = cenario
+    await cadastro.ligar(db, conta, emp.id, 7)
+    dono_do_numero = User(apelido="renan", nome="Renan", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id,
+                          telefone="+5517997377626")
+    db.add(dono_do_numero)
+    db.commit()
+    admin = User(apelido="adm", nome="Adm", perfil=Perfil.ADMINISTRADOR)
+
+    with pytest.raises(HTTPException) as e:
+        await salvar_contato(conta.id, ContatoIn(telefone="(17) 99737-7626"), db=db, gestor=admin)
+    assert e.value.status_code == 409
+
+    await salvar_contato(conta.id, ContatoIn(telefone="(16) 98888-1234"), db=db, gestor=admin)
+    assert conta.telefone == "+5516988881234"
+    assert mp.gravado[-1] == (7, {"phone": "(16) 9 8888-1234"})
+
+
+async def test_sugere_ligar_quem_tem_o_mesmo_email_na_organizacao(cenario):
+    db, emp, conta, mp = cenario
+    conta.email = "ana@empresa.com"
+    db.commit()
+    sugestoes = cadastro.sugestoes(db, emp.id, mp.pessoas, [conta])
+    assert sugestoes[conta.id]["id"] == 7
+    # Ligada, não sugere mais; e quem é de OUTRA organização nunca é sugerido.
+    await cadastro.ligar(db, conta, emp.id, 7)
+    assert cadastro.sugestoes(db, emp.id, mp.pessoas, [conta]) == {}
+    conta2 = User(apelido="bia", email="bia@outra.com", nome="Bia", perfil=Perfil.CLIENTE, empresa_id=emp.id)
+    db.add(conta2)
+    db.commit()
+    assert cadastro.sugestoes(db, emp.id, mp.pessoas, [conta2]) == {}

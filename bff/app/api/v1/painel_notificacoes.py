@@ -18,9 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import exige_area
-from app.core.telefone import TelefoneInvalido
 from app.core.telefone import e_celular, exibir
-from app.core.telefone import normalizar as normalizar_telefone
 from app.models.user import Perfil, User
 from app.services import notificacoes as svc
 
@@ -198,7 +196,7 @@ def historico(
 
 
 @router.patch("/clientes/{cliente_id}/notificacoes/contato", response_model=ContatoOut)
-def salvar_contato(
+async def salvar_contato(
     cliente_id: int,
     corpo: ContatoIn,
     db: Session = Depends(get_db),
@@ -206,18 +204,20 @@ def salvar_contato(
 ) -> ContatoOut:
     """Telefone e aceite — as duas coisas sem as quais nada sai.
 
-    O telefone é normalizado aqui, uma vez (`core/telefone.py`), e não em cada tela: dois
-    lugares normalizando é o caminho para o mesmo número virar dois destinos diferentes.
+    O celular passa pelo MESMO caminho do oem-gs (`services/cadastro.gravar`): um número de
+    uma conta ativa só (o bot do WhatsApp reconhece a pessoa por ele — duplicado, ele deixa
+    de reconhecer as duas) e, com o cadastro ligado ao meuPlano, grava lá também (base
+    única). A auditoria de 24/10/2026 achou este segundo caminho gravando direto, sem nenhum
+    dos dois.
     """
     cliente = _cliente(db, cliente_id)
 
     # `model_fields_set`: distinguir "não mandou o campo" de "mandou null para apagar" —
     # sem isso, salvar só o aceite apagaria o telefone.
     if "telefone" in corpo.model_fields_set:
-        try:
-            cliente.telefone = normalizar_telefone(corpo.telefone)
-        except TelefoneInvalido as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        from app.services import cadastro
+
+        await cadastro.gravar(db, cliente, cliente.empresa_id, telefone=corpo.telefone or "")
 
     if corpo.aceite is not None:
         svc.registrar_aceite(db, cliente, aceito=corpo.aceite, por=gestor)

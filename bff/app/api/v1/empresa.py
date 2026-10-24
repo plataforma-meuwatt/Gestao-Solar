@@ -1274,6 +1274,9 @@ class UsuarioDetalhado(BaseModel):
     #: Em quais produtos a conta DELA está conectada. Vazio é o normal no aplicativo (o
     #: cliente lê com o token da empresa); o ASSISTENTE só responde com o token dela.
     produtos: list[str] = []
+    #: De quem é cada token, como o PRODUTO respondeu ao conferi-lo (`{"meuwatt": "Renan"}`):
+    #: é o que torna visível um token colado na conta da pessoa errada.
+    tokens_de: dict[str, str] = {}
     #: Celular, para a tela: `(17) 9 9737-7626`.
     telefone: str | None = None
     #: O que o assistente do WhatsApp responde a esta pessoa, por produto.
@@ -1286,6 +1289,10 @@ class UsuarioDetalhado(BaseModel):
     #: da empresa que cuida dela. Daqui só se concedem as usinas desta empresa; senha,
     #: celular, tokens e bot são de lá. Nulo = a conta é desta empresa.
     cuidada_por: str | None = None
+    #: Cadastro ainda sem ligação, e há na organização da empresa no meuPlano uma pessoa
+    #: livre com o MESMO e-mail: o "ligar" sugerido (puxa nome, e-mail e celular de lá).
+    sugestao_meuplano: str | None = None
+    sugestao_meuplano_id: int | None = None
 
 
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
@@ -1296,7 +1303,8 @@ async def usuarios_detalhados(
     do meuPlano o que mudou lá no cadastro de quem está ligado (base única)."""
     from app.services import cadastro
     empresa_id = svc.empresa_exigida(gerente)
-    await cadastro.sincronizar(db, empresa_id)
+    pessoas_mp = await cadastro.todas_as_pessoas(db, empresa_id)
+    await cadastro.sincronizar(db, empresa_id, pessoas_mp)
     contas = list(
         db.scalars(
             select(User)
@@ -1310,6 +1318,7 @@ async def usuarios_detalhados(
     if not contas:
         return []
     nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    sugeridas = cadastro.sugestoes(db, empresa_id, pessoas_mp, [c for c in contas if c.empresa_id == empresa_id])
 
     ids = [c.id for c in contas]
     # Só as usinas DESTA empresa (e as sem dono): a que o dono recebe de outra não é daqui.
@@ -1325,6 +1334,7 @@ async def usuarios_detalhados(
         ).all()
     )
     conectados: dict[int, list[str]] = {}
+    tokens_de: dict[int, dict[str, str]] = {}
     ligado_mp: dict[int, str] = {}
     for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
         if v.produto == Produto.MEUPLANO.value:
@@ -1337,6 +1347,9 @@ async def usuarios_detalhados(
         # `Integracao.produto`, que é `Enum(...)`. Chamar `.value` aqui estourava 500 na
         # tela inteira, e o traço dos dois modelos é parecido o bastante para enganar.
         conectados.setdefault(v.gs_user_id, []).append(str(v.produto))
+        tokens_de.setdefault(v.gs_user_id, {})[str(v.produto)] = (
+            v.usuario_remoto_nome or v.usuario_remoto_email or f"id {v.usuario_remoto_id}"
+        )
 
     return [
         UsuarioDetalhado(
@@ -1348,10 +1361,16 @@ async def usuarios_detalhados(
             email=c.email,
             usinas=quantas.get(c.id, 0),
             produtos=sorted(conectados.get(c.id, [])),
+            tokens_de=tokens_de.get(c.id, {}),
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
             meuplano=ligado_mp.get(c.id),
             cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
+            sugestao_meuplano=(
+                " · ".join(x for x in (sugeridas[c.id].get("name"), sugeridas[c.id].get("phone")) if x)
+                or sugeridas[c.id].get("email")
+            ) if c.id in sugeridas else None,
+            sugestao_meuplano_id=sugeridas[c.id].get("id") if c.id in sugeridas else None,
         )
         for c in contas
     ]

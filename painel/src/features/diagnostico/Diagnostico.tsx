@@ -33,11 +33,11 @@ export function Diagnostico() {
   return (
     <Pagina
       titulo="Diagnóstico"
-      apoio="Confira o que o cliente recebe, e de onde cada número vem, antes de ele abrir o aplicativo."
+      apoio="Confira o que o dono de usina recebe, e de onde cada número vem, antes de ele abrir o aplicativo."
     >
       <div className="mb-5 max-w-md">
         <label className="rotulo-campo" htmlFor="cliente">
-          Cliente
+          Dono de usina
         </label>
         <select
           id="cliente"
@@ -45,7 +45,7 @@ export function Diagnostico() {
           value={clienteId ?? ''}
           onChange={(e) => setParams(e.target.value ? { cliente: e.target.value } : {})}
         >
-          <option value="">— escolha um cliente —</option>
+          <option value="">— escolha o dono de usina —</option>
           {(clientes ?? []).map((c) => (
             <option key={c.id} value={c.id}>
               {c.nome}
@@ -58,8 +58,8 @@ export function Diagnostico() {
       {!clienteId ? (
         <Cartao>
           <Vazio
-            titulo="Escolha um cliente"
-            descricao="O diagnóstico consulta as duas plataformas com as usinas daquele cliente e mostra o que voltou."
+            titulo="Escolha o dono de usina"
+            descricao="O diagnóstico consulta as duas plataformas com as usinas daquele dono e mostra o que voltou."
           />
         </Cartao>
       ) : null}
@@ -73,7 +73,7 @@ export function Diagnostico() {
             {diag.usinas.length === 0 ? (
               <Vazio
                 titulo="Nenhuma usina concedida"
-                descricao="Este cliente entra no aplicativo e não vê usina nenhuma. Conceda usinas na tela dele."
+                descricao="Este dono entra no aplicativo e não vê usina nenhuma. Quem concede é o gerente da empresa dele, no oem-gs."
               />
             ) : (
               diag.usinas.map((u, i) => (
@@ -92,7 +92,7 @@ export function Diagnostico() {
           <Bloco titulo="meuWatt — geração" bloco={diag.meuwatt} />
           <Bloco titulo="meuPlano — manutenção" bloco={diag.meuplano} />
           {diag.manutencao ? (
-            <Bloco titulo="Portal do cliente — cronograma do contrato" bloco={diag.manutencao} />
+            <Bloco titulo="Portal do dono — cronograma do contrato" bloco={diag.manutencao} />
           ) : null}
         </div>
       ) : null}

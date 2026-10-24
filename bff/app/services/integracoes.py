@@ -316,6 +316,10 @@ def traduzir_falha(exc: Exception, produto: Produto) -> ResultadoTeste:
             )
         return ResultadoTeste(False, dito or f"O {nome} respondeu {codigo}.")
 
+    if isinstance(exc, RuntimeError):
+        # As frases nossas ("Esta empresa ainda não conectou…") já são para gente ler: o nome
+        # da exceção na frente era a primeira coisa que o gerente de uma empresa nova via.
+        return ResultadoTeste(False, str(exc))
     return ResultadoTeste(False, f"{type(exc).__name__}: {exc}")
 
 

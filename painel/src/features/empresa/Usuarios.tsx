@@ -112,7 +112,7 @@ function CaixasDoBot({
   aoMudar: (campo: ProdutoDoBot, valor: boolean) => void
 }) {
   const faltam = [
-    ...new Set(PARTES_DO_BOT.filter((b) => !b.emBreve && !produtos.includes(b.token)).map((b) => b.token)),
+    ...new Set(PARTES_DO_BOT.filter((b) => !produtos.includes(b.token)).map((b) => b.token)),
   ]
   return (
     <div>
@@ -123,11 +123,10 @@ function CaixasDoBot({
             <input
               type="checkbox"
               checked={bot[b.campo]}
-              disabled={!bot[b.campo] && (Boolean(b.emBreve) || !temCelular || !produtos.includes(b.token))}
+              disabled={!bot[b.campo] && (!temCelular || !produtos.includes(b.token))}
               onChange={(e) => aoMudar(b.campo, e.target.checked)}
             />
             {b.rotulo}
-            {b.emBreve ? <span className="text-[11px] text-fraco">(em breve)</span> : null}
           </label>
         ))}
       </div>
@@ -208,10 +207,19 @@ function Linha({
               <span className="flex items-center gap-1.5">
                 <Link2 size={14} />
                 {usuario.produtos.length
-                  ? `conta própria: ${usuario.produtos.map((p) => NOME_DO_PRODUTO[p]).join(' · ')}`
+                  ? `token próprio: ${usuario.produtos
+                      .map((p) => `${NOME_DO_PRODUTO[p]}${usuario.tokens_de[p] ? ` (de ${usuario.tokens_de[p]})` : ''}`)
+                      .join(' · ')}`
                   : 'lê com a conta da empresa'}
               </span>
             </p>
+            {usuario.sugestao_meuplano && usuario.sugestao_meuplano_id && !usuario.cuidada_por ? (
+              <SugestaoMeuPlano
+                usuarioId={usuario.id}
+                pessoaId={usuario.sugestao_meuplano_id}
+                pessoa={usuario.sugestao_meuplano}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -294,6 +302,27 @@ function Linha({
         <CadastroDoUsuario usuario={usuario} aoFechar={() => setCadastroAberto(false)} />
       ) : null}
     </Cartao>
+  )
+}
+
+/** "Há <pessoa> no meuPlano com este e-mail" — o ligar sugerido, num clique (puxa nome,
+ *  e-mail e celular de lá, e passam a valer nos dois). */
+function SugestaoMeuPlano({ usuarioId, pessoaId, pessoa }: { usuarioId: number; pessoaId: number; pessoa: string }) {
+  const qc = useQueryClient()
+  const ligar = useMutation({
+    mutationFn: () => ligarAoMeuPlano(usuarioId, pessoaId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['empresa'] }),
+  })
+  return (
+    <div className="mt-2 flex items-center gap-2 flex-wrap text-xs text-rotulo">
+      <span>
+        No meuPlano da empresa há <b className="text-corpo">{pessoa}</b> com este e-mail.
+      </span>
+      <button className="btn-fantasma" disabled={ligar.isPending} onClick={() => ligar.mutate()}>
+        {ligar.isPending ? 'Ligando…' : 'Ligar e puxar o cadastro'}
+      </button>
+      {ligar.error ? <span className="text-parado">{mensagemDeErro(ligar.error)}</span> : null}
+    </div>
   )
 }
 
@@ -656,7 +685,8 @@ export function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFec
             {usuario.produtos.map((p) => (
               <div key={p} className="flex items-center justify-between gap-2">
                 <span className="text-sm text-forte">
-                  Conta própria no {NOME_DO_PRODUTO[p]}
+                  Token do {NOME_DO_PRODUTO[p]}
+                  {usuario.tokens_de[p] ? <span className="text-rotulo"> · de {usuario.tokens_de[p]}</span> : null}
                 </span>
                 <button
                   className="btn-fantasma"

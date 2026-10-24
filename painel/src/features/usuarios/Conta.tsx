@@ -24,8 +24,10 @@ import { mensagemDeErro } from '@/lib/api'
 
 /** As linhas de informação de uma conta. */
 export function ResumoDaConta({ conta }: { conta: UsuarioDaEmpresaAdmin }) {
-  const tokens = (['meuwatt', 'meuplano'] as Produto[]).map(
-    (p) => `${NOME_DO_PRODUTO[p]} ${conta.tokens.includes(p) ? '✓' : '✗'}`,
+  const tokens = (['meuwatt', 'meuplano'] as Produto[]).map((p) =>
+    conta.tokens.includes(p)
+      ? `${NOME_DO_PRODUTO[p]} ✓${conta.tokens_de[p] ? ` (${conta.tokens_de[p]})` : ''}`
+      : `${NOME_DO_PRODUTO[p]} ✗`,
   )
   return (
     <div className="text-sm text-rotulo mt-1.5 flex items-center gap-x-4 gap-y-1 flex-wrap">
@@ -128,6 +130,9 @@ export function EmpresasDaConta({ conta, aoFechar }: { conta: Conta; aoFechar: (
             <strong>origem</strong> cuida da conta (senha, celular, tokens e bot); nas outras ela
             é {conta.perfil === 'cliente' ? 'dona de usina' : PAPEL[conta.perfil]?.toLowerCase()} e
             recebe só o que aquela empresa der.
+            {conta.perfil === 'cliente'
+              ? ' No aplicativo, as usinas da outra empresa só trazem dado com o token próprio dele no meuWatt/meuPlano (sem ele, a leitura é com a conta da empresa de origem).'
+              : ''}
           </Aviso>
 
           {conta.empresas.length ? (

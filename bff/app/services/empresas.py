@@ -15,7 +15,7 @@ recusada em vez de ver tudo: falhar fechado é a única leitura segura de um dad
 """
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
@@ -162,3 +162,22 @@ def tirar_da_empresa(db: Session, conta: User, empresa_id: int) -> None:
         conta.empresa_id = proxima.empresa_id if proxima else None
         if proxima is not None:
             db.delete(proxima)
+
+
+def exigir_outro_gerente(db: Session, empresa_id: int, conta: User) -> None:
+    """Recusa tirar da empresa o ÚLTIMO gerente ativo dela (rebaixar, desativar ou tirar):
+    sem gerente, ninguém opera a empresa no oem-gs, e a saída seria a plataforma."""
+    if conta.perfil is not Perfil.GESTOR_EMPRESA or not conta.ativo:
+        return
+    outros = db.scalar(
+        select(func.count()).select_from(User).where(
+            contas_da_empresa(empresa_id), User.perfil == Perfil.GESTOR_EMPRESA, User.ativo,
+            User.id != conta.id,
+        )
+    ) or 0
+    if not outros:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "É o único gerente ativo desta empresa: sem ele, ninguém opera a empresa no oem-gs. "
+            "Crie ou promova outro gerente antes.",
+        )

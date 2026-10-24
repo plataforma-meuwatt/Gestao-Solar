@@ -49,7 +49,7 @@ const ROTULO_EVENTO: Record<string, string> = {
 }
 
 const APOIO =
-  'O número de WhatsApp da empresa, pelo qual as notificações saem e as mensagens dos ' +
+  'O número de WhatsApp da PLATAFORMA — o do bot —, pelo qual as notificações saem e as mensagens dos ' +
   'clientes chegam. O token vale o que a conta que o gerou vale, e o segredo do app é o ' +
   'que prova que uma entrega veio mesmo da Meta.'
 
@@ -117,7 +117,7 @@ export function Whatsapp() {
       <Cartao className="p-5">
         <header className="flex items-center gap-3 mb-1 flex-wrap">
           <MessageCircle size={18} className="text-rotulo" />
-          <h2 className="text-lg font-semibold text-forte">Número da empresa</h2>
+          <h2 className="text-lg font-semibold text-forte">Número da plataforma</h2>
           <Selo tom={estado.tom}>{estado.rotulo}</Selo>
           {data?.envio_pronto ? <Selo tom="ok">envio pronto</Selo> : (
             <Selo tom="alerta">envio não configurado</Selo>

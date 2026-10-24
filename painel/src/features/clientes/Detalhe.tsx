@@ -16,7 +16,6 @@ import {
 } from '@/components/base'
 import {
   definirPermissoes,
-  definirUsinas,
   editarCliente,
   obterCliente,
   permissoesDoCliente,
@@ -28,7 +27,6 @@ import {
 } from '@/features/api'
 import { CartaoNotificacoes } from '@/features/clientes/Notificacoes'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
-import { ListaDeUsinas, useSelecaoUsinas } from '@/features/clientes/SeletorUsinas'
 import { mensagemDeErro } from '@/lib/api'
 
 const ACESSO: Record<SituacaoAcesso, { tom: Tom; rotulo: string }> = {
@@ -53,7 +51,6 @@ export function DetalheCliente() {
 
   const [erro, setErro] = useState('')
   const [senha, setSenha] = useState<string | null>(null)
-  const [editandoUsinas, setEditandoUsinas] = useState(false)
   const [editandoDados, setEditandoDados] = useState(false)
 
   const { data: cliente, isLoading } = useQuery({
@@ -82,7 +79,7 @@ export function DetalheCliente() {
   })
 
   if (isLoading) return <Carregando />
-  if (!cliente) return <Erro>Cliente não encontrado.</Erro>
+  if (!cliente) return <Erro>Dono de usina não encontrado.</Erro>
 
   const acesso = ACESSO[cliente.acesso]
 
@@ -171,25 +168,13 @@ export function DetalheCliente() {
           ))}
         </Cartao>
 
-        <Cartao
-          titulo={`Usinas · ${cliente.usinas.length}`}
-          className="lg:col-span-2"
-          acao={
-            <button onClick={() => setEditandoUsinas(true)} className="btn-fantasma">
-              <Pencil size={13} />
-              Alterar usinas
-            </button>
-          }
-        >
+        {/* Só leitura no adm: quem concede usina é o gerente da empresa do dono, no oem-gs
+            (o adm cuida das empresas e das contas; o dia a dia da carteira é da O&M). */}
+        <Cartao titulo={`Usinas · ${cliente.usinas.length}`} className="lg:col-span-2">
           {cliente.usinas.length === 0 ? (
             <Vazio
               titulo="Nenhuma usina concedida"
-              descricao="O cliente entra no aplicativo, mas não vê usina nenhuma até você conceder."
-              acao={
-                <button onClick={() => setEditandoUsinas(true)} className="btn-primario">
-                  Conceder usinas
-                </button>
-              }
+              descricao="Ele entra no aplicativo, mas não vê usina nenhuma até o gerente da empresa dele conceder, no oem-gs."
             />
           ) : (
             cliente.usinas.map((u, i) => (
@@ -241,14 +226,6 @@ export function DetalheCliente() {
           apelido={cliente.apelido}
           senha={senha}
           aoFechar={() => setSenha(null)}
-        />
-      ) : null}
-
-      {editandoUsinas ? (
-        <ModalUsinas
-          cliente={cliente}
-          aoFechar={() => setEditandoUsinas(false)}
-          aoSalvar={recarregar}
         />
       ) : null}
 
@@ -309,59 +286,6 @@ function ContaNoProduto({
     </div>
   )
 }
-
-/** Mesma escolha do cadastro, reaproveitada — ver SeletorUsinas. */
-function ModalUsinas({
-  cliente,
-  aoFechar,
-  aoSalvar,
-}: {
-  cliente: TipoCliente
-  aoFechar: () => void
-  aoSalvar: () => void
-}) {
-  const [erro, setErro] = useState('')
-  const selecao = useSelecaoUsinas(
-    cliente.id,
-    cliente.usinas.map((u) => u.plant_link_id),
-  )
-
-  const salvar = useMutation({
-    mutationFn: () => definirUsinas(cliente.id, [...selecao.escolhidas]),
-    onSuccess: () => {
-      aoSalvar()
-      aoFechar()
-    },
-    onError: (e) => setErro(mensagemDeErro(e)),
-  })
-
-  return (
-    <Modal titulo="Usinas do cliente" aoFechar={aoFechar} largura="max-w-2xl">
-      <p className="text-sm text-rotulo mb-4">
-        Marque o que {cliente.nome} vê no aplicativo. Desmarcar tira do aplicativo dele na
-        hora e libera a usina para outro cliente.
-      </p>
-
-      {erro ? (
-        <div className="mb-4">
-          <Erro>{erro}</Erro>
-        </div>
-      ) : null}
-
-      <ListaDeUsinas {...selecao} />
-
-      <div className="flex gap-2 mt-5">
-        <button onClick={() => salvar.mutate()} className="btn-primario" disabled={salvar.isPending}>
-          {salvar.isPending ? 'Salvando…' : 'Salvar usinas'}
-        </button>
-        <button onClick={aoFechar} className="btn-secundario">
-          Cancelar
-        </button>
-      </div>
-    </Modal>
-  )
-}
-
 
 /**
  * Permissões do aplicativo.
@@ -500,7 +424,7 @@ function ModalDados({
   })
 
   return (
-    <Modal titulo="Dados do cliente" aoFechar={aoFechar}>
+    <Modal titulo="Dados do dono de usina" aoFechar={aoFechar}>
       <form
         onSubmit={(e) => {
           e.preventDefault()

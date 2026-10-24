@@ -248,48 +248,8 @@ def editar_cliente(
 
 
 # ------------------------------------------------------------------ usinas
-
-
-class UsinaSugeridaOut(BaseModel):
-    plant_link_id: int
-    nome: str
-    origem: list[str]
-    ja_concedida: bool
-    dono_atual: str | None = None
-
-
-@router.get("/clientes/{cliente_id}/usinas-sugeridas", response_model=list[UsinaSugeridaOut])
-async def sugerir_usinas(
-    cliente_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_CLIENTES)
-) -> list[UsinaSugeridaOut]:
-    cliente = _cliente(db, cliente_id)
-    return [
-        UsinaSugeridaOut(
-            plant_link_id=u.plant_link_id,
-            nome=u.nome,
-            origem=u.origem,
-            ja_concedida=u.ja_concedida,
-            dono_atual=u.dono_atual,
-        )
-        for u in await svc.usinas_sugeridas(db, cliente)
-    ]
-
-
-class UsinasIn(BaseModel):
-    plant_link_ids: list[int]
-
-
-@router.put("/clientes/{cliente_id}/usinas", status_code=204)
-def definir_usinas(
-    cliente_id: int,
-    body: UsinasIn,
-    db: Session = Depends(get_db),
-    _: User = Depends(EXIGE_CLIENTES),
-) -> None:
-    try:
-        svc.definir_usinas(db, _cliente(db, cliente_id), body.plant_link_ids)
-    except svc.RegraDeNegocio as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+# Conceder usina é do GERENTE da empresa do dono (oem-gs → Usuários → Usinas). O adm não
+# concede (o modelo do dono, 24/10/2026): a ficha daqui só mostra o que ele recebe.
 
 
 # -------------------------------------------------------------- diagnóstico

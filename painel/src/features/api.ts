@@ -72,13 +72,6 @@ export type ClienteDetalhe = {
   usinas: UsinaDoCliente[]
 }
 
-export type UsinaSugerida = {
-  plant_link_id: number
-  nome: string
-  origem: string[]
-  ja_concedida: boolean
-  dono_atual: string | null
-}
 
 
 export type BlocoDiagnostico = { ok: boolean; detalhe: string; itens: Record<string, unknown>[] }
@@ -138,14 +131,6 @@ export const editarCliente = (id: number, dados: { nome?: string; ativo?: boolea
 
 export const regenerarSenha = (id: number) =>
   api.post<{ senha_provisoria: string }>(`/clientes/${id}/senha`).then((r) => r.data)
-
-/* ----------------------------------------------------------------- usinas */
-
-export const usinasSugeridas = (clienteId: number) =>
-  api.get<UsinaSugerida[]>(`/clientes/${clienteId}/usinas-sugeridas`).then((r) => r.data)
-
-export const definirUsinas = (clienteId: number, plant_link_ids: number[]) =>
-  api.put(`/clientes/${clienteId}/usinas`, { plant_link_ids })
 
 /* ------------------------------------------------------------ permissões */
 
@@ -707,8 +692,9 @@ export type UsuarioDaEmpresaAdmin = {
   /** Liberado pelo gerente, e o que responde de fato (liberado E com o token dela). */
   bot: ProdutoDoBot[]
   bot_ativo: ProdutoDoBot[]
-  /** Produtos em que a pessoa tem o token DELA. */
+  /** Produtos em que a pessoa tem o token DELA — e de quem o produto disse que ele é. */
   tokens: Produto[]
+  tokens_de: Partial<Record<Produto, string>>
   /** A empresa que cuida da conta, quando não é a desta lista. */
   cuidada_por: string | null
   outras_empresas: string[]
@@ -759,6 +745,8 @@ export type Conta = UsuarioDaEmpresaAdmin & {
   areas: string[]
   /** A de origem primeiro. Vazio numa conta que não é da plataforma = sem empresa. */
   empresas: EmpresaDaConta[]
+  /** O texto livre antigo ("Eninsa"), só na conta sem empresa: a pista de onde pôr. */
+  empresa_antiga: string | null
 }
 
 export const todasAsContas = () => api.get<Conta[]>('/contas').then((r) => r.data)
@@ -916,6 +904,11 @@ export type UsuarioDetalhado = {
   /** A conta é de OUTRA empresa e também desta: o nome da que cuida dela. Daqui só se
    *  concedem as usinas desta empresa; senha, celular, tokens e bot são de lá. */
   cuidada_por: string | null
+  /** De quem é cada token, como o produto respondeu (`{meuwatt: 'Renan'}`). */
+  tokens_de: Partial<Record<Produto, string>>
+  /** Há na organização da empresa no meuPlano uma pessoa livre com o MESMO e-mail. */
+  sugestao_meuplano: string | null
+  sugestao_meuplano_id: number | null
 }
 
 /** Uma pessoa que a empresa administra no meuPlano — de onde o cadastro pode ser puxado. */

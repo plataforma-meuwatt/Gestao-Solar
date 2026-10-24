@@ -165,3 +165,32 @@ def test_o_adm_ve_empresas_e_usuarios_dos_dois_lados(db, cenario, administrador)
     assert [e.nome for e in contas["ger.a"].empresas] == ["Splendor O&M"]
     assert contas["orfao"].empresas == [] and not contas["orfao"].da_plataforma
     assert contas[administrador.apelido].da_plataforma and contas[administrador.apelido].empresas == []
+
+
+def test_o_ultimo_gerente_nao_sai_da_empresa_sem_outro(db, cenario, administrador):
+    """Sem gerente, ninguém opera a empresa no oem-gs — e a saída seria a plataforma."""
+    from app.api.v1.painel_empresas import UsuarioPatch, editar_usuario_da_empresa, tirar_usuario_da_empresa
+
+    a, _b, _ua, _ub, ger_a, _ger_b, _dono = cenario
+    for tentativa in (
+        lambda: editar_usuario_da_empresa(a.id, ger_a.id, UsuarioPatch(perfil=Perfil.CLIENTE), db=db, gestor=administrador),
+        lambda: editar_usuario_da_empresa(a.id, ger_a.id, UsuarioPatch(ativo=False), db=db, gestor=administrador),
+        lambda: tirar_usuario_da_empresa(a.id, ger_a.id, db=db, _gestor=administrador),
+    ):
+        with pytest.raises(HTTPException) as erro:
+            tentativa()
+        assert erro.value.status_code == 400 and "único gerente" in erro.value.detail
+
+    outro = User(apelido="ger.a2", nome="Ger A2", perfil=Perfil.GESTOR_EMPRESA, empresa_id=a.id)
+    db.add(outro)
+    db.commit()
+    assert editar_usuario_da_empresa(a.id, ger_a.id, UsuarioPatch(ativo=False), db=db, gestor=administrador).ativo is False
+
+
+def test_conta_sem_empresa_mostra_a_pista_do_cadastro_antigo(db, cenario, administrador):
+    from app.api.v1.painel_usuarios import todas_as_contas
+
+    db.add(User(apelido="janderson", nome="Janderson", perfil=Perfil.CLIENTE, empresa="Eninsa"))
+    db.commit()
+    conta = next(c for c in todas_as_contas(db=db, admin=administrador) if c.apelido == "janderson")
+    assert conta.empresas == [] and conta.empresa_antiga == "Eninsa"

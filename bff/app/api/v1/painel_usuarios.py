@@ -26,10 +26,11 @@ from app.core.apelido import normalizar as normalizar_apelido
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha
 from app.api.v1.painel_empresas import UsuarioDaEmpresaOut, resumo_das_contas
-from app.models.empresa import Empresa
+from app.models.acesso_painel import AcessoPainel
+from app.models.empresa import Empresa, MembroDaEmpresa
 from app.models.pessoa import Pessoa
 from app.models.user import Perfil, User
-from app.services import areas_painel, empresas, pessoas
+from app.services import areas_painel, pessoas
 
 #: Os perfis desta tela. Cliente tem a tela dele; gerente de empresa, a da empresa —
 #: e essa separação é a mesma dos portões: o que não é da plataforma não se administra aqui.
@@ -353,6 +354,9 @@ class ContaOut(UsuarioDaEmpresaOut):
     #: As empresas desta conta, a de origem primeiro. Vazio numa conta que não é da
     #: plataforma = conta SEM empresa: nenhum gerente a enxerga — falta pôr numa empresa.
     empresas: list[EmpresaDaContaOut] = []
+    #: O texto livre de antes de `gs_empresas` ("Eninsa"), só para a conta SEM empresa: é a
+    #: pista de onde ela deveria estar.
+    empresa_antiga: str | None = None
 
 
 @router.get("/contas", response_model=list[ContaOut])
@@ -365,25 +369,36 @@ def todas_as_contas(
     A equipe da plataforma vem junto, marcada; ela continua sendo administrada pelas rotas
     de `/usuarios`, que não aceitam conta de empresa (e vice-versa, `PATCH /contas/{id}`).
     """
-    # ponytail: uma ida ao banco por conta (empresas dela); dezenas de contas é nada — com
-    # milhares, junta-se `gs_usuario_empresas` numa consulta só, como em `resumo_das_contas`.
+    # Poucas idas ao banco no total, e não algumas por conta: o banco fica nos EUA, e cada
+    # ida custa ~150 ms (a lista levava 4,6 s — auditoria de 24/10/2026).
     contas = list(db.scalars(select(User).order_by(User.nome)).all())
     resumo = {r.id: r for r in resumo_das_contas(db, contas, admin)}
     nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    membro: dict[int, list[int]] = {}
+    for uid, eid in db.execute(
+        select(MembroDaEmpresa.user_id, MembroDaEmpresa.empresa_id).order_by(MembroDaEmpresa.id)
+    ).all():
+        membro.setdefault(uid, []).append(eid)
+    areas: dict[int, set[str]] = {}
+    for uid, area in db.execute(select(AcessoPainel.user_id, AcessoPainel.area)).all():
+        areas.setdefault(uid, set()).add(area)
     saida = []
     for c in contas:
         plataforma = c.perfil in DA_PLATAFORMA
-        ids = [] if plataforma else empresas.empresas_da_conta(db, c)
+        ids = [] if plataforma else list(
+            dict.fromkeys(([c.empresa_id] if c.empresa_id else []) + membro.get(c.id, []))
+        )
         saida.append(
             ContaOut(
                 **resumo[c.id].model_dump(),
                 da_plataforma=plataforma,
-                areas=sorted(areas_painel.concedidas(db, c)) if plataforma else [],
+                areas=sorted(areas.get(c.id, set()) & areas_painel.CHAVES) if plataforma else [],
                 empresas=[
                     EmpresaDaContaOut(id=i, nome=nomes[i], origem=i == c.empresa_id)
                     for i in ids
                     if i in nomes
                 ],
+                empresa_antiga=c.empresa if not plataforma and not ids else None,
             )
         )
     return saida

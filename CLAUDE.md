@@ -771,8 +771,13 @@ do meuPlano, falando como a pessoa). ⛔ **Regra do dono (23/10/2026): cada um u
 SEU token** (`gs_vinculos_produto`, `so_proprio=True`) — nunca o da empresa nem o da plataforma.
 O administrador da plataforma não usa o bot (não tem token); o do Renan responde à conta de
 gerente dele (`renan.marquezini`). Liberar uma parte exige o token dela (`cadastro.liberar_bot`),
-e liberada sem token fica parada (`User.bot_ativo`). O helper fica "em breve" (liberar é
-recusado) até as ferramentas dele existirem — o prompt não o anuncia. O aplicativo continua
+e liberada sem token fica parada (`User.bot_ativo`). **O helper** (`assistente_helper.py`,
+porta `/api/bot/*` do mw-modbus-helper pelo túnel `HELPER_BOT_URL`, chave `HELPER_BOT_CHAVE`):
+leitura volta na hora; AÇÃO vira proposta com um código de 4 dígitos, e só executa quando a
+PESSOA responde `CONFIRMO <código>` — conferido por código, antes do modelo (a IA não tem
+ferramenta de confirmar), uma vez, em até 2 min. **O token é da pessoa:** a mesma pessoa de
+lá não serve a duas contas, e o token de outra pessoa não troca a ligação em silêncio
+(`vinculos.conectar`); a tela mostra de quem é cada token. O aplicativo continua
 caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_bot_registros`**
 (quem, empresa, resultado, pergunta, resposta, ferramentas, duração, erro — inclusive número
 sem cadastro): adm-gs → Log do bot, e o recorte da empresa no oem-gs → Bot do WhatsApp. A

@@ -144,7 +144,7 @@ async def test_o_bot_le_com_o_token_dela_e_so_o_que_o_gs_concede(db, monkeypatch
     assert set(ctx.usinas) == {"porto-ferreira"}
 
 
-async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
+async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db, monkeypatch):
     """Celular de outra conta é recusado (o bot ficaria sem saber quem é); sem celular não libera."""
     from fastapi import HTTPException
 
@@ -173,11 +173,12 @@ async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
     _token(db, cli, "meuwatt")
     r = await editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_meuwatt=True), db, gerente)
     assert r.telefone == "(16) 9 9999-8888" and r.bot_meuwatt and not r.bot_meuplano
-    # o helper ainda não tem ferramenta no bot: liberar é recusado, com o motivo (auditoria
-    # de 23/10/2026 — a caixa ligada prometia uma ação que não acontecia)
-    with pytest.raises(HTTPException) as e:
-        await editar_conta_da_empresa(cli.id, ContaPatch(bot_helper=True, bot_meuwatt=True), db, gerente)
-    assert e.value.status_code == 400 and "helper" in e.value.detail
+    # o helper (com a porta dele configurada) reconhece a pessoa pelo token do meuWatt
+    from app.services import assistente_helper
+
+    monkeypatch.setattr(assistente_helper, "configurado", lambda: True)
+    r = await editar_conta_da_empresa(cli.id, ContaPatch(bot_helper=True, bot_meuwatt=True), db, gerente)
+    assert r.bot_helper
     # o meuPlano pede o token dele
     with pytest.raises(HTTPException):
         await editar_conta_da_empresa(cli.id, ContaPatch(bot_meuplano=True), db, gerente)
@@ -295,3 +296,83 @@ async def test_cada_mensagem_vira_uma_linha_no_log_do_bot(db, monkeypatch):
     assert linhas[1].resposta == "*2 OS abertas*" and linhas[1].duracao_ms is not None
     conversa = db.query(ConversaWhatsapp).one()
     assert conversa.gs_user_id == dono.id and "segredo da outra conta" not in conversa.mensagens
+
+
+# ── o helper pelo bot: ação só com CONFIRMO <código>, conferido pelo Gestão Solar ──────
+
+
+class _HelperFalso:
+    def __init__(self):
+        self.confirmadas = []
+
+    async def chamar(self, rota, corpo, origem, metodo="POST"):
+        if rota == "/api/act":
+            return {"ok": True, "tipo": "proposta", "proposta": "P-1", "resumo": "Desligar o inversor 3", "expira_em_s": 120}
+        return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": {"plants": ["pirapozinho"]}}
+
+    async def confirmar(self, proposta, confirmado_por, origem):
+        self.confirmadas.append((proposta, confirmado_por))
+        return {"ok": True, "tipo": "execucao", "resumo": "Desligar o inversor 3", "status_http": 200}
+
+    async def ferramentas(self):
+        return {"ok": True, "rotas": []}
+
+
+@pytest.fixture
+def helper_ligado(monkeypatch):
+    from app.services import assistente_helper
+
+    falso = _HelperFalso()
+    monkeypatch.setattr(assistente_helper, "_cliente", lambda db, user: falso)
+    monkeypatch.setattr(assistente_helper, "configurado", lambda: True)
+    assistente_helper.PENDENTES.clear()
+    return falso
+
+
+async def test_acao_do_helper_so_roda_com_o_codigo_da_propria_pessoa(db, helper_ligado):
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    outro = _conta(db, "outro", "+5517997370000")
+    for u in (dono, outro):
+        u.bot_helper = True
+    db.commit()
+    assert {"usina_helper", "usina_helper_catalogo"} <= set(assistente.permitidas(dono))
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+
+    # Leitura passa direto; ação NÃO roda — vira código.
+    assert (await h.usina_helper(ctx, {"rota": "/api/registry/plants"}))["status_http"] == 200
+    proposta = await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    assert "NADA foi executado" in proposta["instrucao"] and helper_ligado.confirmadas == []
+    codigo = proposta["codigo"]
+
+    # Outra pessoa, com o mesmo código, não executa a ação de ninguém.
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, f"CONFIRMO {codigo}")
+    errado = "0000" if codigo != "0000" else "1111"
+    assert "não confere" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"confirmo {errado}")
+    assert helper_ligado.confirmadas == []
+    # O código certo, da própria pessoa: executa UMA vez.
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")).startswith("✅")
+    assert helper_ligado.confirmadas == [("P-1", "codigo_whatsapp")]
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")
+    # Mensagem comum não é confirmação.
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "qual a geração de hoje?") is None
+
+
+async def test_liberar_o_helper_pede_a_porta_configurada_e_o_token_do_meuwatt(db, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.services import assistente_helper, cadastro
+
+    conta = _conta(db, "sem.mw", "+5517997371111", bot=False)
+    monkeypatch.setattr(assistente_helper, "configurado", lambda: False)
+    with pytest.raises(HTTPException) as e:
+        cadastro.liberar_bot(conta, "bot_helper", True)
+    assert e.value.status_code == 400 and "helper" in e.value.detail
+    monkeypatch.setattr(assistente_helper, "configurado", lambda: True)
+    with pytest.raises(HTTPException) as e:
+        cadastro.liberar_bot(conta, "bot_helper", True)
+    assert "token do meuWatt" in e.value.detail
+    _token(db, conta, "meuwatt")
+    cadastro.liberar_bot(conta, "bot_helper", True)
+    assert conta.bot_helper and "bot_helper" in conta.bot_ativo

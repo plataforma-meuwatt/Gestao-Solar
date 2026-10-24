@@ -104,10 +104,10 @@ CATALOGO: list[Area] = [
     ),
     Area(
         chave="whatsapp",
-        rotulo="WhatsApp da empresa",
+        rotulo="WhatsApp da plataforma",
         descricao=(
-            "O número por onde TODAS as notificações saem: token da Meta, segredo do "
-            "app e endereço do webhook."
+            "O número da PLATAFORMA — por onde o bot responde e TODAS as notificações "
+            "saem: credencial da Meta, segredo do app e endereço do webhook."
         ),
         grupo="Sistema",
     ),

@@ -83,12 +83,14 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
     naquele produto (regra do dono, 23/10/2026). Manter ligada não reconfere: o que ficou sem
     token já está parado (`User.bot_ativo`), e reconferir travaria salvar o resto do cadastro."""
     if valor and not getattr(conta, campo):
-        if campo == "bot_helper":
-            # A caixa existe (pedido do dono), mas o bot ainda não tem ferramenta de atuar na
-            # usina: liberar seria prometer uma resposta que não vem.
+        from app.services import assistente_helper
+
+        if campo == "bot_helper" and not assistente_helper.configurado():
+            # Sem a porta do helper configurada neste servidor, liberar prometeria uma
+            # resposta que não vem.
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                "O helper no bot ainda está sendo feito — libera quando as "
-                                "ferramentas de atuar na usina ficarem prontas.")
+                                "O helper ainda não está ligado neste servidor (falta a porta do "
+                                "bot do helper). Fale com quem administra a plataforma.")
         if not conta.telefone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "Cadastre o celular antes de liberar o assistente do WhatsApp.")
@@ -228,19 +230,56 @@ async def gravar(db: Session, conta: User, empresa_id: int, *, nome: str | None 
             conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
 
 
-async def sincronizar(db: Session, empresa_id: int) -> int:
+async def todas_as_pessoas(db: Session, empresa_id: int) -> list[dict[str, Any]] | None:
+    """As pessoas que a credencial da empresa enxerga no meuPlano, numa ida só — ou `None`
+    sem o meuPlano (melhor esforço: a tela mostra o que está guardado)."""
+    try:
+        return await (await _mp(db, empresa_id)).usuarios_admin()
+    except Exception:                                      # noqa: BLE001
+        log.warning("cadastro: ler as pessoas do meuPlano falhou (empresa %s)", empresa_id, exc_info=True)
+        return None
+
+
+def sugestoes(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None,
+              contas: list[User]) -> dict[int, dict[str, Any]]:
+    """Conta daqui ainda SEM ligação ao meuPlano cujo e-mail é o de uma pessoa da organização
+    da empresa lá, ainda livre: `{conta_id: pessoa}`. É o "ligar" sugerido — a auditoria de
+    24/10/2026 achou Camila e kewyn no meuPlano, com celular, e "só do Gestão Solar" aqui."""
+    from app.models.empresa import Empresa
+
+    empresa = db.get(Empresa, empresa_id)
+    if not pessoas or empresa is None or empresa.mp_tenant_id is None:
+        return {}
+    ligadas = set(db.scalars(select(VinculoProduto.usuario_remoto_id).where(
+        VinculoProduto.produto == Produto.MEUPLANO.value)).all())
+    contas_ligadas = set(db.scalars(select(VinculoProduto.gs_user_id).where(
+        VinculoProduto.produto == Produto.MEUPLANO.value)).all())
+    por_email = {
+        (p.get("email") or "").strip().lower(): p
+        for p in _da_organizacao(pessoas, empresa.mp_tenant_id)
+        if p.get("email") and str(p.get("id")) not in ligadas
+    }
+    return {
+        c.id: por_email[c.email.strip().lower()]
+        for c in contas
+        if c.id not in contas_ligadas and c.email and c.email.strip().lower() in por_email
+    }
+
+
+async def sincronizar(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None = None) -> int:
     """O que mudou no meuPlano chega aqui (nome, e-mail, celular das contas LIGADAS). Melhor
-    esforço: sem o meuPlano, a tela mostra o que está guardado. Devolve quantas mudaram."""
+    esforço: sem o meuPlano, a tela mostra o que está guardado. Devolve quantas mudaram.
+    `pessoas`: a lista já lida (para a tela não ir duas vezes ao meuPlano)."""
     ligadas = db.execute(
         select(User, VinculoProduto.usuario_remoto_id).join(VinculoProduto, VinculoProduto.gs_user_id == User.id)
         .where(VinculoProduto.produto == Produto.MEUPLANO.value, User.empresa_id == empresa_id)).all()
     if not ligadas:
         return 0
-    try:
-        pessoas = {str(p.get("id")): p for p in await (await _mp(db, empresa_id)).usuarios_admin()}
-    except Exception:                                      # noqa: BLE001
-        log.warning("cadastro: sincronizar com o meuPlano falhou (empresa %s)", empresa_id, exc_info=True)
-        return 0
+    if pessoas is None:
+        pessoas = await todas_as_pessoas(db, empresa_id)
+        if pessoas is None:
+            return 0
+    pessoas = {str(p.get("id")): p for p in pessoas}
     mudou = 0
     for conta, remoto in ligadas:
         p = pessoas.get(remoto)

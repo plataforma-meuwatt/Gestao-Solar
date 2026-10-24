@@ -408,3 +408,41 @@ class TestTestarRetentaOLogin:
         assert r.login_externo is True
         # Retentar um login que já está de pé é uma chamada de rede inútil por clique.
         assert chamou == []
+
+
+# ── 4. o token é DA PESSOA (auditoria de 24/10/2026) ─────────────────────────
+
+
+class TestTokenDaPessoa:
+    async def test_o_mesmo_token_nao_serve_a_duas_contas(self, db, cliente, administrador, monkeypatch):
+        _responde(monkeypatch)
+        assert (await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)).ok
+        outra = User(apelido="outra", nome="Outra", perfil=Perfil.CLIENTE)
+        db.add(outra)
+        db.commit()
+
+        r = await vinculos.conectar(db, outra, Produto.MEUWATT, MW2, por=administrador)
+
+        assert not r.ok and "janderson" in r.detalhe and "duas contas" in r.detalhe
+        assert vinculos.obter(db, outra.id, Produto.MEUWATT) is None
+
+    async def test_token_de_outra_pessoa_nao_troca_a_ligacao_em_silencio(
+        self, db, cliente, administrador, monkeypatch
+    ):
+        # A conta está ligada à pessoa 10 do meuPlano (cadastro); colam o token da 999.
+        db.add(VinculoProduto(gs_user_id=cliente.id, produto="meuplano", usuario_remoto_id="10",
+                              usuario_remoto_nome="Camila Silva"))
+        db.commit()
+        _responde(monkeypatch, identidade={"id": "999", "nome": "Renan Marquezini", "email": "r@x.com"})
+
+        r = await vinculos.conectar(db, cliente, Produto.MEUPLANO, MP, por=administrador)
+
+        assert not r.ok and "Camila Silva" in r.detalhe and "Renan Marquezini" in r.detalhe
+        v = vinculos.obter(db, cliente.id, Produto.MEUPLANO)
+        assert v.usuario_remoto_id == "10" and v.token_cifrado is None
+
+    async def test_trocar_o_token_da_MESMA_pessoa_continua_valendo(self, db, cliente, administrador, monkeypatch):
+        _responde(monkeypatch)
+        await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)
+        assert (await vinculos.conectar(db, cliente, Produto.MEUWATT, MW2, por=administrador)).ok
+        assert vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT) == MW2

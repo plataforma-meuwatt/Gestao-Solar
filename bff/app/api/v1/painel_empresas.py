@@ -359,8 +359,10 @@ class UsuarioDaEmpresaOut(BaseModel):
     #: e o que responde de fato — liberado E com o token PRÓPRIO da pessoa.
     bot: list[str] = []
     bot_ativo: list[str] = []
-    #: Em quais produtos a pessoa tem o token DELA (`meuwatt`, `meuplano`). Só o fato.
+    #: Em quais produtos a pessoa tem o token DELA (`meuwatt`, `meuplano`). Só o fato — e de
+    #: quem o produto disse que ele é (`tokens_de`), nunca o valor nem o prefixo.
     tokens: list[str] = []
+    tokens_de: dict[str, str] = {}
     #: A empresa que cuida da conta, quando não é a desta lista (usuário em mais de uma).
     cuidada_por: str | None = None
     #: As OUTRAS empresas desta conta.
@@ -397,9 +399,13 @@ def resumo_das_contas(
         )
     usinas = dict(db.execute(consulta).all())
     tokens: dict[int, list[str]] = {}
+    tokens_de: dict[int, dict[str, str]] = {}
     for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
         if v.token_cifrado:
             tokens.setdefault(v.gs_user_id, []).append(str(v.produto))
+            tokens_de.setdefault(v.gs_user_id, {})[str(v.produto)] = (
+                v.usuario_remoto_nome or v.usuario_remoto_email or f"id {v.usuario_remoto_id}"
+            )
 
     saida = []
     for c in contas:
@@ -416,8 +422,14 @@ def resumo_das_contas(
                 telefone=exibir_telefone(c.telefone),
                 usinas=usinas.get(c.id, 0),
                 bot=[campo for campo in BOT_TOKEN if getattr(c, campo)],
-                bot_ativo=sorted(c.bot_ativo) if c.telefone else [],
+                # O mesmo que `User.bot_ativo`, com os tokens já lidos acima (uma ida ao
+                # banco para todas as contas, e não uma por conta).
+                bot_ativo=sorted(
+                    campo for campo, produto in BOT_TOKEN.items()
+                    if getattr(c, campo) and produto in tokens.get(c.id, [])
+                ) if c.telefone else [],
                 tokens=sorted(tokens.get(c.id, [])),
+                tokens_de=tokens_de.get(c.id, {}),
                 cuidada_por=(
                     nomes.get(c.empresa_id)
                     if empresa_id is not None and c.empresa_id != empresa_id
@@ -494,6 +506,8 @@ def editar_usuario_da_empresa(
     """
     svc.por_id(db, empresa_id)
     alvo = _conta_desta_empresa(db, empresa_id, usuario_id)
+    if body.ativo is False or (body.perfil is not None and body.perfil is not Perfil.GESTOR_EMPRESA):
+        svc.exigir_outro_gerente(db, empresa_id, alvo)
 
     if body.ativo is not None:
         alvo.ativo = body.ativo
@@ -608,6 +622,7 @@ def tirar_usuario_da_empresa(
     conta = db.get(User, usuario_id)
     if conta is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    svc.exigir_outro_gerente(db, empresa_id, conta)
     svc.tirar_da_empresa(db, conta, empresa_id)
     db.commit()
 

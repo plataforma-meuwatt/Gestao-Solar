@@ -120,7 +120,7 @@ export function CartaoNotificacoes({ clienteId, nome }: { clienteId: number; nom
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <BellRing size={14} className="text-rotulo" />
-                  <p className="text-sm font-semibold text-forte">WhatsApp do cliente</p>
+                  <p className="text-sm font-semibold text-forte">WhatsApp do dono de usina</p>
                   {contato?.apto ? (
                     <Selo tom="ok">pronto para receber</Selo>
                   ) : (

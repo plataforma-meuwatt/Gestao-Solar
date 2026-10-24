@@ -166,7 +166,7 @@ function LinhaDoBot({
           <KeyRound size={14} className="text-rotulo" />
           {(['meuwatt', 'meuplano'] as const).map((p) => (
             <span key={p} className={u.produtos.includes(p) ? 'text-ok' : 'text-alerta'}>
-              {NOME_DO_PRODUTO[p]} {u.produtos.includes(p) ? '✓' : 'falta'}
+              {NOME_DO_PRODUTO[p]} {u.produtos.includes(p) ? `✓${u.tokens_de[p] ? ` (${u.tokens_de[p]})` : ''}` : 'falta'}
             </span>
           ))}
           <button className="btn-fantasma" onClick={aoAbrirTokens}>
@@ -179,12 +179,12 @@ function LinhaDoBot({
         {PARTES_DO_BOT.map((p) => {
           const ligado = u[p.campo]
           const falta = !u.telefone ? 'o celular' : !u.produtos.includes(p.token) ? `o token do ${NOME_DO_PRODUTO[p.token]} dela` : null
-          const travado = !ligado && (Boolean(p.emBreve) || falta !== null)
+          const travado = !ligado && falta !== null
           return (
             <label
               key={p.campo}
               className={`flex items-center gap-2 text-sm ${travado ? 'text-fraco' : 'text-corpo cursor-pointer'}`}
-              title={p.emBreve ? 'As ferramentas do helper no bot ainda estão sendo feitas.' : falta ? `Falta ${falta}.` : undefined}
+              title={falta ? `Falta ${falta}.` : undefined}
             >
               <input
                 type="checkbox"
@@ -193,8 +193,7 @@ function LinhaDoBot({
                 onChange={(e) => mudar.mutate({ [p.campo]: e.target.checked })}
               />
               {p.rotulo}
-              {p.emBreve ? <span className="text-[11px] text-fraco">(em breve)</span> : null}
-              {!p.emBreve && !ligado && falta ? <span className="text-[11px] text-fraco">(falta {falta})</span> : null}
+              {!ligado && falta ? <span className="text-[11px] text-fraco">(falta {falta})</span> : null}
             </label>
           )
         })}

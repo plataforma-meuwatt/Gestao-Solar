@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     #: mundo na hora de mandar mensagem — e o gateway do resto do mundo na hora de avisar.
     whatsapp_chave_interna: str = ""
 
+    # ── o helper (mw-modbus-helper) pelo assistente ─────────────────────────
+    #: A porta do bot do helper (contrato `docs/bot.md` do helper): pelo túnel SSH reverso,
+    #: `http://10.0.1.1:18080`, só de dentro da rede `coolify`. Vazio = o assistente não
+    #: oferece o helper, e liberar a parte do helper é recusado com o motivo.
+    helper_bot_url: str = ""
+    helper_bot_chamador: str = "gestao-solar"
+    #: A chave do chamador `gestao-solar` (a mesma do `MW_BOT_CALLERS_FILE` do helper).
+    helper_bot_chave: str = ""
+
     # ── assistente do WhatsApp ──────────────────────────────────────────────
     #: DeepSeek (API compatível com a da OpenAI). Vazia = o assistente responde que está
     #: desligado, em vez de ficar mudo.

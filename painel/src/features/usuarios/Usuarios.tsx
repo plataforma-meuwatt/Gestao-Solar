@@ -182,7 +182,12 @@ function TextoDasEmpresas({ conta }: { conta: Conta }) {
       </span>
     )
   }
-  if (!conta.empresas.length) return <span className="text-alerta">sem empresa</span>
+  if (!conta.empresas.length)
+    return (
+      <span className="text-alerta">
+        sem empresa{conta.empresa_antiga ? ` (no cadastro antigo: ${conta.empresa_antiga})` : ''}
+      </span>
+    )
   return (
     <span className="flex items-center gap-1.5">
       <Building2 size={14} />
