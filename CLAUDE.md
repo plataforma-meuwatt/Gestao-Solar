@@ -885,9 +885,10 @@ concluída"; e "Pode, só a 1638" fecharia a 1640 de "Fechar só a OS 1638 e a 1
 tudo!" executava — avaliação 14). A afirmativa de mais de uma palavra ("Sim, com certeza", "Sem
 problema", "Sem dúvida", "Claro que sim", "Sim senhor", "Por favor") é lista FECHADA e vale para
 qualquer resumo (`_EXPRESSOES_SIM`; avaliação 16: cancelavam, e "com certeza" só confirmava resumo
-com "com"). A que começa como afirmativa sem negação nem correção, mas não é um SIM limpo ("Sim,
-pode deixar"), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões, sem ir à IA
-(`pergunta_de_novo`) — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
+com "com"). A CURTA (até 4 palavras) que começa como afirmativa sem negação nem correção, mas não
+é um SIM limpo ("Sim, pode deixar"), não confirma nem derruba: o SISTEMA pergunta de novo, com os
+botões, sem ir à IA (`pergunta_de_novo`); a mais longa é outro assunto ("Pode me mandar o relatório
+da Porto Ferreira") — derruba e vai à IA, que fica sabendo, em vez de o pedido ser engolido — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
 pergunto de novo" (`_resposta_ao_resumo`, `e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
 UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —

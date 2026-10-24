@@ -410,8 +410,10 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
       1638", avaliação 15);
     - "outra": pergunta, negação, parada, restrição, troca fora do resumo, número fora dele, ou o que
       não começa por afirmativa — derruba a ação;
-    - "duvida": começa como afirmativa, sem nada disso, mas não é um SIM limpo ("Sim, pode deixar") —
-      não confirma nem derruba: o sistema pergunta de novo (avaliação 16)."""
+    - "duvida": CURTA (até 4 palavras), começa como afirmativa, sem nada disso, mas não é um SIM limpo
+      ("Sim, pode deixar") — não confirma nem derruba: o sistema pergunta de novo (avaliação 16). Mais
+      longa é outro assunto ("Pode me mandar o relatório da Porto Ferreira"): derruba e vai à IA, que
+      fica sabendo do cancelamento — perguntar de novo engoliria o pedido."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return "sim"
@@ -428,7 +430,7 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
         return "outra"
     if len(palavras) <= 8 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) for p in palavras[1:]):
         return "sim"
-    return "duvida"
+    return "duvida" if len(palavras) <= 4 else "outra"
 
 
 def e_sim(texto: str, acao: str = "") -> bool:

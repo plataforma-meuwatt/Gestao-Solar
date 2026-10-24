@@ -2579,6 +2579,12 @@ async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, b
     assert bot_local.enviados[-1] == h.DE_NOVO.format(resumo="Criar OS em UFV Ibitinga com 1 tarefa(s)",
                                                        limite=h._limite(h.PENDENTES[dono.id]))
     assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]               # os do MESMO resumo
+    # só a resposta CURTA é dúvida; a longa é outro assunto (derruba e vai à IA) — perguntar de novo
+    # engoliria o pedido
+    resumo = h._texto_da_acao(h.PENDENTES[dono.id])
+    assert [h._resposta_ao_resumo(t, resumo) for t in ("Sim, pode deixar", "Ok, pode deixar comigo",
+            "Pode me mandar o relatório da Porto Ferreira", "Ok, e a geração de hoje")] == [
+        "duvida", "duvida", "outra", "outra"]
     await assistente.atender(_toque(dono, 3))
     assert falso.aplicadas == ["criar_ordem_servico"]
     from time import monotonic
