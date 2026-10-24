@@ -40,6 +40,16 @@ export function confirmaAtivacao(nome: string, ativoAgora: boolean): boolean {
   )
 }
 
+/** A troca de perfil da equipe da plataforma grava ao escolher: pergunta antes, dizendo o que muda
+ *  (avaliação de 24/10/2026 — gravava sem confirmar). */
+export function confirmaPerfil(nome: string, novo: 'administrador' | 'atendimento'): boolean {
+  return window.confirm(
+    novo === 'administrador'
+      ? `Dar o perfil Administrador a ${nome}? Administrador abre todas as telas da plataforma, inclusive Usuários.`
+      : `Mudar ${nome} para Atendimento? A pessoa passa a abrir só as telas concedidas a ela.`,
+  )
+}
+
 export function quando(iso: string | null): string {
   if (!iso) return 'nunca'
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })

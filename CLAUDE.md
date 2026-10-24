@@ -855,8 +855,8 @@ e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da re
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
 srvclaude com a idade do contato do wg0 (exige a mesma chave de chamador) — VPN parada há mais
-de 5 min deixa o selo vermelho; a causa curta vem da API (`helper_rotulo`: "VPN das usinas parada" ou
-"Helper fora do ar"), no selo e na linha de cada pessoa do Bot do WhatsApp — "helper fora do ar"
+de 5 min deixa o selo vermelho; a causa curta vem da API (`helper_rotulo`: "VPN das usinas parada",
+"VPN das usinas não conferida" ou "Helper fora do ar"), no selo e na linha de cada pessoa do Bot do WhatsApp — "helper fora do ar"
 quando era a VPN mandava procurar no lugar errado (avaliação 17). Gateway e helper são conferidos ao
 mesmo tempo. **A ação do meuPlano confirma com SIM, não com a senha** (dono, 24/10/2026:
 o bot cobrava a senha de atuação para concluir uma OS — senha é para EQUIPAMENTO, "desligar,
@@ -889,9 +889,13 @@ tudo!" executava — avaliação 14). A afirmativa de mais de uma palavra ("Sim,
 problema", "Sem dúvida", "Claro que sim", "Sim senhor", "Por favor") é lista FECHADA e vale para
 qualquer resumo (`_EXPRESSOES_SIM`; avaliação 16: cancelavam, e "com certeza" só confirmava resumo
 com "com"; avaliação 17: também "Não tem problema", "Vai em frente", "Sim, só isso", "Top",
-"Boa", "Massa", "Yes"). O PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí" para "Fechar a OS
-1638…"): formas de cada verbo das ações do meuPlano, lista fechada (`_VERBOS`), casadas só com o
-PRIMEIRO verbo do resumo — "Fecha" não confirma "Criar OS…". A CURTA (até 4 palavras) que começa como
+"Boa", "Massa", "Yes"; avaliação 18: "Concordo", "Vamos lá", "Por mim pode", "Manda brasa"). Só o
+PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí", "Confirmo o fechamento" para "Fechar a OS
+1638…"): os verbos das ações do meuPlano (o primeiro de cada resumo, conferidos nas prévias de lá),
+com sinônimos e substantivos, lista fechada (`_FAMILIAS` → `_VERBOS`; "abrir a OS" é criá-la), casados
+só com o PRIMEIRO verbo do resumo. Verbo de OUTRA ação NUNCA confirma — nem é palavra neutra: "Pode
+criar" confirmava "APAGAR 3 itens" e "Pode abrir a OS" fechava a 1638 (avaliação 18); agora o sistema
+pergunta de novo, e um teste falha se um verbo de ação entrar nas listas neutras. A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
 "Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
 sem ir à IA (`pergunta_de_novo`); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais

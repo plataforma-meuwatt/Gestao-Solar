@@ -27,4 +27,7 @@ USER gateway
 #
 # `exec` antes do uvicorn: sem ele o shell fica como processo principal, engole o SIGTERM do
 # deploy e a requisição em voo é cortada — no webhook, isso é entrega perdida da Meta.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn gateway.main:app --host 0.0.0.0 --port ${PORT:-8120}"]
+#
+# Migração que FALHA não derruba o gateway: ele sobe com o banco como está e o log grita — fora do ar,
+# toda entrega da Meta se perderia (avaliação de 24/10/2026; o mesmo do BFF).
+CMD ["sh", "-c", "alembic upgrade head || echo 'MIGRACAO FALHOU: o gateway sobe com o banco como esta. Rode alembic upgrade head e confira o log acima.' >&2; exec uvicorn gateway.main:app --host 0.0.0.0 --port ${PORT:-8120}"]

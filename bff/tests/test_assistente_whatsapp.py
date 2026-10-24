@@ -1195,12 +1195,14 @@ async def test_o_selo_fica_vermelho_sem_contato_com_a_vpn(monkeypatch):
             return next(respostas)
 
     monkeypatch.setattr(h, "HelperBot", _Falso)
-    vpn = await h.alcancavel()
+    vpn, nao_conferida = await h.alcancavel(), await h.alcancavel()
     assert vpn == (False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato.")
-    assert (await h.alcancavel())[0] is False
+    assert nao_conferida[0] is False
     # a causa curta do selo (avaliação 17: dizia "helper fora do ar" quando era a VPN)
     assert h.rotulo_do_helper(*vpn) == "VPN das usinas parada"
     assert h.rotulo_do_helper(False, "Helper fora do alcance do bot: sem resposta") == "Helper fora do ar"
+    # e a VPN que não deu para conferir não é "parada" (avaliação 18)
+    assert h.rotulo_do_helper(*nao_conferida) == "VPN das usinas não conferida"
     assert h.rotulo_do_helper(True, "Helper e rede das usinas no ar") is None and h.rotulo_do_helper(None, "") is None
 
 
@@ -1775,8 +1777,10 @@ async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_loc
     assert falso.aplicadas == ["criar_ordem_servico"]
     assert not any("senha" in (m or "").lower() for m in bot_local.enviados)
     for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍",
-                "Confirmar", "pode confirmar", "Aprovado", "De acordo", "tá certo", "Pode lançar", "Sim, pode abrir"):
+                "Confirmar", "pode confirmar", "Aprovado", "De acordo", "tá certo"):
         assert h.e_sim(sim), sim
+    # o verbo, só o da AÇÃO (avaliação 18: "Pode criar" confirmava "APAGAR 3 itens")
+    assert h.e_sim("Pode lançar", "Lançar o dia 23/10 na tarefa 8873") and h.e_sim("Sim, pode abrir", "Abrir a OS 1639")
     assert h.e_sim("Sim, crie a OS 1639", "Abrir a OS 1639")    # o número, só o do resumo (avaliação 15)
     for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", "",
                   "de jeito nenhum", "tá errado"):
@@ -2590,6 +2594,39 @@ def test_o_verbo_da_acao_e_o_sim_falado_confirmam_e_assunto_novo_vai_a_ia():
         assert r(t, fechar) == "outra", t                                 # assunto novo: vai à IA
     for t in ("Sim, pode deixar", "Ok, vou ver"):
         assert r(t, fechar) == "duvida", t                                # sem assunto: pergunta de novo
+
+
+def test_verbo_de_outra_acao_nunca_confirma():
+    """Avaliação 18: os verbos de ação contavam como palavra neutra — "Pode criar" confirmava "APAGAR 3
+    item(ns) — 41 nó(s)", "Ok, cria o contato" confirmava "Apagar o contato…" e "Pode abrir a OS"
+    FECHAVA a 1638. Só o verbo (ou o substantivo) da PRÓPRIA ação confirma; o de outra, nunca."""
+    from app.services import assistente_helper as h
+
+    r = h._resposta_ao_resumo
+    apagar_nos = "APAGAR 3 item(ns) — 41 nó(s) no total (cascata)."
+    apagar_contato = "Apagar o contato 'Michel Renan' (#412)."
+    fechar = "Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas."
+    criar = "Criar OS em UFV Ibitinga com 1 tarefa(s), programada para 2026-10-23 com Michel."
+    desinstalar = "Desinstalar o equipamento de 1 ponto(s)."
+    remover = "Remover o material 'Fusível 15A' de INV-13."
+    for t, resumo in (("Pode criar", apagar_nos), ("Sim, crie", apagar_nos), ("Pode fechar", apagar_nos),
+                      ("Ok, registra", apagar_nos), ("Ok, cria o contato", apagar_contato),
+                      ("Pode registrar", apagar_contato), ("Sim, lança", apagar_contato), ("Pode abrir a OS", fechar),
+                      ("Ok, lança o dia", fechar), ("Sim, conclua a OS", criar), ("Pode trocar", desinstalar),
+                      ("Pode criar", remover), ("Pode concluir", fechar)):
+        assert r(t, resumo) != "sim", (t, resumo)
+    for t, resumo in (("Pode apagar", apagar_nos), ("Apaga", apagar_contato), ("Exclua", apagar_contato),
+                      ("Confirmo o fechamento", fechar), ("Confirmo a criação", criar), ("Pode abrir", criar),
+                      ("Pode desinstalar", desinstalar), ("Remove", remover),
+                      ("Edita", "Editar 5 nó(s) — 5 alteração(ões) no total."), ("Concordo", fechar),
+                      ("Vamos lá", fechar), ("Vamos", fechar), ("Por mim pode", fechar), ("Pode fechar já", fechar),
+                      ("Não tem problema nenhum", fechar), ("Manda brasa", fechar), ("Pode executar", apagar_contato)):
+        assert r(t, resumo) == "sim", (t, resumo)
+    assert r("Ok, vamos ver", fechar) == "duvida" and r("Vamos ver", fechar) == "outra"      # hesitar não confirma
+    # o verbo de outra ação não confirma nem quando o resumo o cita: a ação é a do PRIMEIRO verbo
+    assert r("Pode criar", "Fechar a OS 1638 e criar a próxima.") == "duvida"
+    # e nenhum verbo de ação mora nas listas de palavras neutras (era assim que "Pode criar" passava)
+    assert not set(h._VERBOS) & (h._NEUTRAS | h._AFIRMA | h._CIENCIA | h._SEM_ASSUNTO)
 
 
 async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):

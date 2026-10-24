@@ -103,8 +103,6 @@ CONFERENCIAS_POR_HORA = 20
 #: Os que passam disso são escondidos sem conferir ("[número oculto]") — o 4º número de uma
 #: frase podia ser a senha e ia em claro (avaliação 10).
 MAX_CONFERIDOS = 3
-#: "não", "cancela", "esquece"… com uma ação esperando: desarma, e o SISTEMA responde.
-CANCELA = re.compile(r"^\s*(?:n[ãa]o\b|cancel|desist|esquec|para\b|pare\b|deixa\b)", re.IGNORECASE)
 #: O que fica no log, no histórico e no gateway no lugar da senha digitada.
 OCULTA = "[senha de atuação]"
 TENTATIVAS = 5
@@ -128,10 +126,6 @@ CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 #: passo anterior criou (avaliação 15). Vem seguido do que já foi feito (`assistente._o_que_ficou`).
 CANCELADO_PASSO = "Cancelado: este passo não será executado."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
-#: O "sim" que confirma a ação do meuPlano: a mensagem INTEIRA, conferida pelo sistema (a IA não
-#: confirma nada).
-SIM = re.compile(r"^\s*(?:sim|confirm[oa]|pode(?:\s+(?:fazer|criar|concluir|seguir|mandar|ir))?|fa[zç]a?|isso|ok|"
-                 r"beleza|manda(?:\s+ver)?|positivo)\s*[!.]*\s*[👍✅]*\s*$", re.IGNORECASE)
 ANTES_DO_RESUMO_SIM = ("Esse \"sim\" foi mandado antes de o resumo da ação chegar, então não vale. Leia o resumo "
                        "acima e, se for isso mesmo, responda SIM de novo até as {limite}. Nada foi feito.")
 #: A senha (certa ou errada — a mesma frase, sem oráculo) depois do prazo da ação.
@@ -364,15 +358,16 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
            "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
-           "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si"}
+           "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
 #: tinha "com").
 _EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: nenhum)?|sem d[úu]vidas?(?: nenhuma)?|"
                              r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza)|"
-                             r"n[ãa]o tem (?:problemas?|erro)|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
-                             r"nada (?:a|pra|para) acrescentar)\b")
+                             r"n[ãa]o tem (?:problemas?|erro)(?: nenhum)?|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
+                             r"nada (?:a|pra|para) acrescentar|vamos (?:l[áa]|nessa)|por mim (?:pode|tudo bem|ok)|manda brasa|"
+                             r"vamos(?=\s*[!.]*\s*$))\b")
 #: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
 #: "Opa, pode", "Valeu, pode fazer").
 _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
@@ -380,25 +375,48 @@ _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e"
 #: O resto da frase só pode ter palavra NEUTRA — lista fechada. Nunca "para" (preposição e o
 #: imperativo de PARAR: "Ok, para tudo!" executava — avaliação 14), "não", "mas", "espera".
 _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
-                      "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "criar", "crie", "cria", "fechar",
-                      "feche", "fecha", "concluir", "conclua", "seguir", "prosseguir", "ir", "ai", "aí", "agora",
-                      "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo", "lançar",
-                      "lancar", "lance", "lança", "lanca", "abrir", "abra", "abre", "registrar", "registre",
-                      "registra", "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue",
-                      "pra", "assim", "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa",
-                      "esse"}
-#: O próprio verbo da ação confirma ("Fecha", "Feche aí" para "Fechar a OS 1638…"; avaliação 17): as
-#: formas de cada verbo das ações do meuPlano, lista FECHADA, casadas com o PRIMEIRO verbo do resumo —
-#: "Fecha" não confirma "Criar OS…", e "Conclua" não casa com "concluídas" no meio do resumo.
-_VERBOS = {forma: raiz for raiz, formas in (
-    ("fechar", ("fechar", "fecha", "feche", "fechem")), ("criar", ("criar", "cria", "crie", "criem")),
-    ("concluir", ("concluir", "conclua", "conclui", "concluam")),
-    ("lancar", ("lancar", "lanca", "lance", "lancem")), ("abrir", ("abrir", "abra", "abre", "abram")),
-    ("registrar", ("registrar", "registra", "registre")), ("executar", ("executar", "executa", "execute")),
-    ("aprovar", ("aprovar", "aprova", "aprove")), ("trocar", ("trocar", "troca", "troque")),
-    ("mover", ("mover", "move", "mova")), ("programar", ("programar", "programa", "programe")),
-    ("agendar", ("agendar", "agenda", "agende")), ("enviar", ("enviar", "envia", "envie")),
-) for forma in formas}
+                      "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "seguir", "prosseguir", "ir", "ai",
+                      "aí", "agora", "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo",
+                      "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue", "pra", "assim",
+                      "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa", "esse", "já", "ja"}
+def _formas(infinitivo: str) -> set[str]:
+    """As formas que se digitam de um verbo regular: o infinitivo, a 3ª pessoa e o imperativo
+    ("apagar" → apaga, apague; "concluir" → conclui, conclua; "mover" → move, mova)."""
+    raiz, fim = infinitivo[:-2], infinitivo[-2:]
+    if fim == "ar":
+        antes_de_e = (raiz[:-1] + "qu" if raiz.endswith("c") else raiz[:-1] + "gu" if raiz.endswith("g")
+                      else raiz[:-1] + "c" if raiz.endswith("ç") else raiz)
+        formas = {raiz + "a", antes_de_e + "e", antes_de_e + "em"}
+    elif raiz.endswith("u"):                         # concluir, excluir, incluir
+        formas = {raiz + "i", raiz + "a", raiz + "am"}
+    else:
+        formas = {raiz + "e", raiz + "a", raiz + "am"}
+    return {unicodedata.normalize("NFKD", f).encode("ascii", "ignore").decode() for f in formas | {infinitivo}}
+
+
+#: Os verbos das ações do meuPlano (o primeiro do resumo de cada uma, conferidos nas prévias de lá em
+#: 24/10/2026) e os sinônimos e substantivos de cada um. Lista FECHADA. Na resposta ao resumo, o verbo
+#: da PRÓPRIA ação confirma ("Fecha", "Apaga", "Confirmo o fechamento" — avaliação 17); verbo de OUTRA
+#: ação nunca confirma ("Pode criar" para "APAGAR 3 itens", "Pode abrir a OS" para "Fechar a OS 1638"
+#: — avaliação 18): o sistema pergunta de novo.
+_FAMILIAS = {
+    "apagar": ("apagar", "excluir", "deletar", "exclusao", "remocao"),
+    # "abrir a OS" é criá-la (jargão da O&M): "Pode criar" confirma "Abrir a OS…", e vice-versa
+    "editar": ("editar", "edicao"), "criar": ("criar", "criacao", "abrir", "abertura"),
+    "cadastrar": ("cadastrar", "cadastro"),
+    "adicionar": ("adicionar",), "remover": ("remover",), "gravar": ("gravar",),
+    "registrar": ("registrar", "registro"), "gerar": ("gerar",), "concluir": ("concluir", "conclusao"),
+    "ajustar": ("ajustar", "ajuste"), "clonar": ("clonar",), "trocar": ("trocar",),
+    "desinstalar": ("desinstalar", "desinstalacao"), "instalar": ("instalar", "instalacao"),
+    "definir": ("definir",), "aplicar": ("aplicar",), "comentar": ("comentar", "comentario"),
+    "alterar": ("alterar", "alteracao"), "fechar": ("fechar", "fechamento"), "associar": ("associar",),
+    "mover": ("mover",), "transferir": ("transferir", "transferencia"), "alocar": ("alocar",),
+    "devolver": ("devolver", "devolucao"), "lancar": ("lançar", "lancamento"),
+    "anexar": ("anexar",), "programar": ("programar",), "agendar": ("agendar",), "enviar": ("enviar",),
+    "arquivar": ("arquivar",), "atualizar": ("atualizar", "atualizacao"),
+}
+_VERBOS = {forma: raiz for raiz, palavras in _FAMILIAS.items() for p in palavras
+           for forma in (_formas(p) if p.endswith(("ar", "er", "ir")) else {p})}
 #: O que pode acompanhar uma afirmativa sem trazer assunto novo, mas sem deixar claro que é SIM ("Sim,
 #: pode deixar", "Ok, vou ver"): o sistema pergunta de novo. Palavra fora disto é assunto novo ("Ok, e
 #: Pereiras", "Pode mandar o PDF") — vai à IA (avaliação 17: era engolido).
@@ -455,15 +473,18 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
     # PARA concluída").
     if any(_tem(_PARAR, p) and not (_tem(_TROCA, p) and (_tem(da_acao, p) or mesmo_verbo(p))) for p in palavras):
         return "outra"
+    # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
+    outro_verbo = any(_verbo(p) is not None and not mesmo_verbo(p) for p in palavras)
     while len(palavras) > 1 and _tem(_ANTES, palavras[0]) and not _tem(_AFIRMA, palavras[0]):
         palavras = palavras[1:]
     if (not palavras or not (_tem(_AFIRMA, palavras[0]) or mesmo_verbo(palavras[0]))
             or any(p.isdigit() and p not in da_acao for p in palavras)):
         return "outra"
-    if len(palavras) <= 8 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or mesmo_verbo(p) for p in palavras[1:]):
+    if (not outro_verbo and len(palavras) <= 8
+            and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or mesmo_verbo(p) for p in palavras[1:])):
         return "sim"
     if len(palavras) <= 4 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or _tem(_SEM_ASSUNTO, p)
-                                  for p in palavras[1:]):
+                                  or _verbo(p) is not None for p in palavras[1:]):
         return "duvida"
     return "outra"
 
@@ -744,7 +765,7 @@ async def alcancavel() -> tuple[bool | None, str]:
     rede = await bot.rede()
     idade = rede.get("vpn_ultimo_contato_s")
     if not rede.get("ok"):
-        return False, f"{_HELPER_RESPONDE} não deu para conferir a rede até as usinas (VPN)."
+        return False, f"{_HELPER_RESPONDE} {_VPN_NAO_CONFERIDA}."
     if idade is None:
         return False, f"{_HELPER_RESPONDE} a rede até as usinas (VPN) nunca fez contato."
     if idade > VPN_PARADA_S:
@@ -754,6 +775,7 @@ async def alcancavel() -> tuple[bool | None, str]:
 
 
 _HELPER_RESPONDE = "Helper responde, mas"
+_VPN_NAO_CONFERIDA = "não deu para conferir a rede até as usinas (VPN)"
 
 
 def rotulo_do_helper(alcancavel: bool | None, resumo: str | None) -> str | None:
@@ -761,7 +783,9 @@ def rotulo_do_helper(alcancavel: bool | None, resumo: str | None) -> str | None:
     mandava o gerente procurar no lugar errado (avaliação 17). `None` = sem problema a mostrar."""
     if alcancavel is not False:
         return None
-    return "VPN das usinas parada" if (resumo or "").startswith(_HELPER_RESPONDE) else "Helper fora do ar"
+    if not (resumo or "").startswith(_HELPER_RESPONDE):
+        return "Helper fora do ar"
+    return "VPN das usinas não conferida" if _VPN_NAO_CONFERIDA in resumo else "VPN das usinas parada"
 
 
 #: O wg0 renova o contato a cada 25 s (PersistentKeepalive); 5 min sem contato é rede parada.

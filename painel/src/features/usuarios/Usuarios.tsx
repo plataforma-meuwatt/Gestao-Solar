@@ -35,7 +35,7 @@ import {
   type Conta,
   type Membro,
 } from '@/features/api'
-import { PAPEL, confirmaAtivacao } from '@/features/rotulos'
+import { PAPEL, confirmaAtivacao, confirmaPerfil } from '@/features/rotulos'
 import { EmpresasDaConta, ResumoDaConta, SenhaNova } from '@/features/usuarios/Conta'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -309,7 +309,10 @@ function LinhaDaEquipe({
           <select
             className="campo h-9 w-40 text-sm"
             value={conta.perfil}
-            onChange={(e) => aoMudar({ perfil: e.target.value as Membro['perfil'] })}
+            onChange={(e) => {
+              const perfil = e.target.value as Membro['perfil']
+              if (confirmaPerfil(conta.nome, perfil)) aoMudar({ perfil })
+            }}
             aria-label={`Perfil de ${conta.nome}`}
           >
             <option value="atendimento">Atendimento</option>

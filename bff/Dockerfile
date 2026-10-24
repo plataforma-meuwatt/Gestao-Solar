@@ -39,4 +39,8 @@ USER gestaosolar
 # `exec` antes do uvicorn é o que importa: sem ele o shell continua sendo o processo
 # principal, engole o SIGTERM do deploy e o uvicorn é morto sem encerrar o que estava
 # atendendo — requisição em voo cortada a cada publicação.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8100}"]
+#
+# Migração que FALHA não derruba a API (avaliação de 24/10/2026): com o healthcheck do Coolify
+# desligado, o contêiner morreria em laço e o aplicativo, o portal, os painéis e o bot iriam junto.
+# Ela sobe com o banco como está e o log grita "MIGRACAO FALHOU" (como no meuPlano, 91393817).
+CMD ["sh", "-c", "alembic upgrade head || echo 'MIGRACAO FALHOU: a API sobe com o banco como esta. Rode alembic upgrade head e confira o log acima.' >&2; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8100}"]
