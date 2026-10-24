@@ -14,6 +14,15 @@ from app.models.plant import PlantLink
 from app.models.user import Perfil, User
 
 
+@pytest.fixture(autouse=True)
+def _gateway_sem_espera(monkeypatch):
+    """Nos testes, o gateway de WhatsApp não existe: tentar de novo sem esperar de verdade
+    (em produção, `ESPERAS_S` cobre a falha passageira de DNS)."""
+    from app.clients import whatsapp
+
+    monkeypatch.setattr(whatsapp, "ESPERAS_S", (0.0, 0.0))
+
+
 @pytest.fixture
 def db():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})

@@ -195,3 +195,31 @@ def test_com_a_chave_certa_o_aviso_e_aceito(cliente_http, configurado):
     )
     assert r.status_code == 202
     assert r.json() == {"ok": True}
+
+
+@respx.mock
+async def test_dns_que_falha_uma_vez_nao_perde_a_resposta_do_bot(configurado, monkeypatch):
+    """24/10/2026: o DNS do endereço do gateway falhou uma vez e a resposta do bot se perdeu.
+    A conexão nem abriu — nada saiu —, então tentar de novo não duplica mensagem."""
+    from app.clients import whatsapp
+
+    async def _sem_espera(_s):
+        return None
+
+    monkeypatch.setattr(whatsapp.asyncio, "sleep", _sem_espera)
+    rota = respx.post(f"{GW}/interno/conteudo").mock(
+        side_effect=[httpx.ConnectError("[Errno -2] Name or service not known"), httpx.Response(200, json={"ok": True})]
+    )
+    assert (await whatsapp.enviar_conteudo(telefone="+5517997377626", tipo="text", texto="oi"))["ok"]
+    assert rota.call_count == 2
+
+
+@respx.mock
+async def test_tempo_esgotado_no_meio_nao_repete(configurado):
+    """Saiu e não voltou: pode ter chegado — repetir mandaria duas vezes."""
+    from app.clients import whatsapp
+
+    rota = respx.post(f"{GW}/interno/conteudo").mock(side_effect=httpx.ReadTimeout("lento"))
+    with pytest.raises(whatsapp.GatewayIndisponivel):
+        await whatsapp.enviar_conteudo(telefone="+5517997377626", tipo="text", texto="oi")
+    assert rota.call_count == 1

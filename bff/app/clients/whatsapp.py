@@ -9,6 +9,7 @@ frases diretas para a tela do gestor, em vez de "erro 502". "Não configurado" (
 estado mais comum enquanto ninguém preencheu a tela, e dizer isso é metade do trabalho.
 """
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -45,16 +46,31 @@ def _base() -> str:
     return s.whatsapp_gateway_url.rstrip("/")
 
 
+#: Esperas antes de tentar de novo quando a conexão NEM ABRIU (DNS, porta recusada). Em
+#: 24/10/2026 o DNS do endereço do gateway falhou uma vez ("Name or service not known") e a
+#: resposta do bot se perdeu. Como nada saiu, repetir não duplica mensagem.
+ESPERAS_S = (1.0, 3.0)
+
+
 async def _req(metodo: str, caminho: str, **kw: Any) -> Any:
     url = f"{_base()}{caminho}"
     cabecalhos = {CABECALHO_CHAVE: get_settings().whatsapp_chave_interna}
-    try:
-        async with httpx.AsyncClient(timeout=TIMEOUT_S) as cliente:
-            r = await cliente.request(metodo, url, headers=cabecalhos, **kw)
-    except httpx.RequestError as exc:
-        raise GatewayIndisponivel(
-            f"Não foi possível falar com o gateway de WhatsApp: {exc}"
-        ) from None
+    for tentativa in range(len(ESPERAS_S) + 1):
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT_S) as cliente:
+                r = await cliente.request(metodo, url, headers=cabecalhos, **kw)
+            break
+        except httpx.ConnectError as exc:
+            if tentativa == len(ESPERAS_S):
+                raise GatewayIndisponivel(
+                    f"Não foi possível falar com o gateway de WhatsApp: {exc}"
+                ) from None
+            await asyncio.sleep(ESPERAS_S[tentativa])
+        except httpx.RequestError as exc:
+            # Saiu e não voltou (tempo esgotado no meio): pode ter chegado — não repete.
+            raise GatewayIndisponivel(
+                f"Não foi possível falar com o gateway de WhatsApp: {exc}"
+            ) from None
 
     if r.status_code == 401:
         raise GatewayIndisponivel(
