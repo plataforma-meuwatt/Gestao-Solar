@@ -790,13 +790,15 @@ leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter ch
 `usina_helper` tem `metodo` (GET é leitura no helper: `/api/devices`, `/api/healthcheck/state?id=`
 — POST ali virava "escrita", pedia senha e dava 404) e respeita o recorte de usinas do GS
 (`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. Com ação esperando, a senha
-escrita numa frase também é tentativa. **Desde a 7ª avaliação:** todo número de 6 a 8 dígitos
-de quem tem senha é CANDIDATO (`assistente_helper.analisar`, conferido fora do laço da API com
-`to_thread`, até 3 por mensagem): certo ou errado, vira "[número oculto]" para a IA, o
-histórico e o log, e a mensagem some do gateway — em todos os caminhos, inclusive os que saem
-cedo. TODA conferência que falha conta (número sozinho ou em frase, com ou sem ação esperando);
-5 falhas em 15 min bloqueiam, e durante o bloqueio nenhuma mensagem com candidato é processada
-(nem conferida: sem oráculo). Na hora da senha, a parte do bot da ação é conferida de novo. O
+escrita numa frase também é tentativa. **Desde a 8ª avaliação: SÓ a mensagem que é APENAS a
+senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dígitos são juntados
+antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem
+(o bloco promete "qualquer outra mensagem cancela", e "não faça! senha 482913" executava).
+Todo número de 6 a 8 dígitos de quem tem senha vira "[número oculto]" para a IA, o histórico e
+o log, e a mensagem some do gateway, em todos os caminhos — mas número dentro de frase NÃO é
+conferido (UC, CEP e protocolo não contam erro, não bloqueiam e não viram oráculo). A tentativa
+(a mensagem que é só o número) é conferida com `to_thread`; cada erro conta; 5 em 15 min
+bloqueiam. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele. Qualquer outra

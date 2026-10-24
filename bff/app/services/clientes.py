@@ -51,7 +51,10 @@ def criar(
     email: str | None,
     empresa: str | None,
     criado_por: User,
+    senha_pronta: tuple[str, str] | None = None,
 ) -> ClienteCriado:
+    """`senha_pronta` = (senha, hash) já calculados — a rota assíncrona faz o pbkdf2 (~0,45 s)
+    fora do laço da API, que é um processo só (bot incluído)."""
     try:
         apelido = normalizar_apelido(apelido)
     except ApelidoInvalido as exc:
@@ -71,14 +74,17 @@ def criar(
     ) is not None:
         raise RegraDeNegocio(f"Já existe um dono de usina com o e-mail {email}.")
 
-    senha = gerar_senha_provisoria()
+    senha, senha_hash = senha_pronta or (None, None)
+    if senha is None:
+        senha = gerar_senha_provisoria()
+        senha_hash = gerar_hash_senha(senha)
     usuario = User(
         apelido=apelido,
         email=email,
         nome=nome.strip(),
         empresa=(empresa or "").strip() or None,
         perfil=Perfil.CLIENTE,
-        senha_hash=gerar_hash_senha(senha),
+        senha_hash=senha_hash,
         trocar_senha=True,
     )
     db.add(usuario)

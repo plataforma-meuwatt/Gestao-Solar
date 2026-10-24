@@ -21,6 +21,7 @@ portão separado erra fechado: rota nova aqui já nasce com o recorte, e `gestor
 recusa esta sessão em qualquer rota de painel.
 """
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -955,6 +956,9 @@ async def criar_cliente(
     from app.services import cadastro
     # O celular é conferido ANTES de criar: recusado depois, a conta já existiria pela metade.
     telefone = cadastro.celular_livre(db, body.telefone, None) if body.telefone else None
+    from app.core.security import gerar_senha_provisoria
+
+    provisoria = gerar_senha_provisoria()
     try:
         criado = clientes.criar(
             db,
@@ -963,6 +967,7 @@ async def criar_cliente(
             email=str(body.email) if body.email else None,
             empresa=None,
             criado_por=gerente,
+            senha_pronta=(provisoria, await asyncio.to_thread(gerar_hash_senha, provisoria)),
         )
     except clientes.RegraDeNegocio as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -1519,7 +1524,7 @@ async def editar_conta_da_empresa(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
             )
-        conta.senha_hash = gerar_hash_senha(body.senha)
+        conta.senha_hash = await asyncio.to_thread(gerar_hash_senha, body.senha)
     if body.senha_atuacao is not None:
         from app.services import assistente_helper
 
@@ -1527,7 +1532,7 @@ async def editar_conta_da_empresa(
             limpa = assistente_helper.validar_senha_atuacao(body.senha_atuacao)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        conta.senha_atuacao_hash = gerar_hash_senha(limpa)
+        conta.senha_atuacao_hash = await asyncio.to_thread(gerar_hash_senha, limpa)
         assistente_helper.nova_senha(conta.id)
     if body.nome is not None or body.email is not None or body.telefone is not None:
         from app.services import cadastro

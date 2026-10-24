@@ -173,7 +173,7 @@ export function CartaoNotificacoes({ clienteId, nome }: { clienteId: number; nom
             <>
               <p className="px-5 pt-4 text-sm text-rotulo">
                 Marque, por aviso, de quais usinas {nome} quer receber. Nada vem ligado: sem
-                marcar, ele não recebe nada.
+                marcar, nada chega.
               </p>
 
               {central.tipos.map((t) => {

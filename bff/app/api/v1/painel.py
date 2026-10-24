@@ -220,6 +220,27 @@ def listar_rotas(
     )
 
 
+@router.get("/helper/rotas", response_model=VarreduraOut)
+async def rotas_do_helper(_: User = Depends(EXIGE_ROTAS)) -> VarreduraOut:
+    """A porta do bot do HELPER na tela Rotas: declarada e não sondada — toda chamada dela
+    exige o token da pessoa, e a plataforma não tem token. O alto diz se o túnel e a VPN até
+    as usinas respondem agora (o mesmo selo do Log do bot)."""
+    from app.services import assistente_helper
+
+    alcancavel, resumo = await assistente_helper.alcancavel()
+    return VarreduraOut(
+        produto="helper",
+        ok=bool(alcancavel),
+        detalhe=resumo,
+        executada_em=datetime.now(UTC),
+        rotas=[
+            RotaSondadaOut(chave=r.chave, metodo=r.metodo, caminho=r.caminho, alimenta=r.alimenta,
+                           essencial=r.essencial, situacao="nao_sondada", detalhe=r.nao_sondada_porque)
+            for r in sonda.HELPER
+        ],
+    )
+
+
 @router.post("/integracoes/{produto}/rotas/sondar", response_model=VarreduraOut)
 async def sondar_rotas(
     produto: Produto,

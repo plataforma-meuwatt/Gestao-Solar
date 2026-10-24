@@ -263,7 +263,10 @@ function LinhaDoUsuario({
             onClick={() => {
               if (
                 window.confirm(
-                  `Tirar ${usuario.nome} de ${empresa.nome}? A conta continua existindo; as usinas que ela recebe desta empresa saem junto.`,
+                  `Tirar ${usuario.nome} de ${empresa.nome}? A conta continua existindo; as usinas que ela recebe desta empresa saem junto.` +
+                    (usuario.outras_empresas.length || usuario.cuidada_por
+                      ? ''
+                      : ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa — nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'),
                 )
               )
                 tirar.mutate()
@@ -344,7 +347,7 @@ function NovoUsuario({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
             aria-label="Papel na empresa"
           >
             <option value="gestor_empresa">Gerente — opera a empresa no oem-gs</option>
-            <option value="tecnico">Técnico — conecta o WhatsApp dele aos tickets</option>
+            <option value="tecnico">Técnico — usa o bot (helper e geração) nas usinas da empresa e conecta o próprio WhatsApp</option>
             <option value="cliente">Dono de usina — entra no aplicativo</option>
           </select>
         </div>
@@ -434,7 +437,7 @@ function PorQuemJaExiste({
             onChange={(e) => setFiltro(e.target.value)}
           />
           <select
-            className="campo text-sm"
+            className="campo text-sm h-auto py-2"
             size={Math.min(8, Math.max(3, candidatas.length))}
             value={escolhida ?? ''}
             onChange={(e) => setEscolhida(Number(e.target.value))}

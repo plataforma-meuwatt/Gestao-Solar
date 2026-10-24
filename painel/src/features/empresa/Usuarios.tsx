@@ -833,7 +833,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           >
             <option value="cliente">Dono de usina — entra no aplicativo</option>
             <option value="gestor_empresa">Gerente — opera a empresa com você</option>
-            <option value="tecnico">Técnico — conecta o WhatsApp dele aos tickets</option>
+            <option value="tecnico">Técnico — usa o bot (helper e geração) nas usinas da empresa e conecta o próprio WhatsApp</option>
           </select>
           <p className="text-xs text-fraco mt-1.5">
             {perfil === 'cliente'

@@ -93,7 +93,7 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
                                 "bot do helper). Fale com quem administra a plataforma.")
         if not conta.telefone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                "Cadastre o celular antes de liberar o assistente do WhatsApp.")
+                                "Cadastre o celular antes de liberar o bot do WhatsApp.")
         produto = BOT_TOKEN[campo]
         if not conta.tem_token(produto):
             raise HTTPException(status.HTTP_400_BAD_REQUEST,

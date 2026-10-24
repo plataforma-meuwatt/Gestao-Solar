@@ -116,6 +116,16 @@ class TestIdentidadeVemDoProduto:
         assert v.usinas_visiveis == 1
         assert v.estado == "ok"
 
+    async def test_token_de_outro_email_e_aceito_com_aviso(self, db, cliente, administrador, monkeypatch):
+        """O e-mail de lá pode ser outro (só a pessoa sabe), mas a tela avisa: é o sinal mais
+        barato de token colado na conta errada."""
+        _responde(monkeypatch, identidade={"id": "46", "nome": "Outra", "email": "outra@x.com"})
+        r = await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)
+        assert r.ok and "outra@x.com" in r.detalhe and "confira se é mesmo desta pessoa" in r.detalhe
+        _responde(monkeypatch)
+        r = await vinculos.conectar(db, cliente, Produto.MEUPLANO, MP, por=administrador)
+        assert "Atenção" not in (r.detalhe or "")
+
     async def test_o_token_nao_fica_em_claro(self, db, cliente, administrador, monkeypatch):
         _responde(monkeypatch)
         await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)

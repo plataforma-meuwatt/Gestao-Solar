@@ -126,10 +126,10 @@ export function EmpresasDaConta({ conta, aoFechar }: { conta: Conta; aoFechar: (
       ) : (
         <div className="grid gap-4">
           <Aviso>
-            Uma pessoa pode estar em mais de uma empresa, com o mesmo papel. A empresa de{' '}
-            <strong>origem</strong> cuida da conta (senha, celular, tokens e bot); nas outras ela
-            é {conta.perfil === 'cliente' ? 'dona de usina' : PAPEL[conta.perfil]?.toLowerCase()} e
-            recebe só o que aquela empresa der.
+            Uma pessoa pode estar em mais de uma empresa, sempre com o MESMO papel (hoje:{' '}
+            {conta.perfil === 'cliente' ? 'dono de usina' : PAPEL[conta.perfil]?.toLowerCase()}). A empresa de{' '}
+            <strong>origem</strong> cuida da conta (senha, celular, tokens e bot); as outras dão só
+            o que é delas (as usinas que concedem).
             {conta.perfil === 'cliente'
               ? ' No aplicativo, as usinas da outra empresa só trazem dado com o token próprio da pessoa no meuWatt/meuPlano (sem ele, a leitura é com a conta da empresa de origem).'
               : ''}

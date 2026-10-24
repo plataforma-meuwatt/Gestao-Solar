@@ -30,7 +30,7 @@ from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
 #: A mensagem INTEIRA é uma tentativa de senha: só o número, ou "senha 482913", "confirmo 482913".
-SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{6,8})\s*[.!]?\s*$", re.IGNORECASE)
+SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{6,8})\s*[.!]?\s*$", re.IGNORECASE)  # sobre `normalizar`
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
 #: CANDIDATO a senha: número de 6 a 8 dígitos solto em qualquer ponto da mensagem (a senha tem
 #: 6 a 8). "OS 1639" e "2025" não são candidatos e seguem para a conversa como sempre.
@@ -56,8 +56,10 @@ SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot só lê.
 #: até a frase mudar descobriria a senha.
 NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — se era "
                   "outra coisa, escreva com palavras.")
-BLOQUEADO = ("Ações bloqueadas por senha errada: por 15 minutos, mensagem com número de 6 a 8 dígitos não "
-             "é processada. Nada foi feito.")
+BLOQUEADO = "Ações bloqueadas por senha errada por 15 minutos. Nada foi feito."
+#: O que vai ao pé da resposta quando uma mensagem que não era só a senha derrubou a ação.
+ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para executar uma ação, mande só a "
+                  "senha, sem outras palavras.)")
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 
@@ -88,38 +90,55 @@ _BLOQUEIO: dict[int, float] = {}
 
 @dataclass
 class Analise:
-    """O que a mensagem tem de senha, conferido UMA vez por mensagem."""
+    """O que a mensagem tem de senha, olhado UMA vez por mensagem."""
 
+    #: Números de 6 a 8 dígitos (depois de juntar "482 913"): escondidos, certos ou errados.
     candidatos: list[str] = field(default_factory=list)
+    #: A mensagem é APENAS a senha ("482913", "senha 482-913") — a única que é tentativa.
+    pura: bool = False
     acertou: bool = False
-    falhas: int = 0
     bloqueada: bool = False
 
 
+#: "482 913", "482-913", "482.913" → "482913": a senha com separador vazava inteira.
+_SEPARADOR = re.compile(r"(?<=\d)[ .\-](?=\d)")
+
+
+def normalizar(texto: str) -> str:
+    return _SEPARADOR.sub("", texto or "")
+
+
 async def analisar(user, texto: str) -> Analise:
-    """Confere os candidatos da mensagem contra a senha desta pessoa — fora do laço da API
-    (`to_thread`: o pbkdf2 leva ~0,45 s e travava o processo inteiro). Durante o bloqueio,
-    nem confere: a resposta é a mesma para qualquer candidato (sem oráculo)."""
+    """Esconde todo candidato e confere a senha SÓ quando a mensagem é apenas ela — fora do
+    laço da API (`to_thread`: o pbkdf2 leva ~0,45 s). Número dentro de frase (UC, CEP,
+    protocolo… ou a senha escrita no meio de "não faça") nunca é conferido: não conta erro, não
+    bloqueia ninguém e não vira oráculo; só some da IA, do log, do histórico e do gateway."""
     if user is None or not user.senha_atuacao_hash:
         return Analise()
-    candidatos = list(dict.fromkeys(CANDIDATO.findall(texto or "")))
-    if not candidatos:
-        return Analise()
+    normal = normalizar(texto)
+    candidatos = list(dict.fromkeys(CANDIDATO.findall(normal)))
+    m = SENHA.match(normal)
+    if m is None:
+        return Analise(candidatos)
     if monotonic() < _BLOQUEIO.get(user.id, 0):
-        return Analise(candidatos, bloqueada=True)
-    for n in candidatos[:MAX_CONFERIDOS]:
-        if await asyncio.to_thread(conferir_senha, n, user.senha_atuacao_hash):
-            return Analise(candidatos, acertou=True)
-    return Analise(candidatos, falhas=len(candidatos[:MAX_CONFERIDOS]))
+        return Analise(candidatos, pura=True, bloqueada=True)
+    acertou = await asyncio.to_thread(conferir_senha, m.group(1), user.senha_atuacao_hash)
+    return Analise(candidatos, pura=True, acertou=acertou)
 
 
 def mascarar(texto: str) -> str:
-    return CANDIDATO.sub(OCULTO, texto or "")
+    return CANDIDATO.sub(OCULTO, normalizar(texto))
+
+
+def desarmar(user_id: int) -> bool:
+    """Tira a ação que esperava a senha. Devolve se havia uma (valendo)."""
+    p = PENDENTES.pop(user_id, None)
+    return p is not None and monotonic() <= p.expira
 
 
 def _contar_falhas(user_id: int, falhas: int) -> int:
-    """Toda conferência que falha conta — número sozinho ou numa frase, com ou sem ação
-    esperando. Zera depois de `BLOQUEIO_S` sem erro. Devolve o total; no limite, bloqueia."""
+    """Toda tentativa errada conta (a mensagem que é só o número), com ou sem ação esperando.
+    Zera depois de `BLOQUEIO_S` sem erro. Devolve o total; no limite, bloqueia."""
     total, desde = _ERROS.get(user_id, (0, monotonic()))
     if monotonic() - desde > BLOQUEIO_S:
         total, desde = 0, monotonic()
@@ -435,23 +454,30 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
     return " · ".join(pares)
 
 
-async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: Analise | None = None) -> str | None:
-    """A SENHA DE ATUAÇÃO → executa a ação esperando desta pessoa. `None` = a mensagem não é
-    senha e segue para a conversa (com os candidatos já mascarados por quem chama).
+async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: Analise | None = None,
+                                 esperava: bool = False) -> str | None:
+    """A mensagem que é APENAS a senha de atuação → executa a ação esperando. `None` = segue
+    para a conversa (com os candidatos já escondidos por quem chama).
 
-    - Bloqueada: qualquer mensagem com candidato recebe `BLOQUEADO`, certo ou errado.
-    - Senha certa (em qualquer frase): executa a ação esperando — se a parte do bot ainda
-      estiver ligada —, ou `NADA_ESPERANDO`.
-    - Toda conferência que falha conta; `TENTATIVAS` falhas bloqueiam por `BLOQUEIO_S`.
-      Mensagem que é só o número recebe a mesma frase sem ação esperando, certa ou errada.
-    - Qualquer outra mensagem DESARMA a ação esperando; "não"/"cancela" respondem aqui."""
-    texto = texto or ""
+    Quem chama (`assistente._atender`) DESARMA a ação antes, em toda mensagem que não é só a
+    senha — frase, "limpar", áudio, imagem: "qualquer outra mensagem cancela" é o que o bloco
+    da ação promete, e "não faça! senha 482913" executava (avaliação de 24/10/2026).
+
+    - Bloqueada: a tentativa recebe `BLOQUEADO`, certa ou errada.
+    - Certa: executa — se a parte do bot ainda estiver ligada —, ou `NADA_ESPERANDO`.
+    - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
+      é a mesma da certa.
+    - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
+    normal = normalizar(texto)
+    if SENHA.match(normal) is None:
+        return CANCELADO if esperava and CANCELA.match(normal) else None
     analise = analise or await analisar(user, texto)
     pendente = PENDENTES.get(user.id)
     if pendente is not None and monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
         pendente = None
-    pura = SENHA.match(texto) is not None
+    if not user.senha_atuacao_hash:
+        return SEM_SENHA if pendente is not None or COM_PALAVRA.match(normal) else None
     if analise.bloqueada:
         return BLOQUEADO
     if analise.acertou:
@@ -462,20 +488,11 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
         if pendente.parte not in user.bot_ativo:
             return PARTE_DESLIGADA
         return await pendente.executar(db, user, telefone)
-    if analise.falhas:
-        total = _contar_falhas(user.id, analise.falhas)
-        if total >= TENTATIVAS:
-            return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
-                    f"{BLOQUEIO_S // 60} min. Nada foi feito.")
-        if pura:
-            return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else NADA_ESPERANDO
-    elif pura and (pendente is not None or COM_PALAVRA.match(texto)):
-        return SEM_SENHA                  # tentativa de senha de quem ainda não tem
-    if pendente is not None:
-        PENDENTES.pop(user.id, None)      # outra mensagem: a ação esperando cai
-        if CANCELA.match(texto):
-            return CANCELADO
-    return None
+    total = _contar_falhas(user.id, 1)
+    if total >= TENTATIVAS:
+        return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
+                f"{BLOQUEIO_S // 60} min. Nada foi feito.")
+    return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else NADA_ESPERANDO
 
 
 _ROTA = {"type": "string", "description": "Rota do helper, ex.: /api/registry/plants, /api/registry/devices, "

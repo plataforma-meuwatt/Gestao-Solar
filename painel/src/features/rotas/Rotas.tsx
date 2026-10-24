@@ -31,6 +31,7 @@ import {
   type RotaSondada,
   type SituacaoRota,
   type Varredura,
+  rotasDoHelper,
 } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -70,8 +71,37 @@ export function Rotas() {
         {PRODUTOS.map((p) => (
           <BlocoProduto key={`${p.chave}-${empresaId}`} {...p} empresaId={empresaId} />
         ))}
+        <BlocoHelper />
       </div>
     </Pagina>
+  )
+}
+
+/** A porta do bot do helper: declarada, não sondada (toda chamada exige o token da pessoa —
+ *  a plataforma não tem), com o alcance de agora no alto: túnel e VPN até as usinas. */
+function BlocoHelper() {
+  const { data, isLoading, error } = useQuery({ queryKey: ['rotas', 'helper'], queryFn: rotasDoHelper })
+  return (
+    <Cartao>
+      <div className="px-5 pt-4 pb-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <p className="text-forte font-semibold">Helper — porta do bot</p>
+          {data ? <Selo tom={data.ok ? 'ok' : 'parado'}>{data.ok ? 'alcançável' : 'fora'}</Selo> : null}
+          {data ? <Selo tom="sem-dados">{data.rotas.length} catalogadas</Selo> : null}
+        </div>
+        <p className="text-sm text-rotulo mt-1">
+          {data?.detalhe ??
+            'Ler e comandar as usinas pelo bot do WhatsApp, com o token de cada pessoa. Não é sondado daqui: a plataforma não tem token.'}
+        </p>
+      </div>
+      {isLoading ? null : error ? (
+        <div className="px-5 pb-5">
+          <Erro>{mensagemDeErro(error)}</Erro>
+        </div>
+      ) : (
+        (data?.rotas ?? []).map((r, i) => <Linha key={r.chave} rota={r} primeira={i === 0} />)
+      )}
+    </Cartao>
   )
 }
 

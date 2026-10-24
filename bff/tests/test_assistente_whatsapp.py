@@ -810,18 +810,23 @@ async def test_o_helper_respeita_as_usinas_liberadas_no_gestao_solar(db, helper_
     assert ("POST", "/api/read") not in helper_com_get.chamadas
 
 
-async def test_a_senha_escrita_numa_frase_e_tentativa_e_some_do_log(db, bot_local, helper_com_get):
-    """"a senha é 482913" ia à IA e ao log em claro."""
+async def test_a_senha_numa_frase_nao_executa_some_e_cancela(db, bot_local, helper_com_get, monkeypatch):
+    """Só a mensagem que é APENAS a senha executa (avaliação 8): "a senha é 482913" cancela a
+    ação, e o número some da IA, do log, do histórico e do gateway."""
     from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
     from app.services import assistente_helper as h
 
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
     dono = _dono_com_usina(db)
-    await h.usina_helper(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
-                         {"rota": "/api/act", "corpo": {"plant_id": "pirapozinho", "acao": "off"}})
+    await _armar(db, dono)
     await assistente.atender({"id": 9, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
                               "texto": "a senha é 482913"})
-    assert bot_local.llm == [] and helper_com_get.confirmadas == [("P-1", "pin")]
-    assert bot_local.ocultadas == [9]
+    assert helper_com_get.confirmadas == [] and dono.id not in h.PENDENTES
+    assert bot_local.llm == [f"a senha é {h.OCULTO}"] and bot_local.ocultadas == [9]
+    assert bot_local.enviados[0].endswith(h.ACAO_CANCELADA)
     assert "482913" not in db.query(RegistroBot).one().pergunta
     assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
 
@@ -886,11 +891,16 @@ async def _armar(db, dono, rota="/api/act"):
     return ctx
 
 
-async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local, helper_com_get):
+async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local, helper_com_get, monkeypatch):
     """S1: frase com a senha e SEM ação esperando; S4: frase de 100 caracteres com a senha e
-    COM ação esperando — as duas iam em claro à IA, ao log, ao histórico e ao gateway."""
+    COM ação esperando. Nenhuma executa, e o número nunca chega à IA, ao log, ao histórico nem
+    ao gateway."""
     from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
     dono = _dono_com_usina(db)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
                               "texto": "sim, pode fazer. senha 482913 ok"})
@@ -899,7 +909,7 @@ async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local
     assert len(longa) > 80
     await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": longa})
 
-    assert bot_local.llm == [] and helper_com_get.confirmadas == [("P-1", "pin")]
+    assert helper_com_get.confirmadas == [] and all("482913" not in m for m in bot_local.llm)
     assert bot_local.ocultadas == [1, 2]
     assert all("482913" not in (r.pergunta or "") for r in db.query(RegistroBot))
     assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
@@ -990,24 +1000,31 @@ async def test_o_tecnico_usa_o_helper_nas_usinas_da_empresa(db, helper_com_get):
     assert "erro" not in r
 
 
-async def test_palpites_em_frases_contam_e_bloqueiam(db, helper_com_get):
-    """36 palpites em 12 mensagens não contavam nenhum erro, e a senha certa executava depois."""
+async def test_numero_em_frase_nao_e_conferido_nem_conta_erro(db, helper_com_get, monkeypatch):
+    """Número de 6 a 8 dígitos numa frase (UC, CEP, protocolo — ou palpites) não é conferido:
+    não bloqueia ninguém e não vira oráculo (avaliação 8: 5 deles bloqueavam a pessoa)."""
     from app.services import assistente_helper as h
 
+    conferidos = []
+    original = h.asyncio.to_thread
+
+    async def _to_thread(fn, *a):
+        conferidos.append(a[0])
+        return await original(fn, *a)
+
+    monkeypatch.setattr(h.asyncio, "to_thread", _to_thread)
     dono = _dono_com_usina(db)
-    await _armar(db, dono)
-    palpites = iter(range(100000, 100036))
-    respostas = [await h.confirmar_por_mensagem(db, dono, dono.telefone,
-                                                f"tenta {next(palpites)} {next(palpites)} {next(palpites)}")
-                 for _ in range(12)]
-    assert any("bloqueadas" in (r or "") for r in respostas)
-    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913") == h.BLOQUEADO
-    assert helper_com_get.confirmadas == []
+    for i in range(12):
+        analise = await h.analisar(dono, f"a UC {100000 + i} e o protocolo {200000 + i}?")
+        assert len(analise.candidatos) == 2 and not analise.pura
+        assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "x", analise) is None
+    assert conferidos == [] and dono.id not in h._ERROS and dono.id not in h._BLOQUEIO
+    assert h.mascarar("a UC 1234567 e a OS 1639") == f"a UC {h.OCULTO} e a OS 1639"
 
 
 async def test_sem_acao_esperando_certa_e_errada_numa_frase_nao_vazam(db, bot_local, helper_com_get, monkeypatch):
-    """ "a 482913" recebia a frase fixa e "a 482914" ia à IA — a diferença entregava o acerto
-    sem contar erro, e o número errado (um dígito de diferença) ia à IA e ao histórico."""
+    """ "a 482913" recebia a frase fixa e "a 482914" ia à IA — a diferença entregava o acerto.
+    Agora as duas chegam IGUAIS à IA, com o número escondido, e nenhuma conta erro."""
     from app.models.conversa_whatsapp import ConversaWhatsapp
     from app.services import assistente_helper as h
 
@@ -1018,10 +1035,8 @@ async def test_sem_acao_esperando_certa_e_errada_numa_frase_nao_vazam(db, bot_lo
     dono = _dono_com_usina(db)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482913"})
     await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482914"})
-    assert bot_local.enviados[0] == h.NADA_ESPERANDO
-    assert bot_local.llm == [f"a {h.OCULTO}"] and bot_local.ocultadas == [1, 2]
-    conversa = db.query(ConversaWhatsapp).one().mensagens
-    assert "48291" not in conversa and h._ERROS[dono.id][0] == 1
+    assert bot_local.llm == [f"a {h.OCULTO}", f"a {h.OCULTO}"] and bot_local.ocultadas == [1, 2]
+    assert "48291" not in db.query(ConversaWhatsapp).one().mensagens and dono.id not in h._ERROS
 
 
 async def test_a_conferencia_da_senha_sai_do_laco_da_api(db, monkeypatch):
@@ -1108,3 +1123,46 @@ def test_leitura_sem_usina_nomeada_vem_so_com_as_liberadas():
                                     {"msg": "sem usina"}]}
     assert _so_liberadas(feed, {"pirapozinho"})["alarmes"] == [{"plant_id": "pirapozinho", "msg": "trip"},
                                                                {"msg": "sem usina"}]
+
+
+# ── avaliação de 24/10/2026 (8ª): "qualquer outra mensagem cancela" vale mesmo ─────────
+
+
+async def test_nao_faca_com_a_senha_nao_executa(db, bot_local, helper_com_get):
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
+                              "texto": "não, cancela! a senha é 482913, mas NÃO faça"})
+    assert bot_local.enviados == [h.CANCELADO] and helper_com_get.confirmadas == [] and bot_local.ocultadas == [1]
+
+
+async def test_limpar_e_audio_cancelam_a_acao(db, bot_local, helper_com_get):
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "limpar"})
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482913"})
+    await _armar(db, dono)
+    await assistente.atender({"id": 3, "telefone": dono.telefone, "wa_id": "1", "tipo": "audio", "texto": None})
+    await assistente.atender({"id": 4, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482913"})
+    assert helper_com_get.confirmadas == []
+    assert bot_local.enviados[0].endswith(h.ACAO_CANCELADA) and bot_local.enviados[1] == h.NADA_ESPERANDO
+    assert bot_local.enviados[2].endswith(h.ACAO_CANCELADA) and bot_local.enviados[3] == h.NADA_ESPERANDO
+
+
+async def test_a_senha_com_separador_e_reconhecida_e_nao_vaza(db, bot_local, helper_com_get):
+    """ "482 913" e "482-913" iam inteiros à IA, ao histórico e ao meuPlano."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482 913"})
+    assert helper_com_get.confirmadas == [("P-1", "pin")] and bot_local.llm == [] and bot_local.ocultadas == [1]
+    await _armar(db, dono)
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "senha 482-913"})
+    assert len(helper_com_get.confirmadas) == 2
+    assert all("913" not in (r.pergunta or "") for r in db.query(RegistroBot))
+    assert "913" not in db.query(ConversaWhatsapp).one().mensagens

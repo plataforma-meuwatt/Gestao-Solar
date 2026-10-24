@@ -43,9 +43,9 @@ MAX_RODADAS = 6
 HISTORICO = 20                # mensagens guardadas (user + assistant)
 TETO_RESULTADO = 14000        # caracteres de cada resultado de ferramenta que vão ao modelo
 
-DESCONHECIDO = ("Este é o assistente do Gestão Solar e só atende números cadastrados. "
+DESCONHECIDO = ("Este é o bot do Gestão Solar e só atende números cadastrados. "
                 "Peça à sua empresa de O&M para cadastrar este telefone na sua conta do Gestão Solar.")
-NAO_LIBERADO = ("Seu acesso ao assistente do WhatsApp ainda não foi liberado. "
+NAO_LIBERADO = ("Seu acesso ao bot do WhatsApp ainda não foi liberado. "
                 "Peça ao gerente da sua empresa de O&M para liberar na sua conta, "
                 "com o seu token do meuWatt ou do meuPlano.")
 LIMPAR = {"/novo", "novo", "/reset", "zerar", "limpar", "limpar contexto"}
@@ -371,11 +371,11 @@ def _empresa_fora(db: Session, user: User) -> str | None:
     from app.models.empresa import Empresa
 
     if user.empresa_id is None:
-        return ("Sua conta não está em nenhuma empresa de O&M no Gestão Solar, então o assistente não "
+        return ("Sua conta não está em nenhuma empresa de O&M no Gestão Solar, então o bot não "
                 "atende. Fale com a sua O&M.")
     empresa = db.get(Empresa, user.empresa_id)
     if empresa is None or not empresa.ativa:
-        return ("O acesso da sua empresa ao Gestão Solar está desligado, então o assistente não atende. "
+        return ("O acesso da sua empresa ao Gestão Solar está desligado, então o bot não atende. "
                 "Fale com a sua O&M.")
     return None
 
@@ -437,8 +437,12 @@ async def _atender(evento: dict) -> None:
             await _texto(telefone, NAO_LIBERADO)
             _registrar(db, telefone, user, "nao_liberado", pergunta=pergunta, resposta=NAO_LIBERADO, em=enviada)
             return
+        # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha derruba a ação
+        # que a esperava — antes de "limpar" e de áudio/imagem, que saem logo abaixo.
+        esperava = False if analise.pura or helper.SENHA.match(helper.normalizar(texto)) else helper.desarmar(user.id)
+        nota = f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""
         if not texto:
-            await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
+            await _texto(telefone, "Por enquanto eu entendo só mensagem de texto." + nota)
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", em=enviada)
             return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
@@ -455,7 +459,7 @@ async def _atender(evento: dict) -> None:
             conv.mensagens = "[]"
             db.commit()
             fim.set()
-            await _texto(telefone, "🧹 Conversa zerada. Pode mandar um pedido novo.")
+            await _texto(telefone, "🧹 Conversa zerada. Pode mandar um pedido novo." + nota)
             _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio, em=enviada)
             return
         historico = json.loads(conv.mensagens or "[]")
@@ -463,19 +467,17 @@ async def _atender(evento: dict) -> None:
         # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
-        esperava = helper.PENDENTES.get(user.id) is not None
-        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise)
-        if resposta is not None and (analise.candidatos or helper.SENHA.match(texto)):
+        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava)
+        if resposta is not None and helper.SENHA.match(helper.normalizar(texto)):
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
             await ger.preparar(ctx)
             if not get_settings().deepseek_api_key:
-                resposta = "O assistente está desligado neste ambiente (falta a chave da IA)."
+                resposta = "O bot está desligado neste ambiente (falta a chave da IA)."
             else:
                 resposta = await responder(ctx, historico)
-            if esperava:
-                resposta += "\n\n(A ação que esperava a sua senha foi cancelada.)"
+            resposta += nota
             if ctx.proposta is not None:
                 # O que a pessoa confirma com a senha é texto do SISTEMA, não da IA.
                 resposta += "\n\n" + helper.bloco_da_proposta(ctx.proposta)

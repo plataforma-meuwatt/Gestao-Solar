@@ -371,6 +371,11 @@ export type Varredura = {
 export const listarRotas = (produto: Produto) =>
   api.get<Varredura>(`/integracoes/${produto}/rotas`).then((r) => r.data)
 
+/** A porta do bot do helper: declarada (não sondada — exige o token de cada pessoa), com o
+ *  selo de alcance (túnel e VPN até as usinas) no alto. */
+export const rotasDoHelper = () =>
+  api.get<Omit<Varredura, 'produto'> & { produto: 'helper' }>('/helper/rotas').then((r) => r.data)
+
 /** Exercita o catálogo inteiro com a conexão DA EMPRESA escolhida (a plataforma não tem
  *  token). Uma dúzia de chamadas ao produto. */
 export const sondarRotas = (produto: Produto, empresaId: number) =>

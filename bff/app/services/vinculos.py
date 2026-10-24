@@ -401,6 +401,11 @@ async def conectar(
     db.refresh(vinculo)
     resultado.login_externo = vinculo.login_externo
     resultado.aviso_login = aviso
+    # O token é aceito (o e-mail de lá pode ser outro, e só a pessoa sabe), mas a tela avisa:
+    # é o sinal mais barato de token colado na conta errada.
+    if resultado.email and cliente.email and resultado.email.strip().lower() != cliente.email.strip().lower():
+        resultado.detalhe = (f"{resultado.detalhe} Atenção: o token é de {resultado.email} no {NOME[produto]}, "
+                             f"e o e-mail desta conta é {cliente.email} — confira se é mesmo desta pessoa.")
     return resultado
 
 
