@@ -25,10 +25,11 @@ from app.core.apelido import ApelidoInvalido
 from app.core.apelido import normalizar as normalizar_apelido
 from app.core.db import get_db
 from app.core.security import administrador_atual, gerar_hash_senha
+from app.api.v1.painel_empresas import UsuarioDaEmpresaOut, resumo_das_contas
 from app.models.empresa import Empresa
 from app.models.pessoa import Pessoa
 from app.models.user import Perfil, User
-from app.services import areas_painel, pessoas
+from app.services import areas_painel, empresas, pessoas
 
 #: Os perfis desta tela. Cliente tem a tela dele; gerente de empresa, a da empresa —
 #: e essa separação é a mesma dos portões: o que não é da plataforma não se administra aqui.
@@ -332,3 +333,84 @@ def desagrupar(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
     conta.pessoa_id = None
     db.commit()
+
+
+# ------------------------------------------------- todas as contas (o inverso de Empresas)
+
+
+class EmpresaDaContaOut(BaseModel):
+    id: int
+    nome: str
+    #: A empresa que cuida da conta (senha, celular, tokens e bot). As outras só a têm.
+    origem: bool
+
+
+class ContaOut(UsuarioDaEmpresaOut):
+    #: Administrador ou atendimento: entra no adm-gs, não é de empresa nenhuma.
+    da_plataforma: bool = False
+    #: As telas do adm que esta conta da plataforma abre (vazio = todas, se administrador).
+    areas: list[str] = []
+    #: As empresas desta conta, a de origem primeiro. Vazio numa conta que não é da
+    #: plataforma = conta SEM empresa: nenhum gerente a enxerga — falta pôr numa empresa.
+    empresas: list[EmpresaDaContaOut] = []
+
+
+@router.get("/contas", response_model=list[ContaOut])
+def todas_as_contas(
+    db: Session = Depends(get_db), admin: User = Depends(administrador_atual)
+) -> list[ContaOut]:
+    """TODAS as contas — a tela Usuários do adm-gs, o inverso de Empresas: cada pessoa com
+    a(s) empresa(s) dela, sem travar ninguém numa empresa só (pedido do dono, 23/10/2026).
+
+    A equipe da plataforma vem junto, marcada; ela continua sendo administrada pelas rotas
+    de `/usuarios`, que não aceitam conta de empresa (e vice-versa, `PATCH /contas/{id}`).
+    """
+    # ponytail: uma ida ao banco por conta (empresas dela); dezenas de contas é nada — com
+    # milhares, junta-se `gs_usuario_empresas` numa consulta só, como em `resumo_das_contas`.
+    contas = list(db.scalars(select(User).order_by(User.nome)).all())
+    resumo = {r.id: r for r in resumo_das_contas(db, contas, admin)}
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    saida = []
+    for c in contas:
+        plataforma = c.perfil in DA_PLATAFORMA
+        ids = [] if plataforma else empresas.empresas_da_conta(db, c)
+        saida.append(
+            ContaOut(
+                **resumo[c.id].model_dump(),
+                da_plataforma=plataforma,
+                areas=sorted(areas_painel.concedidas(db, c)) if plataforma else [],
+                empresas=[
+                    EmpresaDaContaOut(id=i, nome=nomes[i], origem=i == c.empresa_id)
+                    for i in ids
+                    if i in nomes
+                ],
+            )
+        )
+    return saida
+
+
+class ContaPatch(BaseModel):
+    ativo: bool | None = None
+    #: Senha nova, definida por quem administra e entregue à pessoa com o apelido.
+    senha: str | None = Field(default=None, min_length=8)
+
+
+@router.patch("/contas/{conta_id}", response_model=ContaOut)
+def editar_conta(
+    conta_id: int,
+    body: ContaPatch,
+    db: Session = Depends(get_db),
+    admin: User = Depends(administrador_atual),
+) -> ContaOut:
+    """Renova a senha ou desativa/reativa uma conta de EMPRESA (ou sem empresa ainda) — a
+    renovação de senha que a plataforma faz por quem esqueceu. Conta da plataforma tem as
+    travas dela em `/usuarios/{id}` (ninguém tira o próprio acesso, sobra um administrador)."""
+    conta = db.get(User, conta_id)
+    if conta is None or conta.perfil in DA_PLATAFORMA:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    if body.ativo is not None:
+        conta.ativo = body.ativo
+    if body.senha:
+        conta.senha_hash = gerar_hash_senha(body.senha)
+    db.commit()
+    return next(c for c in todas_as_contas(db=db, admin=admin) if c.id == conta.id)

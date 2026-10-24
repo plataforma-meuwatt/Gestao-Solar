@@ -39,22 +39,14 @@ export type Vinculo = {
   email: string | null
   nome: string | null
   vinculado_em: string
-  token_prefixo: string | null
+  /** A pessoa colou o token DELA (o adm vê só o fato: não tem token, nem o prefixo). */
+  tem_token: boolean
   token_gravado_em: string | null
   estado: 'nunca' | 'ok' | 'falhou'
   detalhe: string | null
   usinas_visiveis: number | null
   /** O produto aceita "Entrar com Gestão Solar" para esta conta. */
   login_externo: boolean
-}
-
-export type ResultadoConexao = {
-  ok: boolean
-  detalhe: string
-  vinculo: Vinculo | null
-  login_externo: boolean
-  /** Por que o login NÃO foi habilitado, quando a conexão em si deu certo. */
-  aviso_login: string | null
 }
 
 export type UsinaDoCliente = {
@@ -88,97 +80,6 @@ export type UsinaSugerida = {
   dono_atual: string | null
 }
 
-
-export type Integracao = {
-  produto: Produto
-  configurada: boolean
-  base_url: string | null
-  usuario_servico: string | null
-  estado: 'nunca' | 'ok' | 'falhou'
-  detalhe: string | null
-  testada_em: string | null
-  usinas_visiveis: number | null
-  /** `false` = conexão antiga, ainda por conta de serviço com senha. */
-  por_token: boolean
-  token_prefixo: string | null
-  token_dono_nome: string | null
-  token_dono_email: string | null
-  token_gravado_em: string | null
-}
-
-export type ResultadoTeste = {
-  ok: boolean
-  detalhe: string
-  usinas_visiveis: number | null
-  dono_nome: string | null
-  dono_email: string | null
-}
-
-export type EventoIntegracao = {
-  evento:
-    | 'token_gravado'
-    | 'token_removido'
-    | 'teste_ok'
-    | 'teste_falhou'
-    | 'senha_gravada'
-    | 'sonda_ok'
-    | 'sonda_falhou'
-  ocorrido_em: string
-  ator_email: string | null
-  token_prefixo: string | null
-  detalhe: string | null
-  usinas_visiveis: number | null
-}
-
-export type UsinaLado = {
-  id: string
-  nome: string
-  cidade: string | null
-  uf: string | null
-  kwp: number | null
-}
-
-export type Candidato = { mp_usina_id: number; nome: string; pontos: number; motivos: string[] }
-
-/** De onde a usina vem. `meuplano` sozinho é normal: manutenção sem monitoramento. */
-export type OrigemUsina = 'ambos' | 'meuwatt' | 'meuplano'
-
-export type LinhaUsina = {
-  chave: string
-  nome: string
-  /** Nulo = existe num produto e ainda não foi trazida para o Gestão Solar. */
-  plant_link_id: number | null
-  mw_slug: string | null
-  mw_nome: string | null
-  mp_usina_id: number | null
-  mp_nome: string | null
-  cidade: string | null
-  uf: string | null
-  kwp: number | null
-  origem: OrigemUsina
-  /** Existe aqui **e** está ligada. Só uma usina no app pode ser concedida a um cliente. */
-  no_app: boolean
-  /** Candidatas do meuPlano, para uma linha do meuWatt. */
-  candidatos: Candidato[]
-  /**
-   * O caminho inverso: para uma usina só do meuPlano, de qual usina do meuWatt ela parece
-   * ser par. As duas linhas continuam separadas de propósito — o sistema não sabe que são
-   * a mesma —, mas o gestor não precisa cruzar os grupos a olho.
-   */
-  par_provavel_mw: string | null
-  par_provavel_nome: string | null
-  par_provavel_motivos: string[]
-  /** A micro usina do MICRO do meuWatt casada com esta — é por ela que chega o aviso de
-   *  parada de uma usina que vem dos portais dos fabricantes (Solis, Canadian…). */
-  mw_micro_plant_id: number | null
-}
-
-export type Conciliacao = {
-  meuwatt: UsinaLado[]
-  meuplano: UsinaLado[]
-  linhas: LinhaUsina[]
-  aviso: string | null
-}
 
 export type BlocoDiagnostico = { ok: boolean; detalhe: string; itens: Record<string, unknown>[] }
 
@@ -233,60 +134,10 @@ export const listarClientes = () => api.get<ClienteResumo[]>('/clientes').then((
 export const obterCliente = (id: number) =>
   api.get<ClienteDetalhe>(`/clientes/${id}`).then((r) => r.data)
 
-export const criarCliente = (dados: {
-  nome: string
-  apelido: string
-  email?: string | null
-  empresa?: string | null
-  /** A empresa de O&M que o atende. Sem ela o cliente não aparece para gerente nenhum e
-   *  a tela dele vem vazia — `usinas_do_usuario` recorta por empresa. */
-  empresa_id?: number | null
-}) =>
-  api
-    .post<{
-      id: number
-      nome: string
-      apelido: string
-      email: string | null
-      senha_provisoria: string
-    }>('/clientes', dados)
-    .then((r) => r.data)
-
-export const editarCliente = (
-  id: number,
-  dados: { nome?: string; empresa?: string | null; ativo?: boolean },
-) => api.patch<ClienteResumo>(`/clientes/${id}`, dados).then((r) => r.data)
+export const editarCliente = (id: number, dados: { nome?: string; ativo?: boolean }) => api.patch<ClienteResumo>(`/clientes/${id}`, dados).then((r) => r.data)
 
 export const regenerarSenha = (id: number) =>
   api.post<{ senha_provisoria: string }>(`/clientes/${id}/senha`).then((r) => r.data)
-
-/* --------------------------------------------------------------- vínculos */
-
-/**
- * Conecta a conta do cliente no produto com o token DELE.
- *
- * Um gesto, duas consequências: o Gestão Solar passa a ler o produto como ele — e a
- * enxergar as usinas que ele enxergaria lá, pela regra de lá — e o produto passa a
- * aceitar que ele entre com a senha daqui.
- *
- * Responde 200 mesmo quando o token é recusado, com `ok: false` e o motivo: o erro é do
- * valor colado, e a tela precisa da frase inteira, não de um "Erro 400".
- */
-export const conectarProduto = (clienteId: number, produto: Produto, token: string) =>
-  api
-    .put<ResultadoConexao>(`/clientes/${clienteId}/conexoes/${produto}`, { token })
-    .then((r) => r.data)
-
-/** Reexercita o token já gravado — um token que funcionava pode ter sido revogado lá. */
-export const testarConexao = (clienteId: number, produto: Produto) =>
-  api
-    .post<ResultadoConexao>(`/clientes/${clienteId}/conexoes/${produto}/testar`)
-    .then((r) => r.data)
-
-/** Apaga o vínculo e o token. NÃO revoga nada do lado do produto — quem precisa cortar o
- *  acesso de verdade revoga na conta de origem. */
-export const desvincular = (clienteId: number, produto: Produto) =>
-  api.delete(`/clientes/${clienteId}/vinculos/${produto}`)
 
 /* ----------------------------------------------------------------- usinas */
 
@@ -497,81 +348,6 @@ export const historicoDeNotificacoes = (clienteId: number) =>
     .get<EnvioDeNotificacao[]>(`/clientes/${clienteId}/notificacoes/historico`)
     .then((r) => r.data)
 
-/* ------------------------------------------------------------- conciliação */
-
-/**
- * As usinas DAQUELE CLIENTE nos dois produtos, para casar uma com a outra.
- *
- * `clienteId` é obrigatório, e é a regra do sistema: usina é sempre de um cliente. Não há
- * mais "inventário completo" — ele existia porque a leitura era feita com uma credencial
- * de serviço, e mostrava o escopo de um administrador, que não é o de ninguém a quem a
- * lista diga respeito.
- */
-export const carregarConciliacao = (clienteId: number) =>
-  api.get<Conciliacao>('/conciliacao', { params: { cliente_id: clienteId } }).then((r) => r.data)
-
-/**
- * Grava o estado desejado de uma usina — casar, descasar e ligar/desligar no app são a
- * mesma operação vista de ângulos diferentes. Uma rota só evita que "trazer a usina do
- * meuPlano para o app" precise de duas chamadas, com a segunda podendo falhar sozinha.
- */
-export const salvarUsina = (dados: {
-  plant_link_id?: number | null
-  mw_slug?: string | null
-  mp_usina_id?: number | null
-  nome: string
-  cidade?: string | null
-  uf?: string | null
-  kwp?: number | null
-  no_app?: boolean
-  mw_micro_plant_id?: number | null
-}) => api.put<LinhaUsina>('/conciliacao/usina', dados).then((r) => r.data)
-
-/** Uma micro usina do MICRO do meuWatt — usina que vem dos portais dos fabricantes. */
-export type MicroUsina = {
-  id: number
-  nome: string
-  kwp: number | null
-  /** As estações dos portais que a formam ("UFV Sitio Solis", "UFV Sitio Canadian"). */
-  estacoes: string[]
-}
-
-/**
- * As micro usinas, para casar com uma usina daqui. Lidas com a credencial de SERVIÇO: o
- * MICRO só é legível por administrador no meuWatt. Ponte fora vira `aviso` com a lista vazia.
- */
-export const carregarMicroUsinas = () =>
-  api
-    .get<{ usinas: MicroUsina[]; aviso: string | null }>('/conciliacao/micro-usinas')
-    .then((r) => r.data)
-
-/** Tira a usina do Gestão Solar. Recusado enquanto algum cliente a tiver concedida. */
-export const removerUsina = (plantLinkId: number) =>
-  api.delete(`/conciliacao/usina/${plantLinkId}`)
-
-/* ------------------------------------------------------------- integrações */
-
-export const listarIntegracoes = () => api.get<Integracao[]>('/integracoes').then((r) => r.data)
-
-export const salvarIntegracao = (
-  produto: Produto,
-  dados: { base_url: string; usuario_servico: string; senha?: string | null },
-) => api.put<Integracao>(`/integracoes/${produto}`, dados).then((r) => r.data)
-
-export const testarIntegracao = (produto: Produto) =>
-  api.post<ResultadoTeste>(`/integracoes/${produto}/testar`).then((r) => r.data)
-
-/** Cola o token e conecta. Se o token não servir, nada é gravado do lado do BFF —
- *  a resposta traz o motivo e a conexão anterior continua de pé. */
-export const conectarPorToken = (produto: Produto, dados: { base_url: string; token: string }) =>
-  api.put<ResultadoTeste>(`/integracoes/${produto}/token`, dados).then((r) => r.data)
-
-export const desconectarToken = (produto: Produto) =>
-  api.delete<Integracao>(`/integracoes/${produto}/token`).then((r) => r.data)
-
-export const historicoIntegracao = (produto: Produto) =>
-  api.get<EventoIntegracao[]>(`/integracoes/${produto}/eventos`).then((r) => r.data)
-
 /* ------------------------------------------------------------------- sonda */
 
 /**
@@ -608,9 +384,12 @@ export type Varredura = {
 export const listarRotas = (produto: Produto) =>
   api.get<Varredura>(`/integracoes/${produto}/rotas`).then((r) => r.data)
 
-/** Exercita o catálogo inteiro com o token gravado. Uma dúzia de chamadas ao produto. */
-export const sondarRotas = (produto: Produto) =>
-  api.post<Varredura>(`/integracoes/${produto}/rotas/sondar`).then((r) => r.data)
+/** Exercita o catálogo inteiro com a conexão DA EMPRESA escolhida (a plataforma não tem
+ *  token). Uma dúzia de chamadas ao produto. */
+export const sondarRotas = (produto: Produto, empresaId: number) =>
+  api
+    .post<Varredura>(`/integracoes/${produto}/rotas/sondar`, null, { params: { empresa_id: empresaId } })
+    .then((r) => r.data)
 
 /* ------------------------------------------------------------ diagnóstico */
 
@@ -652,15 +431,44 @@ export type Empresa = {
   nome: string
   documento: string | null
   ativa: boolean
+  /** Quem é da empresa (de origem ou também dela), e por papel. */
   usuarios: number
+  gerentes: number
+  tecnicos: number
+  donos: number
   usinas: number
   /** Para qual empresa de cada produto esta linha aponta. Sem nenhum dos dois, ela é
    *  fantasma: aparece na lista e todas as telas dela vêm vazias. */
   mw_enterprise_id: number | null
   mp_tenant_id: number | null
+  /** O estado da conta DA EMPRESA em cada produto (`ok` · `falhou` · `nunca`); nulo = o
+   *  gerente ainda não conectou. Só o estado — o token é dela. */
+  conexao_meuwatt: string | null
+  conexao_meuplano: string | null
 }
 
 export const listarEmpresas = () => api.get<Empresa[]>('/empresas').then((r) => r.data)
+
+/** Todas as usinas do sistema, com a empresa dona — o inventário do adm (só leitura: trazer
+ *  e casar usina é do gerente, no oem-gs). */
+export type UsinaDaPlataforma = {
+  id: number
+  nome: string
+  cidade: string | null
+  uf: string | null
+  kwp: number | null
+  tem_meuwatt: boolean
+  tem_meuplano: boolean
+  dono_id: number | null
+  dono_nome: string | null
+  empresa_id: number | null
+  empresa: string | null
+  no_app: boolean
+}
+
+export const usinasDaPlataforma = () => api.get<UsinaDaPlataforma[]>('/usinas').then((r) => r.data)
+
+export const obterEmpresa = (id: number) => api.get<Empresa>(`/empresas/${id}`).then((r) => r.data)
 
 export const criarEmpresa = (dados: { nome: string; documento?: string | null }) =>
   api.post<Empresa>('/empresas', dados).then((r) => r.data)
@@ -737,8 +545,9 @@ export type Carteira = { usinas: ItemDaCarteira[]; clientes: ItemDaCarteira[] }
 export const carteiraDaEmpresa = (id: number) =>
   api.get<Carteira>(`/empresas/${id}/carteira`).then((r) => r.data)
 
-/** As listas COMPLETAS: o que sair delas fica sem dono. */
-export const salvarCarteira = (id: number, dados: { usinas: number[]; clientes: number[] }) =>
+/** As listas COMPLETAS: o que sair delas fica sem dono. Sem `clientes`, as contas ficam
+ *  como estão (usuário se põe e se tira pela lista de usuários da empresa). */
+export const salvarCarteira = (id: number, dados: { usinas: number[]; clientes?: number[] }) =>
   api.put<Carteira>(`/empresas/${id}/carteira`, dados).then((r) => r.data)
 
 export type ConexaoDaEmpresa = {
@@ -826,14 +635,6 @@ export const salvarVinculos = (dados: {
     .put<{ mw_enterprise_id: number | null; mp_tenant_id: number | null }>('/vinculos', dados)
     .then((r) => r.data)
 
-/** Contas que podem virar gerente de uma empresa (as que não são da plataforma). */
-export type ContaLivre = { apelido: string; nome: string; perfil: string; empresa: string | null }
-
-export const contasLivres = () => api.get<ContaLivre[]>('/contas-livres').then((r) => r.data)
-
-export const tornarGerente = (empresaId: number, apelido: string) =>
-  api.put<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/gerente/${apelido}`).then((r) => r.data)
-
 /* ------------------------------------------------ os papéis de uma pessoa */
 
 export type Papel = {
@@ -887,12 +688,30 @@ export const agruparContas = (dados: { nome: string; apelidos: string[] }) =>
 export const desagruparConta = (apelido: string) =>
   api.delete<void>(`/pessoas/${apelido}`).then(() => undefined)
 
+/** O que o gerente liberou no assistente, por produto. */
+export type ProdutoDoBot = 'bot_meuplano' | 'bot_meuwatt' | 'bot_helper'
+
+/** Uma conta como a PLATAFORMA a vê: papel, empresas, celular, bot e se a pessoa tem o
+ *  token dela — nunca o token. */
 export type UsuarioDaEmpresaAdmin = {
   id: number
   nome: string
   apelido: string
   perfil: string
   ativo: boolean
+  email: string | null
+  ultimo_login: string | null
+  telefone: string | null
+  /** Usinas concedidas (as desta empresa, na lista de uma empresa). */
+  usinas: number
+  /** Liberado pelo gerente, e o que responde de fato (liberado E com o token dela). */
+  bot: ProdutoDoBot[]
+  bot_ativo: ProdutoDoBot[]
+  /** Produtos em que a pessoa tem o token DELA. */
+  tokens: Produto[]
+  /** A empresa que cuida da conta, quando não é a desta lista. */
+  cuidada_por: string | null
+  outras_empresas: string[]
   /** Está no MEU grupo de papéis — é a que aparece em "Trocar papel". */
   minha: boolean
 }
@@ -900,14 +719,87 @@ export type UsuarioDaEmpresaAdmin = {
 export const usuariosDaEmpresaAdmin = (empresaId: number) =>
   api.get<UsuarioDaEmpresaAdmin[]>(`/empresas/${empresaId}/usuarios`).then((r) => r.data)
 
+export type PapelNaEmpresa = 'cliente' | 'gestor_empresa' | 'tecnico'
+
 export const editarUsuarioDaEmpresa = (
   empresaId: number,
   usuarioId: number,
-  dados: { ativo?: boolean; senha?: string },
+  dados: { ativo?: boolean; senha?: string; perfil?: PapelNaEmpresa },
 ) =>
   api
     .patch<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/usuarios/${usuarioId}`, dados)
     .then((r) => r.data)
+
+/** A senha provisória aparece UMA vez — entregue com o apelido, que é o que autentica. */
+export const criarUsuarioDaEmpresa = (
+  empresaId: number,
+  dados: { nome: string; apelido: string; email?: string | null; perfil: PapelNaEmpresa },
+) =>
+  api
+    .post<{ id: number; nome: string; apelido: string; senha: string }>(
+      `/empresas/${empresaId}/usuarios`,
+      dados,
+    )
+    .then((r) => r.data)
+
+/** Põe uma conta que JÁ EXISTE nesta empresa, sem tirar das outras. */
+export const porUsuarioNaEmpresa = (empresaId: number, usuarioId: number) =>
+  api.put<UsuarioDaEmpresaAdmin>(`/empresas/${empresaId}/usuarios/${usuarioId}`).then((r) => r.data)
+
+/** Tira a conta desta empresa (e as usinas que ela recebia daqui). A conta continua existindo. */
+export const tirarUsuarioDaEmpresa = (empresaId: number, usuarioId: number) =>
+  api.delete<void>(`/empresas/${empresaId}/usuarios/${usuarioId}`).then(() => undefined)
+
+/* ------------------------------------------ todos os usuários (o inverso de Empresas) */
+
+export type EmpresaDaConta = { id: number; nome: string; origem: boolean }
+
+export type Conta = UsuarioDaEmpresaAdmin & {
+  da_plataforma: boolean
+  areas: string[]
+  /** A de origem primeiro. Vazio numa conta que não é da plataforma = sem empresa. */
+  empresas: EmpresaDaConta[]
+}
+
+export const todasAsContas = () => api.get<Conta[]>('/contas').then((r) => r.data)
+
+/** Renova a senha / desativa uma conta de EMPRESA (a da plataforma usa `/usuarios`). */
+export const editarConta = (id: number, dados: { ativo?: boolean; senha?: string }) =>
+  api.patch<Conta>(`/contas/${id}`, dados).then((r) => r.data)
+
+/* ------------------------------------------------------------- log do bot */
+
+export type RegistroBot = {
+  id: number
+  em: string
+  telefone: string
+  usuario_id: number | null
+  usuario: string | null
+  apelido: string | null
+  empresa: string | null
+  resultado: 'respondeu' | 'sem_conta' | 'nao_liberado' | 'sem_texto' | 'zerou' | 'erro'
+  ferramentas: string[]
+  pergunta: string | null
+  resposta: string | null
+  duracao_ms: number | null
+  erro: string | null
+}
+
+export const logDoBot = (filtro: { empresa_id?: number; usuario_id?: number; resultado?: string } = {}) =>
+  api.get<RegistroBot[]>('/whatsapp/bot/registros', { params: filtro }).then((r) => r.data)
+
+/** O mesmo log, no oem-gs: só as pessoas que a empresa da sessão cuida. */
+export const logDoBotDaEmpresa = () =>
+  apiEmpresa.get<RegistroBot[]>('/bot/registros').then((r) => r.data)
+
+/* ------------------------------------------------ um usuário em mais de uma empresa */
+
+export type EmpresaDaSessao = { id: number; nome: string; ativa: boolean; origem: boolean; atual: boolean }
+
+export const minhasEmpresas = () => sessao.get<EmpresaDaSessao[]>('/empresas').then((r) => r.data)
+
+export const trocarDeEmpresa = (empresaId: number) =>
+  sessao.post<TrocaDePapel>('/empresa', { empresa_id: empresaId }).then((r) => r.data)
 
 /** Trocar a PRÓPRIA senha — vale para os três portões, por isso fora do prefixo do painel. */
 export const trocarMinhaSenha = (dados: { senha_atual: string; senha_nova: string }) =>
@@ -1021,6 +913,9 @@ export type UsuarioDetalhado = {
   bot_helper: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
   meuplano: string | null
+  /** A conta é de OUTRA empresa e também desta: o nome da que cuida dela. Daqui só se
+   *  concedem as usinas desta empresa; senha, celular, tokens e bot são de lá. */
+  cuidada_por: string | null
 }
 
 /** Uma pessoa que a empresa administra no meuPlano — de onde o cadastro pode ser puxado. */
@@ -1046,8 +941,6 @@ export const ligarAoMeuPlano = (usuarioId: number, mpUserId: number) =>
 
 export const desligarDoMeuPlano = (usuarioId: number) =>
   apiEmpresa.delete<UsuarioDetalhado>(`/usuarios/${usuarioId}/meuplano`).then((r) => r.data)
-
-export type ProdutoDoBot = 'bot_meuplano' | 'bot_meuwatt' | 'bot_helper'
 
 export const usuariosDetalhados = () =>
   apiEmpresa.get<UsuarioDetalhado[]>('/usuarios/detalhados').then((r) => r.data)

@@ -8,7 +8,7 @@ mensagem que não diz o que aconteceu nem onde se conserta.
 
 O que estes testes protegem:
 
-1. **Sem token e sem senha, a mensagem aponta o conserto** (Painel → Conexões).
+1. **Sem token e sem senha, a mensagem aponta o conserto** (oem-gs → Conexões, da empresa).
 2. **A checagem vale para os dois produtos** — o meuPlano tem exatamente o mesmo caminho.
 3. **Com credencial, nada muda**: a guarda não pode barrar quem está configurado.
 """
@@ -34,7 +34,7 @@ class _Fake:
 def test_meuwatt_sem_credencial_diz_o_que_falta(monkeypatch):
     monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake())
     with pytest.raises(RuntimeError) as e:
-        asyncio.run(integracoes.cliente_meuwatt(None))
+        asyncio.run(integracoes.cliente_meuwatt(None, 1))
     assert 'meuWatt' in str(e.value) and 'sem credencial' in str(e.value)
     assert 'encode' not in str(e.value), 'o erro cru não pode vazar'
 
@@ -42,7 +42,7 @@ def test_meuwatt_sem_credencial_diz_o_que_falta(monkeypatch):
 def test_meuplano_sem_credencial_diz_o_que_falta(monkeypatch):
     monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake())
     with pytest.raises(RuntimeError) as e:
-        asyncio.run(integracoes.cliente_meuplano(None))
+        asyncio.run(integracoes.cliente_meuplano(None, 1))
     assert 'meuPlano' in str(e.value) and 'sem credencial' in str(e.value)
 
 
@@ -50,5 +50,5 @@ def test_com_token_a_guarda_nao_atrapalha(monkeypatch):
     """A guarda protege de configuração pela metade — não pode barrar quem está pronto."""
     monkeypatch.setattr(integracoes, 'obter', lambda db, p, empresa_id=None: _Fake(token='cifrado'))
     monkeypatch.setattr(integracoes, 'decifrar', lambda v: 'token-em-claro')
-    cli = asyncio.run(integracoes.cliente_meuwatt(None))
+    cli = asyncio.run(integracoes.cliente_meuwatt(None, 1))
     assert cli is not None

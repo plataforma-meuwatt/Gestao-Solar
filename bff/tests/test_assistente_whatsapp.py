@@ -173,9 +173,12 @@ async def test_gerente_poe_celular_e_libera_o_bot_sem_repetir_numero(db):
     _token(db, cli, "meuwatt")
     r = await editar_conta_da_empresa(cli.id, ContaPatch(telefone="(16) 99999-8888", bot_meuwatt=True), db, gerente)
     assert r.telefone == "(16) 9 9999-8888" and r.bot_meuwatt and not r.bot_meuplano
-    # o helper reconhece a pessoa pelo token do meuWatt; o meuPlano pede o dele
-    r = await editar_conta_da_empresa(cli.id, ContaPatch(bot_helper=True, bot_meuwatt=True), db, gerente)
-    assert r.bot_helper
+    # o helper ainda não tem ferramenta no bot: liberar é recusado, com o motivo (auditoria
+    # de 23/10/2026 — a caixa ligada prometia uma ação que não acontecia)
+    with pytest.raises(HTTPException) as e:
+        await editar_conta_da_empresa(cli.id, ContaPatch(bot_helper=True, bot_meuwatt=True), db, gerente)
+    assert e.value.status_code == 400 and "helper" in e.value.detail
+    # o meuPlano pede o token dele
     with pytest.raises(HTTPException):
         await editar_conta_da_empresa(cli.id, ContaPatch(bot_meuplano=True), db, gerente)
     r = await editar_conta_da_empresa(cli.id, ContaPatch(telefone=""), db, gerente)
@@ -247,3 +250,48 @@ def test_sem_o_token_a_parte_liberada_fica_parada_e_o_resto_do_cadastro_salva(db
     assert u.bot_ativo == {"bot_meuwatt"} and assistente.permitidas(u) == list(ger.FERRAMENTAS)
     cadastro.liberar_bot(u, "bot_meuplano", True)          # já estava ligada: não reconfere
     assert u.bot_meuplano
+
+
+async def test_cada_mensagem_vira_uma_linha_no_log_do_bot(db, monkeypatch):
+    """O que o dono pediu para o adm-gs: "vejo log dos bots". Número sem cadastro, conta sem
+    liberação e a resposta entram — com quem, a empresa, a pergunta e as ferramentas."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+
+    async def _enviar(**k):
+        return {"ok": True}
+
+    async def _llm(msgs, ferramentas=None):
+        if len([m for m in msgs if m.get("role") == "tool"]) == 0:
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "manutencao", "arguments": '{"pergunta": "OS abertas"}'}}]}
+        return {"content": "ok"}
+
+    async def _manutencao(ctx, a):
+        return {"texto": "*2 OS abertas*"}
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente.whatsapp, "digitando", _nada)
+    monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "manutencao", (_manutencao, assistente.FERRAMENTAS["manutencao"][1]))
+    monkeypatch.setattr(ger, "preparar", _nada)
+    monkeypatch.setattr(assistente.get_settings(), "deepseek_api_key", "x")
+
+    await assistente.atender({"telefone": "+5511900000001", "tipo": "text", "texto": "oi", "wamid": "w1"})
+    dono = _conta(db, "dono", "+5517997377626")
+    # O número estava numa conversa de OUTRA conta: o histórico dela não entra nesta.
+    db.add(ConversaWhatsapp(telefone=dono.telefone, gs_user_id=dono.id + 999,
+                            mensagens='[{"role": "user", "content": "segredo da outra conta"}]'))
+    db.commit()
+    await assistente.atender({"telefone": "+5517997377626", "tipo": "text", "texto": "OS abertas?", "wamid": "w2"})
+
+    linhas = db.query(RegistroBot).order_by(RegistroBot.id).all()
+    assert [(r.resultado, r.gs_user_id) for r in linhas] == [("sem_conta", None), ("respondeu", dono.id)]
+    assert linhas[1].pergunta == "OS abertas?" and linhas[1].ferramentas == "manutencao"
+    assert linhas[1].resposta == "*2 OS abertas*" and linhas[1].duracao_ms is not None
+    conversa = db.query(ConversaWhatsapp).one()
+    assert conversa.gs_user_id == dono.id and "segredo da outra conta" not in conversa.mensagens

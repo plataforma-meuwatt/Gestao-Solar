@@ -31,7 +31,17 @@ upstream de onde ler. Ter só um dos dois é legítimo; ter nenhum não é.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -77,11 +87,45 @@ class Empresa(Base):
     #: mesma empresa de lá seriam dois inquilinos lendo a mesma carteira.
     mw_enterprise_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
-    #: A empresa no meuPlano (`tenants.id`). Também única, e independente da de cima: os
-    #: dois cadastros não se conhecem, e quem diz que são a mesma empresa é esta linha.
+    #: A empresa no meuPlano: a ORGANIZAÇÃO de lá (`owners.id`, espécie PRESTADORA) — o
+    #: nome da coluna é de quando se casava com `tenants`, andaime vazio lá (trocado em
+    #: 23/10/2026). Também única, e independente da de cima: os dois cadastros não se
+    #: conhecem, e quem diz que são a mesma empresa é esta linha. É ela que recorta quem o
+    #: gerente pode puxar do meuPlano (`services/cadastro`).
     mp_tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     ativa: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     criada_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class MembroDaEmpresa(Base):
+    """Uma conta que TAMBÉM é de outra empresa — além da de origem (`gs_users.empresa_id`).
+
+    Pedido do dono (23/10/2026): "um usuário pode estar em mais de uma empresa". É o
+    `enterprise_employees` do meuWatt (um usuário, várias empresas); o meuPlano tem uma só.
+
+    O papel é o da conta (`perfil`): gerente nas duas, técnico nas duas, dono de usina nas
+    duas. A empresa de ORIGEM continua sendo quem cuida da CONTA — senha, celular, tokens e
+    bot —, porque deixar duas empresas trocarem a senha da mesma pessoa abriria a carteira
+    de uma para o gerente da outra. Aqui a outra empresa ganha o resto: o gerente opera a
+    outra (troca de empresa no oem-gs), o técnico atende a outra, o dono recebe usina dela.
+    """
+
+    __tablename__ = "gs_usuario_empresas"
+    __table_args__ = (UniqueConstraint("user_id", "empresa_id", name="uq_usuario_empresa"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("gs_users.id", ondelete="CASCADE"), index=True
+    )
+    empresa_id: Mapped[int] = mapped_column(
+        ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    criado_por: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True
     )

@@ -40,16 +40,9 @@ import {
   type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, textoDoBot } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
-
-const PAPEL: Record<string, string> = {
-  gestor_empresa: 'Gerente da empresa',
-  tecnico: 'Técnico',
-  cliente: 'Dono de usina',
-}
-
-const NOME_DO_PRODUTO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
 
 export function UsuariosDaEmpresa() {
   const empresa = useAuth((s) => s.empresa)
@@ -80,7 +73,7 @@ export function UsuariosDaEmpresa() {
       ) : !data?.length ? (
         <Vazio
           titulo="Nenhuma conta nesta empresa"
-          descricao="Cadastre um dono de usina em Clientes → Novo cliente."
+          descricao="Cadastre o primeiro em “Novo usuário”."
         />
       ) : (
         <div className="grid gap-3">
@@ -105,23 +98,6 @@ export function UsuariosDaEmpresa() {
   )
 }
 
-/** O assistente do WhatsApp, por produto — o gerente libera um, dois ou todos. Cada parte
- *  responde com o token PRÓPRIO da pessoa (`token`); o helper a reconhece pelo do meuWatt. */
-const BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
-  { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
-  { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
-  { campo: 'bot_helper', rotulo: 'Usina (helper)', token: 'meuwatt' },
-]
-
-/** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */
-function textoDoBot(u: Pick<UsuarioDetalhado, ProdutoDoBot | 'produtos'>): string {
-  return (
-    BOT.filter((b) => u[b.campo])
-      .map((b) => (u.produtos.includes(b.token) ? b.rotulo : `${b.rotulo} (falta o token)`))
-      .join(' · ') || 'bloqueado'
-  )
-}
-
 /** As caixinhas do assistente. Ligar exige celular e o token dela naquele produto; o que já
  *  está ligado sem token pode ser desligado. */
 function CaixasDoBot({
@@ -135,20 +111,23 @@ function CaixasDoBot({
   temCelular: boolean
   aoMudar: (campo: ProdutoDoBot, valor: boolean) => void
 }) {
-  const faltam = [...new Set(BOT.filter((b) => !produtos.includes(b.token)).map((b) => b.token))]
+  const faltam = [
+    ...new Set(PARTES_DO_BOT.filter((b) => !b.emBreve && !produtos.includes(b.token)).map((b) => b.token)),
+  ]
   return (
     <div>
       <p className="rotulo-campo">O assistente do WhatsApp responde a esta pessoa sobre</p>
       <div className="flex gap-4 flex-wrap mt-1.5">
-        {BOT.map((b) => (
+        {PARTES_DO_BOT.map((b) => (
           <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
             <input
               type="checkbox"
               checked={bot[b.campo]}
-              disabled={!bot[b.campo] && (!temCelular || !produtos.includes(b.token))}
+              disabled={!bot[b.campo] && (Boolean(b.emBreve) || !temCelular || !produtos.includes(b.token))}
               onChange={(e) => aoMudar(b.campo, e.target.checked)}
             />
             {b.rotulo}
+            {b.emBreve ? <span className="text-[11px] text-fraco">(em breve)</span> : null}
           </label>
         ))}
       </div>
@@ -214,7 +193,13 @@ function Linha({
               </span>
               <span className="flex items-center gap-1.5">
                 <MessageCircle size={14} />
-                {usuario.telefone ? `${usuario.telefone} · assistente: ${textoDoBot(usuario)}` : 'sem celular'}
+                {usuario.telefone
+                  ? `${usuario.telefone} · assistente: ${textoDoBot(
+                      PARTES_DO_BOT.filter((p) => usuario[p.campo]).map((p) => p.campo),
+                      usuario.produtos,
+                      true,
+                    )}`
+                  : 'sem celular'}
               </span>
               <span className="flex items-center gap-1.5">
                 <UserCog size={14} />
@@ -234,6 +219,16 @@ function Linha({
           <Selo tom={usuario.ativo ? 'ok' : 'sem-dados'}>
             {usuario.ativo ? 'Ativo' : 'Inativo'}
           </Selo>
+          {usuario.cuidada_por ? (
+            // Também é de OUTRA empresa, que cuida da conta: daqui só se concedem as usinas
+            // desta empresa. Senha, celular, token e bot são de lá.
+            usuario.perfil === 'cliente' ? (
+              <button className="btn-secundario" onClick={aoAbrirUsinas}>
+                Usinas
+              </button>
+            ) : null
+          ) : (
+            <>
           {/* Gerente não recebe concessão: ele vê a carteira inteira da empresa por SER
               gerente. Oferecer o botão o punha a competir com os clientes pela mesma
               usina — a regra é "cada usina pertence a um dono só" —, e o salvar voltava
@@ -263,8 +258,16 @@ function Linha({
               {usuario.ativo ? 'Desativar' : 'Reativar'}
             </button>
           ) : null}
+            </>
+          )}
         </div>
       </div>
+      {usuario.cuidada_por ? (
+        <p className="text-xs text-alerta mt-2">
+          Também é da empresa {usuario.cuidada_por}, que cuida da conta (senha, celular, token e
+          bot). Aqui você concede só as usinas da sua empresa.
+        </p>
+      ) : null}
 
       {senhaAberta ? (
         <div className="flex gap-2 mt-3">
@@ -618,7 +621,7 @@ export function UsinasDoUsuario({
  * Com ele, a leitura passa a acontecer **como ela**: as usinas que ela enxergaria lá, pela
  * regra de lá — e o produto passa a aceitar que ela entre com a senha daqui.
  */
-function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
+export function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
   const qc = useQueryClient()
   const [produto, setProduto] = useState<Produto>('meuwatt')
   const [token, setToken] = useState('')

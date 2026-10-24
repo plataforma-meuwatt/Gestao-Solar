@@ -30,7 +30,6 @@ from app.core.security import (
     usuario_atual,
 )
 from app.models.integracao import Produto
-from app.services import integracoes
 from app.models.user import User, UserPlantAccess, VinculoProduto
 
 router = APIRouter(prefix="/api/v1/auth", tags=["app · autenticação"])
@@ -246,9 +245,7 @@ def entrar_no_produto(
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
-    integracao = integracoes.obter(db, produto)
-    base = (integracao.base_url if integracao else "") or ""
-    destino = _enderecos_web().get(produto) or base
+    destino = _enderecos_web().get(produto) or ""
     return DestinoOut(url=f"{destino.rstrip('/')}/#assercao={assercao}", nome=NOME[produto])
 
 

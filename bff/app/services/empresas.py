@@ -15,12 +15,14 @@ recusada em vez de ver tudo: falhar fechado é a única leitura segura de um dad
 """
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
-from app.models.empresa import Empresa
-from app.models.user import User
+from app.models.empresa import Empresa, MembroDaEmpresa
+from app.models.plant import PlantLink
+from app.models.user import Perfil, User, UserPlantAccess
+from app.services import notificacoes
 
 
 def da_plataforma(usuario: User) -> bool:
@@ -33,14 +35,44 @@ def da_plataforma(usuario: User) -> bool:
 
 
 def empresa_exigida(usuario: User) -> int:
-    """A empresa desta conta de inquilino. Recusa quem não tem — nunca devolve "todas"."""
-    if usuario.empresa_id is None:
+    """A empresa em que esta conta de inquilino está OPERANDO. Recusa quem não tem — nunca
+    devolve "todas".
+
+    É a da sessão quando a conta é de mais de uma empresa e trocou de empresa no oem-gs
+    (`empresa_da_sessao`, posto pela guarda depois de conferir que a conta é mesmo de lá);
+    senão, a de origem.
+    """
+    empresa = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
+    if empresa is None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Esta conta não está ligada a nenhuma empresa. Peça a quem administra a "
             "plataforma para vinculá-la.",
         )
-    return usuario.empresa_id
+    return empresa
+
+
+def empresas_da_conta(db: Session, usuario: User) -> list[int]:
+    """Todas as empresas desta conta: a de origem primeiro, depois as outras
+    (`gs_usuario_empresas`). Conta da plataforma não tem nenhuma."""
+    ids = [usuario.empresa_id] if usuario.empresa_id is not None else []
+    for e in db.scalars(
+        select(MembroDaEmpresa.empresa_id)
+        .where(MembroDaEmpresa.user_id == usuario.id)
+        .order_by(MembroDaEmpresa.id)
+    ).all():
+        if e not in ids:
+            ids.append(e)
+    return ids
+
+
+def contas_da_empresa(empresa_id: int):
+    """O filtro de "quem é desta empresa": a de origem OU membro dela. Um lugar só, para a
+    lista do adm e a do gerente não divergirem sobre quem aparece."""
+    return or_(
+        User.empresa_id == empresa_id,
+        User.id.in_(select(MembroDaEmpresa.user_id).where(MembroDaEmpresa.empresa_id == empresa_id)),
+    )
 
 
 def no_escopo(
@@ -80,3 +112,53 @@ def criar(db: Session, nome: str, documento: str | None = None) -> Empresa:
     db.add(empresa)
     db.flush()
     return empresa
+
+
+def por_na_empresa(db: Session, conta: User, empresa_id: int, por: User | None = None) -> None:
+    """Põe a conta nesta empresa (decisão da plataforma). Sem empresa de origem, esta vira a
+    de origem; com, ela entra como OUTRA empresa da conta. Não faz commit."""
+    if conta.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Conta da plataforma não é de empresa: ela já vê todas.",
+        )
+    por_id(db, empresa_id)
+    if empresa_id in empresas_da_conta(db, conta):
+        return
+    if conta.empresa_id is None:
+        conta.empresa_id = empresa_id
+        return
+    db.add(MembroDaEmpresa(user_id=conta.id, empresa_id=empresa_id, criado_por=por.id if por else None))
+
+
+def tirar_da_empresa(db: Session, conta: User, empresa_id: int) -> None:
+    """Tira a conta desta empresa — e o que ela recebia DELA (as usinas concedidas). Saindo
+    da de origem, a próxima empresa dela passa a ser a de origem. Não faz commit."""
+    if empresa_id not in empresas_da_conta(db, conta):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Esta conta não é desta empresa.")
+
+    daqui = db.scalars(
+        select(UserPlantAccess)
+        .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
+        .where(UserPlantAccess.user_id == conta.id, PlantLink.empresa_id == empresa_id)
+    ).all()
+    notificacoes.limpar_usinas(db, conta.id, [a.plant_link_id for a in daqui])
+    for acesso in daqui:
+        db.delete(acesso)
+
+    membro = db.scalar(
+        select(MembroDaEmpresa).where(
+            MembroDaEmpresa.user_id == conta.id, MembroDaEmpresa.empresa_id == empresa_id
+        )
+    )
+    if membro is not None:
+        db.delete(membro)
+    if conta.empresa_id == empresa_id:
+        proxima = db.scalar(
+            select(MembroDaEmpresa)
+            .where(MembroDaEmpresa.user_id == conta.id, MembroDaEmpresa.empresa_id != empresa_id)
+            .order_by(MembroDaEmpresa.id)
+        )
+        conta.empresa_id = proxima.empresa_id if proxima else None
+        if proxima is not None:
+            db.delete(proxima)

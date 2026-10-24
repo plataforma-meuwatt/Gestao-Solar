@@ -179,9 +179,10 @@ def test_conta_da_plataforma_nao_e_barrada_por_empresa(db, administrador):
 
 
 def test_o_inquilino_nao_le_QUEM_gerou_a_credencial_da_plataforma(db, cenario):
-    """Sem linha própria, a empresa cai na credencial da plataforma (atalho da migração) —
-    e a tela de Conexões entregava nome, e-mail e prefixo do token de quem a gerou. O
-    estado ela precisa saber; a identidade é de outra conta."""
+    """Sem linha própria, a empresa caía na credencial da plataforma (atalho da migração) —
+    e a tela de Conexões entregava nome, e-mail e prefixo do token de quem a gerou. Desde
+    23/10/2026 a plataforma não tem token e não há atalho: uma linha sem empresa que tenha
+    sobrado não aparece para empresa nenhuma, nem o estado dela."""
     from app.api.v1.empresa import listar_conexoes
 
     emp, gerente, _admin = cenario
@@ -198,7 +199,7 @@ def test_o_inquilino_nao_le_QUEM_gerou_a_credencial_da_plataforma(db, cenario):
     db.commit()
 
     mw = next(c for c in listar_conexoes(db=db, gerente=gerente) if c.produto == "meuwatt")
-    assert mw.configurada is True and mw.propria is False
+    assert mw.configurada is False
     assert mw.token_dono_nome is None
     assert mw.token_dono_email is None
     assert mw.token_prefixo is None

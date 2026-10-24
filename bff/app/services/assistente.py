@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -28,7 +29,7 @@ from app.clients import whatsapp
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.telefone import normalizar
-from app.models.conversa_whatsapp import ConversaWhatsapp
+from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 from app.models.user import User
 from app.services import assistente_geracao as ger
 
@@ -101,6 +102,31 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO)}
 
 
+# --------------------------------------------------------------------------- log
+def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
+               pergunta: str | None = None, resposta: str | None = None,
+               ferramentas: list[str] | None = None, inicio: float | None = None,
+               erro: str | None = None) -> None:
+    """Uma linha no log do bot (adm-gs → Log do bot). Falhar aqui nunca derruba a resposta.
+
+    ponytail: guarda tudo, sem expurgo; quando o volume pesar, apaga o que passou de 90 dias.
+    """
+    try:
+        db.add(RegistroBot(
+            telefone=telefone[:20], gs_user_id=user.id if user else None,
+            empresa_id=user.empresa_id if user else None, resultado=resultado,
+            ferramentas=",".join(dict.fromkeys(ferramentas or [])) or None,
+            pergunta=(pergunta or None) and pergunta[:2000],
+            resposta=(resposta or None) and resposta[:2000],
+            duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
+            erro=(erro or None) and erro[:1000],
+        ))
+        db.commit()
+    except Exception:                                      # noqa: BLE001
+        log.warning("assistente: não gravou o log do bot", exc_info=True)
+        db.rollback()
+
+
 def permitidas(user) -> list[str]:
     """As ferramentas que a IA RECEBE para esta pessoa — liberadas pelo gerente, por produto,
     E com o token dela (`User.bot_ativo`). A que não vem na lista não existe para o modelo
@@ -119,9 +145,10 @@ def permitidas(user) -> list[str]:
 def _sistema(ctx: ger.Contexto) -> str:
     usinas = ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento"
     ativo = ctx.user.bot_ativo
+    # O helper (atuar na usina) fica FORA até as ferramentas dele existirem: dizer ao modelo
+    # que está liberado o convidaria a confirmar uma ação que não aconteceu.
     areas = [n for n, c in (("geração/monitoramento (meuWatt)", "bot_meuwatt"),
-                            ("manutenção (meuPlano)", "bot_meuplano"),
-                            ("atuação na usina (helper)", "bot_helper")) if c in ativo]
+                            ("manutenção (meuPlano)", "bot_meuplano")) if c in ativo]
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
@@ -152,6 +179,7 @@ async def _llm(mensagens: list[dict], ferramentas: list[dict]) -> dict:
 
 async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
     nome = chamada["function"]["name"]
+    ctx.ferramentas.append(nome)
     if nome not in permitidas(ctx.user):
         return {"erro": "Essa parte não está liberada para você. O gerente da sua O&M pode liberar."}
     try:
@@ -227,28 +255,40 @@ async def atender(evento: dict) -> None:
     texto = (evento.get("texto") or "").strip()
     db = SessionLocal()
     fim = asyncio.Event()
+    inicio = monotonic()
+    user: User | None = None
+    ctx: ger.Contexto | None = None
     try:
         user = conta_do_telefone(db, telefone)
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):
                 await _texto(telefone, DESCONHECIDO)
+                _registrar(db, telefone, None, "sem_conta", pergunta=texto, resposta=DESCONHECIDO)
             return
         if not user.bot_liberado:
             await _texto(telefone, NAO_LIBERADO)
+            _registrar(db, telefone, user, "nao_liberado", pergunta=texto, resposta=NAO_LIBERADO)
             return
         if not texto:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
+            _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]")
             return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
         if conv is None:
             conv = ConversaWhatsapp(telefone=user.telefone, gs_user_id=user.id, mensagens="[]")
             db.add(conv)
+        elif conv.gs_user_id != user.id:
+            # O número mudou de conta (ex.: saiu do admin e foi para o gerente): a conversa
+            # é da CONTA, e o histórico da outra não pode entrar no contexto desta.
+            conv.mensagens = "[]"
+            conv.gs_user_id = user.id
         if texto.lower() in LIMPAR:
             conv.mensagens = "[]"
             db.commit()
             fim.set()
             await _texto(telefone, "🧹 Conversa zerada. Pode mandar um pedido novo.")
+            _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio)
             return
         historico = json.loads(conv.mensagens or "[]")
         historico.append({"role": "user", "content": texto})
@@ -265,10 +305,15 @@ async def atender(evento: dict) -> None:
         fim.set()
         await tarefa
         await _texto(telefone, para_whatsapp(resposta))
-    except Exception:                                      # noqa: BLE001
+        _registrar(db, telefone, user, "respondeu", pergunta=texto, resposta=resposta,
+                   ferramentas=ctx.ferramentas, inicio=inicio)
+    except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()
         fim.set()
+        _registrar(db, telefone, user, "erro", pergunta=texto,
+                   ferramentas=ctx.ferramentas if ctx else None, inicio=inicio,
+                   erro=f"{type(exc).__name__}: {exc}")
         try:
             await _texto(telefone, "Tive um problema para responder agora. Tente de novo em instantes.")
         except Exception:                                  # noqa: BLE001

@@ -50,6 +50,8 @@ class Contexto:
     usinas: dict[str, dict] = field(default_factory=dict)
     #: arquivos/imagens que as ferramentas mandaram neste turno (o texto não repete o link)
     enviados: list[str] = field(default_factory=list)
+    #: as ferramentas chamadas neste turno — vão para o log do bot (`gs_bot_registros`)
+    ferramentas: list[str] = field(default_factory=list)
 
 
 async def preparar(ctx: Contexto) -> None:

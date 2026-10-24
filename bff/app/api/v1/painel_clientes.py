@@ -1,10 +1,9 @@
-"""Gestão de clientes e diagnóstico.
+"""A ficha do dono de usina, vista pela plataforma (adm-gs), e o diagnóstico.
 
-Quem opera o painel — o staff — está em `painel_usuarios.py`; aqui só o cliente.
-
-O caminho que o gestor percorre: cadastra o cliente, vincula as contas dele nos dois
-produtos, escolhe as usinas, copia a senha provisória e confere no diagnóstico que o dado
-chega certo dos dois lados.
+O cliente NASCE dentro da empresa que o atende (`painel_empresas.py` no adm, `empresa.py`
+no oem-gs) — não há mais "Novo cliente" solto aqui, que criava conta sem empresa. E o adm
+**não mexe em token** (regra do dono, 23/10/2026): quem cola o token de cada pessoa é o
+gerente da empresa dela, no oem-gs. A ficha só diz se a pessoa tem o token dela.
 
 A senha provisória aparece **uma vez**, na resposta que a gera. Nenhum GET aqui a devolve.
 """
@@ -12,7 +11,7 @@ A senha provisória aparece **uma vez**, na resposta que a gera. Nenhum GET aqui
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,7 +19,7 @@ from app.core.datas import hoje as hoje_na_usina
 from app.core.db import get_db
 from app.core.security import exige_area
 from app.core.telefone import exibir as exibir_telefone
-from app.models.integracao import Produto
+from app.models.empresa import Empresa
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
 from app.services import clientes as svc
@@ -60,8 +59,8 @@ class VinculoOut(BaseModel):
     nome: str | None = None
     vinculado_em: datetime
 
-    #: `mw_pat_a1b2` — identifica o token na lista do produto, para revogar o certo.
-    token_prefixo: str | None = None
+    #: A pessoa colou o token DELA (o valor e o prefixo não saem daqui: o adm não tem token).
+    tem_token: bool = False
     token_gravado_em: datetime | None = None
     #: `nunca` | `ok` | `falhou`, do último teste.
     estado: str = "nunca"
@@ -78,7 +77,7 @@ def _vinculo_out(v: VinculoProduto) -> VinculoOut:
         email=v.usuario_remoto_email,
         nome=v.usuario_remoto_nome,
         vinculado_em=v.vinculado_em,
-        token_prefixo=v.token_prefixo,
+        tem_token=bool(v.token_cifrado),
         token_gravado_em=v.token_gravado_em,
         estado=v.estado,
         detalhe=v.detalhe,
@@ -107,6 +106,9 @@ def listar_clientes(
         select(User).where(User.perfil == Perfil.CLIENTE).order_by(User.nome)
     ).all()
     totais = svc.contar_usinas(db)
+    # A empresa de O&M que o atende (`empresa_id`) — não o texto livre antigo, que dizia
+    # "Eninsa" para quem não é de empresa nenhuma cadastrada.
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
 
     vinculos: dict[int, list[str]] = {}
     for v in db.scalars(select(VinculoProduto)).all():
@@ -118,7 +120,7 @@ def listar_clientes(
             nome=c.nome,
             apelido=c.apelido,
             email=c.email,
-            empresa=c.empresa,
+            empresa=nomes.get(c.empresa_id),
             ativo=c.ativo,
             usinas=totais.get(c.id, 0),
             produtos=sorted(vinculos.get(c.id, [])),
@@ -126,67 +128,6 @@ def listar_clientes(
         )
         for c in lista
     ]
-
-
-# ------------------------------------------------------------------- criar
-
-
-class ClienteIn(BaseModel):
-    nome: str = Field(min_length=2)
-    #: Com o que ele entra no aplicativo. Não precisa parecer com o e-mail.
-    apelido: str = Field(min_length=3)
-    #: Continua sendo pedido porque é a chave que acha a conta dele no meuWatt e no
-    #: meuPlano — sem ele o vínculo com os produtos vira busca manual. Mas não autentica.
-    email: EmailStr | None = None
-    #: O texto livre antigo — o nome da empresa DELE, impresso no cadastro.
-    empresa: str | None = None
-    #: A empresa de O&M que o atende, e é o que decide quem enxerga esta conta. Sem ela o
-    #: cliente nasce órfão: não aparece para gerente nenhum, e `usinas_do_usuario` recorta
-    #: por `empresa_id`, então a tela dele vem vazia para sempre. Três contas assim já
-    #: existiam quando isto foi achado (30/09/2026). Nulo continua sendo aceito, porque o
-    #: sistema nasceu sem empresas e as contas de antes são legítimas.
-    empresa_id: int | None = None
-
-
-class ClienteCriadoOut(BaseModel):
-    id: int
-    nome: str
-    apelido: str
-    email: str | None = None
-    # Aparece só aqui, uma vez. Nenhum outro endpoint devolve isto.
-    senha_provisoria: str
-
-
-@router.post("/clientes", response_model=ClienteCriadoOut, status_code=201)
-def criar_cliente(
-    body: ClienteIn,
-    db: Session = Depends(get_db),
-    gestor: User = Depends(EXIGE_CLIENTES),
-) -> ClienteCriadoOut:
-    try:
-        criado = svc.criar(
-            db,
-            nome=body.nome,
-            apelido=body.apelido,
-            email=str(body.email) if body.email else None,
-            empresa=body.empresa,
-            criado_por=gestor,
-        )
-    except svc.RegraDeNegocio as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-    if body.empresa_id is not None:
-        empresas.por_id(db, body.empresa_id)  # 404 se não existir
-        criado.usuario.empresa_id = body.empresa_id
-        db.commit()
-
-    return ClienteCriadoOut(
-        id=criado.usuario.id,
-        nome=criado.usuario.nome,
-        apelido=criado.usuario.apelido,
-        email=criado.usuario.email,
-        senha_provisoria=criado.senha_provisoria,
-    )
 
 
 class SenhaOut(BaseModel):
@@ -252,7 +193,7 @@ def detalhe_cliente(
         nome=cliente.nome,
         apelido=cliente.apelido,
         email=cliente.email,
-        empresa=cliente.empresa,
+        empresa=empresas.por_id(db, cliente.empresa_id).nome if cliente.empresa_id else None,
         ativo=cliente.ativo,
         acesso=svc.situacao_acesso(db, cliente),
         trocar_senha=cliente.trocar_senha,
@@ -276,7 +217,6 @@ def detalhe_cliente(
 
 class ClientePatch(BaseModel):
     nome: str | None = None
-    empresa: str | None = None
     ativo: bool | None = None
 
 
@@ -290,8 +230,6 @@ def editar_cliente(
     cliente = _cliente(db, cliente_id)
     if body.nome is not None:
         cliente.nome = body.nome.strip()
-    if body.empresa is not None:
-        cliente.empresa = body.empresa.strip() or None
     if body.ativo is not None:
         cliente.ativo = body.ativo
     db.commit()
@@ -301,109 +239,12 @@ def editar_cliente(
         nome=cliente.nome,
         apelido=cliente.apelido,
         email=cliente.email,
-        empresa=cliente.empresa,
+        empresa=empresas.por_id(db, cliente.empresa_id).nome if cliente.empresa_id else None,
         ativo=cliente.ativo,
         usinas=svc.contar_usinas(db).get(cliente.id, 0),
         produtos=sorted(v.produto for v in cliente.vinculos),
         acesso=svc.situacao_acesso(db, cliente),
     )
-
-
-# ---------------------------------------------------------------- vínculos
-
-
-class ConectarIn(BaseModel):
-    """O token que o cliente gerou no produto. Só isso.
-
-    Não há campo de e-mail nem de id: qual conta é, quem responde é o produto ao receber o
-    token. Deixar o gestor informar isso reabriria o engano que este desenho fechou — uma
-    anotação digitada podendo discordar do token efetivamente gravado.
-    """
-
-    token: str = Field(min_length=1, max_length=200)
-
-
-class ConexaoOut(BaseModel):
-    """O desfecho da tentativa, com o vínculo resultante quando houve um."""
-
-    ok: bool
-    detalhe: str
-    vinculo: VinculoOut | None = None
-    #: O produto passou a aceitar "Entrar com Gestão Solar" para esta conta.
-    login_externo: bool = False
-    #: Por que o login NÃO foi habilitado, quando a conexão em si deu certo. Separado de
-    #: `detalhe` porque são duas coisas: ler os dados dele e deixá-lo entrar lá.
-    aviso_login: str | None = None
-
-
-@router.put("/clientes/{cliente_id}/conexoes/{produto}", response_model=ConexaoOut)
-async def conectar_produto(
-    cliente_id: int,
-    produto: Produto,
-    body: ConectarIn,
-    db: Session = Depends(get_db),
-    gestor: User = Depends(EXIGE_CLIENTES),
-) -> ConexaoOut:
-    """Conecta a conta deste cliente no produto com o token dele.
-
-    Um gesto, duas consequências: o Gestão Solar passa a LER o produto como ele — e com
-    isso a enxergar exatamente as usinas que ele enxergaria lá, pela regra de lá — e o
-    produto passa a aceitar que ele ENTRE com a senha daqui.
-
-    Responde 200 mesmo quando o token é recusado, com `ok: false` e o motivo. O erro é do
-    valor colado, não da requisição, e a tela precisa mostrar a frase inteira — um 400 com
-    detalhe viraria "Erro 400" em qualquer camada de tratamento genérico pelo caminho.
-    """
-    cliente = _cliente(db, cliente_id)
-    r = await vinculos.conectar(db, cliente, produto, body.token, por=gestor)
-    vinculo = vinculos.obter(db, cliente.id, produto)
-    return ConexaoOut(
-        ok=r.ok,
-        detalhe=r.detalhe,
-        vinculo=_vinculo_out(vinculo) if (r.ok and vinculo is not None) else None,
-        login_externo=r.login_externo,
-        aviso_login=r.aviso_login,
-    )
-
-
-@router.post("/clientes/{cliente_id}/conexoes/{produto}/testar", response_model=ConexaoOut)
-async def testar_conexao(
-    cliente_id: int,
-    produto: Produto,
-    db: Session = Depends(get_db),
-    _: User = Depends(EXIGE_CLIENTES),
-) -> ConexaoOut:
-    """Reexercita o token já gravado.
-
-    Existe porque um token que funcionava pode parar sozinho — revogado do outro lado,
-    conta desativada, usina tirada da pessoa. Sem isto, a equipe só descobre pelo cliente
-    reclamando que o aplicativo abriu vazio.
-    """
-    cliente = _cliente(db, cliente_id)
-    r = await vinculos.testar(db, cliente, produto)
-    vinculo = vinculos.obter(db, cliente.id, produto)
-    return ConexaoOut(
-        ok=r.ok,
-        detalhe=r.detalhe,
-        vinculo=_vinculo_out(vinculo) if vinculo is not None else None,
-        login_externo=r.login_externo,
-    )
-
-
-@router.delete("/clientes/{cliente_id}/vinculos/{produto}", status_code=204)
-def desvincular_produto(
-    cliente_id: int,
-    produto: Produto,
-    db: Session = Depends(get_db),
-    _: User = Depends(EXIGE_CLIENTES),
-) -> None:
-    """Apaga o vínculo e o token junto.
-
-    O token continua valendo do lado do produto até ser revogado LÁ — desconectar aqui não
-    revoga nada, só para de usar. Quem precisa cortar o acesso de verdade revoga na conta
-    de origem, que é justamente a vantagem de o token ser da pessoa.
-    """
-    vinculos.desconectar(db, _cliente(db, cliente_id), produto)
 
 
 # ------------------------------------------------------------------ usinas

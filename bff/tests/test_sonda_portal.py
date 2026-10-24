@@ -52,7 +52,12 @@ def _chave_de_teste(monkeypatch):
 
 @pytest.fixture
 def conectado(db):
+    # A sonda lê com a conta de uma EMPRESA: a plataforma não tem token (23/10/2026).
+    from app.models.empresa import Empresa
+
+    db.add(Empresa(id=1, nome="Empresa da sonda"))
     linha = Integracao(
+        empresa_id=1,
         produto=Produto.MEUWATT,
         base_url=BASE,
         token_cifrado=cripto.cifrar(MW),
@@ -68,7 +73,7 @@ async def _portal(db, conectado, corpo):
     """Varre com `/reports/portal` respondendo `corpo`, e devolve a linha dela."""
     _tudo_responde(respx.mock)
     respx.mock.get(f"{BASE}/reports/portal").respond(200, json=corpo)
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, 1)
     return next(r for r in v.rotas if r.chave == "mw.portal"), v
 
 

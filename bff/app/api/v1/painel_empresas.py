@@ -10,6 +10,8 @@ junto o que alguém ainda precisa auditar, e a chave estrangeira é `RESTRICT` j
 para o banco recusar a tentativa em vez de arrastar o resto.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
@@ -18,9 +20,11 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.apelido import ApelidoInvalido, normalizar as normalizar_apelido
 from app.core.security import exige_area, gerar_hash_senha, gerar_senha_provisoria
-from app.models.empresa import Empresa
+from app.core.telefone import exibir as exibir_telefone
+from app.models.empresa import Empresa, MembroDaEmpresa
+from app.models.integracao import Integracao, Produto
 from app.models.plant import PlantLink
-from app.models.user import Perfil, User
+from app.models.user import BOT_TOKEN, Perfil, User, UserPlantAccess, VinculoProduto
 from app.services import empresas as svc
 from app.services import pessoas
 
@@ -34,16 +38,35 @@ class EmpresaOut(BaseModel):
     nome: str
     documento: str | None = None
     ativa: bool
-    #: Contagens para a lista responder "posso desligar?" sem abrir a empresa.
+    #: Quem é da empresa (de origem ou também dela), por papel — a lista responde "quem
+    #: está aqui dentro?" sem abrir a empresa.
     usuarios: int = 0
+    gerentes: int = 0
+    tecnicos: int = 0
+    donos: int = 0
     usinas: int = 0
     #: Para qual empresa de cada produto esta linha aponta. Sem nenhum dos dois ela é
     #: fantasma: aparece na lista e todas as telas dela vêm vazias.
     mw_enterprise_id: int | None = None
     mp_tenant_id: int | None = None
+    #: O estado da conta DA EMPRESA em cada produto (`ok` · `falhou` · `nunca`), ou nulo se
+    #: o gerente ainda não conectou. Só o estado: o token é dela, e o adm não tem token.
+    conexao_meuwatt: str | None = None
+    conexao_meuplano: str | None = None
 
 
 def _saida(db: Session, e: Empresa) -> EmpresaOut:
+    por_papel = dict(
+        db.execute(
+            select(User.perfil, func.count())
+            .where(svc.contas_da_empresa(e.id), User.perfil.not_in(pessoas.DA_PLATAFORMA))
+            .group_by(User.perfil)
+        ).all()
+    )
+    conexoes = {
+        i.produto: (i.estado.value if i.token_cifrado or i.senha_cifrada else None)
+        for i in db.scalars(select(Integracao).where(Integracao.empresa_id == e.id)).all()
+    }
     return EmpresaOut(
         id=e.id,
         nome=e.nome,
@@ -51,10 +74,12 @@ def _saida(db: Session, e: Empresa) -> EmpresaOut:
         ativa=e.ativa,
         mw_enterprise_id=e.mw_enterprise_id,
         mp_tenant_id=e.mp_tenant_id,
-        usuarios=db.scalar(
-            select(func.count()).select_from(User).where(User.empresa_id == e.id)
-        )
-        or 0,
+        conexao_meuwatt=conexoes.get(Produto.MEUWATT),
+        conexao_meuplano=conexoes.get(Produto.MEUPLANO),
+        usuarios=sum(por_papel.values()),
+        gerentes=por_papel.get(Perfil.GESTOR_EMPRESA, 0),
+        tecnicos=por_papel.get(Perfil.TECNICO, 0),
+        donos=por_papel.get(Perfil.CLIENTE, 0),
         usinas=db.scalar(
             select(func.count()).select_from(PlantLink).where(PlantLink.empresa_id == e.id)
         )
@@ -68,6 +93,13 @@ def listar(
 ) -> list[EmpresaOut]:
     empresas = db.scalars(select(Empresa).order_by(Empresa.nome)).all()
     return [_saida(db, e) for e in empresas]
+
+
+@router.get("/empresas/{empresa_id}", response_model=EmpresaOut)
+def detalhe(
+    empresa_id: int, db: Session = Depends(get_db), _gestor: User = Depends(EXIGE_EMPRESAS)
+) -> EmpresaOut:
+    return _saida(db, svc.por_id(db, empresa_id))
 
 
 class EmpresaIn(BaseModel):
@@ -177,7 +209,9 @@ class CarteiraIn(BaseModel):
     #: dono** — e não volta para outra empresa por conta própria, porque adivinhar o
     #: destino de um item removido seria decidir no lugar de quem decide.
     usinas: list[int]
-    clientes: list[int]
+    #: Ausente = não mexe nas contas. A tela da empresa põe e tira usuário pela lista de
+    #: usuários dela (que sabe de quem é de mais de uma empresa); aqui fica só a usina.
+    clientes: list[int] | None = None
 
 
 @router.put("/empresas/{empresa_id}/carteira", response_model=CarteiraOut)
@@ -208,7 +242,11 @@ def salvar_carteira(
     # entrada, para o estado nem existir. (Revisão adversarial, 30/09/2026.)
     for modelo, coluna, escolhidos, extra in (
         (PlantLink, PlantLink.empresa_id, set(body.usinas), []),
-        (User, User.empresa_id, set(body.clientes), [User.perfil.not_in(pessoas.DA_PLATAFORMA)]),
+        *(
+            [(User, User.empresa_id, set(body.clientes), [User.perfil.not_in(pessoas.DA_PLATAFORMA)])]
+            if body.clientes is not None
+            else []
+        ),
     ):
         for item in db.scalars(
             select(modelo).where(coluna.is_(None) | (coluna == empresa_id), *extra)
@@ -303,45 +341,141 @@ def criar_gerente(
 
 
 class UsuarioDaEmpresaOut(BaseModel):
+    """Uma conta, como a plataforma a vê: papel, empresas, celular, o bot e se a pessoa tem
+    o token dela — nunca o token."""
+
     id: int
     nome: str
     apelido: str
     perfil: str
     ativo: bool
+    email: str | None = None
+    ultimo_login: datetime | None = None
+    #: `(17) 9 9737-7626`
+    telefone: str | None = None
+    #: Usinas concedidas a esta pessoa (as desta empresa, quando a lista é de uma empresa).
+    usinas: int = 0
+    #: O que o gerente liberou no assistente (`bot_meuwatt`, `bot_meuplano`, `bot_helper`)
+    #: e o que responde de fato — liberado E com o token PRÓPRIO da pessoa.
+    bot: list[str] = []
+    bot_ativo: list[str] = []
+    #: Em quais produtos a pessoa tem o token DELA (`meuwatt`, `meuplano`). Só o fato.
+    tokens: list[str] = []
+    #: A empresa que cuida da conta, quando não é a desta lista (usuário em mais de uma).
+    cuidada_por: str | None = None
+    #: As OUTRAS empresas desta conta.
+    outras_empresas: list[str] = []
     #: Se esta conta está no MEU grupo de papéis — é a que aparece em "Trocar papel".
     minha: bool = False
+
+
+def resumo_das_contas(
+    db: Session, contas: list[User], gestor: User, empresa_id: int | None = None
+) -> list[UsuarioDaEmpresaOut]:
+    """A linha de cada conta, montada num lugar só para a lista da empresa e a lista de
+    todos os usuários não divergirem. Com `empresa_id`, as usinas contadas são as dela."""
+    if not contas:
+        return []
+    ids = [c.id for c in contas]
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    membro: dict[int, list[int]] = {}
+    for uid, eid in db.execute(
+        select(MembroDaEmpresa.user_id, MembroDaEmpresa.empresa_id)
+        .where(MembroDaEmpresa.user_id.in_(ids))
+        .order_by(MembroDaEmpresa.id)
+    ).all():
+        membro.setdefault(uid, []).append(eid)
+    consulta = (
+        select(UserPlantAccess.user_id, func.count())
+        .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
+        .where(UserPlantAccess.user_id.in_(ids))
+        .group_by(UserPlantAccess.user_id)
+    )
+    if empresa_id is not None:
+        consulta = consulta.where(
+            (PlantLink.empresa_id == empresa_id) | PlantLink.empresa_id.is_(None)
+        )
+    usinas = dict(db.execute(consulta).all())
+    tokens: dict[int, list[str]] = {}
+    for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
+        if v.token_cifrado:
+            tokens.setdefault(v.gs_user_id, []).append(str(v.produto))
+
+    saida = []
+    for c in contas:
+        todas = ([c.empresa_id] if c.empresa_id else []) + membro.get(c.id, [])
+        saida.append(
+            UsuarioDaEmpresaOut(
+                id=c.id,
+                nome=c.nome,
+                apelido=c.apelido,
+                perfil=c.perfil.value,
+                ativo=c.ativo,
+                email=c.email,
+                ultimo_login=c.ultimo_login,
+                telefone=exibir_telefone(c.telefone),
+                usinas=usinas.get(c.id, 0),
+                bot=[campo for campo in BOT_TOKEN if getattr(c, campo)],
+                bot_ativo=sorted(c.bot_ativo) if c.telefone else [],
+                tokens=sorted(tokens.get(c.id, [])),
+                cuidada_por=(
+                    nomes.get(c.empresa_id)
+                    if empresa_id is not None and c.empresa_id != empresa_id
+                    else None
+                ),
+                outras_empresas=[nomes[e] for e in todas if e != empresa_id and e in nomes],
+                minha=gestor.pessoa_id is not None and c.pessoa_id == gestor.pessoa_id,
+            )
+        )
+    return saida
 
 
 @router.get("/empresas/{empresa_id}/usuarios", response_model=list[UsuarioDaEmpresaOut])
 def usuarios_da_empresa(
     empresa_id: int, db: Session = Depends(get_db), gestor: User = Depends(EXIGE_EMPRESAS)
 ) -> list[UsuarioDaEmpresaOut]:
-    """Quem é desta empresa — gerentes e clientes.
+    """Quem é desta empresa — gerentes, técnicos e donos de usina, inclusive quem é dela E
+    de outra (usuário em mais de uma empresa).
 
     A plataforma gere o gerente AQUI, e não em Usuários do sistema: aquela tela é do staff
     da plataforma, e misturar as duas coisas já deixava um clique errado promover o gerente
     de um inquilino a administrador do sistema inteiro.
     """
     svc.por_id(db, empresa_id)
-    return [
-        UsuarioDaEmpresaOut(
-            id=u.id,
-            nome=u.nome,
-            apelido=u.apelido,
-            perfil=u.perfil.value,
-            ativo=u.ativo,
-            minha=gestor.pessoa_id is not None and u.pessoa_id == gestor.pessoa_id,
-        )
-        for u in db.scalars(
-            select(User).where(User.empresa_id == empresa_id).order_by(User.nome)
+    contas = list(
+        db.scalars(
+            select(User)
+            .where(svc.contas_da_empresa(empresa_id), User.perfil.not_in(pessoas.DA_PLATAFORMA))
+            .order_by(User.nome)
         ).all()
-    ]
+    )
+    return resumo_das_contas(db, contas, gestor, empresa_id)
 
 
 class UsuarioPatch(BaseModel):
     ativo: bool | None = None
     #: Define uma senha nova. Some da resposta: quem a define é quem a entrega.
     senha: str | None = None
+    #: O papel DENTRO da empresa: dono de usina, gerente ou técnico.
+    perfil: Perfil | None = None
+
+
+#: Os papéis que existem dentro de uma empresa. Os da plataforma não se dão por aqui.
+PAPEIS_DA_EMPRESA = (Perfil.CLIENTE, Perfil.GESTOR_EMPRESA, Perfil.TECNICO)
+
+
+def _conta_desta_empresa(db: Session, empresa_id: int, usuario_id: int) -> User:
+    alvo = db.get(User, usuario_id)
+    if alvo is None or empresa_id not in svc.empresas_da_conta(db, alvo):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    if alvo.perfil in (Perfil.ATENDIMENTO, Perfil.ADMINISTRADOR):
+        # Conta da plataforma com empresa gravada (acontece: um administrador que também é
+        # dono de usina). Ela não se administra por aqui.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Esta é uma conta da plataforma. Administre-a em Usuários.",
+        )
+    return alvo
 
 
 @router.patch("/empresas/{empresa_id}/usuarios/{usuario_id}", response_model=UsuarioDaEmpresaOut)
@@ -352,23 +486,14 @@ def editar_usuario_da_empresa(
     db: Session = Depends(get_db),
     gestor: User = Depends(EXIGE_EMPRESAS),
 ) -> UsuarioDaEmpresaOut:
-    """Desativa, reativa ou redefine a senha de quem é da empresa.
+    """Desativa, reativa, redefine a senha ou muda o papel de quem é da empresa.
 
     **Só mexe em quem é DESTA empresa** — o id vem da URL e a conta é conferida contra ele.
     Sem essa checagem, trocar o número na barra de endereço redefiniria a senha de qualquer
     conta do sistema a partir de uma tela de empresa.
     """
     svc.por_id(db, empresa_id)
-    alvo = db.get(User, usuario_id)
-    if alvo is None or alvo.empresa_id != empresa_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
-    if alvo.perfil in (Perfil.ATENDIMENTO, Perfil.ADMINISTRADOR):
-        # Conta da plataforma com empresa gravada (acontece: um administrador que também é
-        # dono de usina). Ela não se administra por aqui.
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Esta é uma conta da plataforma. Administre-a em Usuários do sistema.",
-        )
+    alvo = _conta_desta_empresa(db, empresa_id, usuario_id)
 
     if body.ativo is not None:
         alvo.ativo = body.ativo
@@ -378,16 +503,113 @@ def editar_usuario_da_empresa(
                 status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
             )
         alvo.senha_hash = gerar_hash_senha(body.senha)
+    if body.perfil is not None and body.perfil is not alvo.perfil:
+        if body.perfil not in PAPEIS_DA_EMPRESA:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Dentro da empresa só existem dono de usina, gerente e técnico.",
+            )
+        if alvo.perfil is Perfil.CLIENTE and db.scalar(
+            select(UserPlantAccess.id).where(UserPlantAccess.user_id == alvo.id).limit(1)
+        ):
+            # Gerente e técnico não recebem concessão (o gerente vê a carteira inteira; o
+            # técnico, só o WhatsApp dele): trocar o papel com usina concedida deixaria a
+            # concessão órfã, disputando a usina com o dono dela.
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Esta pessoa ainda recebe usinas como dona. Tire as usinas dela antes de "
+                "mudar o papel.",
+            )
+        alvo.perfil = body.perfil
     db.commit()
+    return resumo_das_contas(db, [alvo], gestor, empresa_id)[0]
 
-    return UsuarioDaEmpresaOut(
-        id=alvo.id,
-        nome=alvo.nome,
-        apelido=alvo.apelido,
-        perfil=alvo.perfil.value,
-        ativo=alvo.ativo,
-        minha=gestor.pessoa_id is not None and alvo.pessoa_id == gestor.pessoa_id,
+
+class NovoUsuarioIn(BaseModel):
+    nome: str = Field(min_length=2)
+    apelido: str = Field(min_length=3)
+    email: EmailStr | None = None
+    perfil: Perfil = Perfil.CLIENTE
+
+
+class NovoUsuarioOut(BaseModel):
+    id: int
+    nome: str
+    apelido: str
+    #: A senha provisória, mostrada UMA vez — entregue com o APELIDO, que é o que autentica.
+    senha: str
+
+
+@router.post("/empresas/{empresa_id}/usuarios", response_model=NovoUsuarioOut, status_code=201)
+def criar_usuario_da_empresa(
+    empresa_id: int,
+    body: NovoUsuarioIn,
+    db: Session = Depends(get_db),
+    gestor: User = Depends(EXIGE_EMPRESAS),
+) -> NovoUsuarioOut:
+    """Cria um usuário DENTRO da empresa: dono de usina, gerente ou técnico. A empresa é o
+    caminho da rota, então o vínculo é obrigatório por construção."""
+    from app.services import clientes
+
+    svc.por_id(db, empresa_id)
+    if body.perfil not in PAPEIS_DA_EMPRESA:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Dentro da empresa só existem dono de usina, gerente e técnico.",
+        )
+    try:
+        criado = clientes.criar(
+            db,
+            nome=body.nome,
+            apelido=body.apelido,
+            email=str(body.email) if body.email else None,
+            empresa=None,
+            criado_por=gestor,
+        )
+    except clientes.RegraDeNegocio as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    criado.usuario.empresa_id = empresa_id
+    criado.usuario.perfil = body.perfil
+    db.commit()
+    return NovoUsuarioOut(
+        id=criado.usuario.id,
+        nome=criado.usuario.nome,
+        apelido=criado.usuario.apelido,
+        senha=criado.senha_provisoria,
     )
+
+
+@router.put("/empresas/{empresa_id}/usuarios/{usuario_id}", response_model=UsuarioDaEmpresaOut)
+def por_usuario_na_empresa(
+    empresa_id: int,
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    gestor: User = Depends(EXIGE_EMPRESAS),
+) -> UsuarioDaEmpresaOut:
+    """Põe uma conta que JÁ EXISTE nesta empresa — sem tirar das outras (usuário em mais de
+    uma empresa). Sem empresa nenhuma, esta passa a ser a de origem (a que cuida da conta)."""
+    conta = db.get(User, usuario_id)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    svc.por_na_empresa(db, conta, empresa_id, gestor)
+    db.commit()
+    return resumo_das_contas(db, [conta], gestor, empresa_id)[0]
+
+
+@router.delete("/empresas/{empresa_id}/usuarios/{usuario_id}", status_code=204)
+def tirar_usuario_da_empresa(
+    empresa_id: int,
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    _gestor: User = Depends(EXIGE_EMPRESAS),
+) -> None:
+    """Tira a conta desta empresa — e as usinas que ela recebia daqui. A conta continua
+    existindo (e nas outras empresas dela); não se apaga ninguém por esta tela."""
+    conta = db.get(User, usuario_id)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    svc.tirar_da_empresa(db, conta, empresa_id)
+    db.commit()
 
 
 @router.put("/empresas/{empresa_id}/gerente/{apelido}", response_model=UsuarioDaEmpresaOut)
@@ -421,14 +643,7 @@ def tornar_gerente(
     conta.empresa_id = empresa_id
     db.commit()
 
-    return UsuarioDaEmpresaOut(
-        id=conta.id,
-        nome=conta.nome,
-        apelido=conta.apelido,
-        perfil=conta.perfil.value,
-        ativo=conta.ativo,
-        minha=gestor.pessoa_id is not None and conta.pessoa_id == gestor.pessoa_id,
-    )
+    return resumo_das_contas(db, [conta], gestor, empresa_id)[0]
 
 
 class ContaLivreOut(BaseModel):

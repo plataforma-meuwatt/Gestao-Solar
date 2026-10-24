@@ -243,32 +243,26 @@ async def _coletar_parada_micro(db: Session, rel: Relatorio) -> list[Evento]:
 
     **A exceção à regra do motor, e por quê:** tudo o mais é lido com o token de um cliente
     (`_leitor`), e este não pode ser: o MICRO não é escopado por usina no meuWatt — só
-    administrador o lê —, então nenhum token de cliente o enxerga. Lê-se com a credencial de
-    serviço, uma chamada por volta para todas as usinas. Ponte sem credencial ou conta sem
-    acesso vira aviso no relatório e silêncio no WhatsApp — nunca "parou" sem saber.
+    administrador o lê —, então nenhum token de cliente o enxerga. Lê-se com a conta da
+    EMPRESA dona da usina (a plataforma não tem token), uma chamada por empresa por volta.
+    Empresa sem conexão ou conta sem acesso vira aviso no relatório e silêncio no WhatsApp
+    — nunca "parou" sem saber.
     """
     links = [l for l in _usinas_com_interesse(db, "parada").values() if l.mw_micro_plant_id]
     if not links:
         return []
-    try:
-        cliente = await integracoes.cliente_meuwatt(db)
-        alertas = await cliente.micro_alertas()
-    except Exception as exc:  # noqa: BLE001 — MICRO fora não derruba o aviso das outras usinas
-        rel.avisos.append(f"MICRO: alertas de micro usina indisponíveis ({exc}).")
-        return []
-
-    por_micro: dict[int, list[PlantLink]] = {}
-    for link in links:
-        por_micro.setdefault(link.mw_micro_plant_id, []).append(link)
+    alertas_da_usina, falhas = await integracoes.micro_alertas_das_usinas(db, links)
+    for falha in falhas:
+        rel.avisos.append(f"MICRO: alertas de micro usina indisponíveis ({falha}).")
 
     eventos: list[Evento] = []
-    for alerta in alertas:
-        episodio = alerta.get("key") or alerta.get("id")
-        if episodio is None:
-            continue
-        estacao = str(alerta.get("station_name") or "Estação")
-        motivo = str(alerta.get("kind_label") or "parada").lower()
-        for link in por_micro.get(alerta.get("plant_id"), []):
+    for link in links:
+        for alerta in alertas_da_usina.get(link.id, []):
+            episodio = alerta.get("key") or alerta.get("id")
+            if episodio is None:
+                continue
+            estacao = str(alerta.get("station_name") or "Estação")
+            motivo = str(alerta.get("kind_label") or "parada").lower()
             eventos.append(
                 Evento(
                     tipo="parada",

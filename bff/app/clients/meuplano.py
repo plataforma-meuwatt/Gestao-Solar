@@ -147,16 +147,18 @@ class MeuPlanoClient:
         return await self._get("/api/v1/meuacesso/auth/me/session", token=token)
 
     async def empresas_om(self) -> list[dict[str, Any]]:
-        """Os `tenants` do meuPlano — a empresa/conta de lá.
+        """As empresas de O&M do meuPlano: as organizações (`owners`) PRESTADORAS que este
+        token enxerga — `[{id, name, document, kind}]`. É a organização de verdade de lá (as
+        pessoas se ligam a ela por `user_owners`); o `tenants` é andaime sem uso, vazio em
+        produção (auditoria de 23/10/2026).
 
         O cadastro é INDEPENDENTE do `enterprises` do meuWatt, e é assim de propósito:
         alguém pode contratar só a manutenção e nunca existir no monitoramento. Quem diz
         que os dois são a mesma empresa é o vínculo no Gestão Solar, não uma regra de
         nome ou de CNPJ adivinhada.
-
-        Exige a permissão `admin.tenants.gerenciar` no token.
         """
-        return await self._get("/api/v1/meuacesso/admin/tenants")
+        dados = await self._get("/api/v1/meuacesso/owners/", kind="PRESTADORA")
+        return dados if isinstance(dados, list) else (dados or {}).get("items") or []
 
     async def usinas(self, token: str | None = None) -> list[dict[str, Any]]:
         """As usinas visíveis. Com `token` do usuário, devolve o escopo DELE — é assim que

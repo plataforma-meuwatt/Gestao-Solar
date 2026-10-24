@@ -115,7 +115,7 @@ def usuario_atual(
     return usuario
 
 
-def _empresa_ativa(db: Session, usuario: User) -> None:
+def _empresa_ativa(db: Session, usuario: User, empresa_id: int | None = None) -> None:
     """Desativar a empresa tem de parar a leitura dela — em todos os portões.
 
     `painel.entrar` já recusava o gerente de empresa desativada, e só ele: `auth.login`
@@ -127,9 +127,10 @@ def _empresa_ativa(db: Session, usuario: User) -> None:
     inclusive as de um token emitido antes da desativação. Conta da plataforma tem
     `empresa_id` nulo e não é tocada.
     """
-    if usuario.empresa_id is None:
+    empresa_id = empresa_id or usuario.empresa_id
+    if empresa_id is None:
         return
-    empresa = db.get(Empresa, usuario.empresa_id)
+    empresa = db.get(Empresa, empresa_id)
     if empresa is None or not empresa.ativa:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -150,28 +151,28 @@ def criar_token_painel(user_id: int) -> tuple[str, datetime]:
     return token, expira
 
 
-def _token_de_escopo(user_id: int, escopo: str) -> tuple[str, datetime]:
+def _token_de_escopo(user_id: int, escopo: str, empresa_id: int | None = None) -> tuple[str, datetime]:
     s = get_settings()
     expira = datetime.now(UTC) + timedelta(hours=s.gs_painel_sessao_horas)
-    token = jwt.encode(
-        {"sub": str(user_id), "escopo": escopo, "exp": expira},
-        s.gs_jwt_secret,
-        algorithm=ALGORITMO,
-    )
-    return token, expira
+    dados = {"sub": str(user_id), "escopo": escopo, "exp": expira}
+    if empresa_id is not None:
+        # A conta é de mais de uma empresa e está operando OUTRA que não a de origem. A
+        # guarda confere a cada requisição que ela ainda é de lá.
+        dados["empresa"] = empresa_id
+    return jwt.encode(dados, s.gs_jwt_secret, algorithm=ALGORITMO), expira
 
 
-def criar_token_empresa(user_id: int) -> tuple[str, datetime]:
+def criar_token_empresa(user_id: int, empresa_id: int | None = None) -> tuple[str, datetime]:
     """Sessão do gerente da empresa de O&M, marcada com `escopo=empresa`.
 
     Um portão novo, e não um perfil a mais dentro do painel: o prefixo da rota passa a
     dizer de quem ela é, e o token de um portão é recusado nos outros — `usuario_atual`
     já recusa qualquer claim `escopo`, e `gestor_atual` exige o valor `painel`.
     """
-    return _token_de_escopo(user_id, "empresa")
+    return _token_de_escopo(user_id, "empresa", empresa_id)
 
 
-def criar_token_tecnico(user_id: int) -> tuple[str, datetime]:
+def criar_token_tecnico(user_id: int, empresa_id: int | None = None) -> tuple[str, datetime]:
     """Sessão do técnico, marcada com `escopo=tecnico`.
 
     Portão próprio, e não a sessão de empresa com menos menu: com `escopo=empresa`, a única
@@ -180,7 +181,7 @@ def criar_token_tecnico(user_id: int) -> tuple[str, datetime]:
     cliente. Com escopo próprio, os três portões existentes o recusam pela claim, antes
     de olhar perfil nenhum.
     """
-    return _token_de_escopo(user_id, "tecnico")
+    return _token_de_escopo(user_id, "tecnico", empresa_id)
 
 
 def gestor_empresa_atual(
@@ -234,20 +235,30 @@ def _conta_do_escopo(
     usuario = db.get(User, user_id)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à empresa")
+    if dados.get("empresa") is not None:
+        # Sessão de OUTRA empresa da conta (troca de empresa no oem-gs). Confere a cada
+        # requisição: tirada da empresa, a sessão para na seguinte, sem esperar expirar.
+        from app.services.empresas import empresas_da_conta
+
+        empresa = int(dados["empresa"])
+        if empresa not in empresas_da_conta(db, usuario):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conta não é mais desta empresa.")
+        usuario.empresa_da_sessao = empresa
     return usuario
 
 
 def _da_empresa(db: Session, usuario: User) -> None:
     """Conta de inquilino tem de ter empresa — e ela, ativa. Sem `empresa_id`, todo filtro
     montado a partir da conta viraria "sem filtro", que é o vazamento silencioso que o
-    multiempresa existe para não ter."""
-    if usuario.empresa_id is None:
+    multiempresa existe para não ter. A empresa conferida é a que a sessão OPERA."""
+    empresa_id = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
+    if empresa_id is None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Esta conta não está ligada a nenhuma empresa. Peça a quem administra a "
             "plataforma para vinculá-la.",
         )
-    _empresa_ativa(db, usuario)
+    _empresa_ativa(db, usuario, empresa_id)
 
 
 def gestor_atual(

@@ -250,62 +250,44 @@ def test_tirar_da_carteira_deixa_sem_dono(db, carteiras, administrador):
 # ------------------------------------------------------- credencial por empresa
 
 
-def test_a_credencial_da_empresa_nao_sobrescreve_a_da_plataforma(db, duas_empresas):
-    """Defeito guardado: `salvar_token` usar o atalho de `obter`, achar a linha da
-    plataforma e gravar o token da empresa em cima dela. A plataforma perderia a
-    credencial com que monta o catálogo, e ninguém ligaria uma coisa à outra."""
+def test_a_credencial_da_empresa_nao_sobrescreve_outra_linha(db, duas_empresas):
+    """Defeito guardado: `salvar_token` gravar o token da empresa na linha errada. Cada
+    empresa tem a SUA linha, e uma não toca na outra."""
     from app.models.integracao import Integracao, Produto
     from app.services import integracoes
 
     a, b = duas_empresas
-    # UMA empresa no sistema — a segunda é apagada, não desativada: desativar não devolve
-    # o atalho (ver o teste abaixo). É o cenário da migração, em que a credencial da
-    # plataforma ainda é legitimamente a da única empresa.
-    db.delete(b)
-    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br"))
-    db.commit()
-
-    # A leitura da empresa, sem linha própria, cai na da plataforma — o atalho da migração.
-    assert integracoes.obter(db, Produto.MEUWATT, a.id).empresa_id is None
-
+    db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br", empresa_id=b.id))
     db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br", empresa_id=a.id))
     db.commit()
 
-    da_empresa = integracoes.obter(db, Produto.MEUWATT, a.id)
-    da_plataforma = integracoes.obter(db, Produto.MEUWATT)
-    assert da_empresa.empresa_id == a.id
-    assert da_plataforma.empresa_id is None
-    assert da_empresa.id != da_plataforma.id
+    da_a = integracoes.obter(db, Produto.MEUWATT, a.id)
+    da_b = integracoes.obter(db, Produto.MEUWATT, b.id)
+    assert (da_a.empresa_id, da_b.empresa_id) == (a.id, b.id)
+    assert da_a.id != da_b.id
 
 
-def test_com_duas_empresas_o_atalho_da_plataforma_e_recusado(db, duas_empresas):
-    """A trava que se arma sozinha. Com UMA empresa, a credencial da plataforma é a dela e
-    o atalho é correto. Com DUAS, ela é de uma das duas — e usá-la para a outra devolveria
-    a carteira do concorrente. A recusa é ruidosa de propósito: parar é melhor do que
-    responder dado errado."""
+def test_a_plataforma_nao_tem_token_e_ninguem_cai_nela(db, duas_empresas):
+    """Regra do dono (23/10/2026): "adm não tem token". A empresa sem a conexão dela não
+    lê nada — nunca o atalho para outra credencial, nem com UMA empresa só no sistema (era
+    o "atalho da migração", que lia a carteira com a conta de quem gerou o token)."""
+    import asyncio
+
     from app.models.integracao import Integracao, Produto
     from app.services import integracoes
 
     a, b = duas_empresas
+    db.delete(b)
+    # Uma linha sem empresa (como a que existia) não serve de atalho para ninguém.
     db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br"))
     db.commit()
 
+    assert integracoes.obter(db, Produto.MEUWATT, a.id) is None
     with pytest.raises(RuntimeError) as erro:
-        integracoes.obter(db, Produto.MEUWATT, a.id)
-    assert "conexão dela" in str(erro.value)
+        asyncio.run(integracoes.cliente_meuwatt(db, a.id))
+    assert "Conexões" in str(erro.value)
 
-    # E DESLIGAR a outra não devolve o atalho — este teste já afirmou o contrário, e
-    # estava errado. A credencial da plataforma pertence à conta de alguém: com duas
-    # empresas cadastradas, ninguém sabe a qual delas. Desativar a primeira faria a
-    # segunda ler a carteira da primeira com o token da primeira, que é exatamente o
-    # vazamento que a trava existe para impedir. Uma trava que se desarma sozinha não é
-    # trava. (Revisão de isolamento, 30/09/2026.)
-    b.ativa = False
-    db.commit()
-    with pytest.raises(RuntimeError):
-        integracoes.obter(db, Produto.MEUWATT, a.id)
-
-    # A saída é conectar a conta DA empresa, não mexer no cadastro da outra.
+    # A saída é conectar a conta DA empresa.
     db.add(Integracao(produto=Produto.MEUWATT, base_url="https://api.meuwatt.com.br", empresa_id=a.id))
     db.commit()
     assert integracoes.obter(db, Produto.MEUWATT, a.id).empresa_id == a.id

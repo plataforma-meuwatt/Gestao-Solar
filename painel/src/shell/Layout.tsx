@@ -4,7 +4,7 @@
  * Três travas de acesso, e as três importam:
  * - sem sessão, qualquer rota manda para a entrada;
  * - o menu mostra só as áreas que a conta abre, e a pessoa pousa na primeira delas —
- *   mandar todo mundo para Clientes deixaria quem não a tem olhando um 403 na cara;
+ *   mandar todo mundo para Empresas deixaria quem não a tem olhando um 403 na cara;
  * - a casca revalida o acesso em `GET /eu` ao abrir, porque a sessão dura oito horas e
  *   o que a pessoa abre pode mudar no meio delas.
  *
@@ -16,17 +16,18 @@
  */
 
 import {
+  Bot,
   Building2,
   KeyRound,
   Link2,
   Repeat,
+  ScrollText,
   ShieldCheck,
   LogOut,
   MessageCircle,
   Route,
   Stethoscope,
   Sun,
-  Users,
   UsersRound,
   type LucideIcon,
 } from 'lucide-react'
@@ -34,7 +35,14 @@ import { useQuery } from '@tanstack/react-query'
 import React from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
-import { meuAcesso, meusPapeis, trocarDePapel, trocarMinhaSenha } from '@/features/api'
+import {
+  meuAcesso,
+  meusPapeis,
+  minhasEmpresas,
+  trocarDeEmpresa,
+  trocarDePapel,
+  trocarMinhaSenha,
+} from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 import { aceita, enderecoDe, fraseDaPortaErrada } from '@/lib/portao'
 import { useAuth, type Escopo, type Perfil } from '@/store/auth'
@@ -55,38 +63,30 @@ type ItemMenu = {
 }
 
 /**
- * O menu, e a ausência que importa: **não há mais item de Conexões**.
+ * O menu da PLATAFORMA (adm-gs), no modelo do dono (23/10/2026): **Empresas** primeiro — os
+ * clientes da plataforma são as empresas de O&M, e se entra numa para ver os usuários
+ * dela —, **Usuários** como o inverso (cada pessoa com a(s) empresa(s) dela), o inventário
+ * de **Usinas** e o **Log do bot**. Em Sistema, o número do WhatsApp, a sonda e o
+ * diagnóstico.
  *
- * Ele existia no mesmo nível de "Clientes" e era lido como se fosse a conexão de alguém —
- * mas quem abria via sempre os mesmos dois cartões, independentemente do cliente
- * escolhido. A conexão é do usuário: a de cada cliente mora dentro da ficha dele, e a
- * credencial com que o painel monta o catálogo de usinas mora dentro de Usuários do
- * sistema, ao lado de quem administra.
- *
- * Sobra em "Sistema" só a sonda de rotas, que é diagnóstico do sistema e de mais nada.
+ * O que NÃO está aqui, de propósito: "Clientes" solto (o cliente é usuário de uma empresa)
+ * e qualquer tela de token — a plataforma não tem token; quem cola o de cada pessoa é o
+ * gerente da empresa, no oem-gs.
  *
  * **`area` é a chave do catálogo do BFF, e os dois lados têm de casar.** Item com área que
  * o servidor não conhece é uma tela que ninguém abre; área do servidor sem item aqui é uma
  * tela concedida que não aparece no menu. Ao criar tela nova, acrescente nos dois.
  */
 const MENU: ItemMenu[] = [
-  { para: '/clientes', rotulo: 'Clientes', icone: Users, area: 'clientes' },
+  { para: '/empresas', rotulo: 'Empresas', icone: Building2, area: 'empresas' },
+  // Quem administra mexe em TODAS as contas, inclusive na equipe da plataforma — não é
+  // área concedível: conceder "mexer em quem administra" a quem não administra é conceder
+  // tudo (ver `services/areas_painel`).
+  { para: '/usuarios', rotulo: 'Usuários', icone: UsersRound, soAdministrador: true },
   { para: '/usinas', rotulo: 'Usinas', icone: Sun, area: 'usinas' },
-  { para: '/diagnostico', rotulo: 'Diagnóstico', icone: Stethoscope, area: 'diagnostico' },
-  // Quem opera o painel. Não é área concedível: conceder "mexer em quem administra" a
-  // quem não administra é conceder tudo — ver `services/areas_painel`.
-  {
-    para: '/usuarios',
-    rotulo: 'Usuários do sistema',
-    icone: UsersRound,
-    soAdministrador: true,
-  },
-  // Sonda das rotas dos produtos: diagnóstico do SISTEMA, não de cliente nenhum. O acesso
-  // aos produtos saiu daqui e foi para dentro de Usuários do sistema — ver
-  // `features/conexoes`.
-  { para: '/rotas', rotulo: 'Rotas', icone: Route, area: 'rotas', grupo: 'Sistema' },
-  // O número da empresa, não o de um cliente: quem abre esta tela configura por onde TODAS
-  // as notificações saem. Por isso Sistema, e por isso área própria.
+  { para: '/bot', rotulo: 'Log do bot', icone: ScrollText, area: 'bot' },
+  // O número da plataforma, não o de um cliente: por onde o bot responde e TODAS as
+  // notificações saem. Por isso Sistema, e por isso área própria.
   {
     para: '/whatsapp',
     rotulo: 'WhatsApp',
@@ -94,13 +94,13 @@ const MENU: ItemMenu[] = [
     area: 'whatsapp',
     grupo: 'Sistema',
   },
-  // Quem abre isto vê a lista INTEIRA de empresas — nenhuma delas sabe que as outras
-  // existem. Por isso Sistema, e por isso área própria.
+  // Sonda das rotas dos produtos, com a conexão de uma empresa: diagnóstico do SISTEMA.
+  { para: '/rotas', rotulo: 'Rotas', icone: Route, area: 'rotas', grupo: 'Sistema' },
   {
-    para: '/empresas',
-    rotulo: 'Empresas de O&M',
-    icone: Building2,
-    area: 'empresas',
+    para: '/diagnostico',
+    rotulo: 'Diagnóstico',
+    icone: Stethoscope,
+    area: 'diagnostico',
     grupo: 'Sistema',
   },
 ]
@@ -118,8 +118,10 @@ const MENU: ItemMenu[] = [
  */
 const MENU_EMPRESA: ItemMenu[] = [
   { para: '/minha-empresa/usinas', rotulo: 'Usinas', icone: Sun },
-  { para: '/minha-empresa/clientes', rotulo: 'Clientes', icone: Users },
   { para: '/minha-empresa/usuarios', rotulo: 'Usuários', icone: UsersRound },
+  // O bot do WhatsApp de cada pessoa da empresa: celular, o token DELA e o que o
+  // assistente responde (meuWatt, meuPlano, helper — um, dois ou todos).
+  { para: '/minha-empresa/bot', rotulo: 'Bot do WhatsApp', icone: Bot },
   // As contas da empresa nos produtos. Fica por último porque é configuração, não o dia
   // a dia — mas é o primeiro lugar aonde ir quando as listas acima vierem vazias.
   { para: '/minha-empresa/conexoes', rotulo: 'Conexões', icone: Link2 },
@@ -197,7 +199,7 @@ function TrocarPapel() {
   }
 
   return (
-    <div className="ml-auto relative">
+    <div className="relative">
       <button
         onClick={() => setAberto((v) => !v)}
         className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-campo
@@ -277,6 +279,56 @@ function TrocarPapel() {
           </p>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * Trocar de EMPRESA — o gerente (ou o técnico) que é de mais de uma O&M. Só aparece com
+ * duas ou mais; a sessão nova vale para a escolhida, e o servidor confere a cada requisição
+ * que a conta continua sendo de lá.
+ */
+function TrocarEmpresa() {
+  const assumir = useAuth((s) => s.assumir)
+  const [erro, setErro] = React.useState<string | null>(null)
+  const { data } = useQuery({ queryKey: ['minhas-empresas'], queryFn: minhasEmpresas, retry: false })
+  if (!data || data.length < 2) return null
+
+  async function trocar(id: number) {
+    setErro(null)
+    try {
+      const nova = await trocarDeEmpresa(id)
+      assumir({
+        token: nova.token,
+        nome: nova.nome,
+        apelido: nova.apelido,
+        perfil: nova.perfil as Perfil,
+        escopo: nova.escopo === 'cliente' ? 'painel' : nova.escopo,
+        empresa: nova.empresa,
+      })
+      // Menu, consultas e carteira são de outra empresa: recarrega a casca inteira.
+      window.location.assign('/')
+    } catch (e) {
+      setErro(mensagemDeErro(e))
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        className="campo h-8 w-52 text-xs"
+        value={data.find((e) => e.atual)?.id ?? ''}
+        onChange={(e) => void trocar(Number(e.target.value))}
+        aria-label="Trocar de empresa"
+      >
+        {data.map((e) => (
+          <option key={e.id} value={e.id} disabled={!e.ativa}>
+            {e.nome}
+            {!e.ativa ? ' (desligada)' : ''}
+          </option>
+        ))}
+      </select>
+      {erro ? <span className="text-[11px] text-parado">{erro}</span> : null}
     </div>
   )
 }
@@ -435,7 +487,10 @@ function FaixaDePapel({
             ? 'administrador do sistema — você vê todas as empresas'
             : 'atendimento — você vê todas as empresas'}
       </span>
-      <TrocarPapel />
+      <div className="ml-auto flex items-center gap-2">
+        {daEmpresa ? <TrocarEmpresa /> : null}
+        <TrocarPapel />
+      </div>
     </div>
   )
 }
@@ -589,7 +644,7 @@ export function Layout() {
   )
 }
 
-/** Guarda das telas que só administrador abre — hoje, só Usuários do sistema. */
+/** Guarda das telas que só administrador abre — hoje, só Usuários. */
 export function SoAdministrador({ children }: { children: React.ReactNode }) {
   const ehAdmin = useAuth((s) => s.perfil === 'administrador')
   if (!ehAdmin) return <SemAcesso />
@@ -635,8 +690,7 @@ function SemAcesso() {
     <div className="cartao p-8 max-w-lg">
       <p className="text-forte font-semibold">Área restrita</p>
       <p className="text-sm text-rotulo mt-2">
-        Seu acesso não inclui esta tela. Quem administra o painel concede em Usuários do
-        sistema.
+        Seu acesso não inclui esta tela. Quem administra o painel concede em Usuários.
       </p>
     </div>
   )

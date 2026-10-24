@@ -83,6 +83,12 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
     naquele produto (regra do dono, 23/10/2026). Manter ligada não reconfere: o que ficou sem
     token já está parado (`User.bot_ativo`), e reconferir travaria salvar o resto do cadastro."""
     if valor and not getattr(conta, campo):
+        if campo == "bot_helper":
+            # A caixa existe (pedido do dono), mas o bot ainda não tem ferramenta de atuar na
+            # usina: liberar seria prometer uma resposta que não vem.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "O helper no bot ainda está sendo feito — libera quando as "
+                                "ferramentas de atuar na usina ficarem prontas.")
         if not conta.telefone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "Cadastre o celular antes de liberar o assistente do WhatsApp.")
@@ -95,11 +101,35 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
 
 
 # --------------------------------------------------------------------------- leitura
+def _organizacao(db: Session, empresa_id: int) -> int:
+    """A organização (`owners.id`) desta empresa no meuPlano — casada em oem-gs → Vínculos.
+
+    Sem ela não se lista ninguém: o token de quem é admin do SISTEMA lá devolve as pessoas
+    de TODAS as organizações (29 de 8 empresas, medido em 23/10/2026), e o gerente desta
+    empresa leria nome, e-mail e celular de gente de outra carteira. Fecha, em vez de vazar.
+    """
+    from app.models.empresa import Empresa
+
+    empresa = db.get(Empresa, empresa_id)
+    if empresa is None or empresa.mp_tenant_id is None:
+        raise HTTPException(
+            status.HTTP_424_FAILED_DEPENDENCY,
+            "Ligue esta empresa à organização dela no meuPlano (Vínculos) antes de puxar "
+            "pessoas de lá — sem isso viriam pessoas de outras empresas.",
+        )
+    return empresa.mp_tenant_id
+
+
+def _da_organizacao(pessoas: list[dict[str, Any]], organizacao: int) -> list[dict[str, Any]]:
+    return [p for p in pessoas if organizacao in (p.get("owner_ids") or [])]
+
+
 async def pessoas_do_meuplano(db: Session, empresa_id: int) -> list[dict[str, Any]]:
-    """As pessoas que a empresa administra no meuPlano, e a quem cada uma já está ligada aqui."""
+    """As pessoas da ORGANIZAÇÃO desta empresa no meuPlano, e a quem cada uma já está ligada aqui."""
+    organizacao = _organizacao(db, empresa_id)
     mp = await _mp(db, empresa_id)
     try:
-        pessoas = await mp.usuarios_admin()
+        pessoas = _da_organizacao(await mp.usuarios_admin(), organizacao)
     except Exception as exc:                               # noqa: BLE001
         raise _falha_do_meuplano(exc) from None
     ligadas = dict(db.execute(
@@ -129,15 +159,16 @@ def _aplicar_da_pessoa(db: Session, conta: User, p: dict[str, Any]) -> list[str]
 
 async def ligar(db: Session, conta: User, empresa_id: int, mp_user_id: int) -> list[str]:
     """Liga a conta daqui à pessoa do meuPlano e puxa o cadastro de lá."""
+    organizacao = _organizacao(db, empresa_id)
     try:
-        pessoas = await (await _mp(db, empresa_id)).usuarios_admin()
+        pessoas = _da_organizacao(await (await _mp(db, empresa_id)).usuarios_admin(), organizacao)
     except HTTPException:
         raise
     except Exception as exc:                               # noqa: BLE001
         raise _falha_do_meuplano(exc) from None
     pessoa = next((p for p in pessoas if p.get("id") == mp_user_id), None)
     if pessoa is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Essa pessoa não está entre as que a sua empresa administra no meuPlano.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Essa pessoa não está na organização da sua empresa no meuPlano.")
     ja = db.scalar(select(User.apelido).join(VinculoProduto, VinculoProduto.gs_user_id == User.id).where(
         VinculoProduto.produto == Produto.MEUPLANO.value, VinculoProduto.usuario_remoto_id == str(mp_user_id),
         User.id != conta.id))

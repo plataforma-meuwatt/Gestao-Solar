@@ -21,8 +21,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.clients import whatsapp as gateway
+from app.core.db import get_db
 from app.core.security import exige_area
+from app.models.conversa_whatsapp import RegistroBot
+from app.models.empresa import Empresa
 from app.models.user import User
 
 router = APIRouter(prefix="/api/painel/whatsapp", tags=["painel · whatsapp"])
@@ -234,3 +240,80 @@ async def eventos(limite: int = 30, _: User = Depends(EXIGE_WHATSAPP)) -> list[E
         return [EventoOut(**e) for e in await gateway.eventos(limite)]
     except gateway.GatewayIndisponivel as exc:
         raise _erro(exc) from exc
+
+
+# ------------------------------------------------------------------ log do bot
+
+#: Área própria: quem lê o log lê as perguntas e respostas das pessoas — não é o mesmo que
+#: configurar o número.
+EXIGE_BOT = exige_area("bot")
+
+
+class RegistroBotOut(BaseModel):
+    """Uma mensagem que chegou ao assistente, e o que ele fez com ela."""
+
+    id: int
+    em: datetime
+    telefone: str
+    usuario_id: int | None = None
+    usuario: str | None = None
+    apelido: str | None = None
+    empresa: str | None = None
+    #: `respondeu` · `sem_conta` · `nao_liberado` · `sem_texto` · `zerou` · `erro`
+    resultado: str
+    ferramentas: list[str] = []
+    pergunta: str | None = None
+    resposta: str | None = None
+    duracao_ms: int | None = None
+    erro: str | None = None
+
+
+def registros_do_bot(
+    db: Session, *, empresa_id: int | None = None, usuario_id: int | None = None,
+    resultado: str | None = None, limite: int = 200,
+) -> list[RegistroBotOut]:
+    """O log, do mais novo para o mais velho. Uma fonte para o adm-gs (tudo) e o oem-gs
+    (só as contas da empresa)."""
+    consulta = select(RegistroBot).order_by(RegistroBot.id.desc()).limit(max(1, min(limite, 500)))
+    if empresa_id is not None:
+        consulta = consulta.where(RegistroBot.empresa_id == empresa_id)
+    if usuario_id is not None:
+        consulta = consulta.where(RegistroBot.gs_user_id == usuario_id)
+    if resultado:
+        consulta = consulta.where(RegistroBot.resultado == resultado)
+    linhas = db.scalars(consulta).all()
+    contas = {
+        u.id: u
+        for u in db.scalars(
+            select(User).where(User.id.in_({r.gs_user_id for r in linhas if r.gs_user_id}))
+        ).all()
+    }
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    return [
+        RegistroBotOut(
+            id=r.id, em=r.em, telefone=r.telefone, usuario_id=r.gs_user_id,
+            usuario=contas[r.gs_user_id].nome if r.gs_user_id in contas else None,
+            apelido=contas[r.gs_user_id].apelido if r.gs_user_id in contas else None,
+            empresa=nomes.get(r.empresa_id) if r.empresa_id else None,
+            resultado=r.resultado,
+            ferramentas=[f for f in (r.ferramentas or "").split(",") if f],
+            pergunta=r.pergunta, resposta=r.resposta, duracao_ms=r.duracao_ms, erro=r.erro,
+        )
+        for r in linhas
+    ]
+
+
+@router.get("/bot/registros", response_model=list[RegistroBotOut])
+def log_do_bot(
+    empresa_id: int | None = None,
+    usuario_id: int | None = None,
+    resultado: str | None = None,
+    limite: int = 200,
+    db: Session = Depends(get_db),
+    _: User = Depends(EXIGE_BOT),
+) -> list[RegistroBotOut]:
+    """O log do assistente do WhatsApp (adm-gs → Log do bot): tudo, ou recortado por
+    empresa, pessoa ou resultado. Inclui os números sem cadastro que tentaram falar."""
+    return registros_do_bot(
+        db, empresa_id=empresa_id, usuario_id=usuario_id, resultado=resultado, limite=limite
+    )

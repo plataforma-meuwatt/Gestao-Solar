@@ -88,6 +88,17 @@ def cliente() -> MeuWattClient:
 # ── 1. o prazo ──────────────────────────────────────────────────────────────
 
 
+
+def _empresa(db) -> int:
+    """A sonda lê com a conta de uma EMPRESA: a plataforma não tem token (23/10/2026)."""
+    from app.models.empresa import Empresa
+
+    if db.get(Empresa, 1) is None:
+        db.add(Empresa(id=1, nome="Empresa da sonda"))
+        db.flush()
+    return 1
+
+
 @respx.mock
 async def test_o_prazo_de_leitura_cobre_os_38_segundos_medidos(cliente):
     """DEFEITO QUE ESTE TESTE GUARDA: a exportação sair pelo teto padrão do cliente (30 s)
@@ -255,6 +266,7 @@ async def test_a_varredura_pede_as_opcoes_e_nunca_gera_o_arquivo(db, monkeypatch
     db.add(
         Integracao(
             produto=Produto.MEUWATT,
+            empresa_id=_empresa(db),
             base_url=BASE,
             token_cifrado=cripto.cifrar("mw_pat_1xNq7BRe4VjtKjjVeAKiQDOPhoccF47X00gaAL"),
             token_prefixo="mw_pat_1xNq",
@@ -268,7 +280,7 @@ async def test_a_varredura_pede_as_opcoes_e_nunca_gera_o_arquivo(db, monkeypatch
     opcoes = respx.mock.get(OPCOES).respond(200, json=OPCOES_COMO_HOJE)
     respx.mock.route(host="api.meuwatt.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, 1)
 
     assert next(r for r in v.rotas if r.chave == "mw.export_options").situacao == "ok"
     assert opcoes.called
@@ -294,6 +306,7 @@ async def test_opcoes_que_respondem_200_com_a_forma_trocada_ficam_vermelhas(db, 
     db.add(
         Integracao(
             produto=Produto.MEUWATT,
+            empresa_id=_empresa(db),
             base_url=BASE,
             token_cifrado=cripto.cifrar("mw_pat_1xNq7BRe4VjtKjjVeAKiQDOPhoccF47X00gaAL"),
             token_prefixo="mw_pat_1xNq",
@@ -310,7 +323,7 @@ async def test_opcoes_que_respondem_200_com_a_forma_trocada_ficam_vermelhas(db, 
     respx.mock.get(OPCOES).respond(200, json=trocada)
     respx.mock.route(host="api.meuwatt.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, 1)
 
     linha = next(r for r in v.rotas if r.chave == "mw.export_options")
     assert linha.status == 200, "o produto respondeu — o que mudou foi a forma"

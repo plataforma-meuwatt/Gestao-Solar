@@ -287,8 +287,9 @@ MEUPLANO: list[Rota] = [
          captura={"user_id": "user_id"}),
     Rota("mp.session", "GET", "/api/v1/meuacesso/auth/me/session",
          "Permissões e nível de acesso, que limitam o assistente"),
-    Rota("mp.tenants", "GET", "/api/v1/meuacesso/admin/tenants",
-         "As empresas (tenants) de lá, para casar com as daqui"),
+    Rota("mp.owners", "GET", "/api/v1/meuacesso/owners/",
+         "As empresas de O&M (organizações PRESTADORAS) de lá, para casar com as daqui",
+         params={"kind": "PRESTADORA"}),
     Rota("mp.usinas", "GET", "/api/v1/meuacesso/usinas",
          "A lista de usinas do lado da manutenção",
          captura={"usina_id": "id"}),
@@ -796,8 +797,9 @@ class Varredura:
     rotas: list[Resultado] = field(default_factory=list)
 
 
-async def varrer(db: Session, produto: Produto) -> Varredura:
-    """Passa por todo o catálogo do produto com a credencial gravada.
+async def varrer(db: Session, produto: Produto, empresa_id: int) -> Varredura:
+    """Passa por todo o catálogo do produto com a conexão DESTA empresa — a plataforma não
+    tem token (regra do dono, 23/10/2026).
 
     A ordem do catálogo importa: as rotas que capturam parâmetros vêm antes das que os
     consomem. Percorrer em sequência (e não em paralelo) é deliberado — além de a captura
@@ -805,21 +807,21 @@ async def varrer(db: Session, produto: Produto) -> Varredura:
     carga que ninguém pediu.
     """
     agora = datetime.now(UTC)
-    integracao = integracoes.obter(db, produto)
+    integracao = integracoes.obter(db, produto, empresa_id)
 
     if integracao is None or not integracao.ativa:
         return Varredura(
             produto=produto.value, base_url=None, ok=False,
-            detalhe=f"A ponte com o {NOME[produto]} não está configurada. "
-                    "Conecte um token em Conexões antes de sondar.",
+            detalhe=f"Esta empresa ainda não conectou a conta dela no {NOME[produto]} "
+                    "(o gerente cola o token em oem-gs → Conexões).",
             executada_em=agora,
         )
 
     if not integracao.token_cifrado:
         return Varredura(
             produto=produto.value, base_url=integracao.base_url, ok=False,
-            detalhe="Esta conexão ainda é por conta de serviço. A sonda exige um token "
-                    "pessoal — reconecte por token em Conexões.",
+            detalhe="A conexão desta empresa ainda é por conta de serviço. A sonda exige um "
+                    "token pessoal — o gerente reconecta por token em oem-gs → Conexões.",
             executada_em=agora,
         )
 

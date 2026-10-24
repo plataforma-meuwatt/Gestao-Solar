@@ -31,7 +31,7 @@ from app.core.security import usuario_atual
 from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.user import User, UserPlantAccess
-from app.services import integracoes, vinculos
+from app.services import empresas, integracoes, vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · usinas"])
 
@@ -54,11 +54,13 @@ def usinas_do_usuario(db: Session, usuario: User) -> list[PlantLink]:
     # E é o que a palavra gerente significa aqui: ele opera as usinas da empresa, todas.
     # Uma concessão para ele seria uma segunda verdade sobre o mesmo fato, capaz de
     # divergir da primeira no dia em que alguém esquecesse de atualizá-la.
-    if usuario.abre_empresa and usuario.empresa_id is not None:
+    # Usuário em mais de uma empresa: vale a carteira (ou a concessão) de TODAS as dele.
+    minhas = empresas.empresas_da_conta(db, usuario)
+    if usuario.abre_empresa and minhas:
         return list(
             db.scalars(
                 select(PlantLink)
-                .where(PlantLink.empresa_id == usuario.empresa_id, PlantLink.ativo)
+                .where(PlantLink.empresa_id.in_(minhas), PlantLink.ativo)
                 .order_by(PlantLink.nome)
             ).all()
         )
@@ -84,7 +86,7 @@ def usinas_do_usuario(db: Session, usuario: User) -> list[PlantLink]:
                 # seria tirar funcionalidade para resolver uma migração pendente.
                 or_(
                     PlantLink.empresa_id.is_(None),
-                    PlantLink.empresa_id == usuario.empresa_id,
+                    PlantLink.empresa_id.in_(minhas),
                 ),
             )
             .order_by(PlantLink.nome)
@@ -808,18 +810,20 @@ async def aquecer_micro(db: Session) -> int:
     desse ciclo não há chamada nenhuma — aquecer de minuto em minuto sem ninguém olhando
     seria pagar a leitura mais cara do sistema o dia inteiro, de graça.
 
-    **Credencial de SERVIÇO**, a exceção do MICRO: ele não é escopado por usina no meuWatt
-    (ver `clients/meuwatt.micro_usinas`), e o valor é o mesmo para qualquer token — medido
-    nos dois em 05/10/2026. Quem filtra continua sendo o chamador, pelos vínculos da
-    pessoa.
+    **Conta de uma EMPRESA que tem micro usina** (a plataforma não tem token), a exceção do
+    MICRO: ele não é escopado por usina no meuWatt (ver `clients/meuwatt.micro_usinas`), e o
+    valor é o mesmo para qualquer token que o leia — medido em 05/10/2026. Quem filtra
+    continua sendo o chamador, pelos vínculos da pessoa.
     """
-    tem_micro = db.scalar(
-        select(PlantLink.id).where(PlantLink.mw_micro_plant_id.is_not(None)).limit(1)
+    empresa_id = db.scalar(
+        select(PlantLink.empresa_id)
+        .where(PlantLink.mw_micro_plant_id.is_not(None), PlantLink.empresa_id.is_not(None))
+        .limit(1)
     )
-    if tem_micro is None:
-        # Nenhuma micro usina cadastrada: a leitura mais cara do sistema não se paga.
+    if empresa_id is None:
+        # Nenhuma micro usina de empresa: a leitura mais cara do sistema não se paga.
         return 0
-    return len(await _buscar_micro(await integracoes.cliente_meuwatt(db)))
+    return len(await _buscar_micro(await integracoes.cliente_meuwatt(db, empresa_id)))
 
 
 async def _micro_ao_vivo(db: Session, usuario: User) -> dict[int, dict[str, Any]]:

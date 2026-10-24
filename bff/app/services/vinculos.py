@@ -59,6 +59,7 @@ from sqlalchemy.orm import Session
 
 from app.clients.meuplano import MeuPlanoClient
 from app.clients.meuwatt import MeuWattClient
+from app.core.config import get_settings
 from app.core.cripto import SegredoInvalido, cifrar, decifrar
 from app.core.tokens_produto import NOME, TokenInvalido, prefixo_visivel, validar
 from app.models.integracao import Integracao, Produto
@@ -224,16 +225,12 @@ def _token_da_empresa(db: Session, cliente_id: int, produto: Produto) -> str | N
 
 
 def _endereco(db: Session, produto: Produto) -> str:
-    """O endereço do produto continua sendo do sistema, não do cliente: é a mesma API para
-    todo mundo, e guardá-la por pessoa seria copiar o mesmo valor N vezes para que N-1
-    delas pudessem ficar desatualizadas."""
-    integracao = integracoes.obter(db, produto)
-    if integracao is None or not integracao.base_url:
-        raise SemConexao(
-            f"O endereço da API do {NOME[produto]} não está configurado. "
-            f"Ajuste em Painel → Conexões."
-        )
-    return integracao.base_url
+    """O endereço do produto é do sistema, não do cliente: é a mesma API para todo mundo.
+    Vem da configuração (`MEUWATT_API_URL` / `MEUPLANO_API_URL`) — a linha da plataforma em
+    `gs_integracoes`, que o guardava junto com um token, deixou de existir: a plataforma não
+    tem token (regra do dono, 23/10/2026)."""
+    s = get_settings()
+    return (s.meuwatt_api_url if produto is Produto.MEUWATT else s.meuplano_api_url).rstrip("/")
 
 
 def cliente_meuwatt(db: Session, cliente_id: int, *, so_proprio: bool = False) -> MeuWattClient:

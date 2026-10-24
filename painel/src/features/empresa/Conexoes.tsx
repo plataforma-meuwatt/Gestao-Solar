@@ -7,11 +7,9 @@
  * token alcançou — uma credencial aceita que não vê nada abriria a plataforma vazia, sem
  * erro nenhum na tela.
  *
- * **Enquanto a empresa não tiver a conta dela, quem responde é a credencial da
- * plataforma** — e a tela diz isso, em vez de mostrar tudo verde. Esse atalho existe para
- * a migração e para de valer sozinho: no dia em que houver mais de uma empresa ativa, o
- * servidor recusa usá-lo, porque a credencial da plataforma é de uma das empresas e
- * serviria a carteira dela para a outra.
+ * **Sem a conta da empresa, nada é lido.** A plataforma não tem token (regra do dono,
+ * 23/10/2026) e o atalho para a credencial dela acabou: o catálogo de usinas, os vínculos e
+ * o aplicativo dos clientes desta empresa dependem do que for colado aqui.
  *
  * **Desconectar não revoga.** O token continua válido no produto de origem; o que muda é
  * que a plataforma para de usá-lo. Fechar a porta de verdade é lá.
@@ -106,9 +104,7 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
             </p>
           ) : (
             <p className="text-sm text-rotulo mt-1">
-              {conexao.configurada
-                ? 'Respondendo pela credencial da plataforma'
-                : 'Sem conexão'}
+              Sem conexão
             </p>
           )}
         </div>
@@ -117,9 +113,9 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
 
       {!ligada ? (
         <Aviso>
-          Enquanto a conta desta empresa não estiver conectada, o que você vê depende de uma
-          credencial que não é sua — e ela para de valer assim que houver outra empresa na
-          plataforma. Gere um token dentro da sua conta do {NOME[conexao.produto]} e cole aqui.
+          Sem a conta da empresa conectada, nada do {NOME[conexao.produto]} é lido para ela — a
+          plataforma não tem token. Gere um token dentro da conta da empresa no{' '}
+          {NOME[conexao.produto]} e cole aqui.
         </Aviso>
       ) : null}
 

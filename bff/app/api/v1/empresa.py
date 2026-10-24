@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot
 from app.core.db import get_db
 from app.core.security import gerar_hash_senha, gestor_empresa_atual
 from app.core.telefone import exibir as exibir_telefone
@@ -141,9 +142,9 @@ def listar_clientes(
     """Os donos de usina atendidos por esta empresa."""
     clientes = list(
         db.scalars(
-            svc.no_escopo(
-                select(User).where(User.perfil == Perfil.CLIENTE), User.empresa_id, gerente
-            ).order_by(User.nome)
+            select(User)
+            .where(User.perfil == Perfil.CLIENTE, svc.contas_da_empresa(svc.empresa_exigida(gerente)))
+            .order_by(User.nome)
         ).all()
     )
     if not clientes:
@@ -191,8 +192,8 @@ def listar_usuarios(
     empresa em qualquer conta, e um administrador com empresa gravada aparecia aqui.
     """
     usuarios = db.scalars(
-        svc.no_escopo(select(User), User.empresa_id, gerente)
-        .where(User.perfil.not_in(pessoas.DA_PLATAFORMA))
+        select(User)
+        .where(svc.contas_da_empresa(svc.empresa_exigida(gerente)), User.perfil.not_in(pessoas.DA_PLATAFORMA))
         .order_by(User.nome)
     ).all()
     return [
@@ -230,6 +231,22 @@ def _conta_da_empresa(db: Session, usuario_id: int, empresa_id: int) -> User:
     return conta
 
 
+def _membro_da_empresa(db: Session, usuario_id: int, empresa_id: int) -> User:
+    """A conta é DESTA empresa — de origem OU membro (`gs_usuario_empresas`). Serve ao que a
+    empresa faz com quem também é de outra: conceder as usinas DELA. O resto da conta
+    (senha, celular, tokens, bot) é de quem cuida dela, a empresa de origem
+    (`_conta_da_empresa`) — duas empresas trocando a senha da mesma pessoa abririam a
+    carteira de uma para o gerente da outra."""
+    conta = db.get(User, usuario_id)
+    if (
+        conta is None
+        or conta.perfil in pessoas.DA_PLATAFORMA
+        or empresa_id not in svc.empresas_da_conta(db, conta)
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada nesta empresa.")
+    return conta
+
+
 class ConexaoOut(BaseModel):
     """A conta da EMPRESA no produto — não a de um cliente dela, e não a da plataforma."""
 
@@ -244,26 +261,14 @@ class ConexaoOut(BaseModel):
     token_dono_nome: str | None = None
     token_dono_email: str | None = None
     token_gravado_em: datetime | None = None
-    #: `false` quando o que responde por este produto ainda é a credencial da PLATAFORMA.
-    #: A tela diz isso em letras claras: enquanto for assim, o que a empresa lê depende de
-    #: uma conta que não é dela, e entra mais de uma empresa no sistema o acesso para.
+    #: A conta é DESTA empresa. Sempre verdadeiro quando configurada: a plataforma não tem
+    #: token (regra do dono, 23/10/2026) e o atalho para a credencial dela acabou.
     propria: bool = False
 
 
 def _conexao_out(produto: Produto, integracao, empresa_id: int) -> ConexaoOut:
-    if integracao is None:
+    if integracao is None or integracao.empresa_id != empresa_id:
         return ConexaoOut(produto=produto.value, configurada=False, estado="nunca")
-    if integracao.empresa_id != empresa_id:
-        # A credencial que responde é a da PLATAFORMA (atalho da migração). O estado a
-        # empresa precisa saber; QUEM gerou o token é de quem o gerou — nome, e-mail e
-        # prefixo são identidade de outra conta, e a tela já diz o que importa com
-        # `propria=False`.
-        return ConexaoOut(
-            produto=produto.value,
-            configurada=True,
-            estado=integracao.estado.value,
-            propria=False,
-        )
     return ConexaoOut(
         produto=produto.value,
         configurada=True,
@@ -971,7 +976,7 @@ def definir_usinas_do_cliente(
     """
     empresa_id = svc.empresa_exigida(gerente)
 
-    cliente = _conta_da_empresa(db, cliente_id, empresa_id)
+    cliente = _membro_da_empresa(db, cliente_id, empresa_id)
 
     # Conceder usina a um GERENTE não existe: ele vê a carteira inteira da empresa por ser
     # gerente. Com concessão, ele competia com os clientes pela mesma usina — a regra da
@@ -1018,7 +1023,7 @@ def definir_usinas_do_cliente(
                     select(PlantLink.id)
                     .join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
                     .join(User, User.id == UserPlantAccess.user_id)
-                    .where(PlantLink.empresa_id.is_(None), User.empresa_id == empresa_id)
+                    .where(PlantLink.empresa_id.is_(None), svc.contas_da_empresa(empresa_id))
                 ).all()
             }
             if [pid for pid in fora if pid not in orfas_que_ja_vejo]:
@@ -1031,7 +1036,7 @@ def definir_usinas_do_cliente(
                 db.get(PlantLink, pid).empresa_id = empresa_id
 
     try:
-        clientes.definir_usinas(db, cliente, body.plant_link_ids)
+        clientes.definir_usinas(db, cliente, body.plant_link_ids, empresa_id=empresa_id)
     except clientes.RegraDeNegocio as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     db.commit()
@@ -1277,6 +1282,10 @@ class UsuarioDetalhado(BaseModel):
     bot_helper: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
     meuplano: str | None = None
+    #: A conta é de OUTRA empresa e também desta (usuário em mais de uma empresa): o nome
+    #: da empresa que cuida dela. Daqui só se concedem as usinas desta empresa; senha,
+    #: celular, tokens e bot são de lá. Nulo = a conta é desta empresa.
+    cuidada_por: str | None = None
 
 
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
@@ -1292,7 +1301,7 @@ async def usuarios_detalhados(
         db.scalars(
             select(User)
             .where(
-                User.empresa_id == empresa_id,
+                svc.contas_da_empresa(empresa_id),
                 User.perfil.not_in(pessoas.DA_PLATAFORMA),
             )
             .order_by(User.nome)
@@ -1300,12 +1309,18 @@ async def usuarios_detalhados(
     )
     if not contas:
         return []
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
 
     ids = [c.id for c in contas]
+    # Só as usinas DESTA empresa (e as sem dono): a que o dono recebe de outra não é daqui.
     quantas = dict(
         db.execute(
             select(UserPlantAccess.user_id, func.count(UserPlantAccess.plant_link_id))
-            .where(UserPlantAccess.user_id.in_(ids))
+            .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
+            .where(
+                UserPlantAccess.user_id.in_(ids),
+                (PlantLink.empresa_id == empresa_id) | PlantLink.empresa_id.is_(None),
+            )
             .group_by(UserPlantAccess.user_id)
         ).all()
     )
@@ -1336,6 +1351,7 @@ async def usuarios_detalhados(
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
             meuplano=ligado_mp.get(c.id),
+            cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
         )
         for c in contas
     ]
@@ -1550,15 +1566,35 @@ def usinas_do_usuario(
     tal, para o gerente resolver: trazer a usina, ou tirar a concessão.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    conta = _conta_da_empresa(db, usuario_id, empresa_id)
+    conta = _membro_da_empresa(db, usuario_id, empresa_id)
 
+    # A usina que ela recebe de OUTRA empresa não aparece aqui — nem o nome: não é deste
+    # gerente, e o "salvar" desta tela não mexe nela (`clientes.definir_usinas`).
     linhas = db.execute(
         select(PlantLink.id, PlantLink.nome, PlantLink.empresa_id)
         .join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
-        .where(UserPlantAccess.user_id == conta.id)
+        .where(
+            UserPlantAccess.user_id == conta.id,
+            (PlantLink.empresa_id == empresa_id) | PlantLink.empresa_id.is_(None),
+        )
         .order_by(PlantLink.nome)
     ).all()
     return [
         ConcedidaOut(plant_link_id=i, nome=n, da_empresa=(e == empresa_id))
         for i, n, e in linhas
     ]
+
+
+# ------------------------------------------------------------- o bot da empresa
+
+
+@router.get("/bot/registros", response_model=list[RegistroBotOut])
+def log_do_bot_da_empresa(
+    limite: int = 100,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> list[RegistroBotOut]:
+    """O que o assistente do WhatsApp recebeu e respondeu às pessoas que ESTA empresa cuida
+    (a de origem da conta na hora da mensagem) — é o gerente que libera o bot, e é aqui que
+    ele vê por que alguém ficou sem resposta. Conversa de outra empresa não aparece."""
+    return registros_do_bot(db, empresa_id=svc.empresa_exigida(gerente), limite=limite)

@@ -1,19 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom'
 
-import { Conexoes } from '@/features/conexoes/Conexoes'
+import { LogDoBot } from '@/features/bot/LogDoBot'
 import { Diagnostico } from '@/features/diagnostico/Diagnostico'
+import { EmpresaPagina } from '@/features/empresas/Empresa'
 import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
+import { BotDaEmpresa } from '@/features/empresa/Bot'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
 import { UsinasDaEmpresa } from '@/features/empresa/Usinas'
-import { ClientesDaEmpresa } from '@/features/empresa/MinhaEmpresa'
 import { UsuariosDaEmpresa } from '@/features/empresa/Usuarios'
 import { Usuarios } from '@/features/usuarios/Usuarios'
 import { DetalheCliente } from '@/features/clientes/Detalhe'
-import { ListaClientes } from '@/features/clientes/Lista'
-import { NovoCliente } from '@/features/clientes/Novo'
 import { Rotas } from '@/features/rotas/Rotas'
 import { Usinas } from '@/features/usinas/Usinas'
 import { MeuWhatsapp } from '@/features/tecnico/MeuWhatsapp'
@@ -41,7 +40,7 @@ aoPerderSessao(() => useAuth.getState().sair())
 /**
  * Onde a pessoa pousa ao abrir o painel.
  *
- * Não é "sempre Clientes": quem não tem essa área leria um 403 como primeira tela, na
+ * Não é "sempre Empresas": quem não tem essa área leria um 403 como primeira tela, na
  * própria casa. Vai para a primeira tela do menu que ela abre — e, se não abre nenhuma,
  * lê que falta acesso em vez de rodar entre redirecionamentos.
  */
@@ -53,7 +52,7 @@ function Pouso() {
     <div className="cartao p-8 max-w-lg">
       <p className="text-forte font-semibold">Sua conta ainda não tem nenhuma tela</p>
       <p className="text-sm text-rotulo mt-2">
-        Peça a quem administra o painel para conceder o acesso em Usuários do sistema.
+        Peça a quem administra o painel para conceder o acesso em Usuários.
       </p>
     </div>
   )
@@ -74,27 +73,41 @@ export function App() {
             {/* Cada tela repete, no `SoArea`, a MESMA área que o BFF exige nas rotas dela.
                 A da tela é conforto (a pessoa lê o que fazer em vez de ver cartões vazios);
                 a do servidor é a que vale. */}
+            {/* adm-gs: Empresas é a entrada (os clientes da plataforma são as empresas de
+                O&M, e cada uma tem os usuários dela); Usuários é o inverso. A lista de
+                "Clientes" solta e o "Novo cliente" sem empresa saíram em 23/10/2026 — o
+                cliente nasce dentro da empresa. A ficha dele continua, aberta da lista. */}
             <Route
-              path="/clientes"
+              path="/empresas"
               element={
-                <SoArea area="clientes">
-                  <ListaClientes />
+                <SoArea area="empresas">
+                  <Empresas />
                 </SoArea>
               }
             />
             <Route
-              path="/clientes/novo"
+              path="/empresas/:id"
               element={
-                <SoArea area="clientes">
-                  <NovoCliente />
+                <SoArea area="empresas">
+                  <EmpresaPagina />
                 </SoArea>
               }
             />
+            <Route path="/clientes" element={<Navigate to="/usuarios" replace />} />
+            <Route path="/clientes/novo" element={<Navigate to="/empresas" replace />} />
             <Route
               path="/clientes/:id"
               element={
                 <SoArea area="clientes">
                   <DetalheCliente />
+                </SoArea>
+              }
+            />
+            <Route
+              path="/bot"
+              element={
+                <SoArea area="bot">
+                  <LogDoBot />
                 </SoArea>
               }
             />
@@ -114,14 +127,9 @@ export function App() {
                 </SoArea>
               }
             />
-            <Route
-              path="/conexoes"
-              element={
-                <SoArea area="conexoes">
-                  <Conexoes />
-                </SoArea>
-              }
-            />
+            {/* "Acesso do painel aos produtos" saiu: a plataforma não tem token (regra do
+                dono, 23/10/2026). Favorito antigo cai em Empresas. */}
+            <Route path="/conexoes" element={<Navigate to="/empresas" replace />} />
             <Route
               path="/rotas"
               element={
@@ -138,14 +146,6 @@ export function App() {
                 </SoArea>
               }
             />
-            <Route
-              path="/empresas"
-              element={
-                <SoArea area="empresas">
-                  <Empresas />
-                </SoArea>
-              }
-            />
 
             {/* O outro portão. `SoEmpresa` não é conforto como as áreas: uma sessão de
                 painel aqui chamaria `/api/empresa/*` e tomaria 403 — a tela diz isso em
@@ -158,11 +158,14 @@ export function App() {
                 </SoEmpresa>
               }
             />
+            {/* "Clientes" repetia "Usuários" com um segundo formulário: os donos de usina
+                são usuários da empresa, e moram lá. */}
+            <Route path="/minha-empresa/clientes" element={<Navigate to="/minha-empresa/usuarios" replace />} />
             <Route
-              path="/minha-empresa/clientes"
+              path="/minha-empresa/bot"
               element={
                 <SoEmpresa>
-                  <ClientesDaEmpresa />
+                  <BotDaEmpresa />
                 </SoEmpresa>
               }
             />

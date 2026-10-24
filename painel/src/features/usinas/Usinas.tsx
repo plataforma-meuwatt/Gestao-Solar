@@ -1,401 +1,87 @@
 /**
- * O inventário de usinas: o que existe em cada plataforma, e o que entra no aplicativo.
+ * Usinas — o inventário da plataforma, por empresa. Só leitura.
  *
- * Duas decisões moram nesta tela, e são independentes:
- *
- * 1. **Qual usina é qual.** Casar a usina do meuWatt com a do meuPlano. A sugestão ordena;
- *    quem decide é o gestor — um par errado mistura a geração de uma com a manutenção de
- *    outra, e ninguém percebe até alguém questionar um relatório.
- * 2. **Quais entram no app.** Uma usina pode existir nas plataformas e não interessar aqui.
- *    Só o que está ligado pode ser concedido a um cliente.
- *
- * As três origens aparecem em grupos separados, incluindo **só no meuPlano** — manutenção
- * sem monitoramento é um caso normal de negócio, e a versão anterior desta tela omitia
- * essas usinas por percorrer apenas o meuWatt.
+ * Trazer a usina do meuWatt e do meuPlano, casar uma com a outra, ligar no aplicativo e
+ * conceder ao dono é trabalho do GERENTE da empresa, no oem-gs — com a conta da empresa
+ * nos produtos. A plataforma não tem token (regra do dono, 23/10/2026) e não lê produto
+ * nenhum: aqui ela vê o que existe no Gestão Solar, de qual empresa é e de quem.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, Sun, Wrench } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Building2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-import { Aviso, Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
-import {
-  listarClientes,
-  carregarConciliacao,
-  carregarMicroUsinas,
-  salvarUsina,
-  type Conciliacao,
-  type LinhaUsina,
-  type MicroUsina,
-  type OrigemUsina,
-} from '@/features/api'
+import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
+import { usinasDaPlataforma, type UsinaDaPlataforma } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 
-const GRUPOS: {
-  origem: OrigemUsina
-  titulo: string
-  icone: typeof Sun
-  apoio: string
-}[] = [
-  {
-    origem: 'ambos',
-    titulo: 'Nas duas plataformas',
-    icone: Link2,
-    apoio: 'Geração e manutenção da mesma usina. É o caso completo.',
-  },
-  {
-    origem: 'meuwatt',
-    titulo: 'Só no meuWatt',
-    icone: Sun,
-    apoio: 'Monitoramento sem manutenção contratada. No app, a aba de manutenção fica oculta.',
-  },
-  {
-    origem: 'meuplano',
-    titulo: 'Só no meuPlano',
-    icone: Wrench,
-    apoio: 'Manutenção sem monitoramento. No app, a aba de geração fica oculta.',
-  },
-]
-
 export function Usinas() {
-  const qc = useQueryClient()
-  const [erro, setErro] = useState('')
-  // Nenhuma usina aparece antes de haver um cliente. É a regra do sistema: usina é de
-  // alguém. Uma lista aberta aqui era o escopo da credencial de serviço — o que UM
-  // administrador enxerga —, e casar usinas sem saber de quem elas são é casar às cegas.
-  const [clienteId, setClienteId] = useState<number | ''>('')
+  const { data, isLoading, error } = useQuery({ queryKey: ['usinas-plataforma'], queryFn: usinasDaPlataforma })
+  const [busca, setBusca] = useState('')
 
-  const { data: clientes } = useQuery({ queryKey: ['clientes'], queryFn: listarClientes })
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['conciliacao', clienteId],
-    queryFn: () => carregarConciliacao(clienteId as number),
-    enabled: clienteId !== '',
-  })
-
-  // As micro usinas não são de cliente nenhum no meuWatt (só administrador lê o MICRO):
-  // a lista é a mesma para qualquer cliente escolhido, então carrega uma vez só.
-  const { data: micro } = useQuery({
-    queryKey: ['micro-usinas'],
-    queryFn: carregarMicroUsinas,
-    enabled: clienteId !== '',
-    staleTime: 5 * 60_000,
-  })
-
-  const salvar = useMutation({
-    mutationFn: (dados: Parameters<typeof salvarUsina>[0]) => salvarUsina(dados),
-    onSuccess: () => {
-      setErro('')
-      qc.invalidateQueries({ queryKey: ['conciliacao', clienteId] })
-      // A lista de usinas do cliente vem da mesma origem: sem isto, uma usina recém-ligada
-      // não apareceria para conceder até alguém recarregar a página.
-      qc.invalidateQueries({ queryKey: ['usinas'] })
-    },
-    onError: (e) => {
-      setErro(mensagemDeErro(e))
-      // Recarrega para os controles voltarem ao valor real do servidor, e não ficarem
-      // mostrando uma escolha que não foi gravada.
-      qc.invalidateQueries({ queryKey: ['conciliacao', clienteId] })
-    },
-  })
-
-  const porGrupo = useMemo(() => {
-    const mapa = new Map<OrigemUsina, LinhaUsina[]>()
-    for (const g of GRUPOS) mapa.set(g.origem, [])
-    for (const l of data?.linhas ?? []) mapa.get(l.origem)?.push(l)
-    return mapa
-  }, [data])
-
-  const noApp = (data?.linhas ?? []).filter((l) => l.no_app).length
+  const grupos = useMemo(() => {
+    const t = busca.trim().toLowerCase()
+    const mapa = new Map<string, UsinaDaPlataforma[]>()
+    for (const u of data ?? []) {
+      if (t && !`${u.nome} ${u.cidade ?? ''} ${u.dono_nome ?? ''} ${u.empresa ?? ''}`.toLowerCase().includes(t)) continue
+      const chave = u.empresa ?? 'Sem empresa'
+      mapa.set(chave, [...(mapa.get(chave) ?? []), u])
+    }
+    return [...mapa.entries()].sort(([a], [b]) => (a === 'Sem empresa' ? 1 : b === 'Sem empresa' ? -1 : a.localeCompare(b)))
+  }, [data, busca])
 
   return (
     <Pagina
       titulo="Usinas"
-      apoio="As usinas de um cliente nos dois produtos. Case as que são a mesma e escolha quais entram no aplicativo dele."
+      apoio="Todas as usinas do Gestão Solar, por empresa, e de quem é cada uma. Trazer, casar, ligar e conceder usina é do gerente da empresa, no oem-gs."
     >
-      <div className="mb-5 flex items-end gap-3 flex-wrap">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-rotulo">Cliente</span>
-          <select
-            value={clienteId}
-            onChange={(e) => setClienteId(e.target.value ? Number(e.target.value) : '')}
-            className="h-11 min-w-72 rounded-campo bg-superficie border border-borda px-3 text-sm text-forte"
-          >
-            <option value="">— escolha um cliente —</option>
-            {(clientes ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nome}
-                {c.empresa ? ` · ${c.empresa}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        {clienteId !== '' ? (
-          <p className="text-xs text-fraco pb-3 max-w-md">
-            Lido com os tokens deste cliente — o que ele enxerga de verdade em cada produto,
-            pela regra de lá.
-          </p>
-        ) : null}
-      </div>
-
-      {clienteId === '' ? (
-        <Vazio
-          titulo="Escolha um cliente"
-          descricao="As usinas são sempre de alguém. Escolha o cliente para ver o que ele enxerga no meuWatt e no meuPlano, e casar as duas listas."
-        />
-      ) : null}
-      {error ? <Erro className="mb-4">{mensagemDeErro(error)}</Erro> : null}
-      {erro ? <Erro className="mb-4">{erro}</Erro> : null}
-      {data?.aviso ? (
-        <div className="mb-4">
-          <Aviso>{data.aviso}</Aviso>
-        </div>
-      ) : null}
-      {micro?.aviso ? (
-        <div className="mb-4">
-          <Aviso>{micro.aviso}</Aviso>
-        </div>
-      ) : null}
-
+      <input
+        className="campo mb-4"
+        placeholder="buscar usina, cidade, dono ou empresa"
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+        aria-label="Buscar usinas"
+      />
       {isLoading ? (
+        <Carregando />
+      ) : error ? (
+        <Erro>{mensagemDeErro(error)}</Erro>
+      ) : !grupos.length ? (
         <Cartao>
-          <Carregando texto="Consultando as duas plataformas…" />
+          <Vazio titulo={data?.length ? 'Nada com essa busca' : 'Nenhuma usina ainda'} />
         </Cartao>
-      ) : null}
-
-      {data ? (
-        <p className="text-sm text-rotulo mb-4">
-          <strong className="text-forte">{noApp}</strong> de {data.linhas.length} usinas no
-          aplicativo. Só as ligadas podem ser concedidas a um cliente.
-        </p>
-      ) : null}
-
-      <div className="flex flex-col gap-5">
-        {GRUPOS.map(({ origem, titulo, icone: Icone, apoio }) => {
-          const linhas = porGrupo.get(origem) ?? []
-          if (!data || (linhas.length === 0 && origem === 'ambos' && data.linhas.length === 0)) {
-            return null
-          }
-
-          return (
-            <Cartao key={origem}>
-              <header className="px-5 pt-4 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <Icone size={15} className="text-fraco" />
-                  <h2 className="text-sm font-semibold text-forte">{titulo}</h2>
-                  <span className="text-xs text-fraco">· {linhas.length}</span>
+      ) : (
+        <div className="grid gap-5">
+          {grupos.map(([empresa, usinas]) => (
+            <Cartao key={empresa} titulo={`${empresa} · ${usinas.length}`}>
+              {empresa === 'Sem empresa' ? (
+                <p className="px-5 pb-3 text-xs text-alerta flex items-center gap-1.5">
+                  <Building2 size={13} />
+                  De antes do multiempresa: nenhuma empresa a opera ainda.
+                </p>
+              ) : null}
+              {usinas.map((u, i) => (
+                <div key={u.id} className={`px-5 py-3 flex items-center gap-4 ${i ? 'border-t border-borda' : ''}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-forte">{u.nome}</p>
+                    <p className="text-xs text-fraco">
+                      {[u.cidade, u.uf].filter(Boolean).join(' · ') || 'sem cidade'}
+                      {u.kwp !== null ? ` · ${u.kwp.toLocaleString('pt-BR')} kWp` : ''}
+                      {` · dono: ${u.dono_nome ?? 'ninguém ainda'}`}
+                    </p>
+                  </div>
+                  <span className="text-xs text-rotulo hidden sm:block">
+                    {[u.tem_meuwatt ? 'monitorada' : null, u.tem_meuplano ? 'com manutenção' : null]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                  <Selo tom={u.no_app ? 'ok' : 'sem-dados'}>{u.no_app ? 'No app' : 'Desligada'}</Selo>
                 </div>
-                <p className="text-xs text-fraco mt-1">{apoio}</p>
-              </header>
-
-              {linhas.length === 0 ? (
-                <div className="px-5 pb-4">
-                  <p className="text-xs text-fraco">Nenhuma.</p>
-                </div>
-              ) : (
-                <div className="border-t border-borda">
-                  {linhas.map((linha, i) => (
-                    <LinhaDeUsina
-                      key={linha.chave}
-                      linha={linha}
-                      dados={data}
-                      micro={micro?.usinas ?? []}
-                      primeira={i === 0}
-                      salvando={salvar.isPending}
-                      aoSalvar={(mudanca) =>
-                        salvar.mutate({
-                          plant_link_id: linha.plant_link_id,
-                          mw_slug: linha.mw_slug,
-                          mp_usina_id: linha.mp_usina_id,
-                          nome: linha.nome,
-                          cidade: linha.cidade,
-                          uf: linha.uf,
-                          kwp: linha.kwp,
-                          no_app: linha.no_app,
-                          mw_micro_plant_id: linha.mw_micro_plant_id,
-                          ...mudanca,
-                        })
-                      }
-                    />
-                  ))}
-                </div>
-              )}
+              ))}
             </Cartao>
-          )
-        })}
-      </div>
-
-      {data && data.linhas.length === 0 && !isLoading ? (
-        <Cartao>
-          <Vazio
-            titulo="Nenhuma usina nas plataformas"
-            descricao="Conecte o meuWatt e o meuPlano em Conexões para as usinas aparecerem aqui."
-          />
-        </Cartao>
-      ) : null}
+          ))}
+        </div>
+      )}
     </Pagina>
-  )
-}
-
-function LinhaDeUsina({
-  linha,
-  dados,
-  micro,
-  primeira,
-  salvando,
-  aoSalvar,
-}: {
-  linha: LinhaUsina
-  dados: Conciliacao
-  micro: MicroUsina[]
-  primeira: boolean
-  salvando: boolean
-  aoSalvar: (mudanca: Partial<Parameters<typeof salvarUsina>[0]>) => void
-}) {
-  const sugestao = linha.candidatos[0]
-
-  // Mesma regra do seletor do meuPlano: as micro usinas livres, mais a desta linha.
-  const microLivres = useMemo(() => {
-    const tomadas = new Set(
-      dados.linhas
-        .filter((l) => l.mw_micro_plant_id !== null && l.chave !== linha.chave)
-        .map((l) => l.mw_micro_plant_id),
-    )
-    return micro.filter((u) => !tomadas.has(u.id))
-  }, [dados, micro, linha.chave])
-
-  // As usinas do meuPlano que ainda não pertencem a ninguém, mais a desta linha — sem
-  // isso, o seletor abriria sem a opção que já está escolhida.
-  const disponiveis = useMemo(() => {
-    const tomadas = new Set(
-      dados.linhas
-        .filter((l) => l.mp_usina_id !== null && l.chave !== linha.chave)
-        .map((l) => l.mp_usina_id),
-    )
-    return dados.meuplano.filter((u) => !tomadas.has(Number(u.id)))
-  }, [dados, linha.chave])
-
-  return (
-    <div className={`px-5 py-4 ${primeira ? '' : 'border-t border-borda'}`}>
-      <div className="flex items-start gap-4 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-forte truncate">{linha.nome}</p>
-          <p className="mono text-xs text-fraco truncate">
-            {linha.mw_slug ? `mw:${linha.mw_slug}` : ''}
-            {linha.mw_slug && linha.mp_usina_id ? ' · ' : ''}
-            {linha.mp_usina_id ? `mp:${linha.mp_usina_id}` : ''}
-            {linha.cidade ? ` · ${linha.cidade}${linha.uf ? `, ${linha.uf}` : ''}` : ''}
-            {linha.kwp ? ` · ${linha.kwp.toLocaleString('pt-BR')} kWp` : ''}
-          </p>
-        </div>
-
-        {linha.no_app ? (
-          <Selo tom="ok">No aplicativo</Selo>
-        ) : (
-          <Selo tom="sem-dados">Fora do aplicativo</Selo>
-        )}
-
-        <button
-          onClick={() => aoSalvar({ no_app: !linha.no_app })}
-          className="btn-fantasma w-28"
-          disabled={salvando}
-          title={
-            linha.no_app
-              ? 'Tira do aplicativo. Os vínculos e as concessões são preservados.'
-              : 'Traz para o aplicativo. Só assim ela pode ser concedida a um cliente.'
-          }
-        >
-          {linha.no_app ? 'Desligar' : 'Ligar'}
-        </button>
-      </div>
-
-      {/* O par só se escolhe do lado do meuWatt: é ele que tem o slug, a chave de todo o
-          resto. Uma usina só do meuPlano vira par ao ser escolhida na linha de uma do
-          meuWatt, não o contrário. */}
-      {linha.mw_slug ? (
-        <div className="mt-3 flex items-center gap-3 flex-wrap">
-          <label className="text-xs text-rotulo" htmlFor={`par-${linha.chave}`}>
-            Usina correspondente no meuPlano
-          </label>
-          <select
-            id={`par-${linha.chave}`}
-            className="campo h-9 text-sm max-w-xs"
-            value={linha.mp_usina_id ?? ''}
-            disabled={salvando}
-            onChange={(e) =>
-              aoSalvar({ mp_usina_id: e.target.value ? Number(e.target.value) : null })
-            }
-          >
-            <option value="">— sem par no meuPlano —</option>
-            {disponiveis.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.nome}
-              </option>
-            ))}
-          </select>
-
-          {!linha.mp_usina_id && sugestao ? (
-            <button
-              onClick={() => aoSalvar({ mp_usina_id: sugestao.mp_usina_id })}
-              className="btn-fantasma text-xs"
-              disabled={salvando}
-            >
-              usar “{sugestao.nome}” ({sugestao.motivos.join(', ')})
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* A micro usina só se casa com uma usina que já está no Gestão Solar: é o vínculo
-          dela que recebe o aviso de parada. As telas do app seguem lendo meuWatt/meuPlano. */}
-      {linha.plant_link_id !== null && (micro.length > 0 || linha.mw_micro_plant_id !== null) ? (
-        <div className="mt-3 flex items-center gap-3 flex-wrap">
-          <label className="text-xs text-rotulo" htmlFor={`micro-${linha.chave}`}>
-            Micro usina (MICRO do meuWatt)
-          </label>
-          <select
-            id={`micro-${linha.chave}`}
-            className="campo h-9 text-sm max-w-xs"
-            value={linha.mw_micro_plant_id ?? ''}
-            disabled={salvando}
-            onChange={(e) =>
-              aoSalvar({ mw_micro_plant_id: e.target.value ? Number(e.target.value) : null })
-            }
-          >
-            <option value="">— sem micro usina —</option>
-            {microLivres.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.nome}
-                {u.estacoes.length > 1 ? ` (${u.estacoes.join(' + ')})` : ''}
-              </option>
-            ))}
-            {linha.mw_micro_plant_id !== null && !micro.some((u) => u.id === linha.mw_micro_plant_id) ? (
-              <option value={linha.mw_micro_plant_id}>micro usina {linha.mw_micro_plant_id}</option>
-            ) : null}
-          </select>
-          <span className="text-xs text-fraco">o aviso de usina parada dela chega por aqui</span>
-        </div>
-      ) : null}
-
-      {/* A linha do meuPlano ainda solta diz de quem parece ser par, e casa num clique.
-          Sem isto, a mesma usina aparece em dois grupos e caberia ao gestor perceber. */}
-      {!linha.mw_slug && linha.par_provavel_mw ? (
-        <p className="text-xs text-fraco mt-2">
-          Parece ser a mesma que{' '}
-          <span className="text-rotulo">{linha.par_provavel_nome}</span> no meuWatt
-          {linha.par_provavel_motivos.length
-            ? ` (${linha.par_provavel_motivos.join(', ')})`
-            : ''}
-          {' · '}
-          <button
-            onClick={() => aoSalvar({ mw_slug: linha.par_provavel_mw })}
-            className="text-ambar hover:underline"
-            disabled={salvando}
-          >
-            casar as duas
-          </button>
-        </p>
-      ) : null}
-    </div>
   )
 }

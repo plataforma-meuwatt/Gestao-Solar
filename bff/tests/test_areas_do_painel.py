@@ -46,7 +46,7 @@ def test_area_concedida_abre_so_ela(db, atendente, administrador):
     assert _abre(db, atendente, "diagnostico")
     # O caso do pedido: outro gestor opera clientes e NÃO mexe no WhatsApp da empresa.
     assert not _abre(db, atendente, "whatsapp")
-    assert not _abre(db, atendente, "conexoes")
+    assert not _abre(db, atendente, "bot")
 
 
 def test_definir_revoga_o_que_nao_veio(db, atendente, administrador):

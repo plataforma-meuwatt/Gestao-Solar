@@ -5,8 +5,8 @@ O que se protege:
 - **O coletor lê os alertas confirmados do MICRO** e gera um evento "parada" por usina
   daqui casada com aquela micro usina — com a chave do EPISÓDIO do meuWatt, para a mesma
   parada nunca avisar duas vezes.
-- **Credencial de serviço**, e só ela: sem ponte configurada o coletor cala (aviso no
-  relatório), nunca inventa "parou".
+- **A conta da EMPRESA dona da usina** (a plataforma não tem token, 23/10/2026): sem a
+  conexão dela o coletor cala (aviso no relatório), nunca inventa "parou".
 - **Usina sem interesse não gera chamada**: o motor só pergunta ao meuWatt se alguém marcou
   o aviso de parada numa usina casada com micro usina.
 - **O vínculo micro não se apaga sozinho**: o painel manda o estado inteiro da linha a cada
@@ -22,11 +22,11 @@ import respx
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 
-from app.api.v1 import painel
 from app.core import cripto
 from app.models.integracao import Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.user import Perfil, User, UserPlantAccess
+from app.models.empresa import Empresa
 from app.services import conciliacao, motor
 
 BASE = "https://api.meuwatt.test"
@@ -39,21 +39,30 @@ def _chave_de_teste(monkeypatch):
     monkeypatch.setattr(cripto, "_fernet", lambda: Fernet(chave))
 
 
+def _empresa(db) -> int:
+    if db.get(Empresa, 1) is None:
+        db.add(Empresa(id=1, nome="O&M da micro"))
+        db.flush()
+    return 1
+
+
 @pytest.fixture
 def ponte(db):
-    """A credencial de serviço do meuWatt gravada em Painel → Conexões."""
+    """A conta da EMPRESA no meuWatt, colada pelo gerente em oem-gs → Conexões."""
     db.add(Integracao(produto=Produto.MEUWATT, base_url=BASE, token_cifrado=cripto.cifrar(MW),
-                      token_prefixo="mw_pat_1xNq", ativa=True))
+                      token_prefixo="mw_pat_1xNq", ativa=True, empresa_id=_empresa(db)))
     db.commit()
 
 
 @pytest.fixture
 def cenario(db, usinas):
-    """Porto Ferreira casada com a micro usina 7 e um cliente que marcou o aviso de parada."""
+    """Porto Ferreira (da empresa 1) casada com a micro usina 7 e um cliente que marcou o
+    aviso de parada."""
     usina, _ = usinas
     usina.mw_micro_plant_id = 7
+    usina.empresa_id = _empresa(db)
     cliente = User(apelido="dono", nome="Dono", perfil=Perfil.CLIENTE, telefone="+5516999990000",
-                   whatsapp_aceite_em=datetime.now(UTC))
+                   whatsapp_aceite_em=datetime.now(UTC), empresa_id=1)
     db.add(cliente)
     db.commit()
     db.add(UserPlantAccess(user_id=cliente.id, plant_link_id=usina.id))
@@ -140,30 +149,7 @@ def test_hora_em_brasilia():
     assert hora_brt(None) == "—"
 
 
-# ── o vínculo no painel ─────────────────────────────────────────────────────
-
-
-def _salvar(db, admin, link, **extra):
-    corpo = {"plant_link_id": link.id, "mw_slug": link.mw_plant_slug, "mp_usina_id": link.mp_usina_id,
-             "nome": link.nome, "no_app": True, **extra}
-    return painel.salvar_usina(painel.UsinaIn(**corpo), db=db, _=admin)
-
-
-def test_casar_manter_e_descasar_a_micro_usina(db, administrador, usinas):
-    usina, _ = usinas
-    assert _salvar(db, administrador, usina, mw_micro_plant_id=7).mw_micro_plant_id == 7
-    # Painel antigo, sem o campo: "Ligar/Desligar" não pode descasar.
-    assert _salvar(db, administrador, usina, no_app=False).mw_micro_plant_id == 7
-    # `null` explícito descasa.
-    assert _salvar(db, administrador, usina, mw_micro_plant_id=None).mw_micro_plant_id is None
-
-
-def test_duas_usinas_nao_apontam_para_a_mesma_micro_usina(db, administrador, usinas):
-    a, b = usinas
-    _salvar(db, administrador, a, mw_micro_plant_id=7)
-    with pytest.raises(HTTPException) as erro:
-        _salvar(db, administrador, b, mw_micro_plant_id=7)
-    assert erro.value.status_code == 409 and "Porto Ferreira" in erro.value.detail
+# ── o vínculo e o catálogo (no oem-gs, com a conta da empresa) ──────────────
 
 
 def test_a_linha_da_conciliacao_carrega_a_micro_usina(usinas):
@@ -173,23 +159,34 @@ def test_a_linha_da_conciliacao_carrega_a_micro_usina(usinas):
     assert linha.mw_micro_plant_id == 7
 
 
+def _gerente(db):
+    g = User(apelido="ger", nome="Ger", perfil=Perfil.GESTOR_EMPRESA, empresa_id=_empresa(db))
+    db.add(g)
+    db.commit()
+    return g
+
+
 @respx.mock
-async def test_catalogo_de_micro_usinas_pela_credencial_de_servico(db, ponte):
-    rota = respx.get(f"{BASE}/micro/plants", params={"live": "false"}).respond(200, json={
+async def test_catalogo_de_micro_usinas_pela_conta_da_empresa(db, ponte):
+    from app.api.v1 import empresa
+
+    rota = respx.get(f"{BASE}/micro/plants").respond(200, json={
         "plants": [{"id": 1, "name": "UFV Sitio", "capacity_kwp": 124.32,
                     "stations": [{"name": "UFV Sitio Solis"}, {"name": "UFV Sitio Canadian"}]}],
         "errors": []})
-    r = await painel.micro_usinas(db=db, _=None)
+    r = await empresa.micro_usinas(db=db, gerente=_gerente(db))
     assert rota.called
-    assert [(u.id, u.nome, u.estacoes) for u in r.usinas] == [(1, "UFV Sitio", ["UFV Sitio Solis", "UFV Sitio Canadian"])]
+    assert [(u.id, u.nome, u.estacoes) for u in r.micro] == [(1, "UFV Sitio", ["UFV Sitio Solis", "UFV Sitio Canadian"])]
     assert r.aviso is None
 
 
 @respx.mock
 async def test_catalogo_sem_acesso_abre_vazio_com_aviso(db, ponte):
+    from app.api.v1 import empresa
+
     respx.get(f"{BASE}/micro/plants").mock(return_value=httpx.Response(403, json={"detail": "Acesso negado"}))
-    r = await painel.micro_usinas(db=db, _=None)
-    assert r.usinas == [] and r.aviso and "MICRO" in r.aviso
+    r = await empresa.micro_usinas(db=db, gerente=_gerente(db))
+    assert r.micro == [] and r.aviso
 
 
 def test_a_micro_usina_e_monitorada_e_a_tela_nao_diz_o_contrario(db):

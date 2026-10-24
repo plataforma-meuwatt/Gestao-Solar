@@ -34,13 +34,20 @@ class _MP:
 
 @pytest.fixture
 def cenario(db, monkeypatch):
-    emp = Empresa(nome="O&M")
+    # A empresa casada com a organização dela no meuPlano (`owners.id` 3): é dela que se puxa.
+    emp = Empresa(nome="O&M", mp_tenant_id=3)
     db.add(emp)
     db.commit()
     conta = User(apelido="ana", email="ana@x.com", nome="Ana", perfil=Perfil.CLIENTE, empresa_id=emp.id)
     db.add(conta)
     db.commit()
-    mp = _MP([{"id": 7, "name": "Ana Souza", "email": "ana@empresa.com", "phone": "16 99999-8888", "active": True}])
+    mp = _MP([
+        {"id": 7, "name": "Ana Souza", "email": "ana@empresa.com", "phone": "16 99999-8888",
+         "active": True, "owner_ids": [3]},
+        # De OUTRA organização: o token de admin do sistema lá devolve todo mundo.
+        {"id": 9, "name": "Bia de Fora", "email": "bia@outra.com", "phone": "11 98888-1111",
+         "active": True, "owner_ids": [5]},
+    ])
 
     async def _mp(db_, empresa_id):
         return mp
@@ -81,3 +88,25 @@ async def test_sem_vinculo_o_cadastro_e_so_daqui(cenario):
     db, emp, conta, mp = cenario
     await cadastro.gravar(db, conta, emp.id, nome="Ana do Zero", telefone="(11) 91234-5678")
     assert mp.gravado == [] and conta.telefone == "+5511912345678"
+
+
+async def test_puxar_do_meuplano_traz_so_a_organizacao_da_empresa(cenario):
+    """Auditoria de 23/10/2026: com o token de admin do sistema, o meuPlano devolve as
+    pessoas de TODAS as organizações (29 de 8), e o gerente da Splendor lia nome, e-mail e
+    celular de gente de outra carteira. Agora só vem quem é da organização da empresa."""
+    db, emp, conta, mp = cenario
+    assert [p["id"] for p in await cadastro.pessoas_do_meuplano(db, emp.id)] == [7]
+    with pytest.raises(HTTPException) as e:
+        await cadastro.ligar(db, conta, emp.id, 9)
+    assert e.value.status_code == 404
+
+
+async def test_sem_a_organizacao_casada_nao_se_puxa_ninguem(cenario):
+    """Fecha em vez de vazar: empresa sem a organização dela no meuPlano não lista pessoa
+    nenhuma — e diz onde casar (Vínculos)."""
+    db, emp, conta, mp = cenario
+    emp.mp_tenant_id = None
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        await cadastro.pessoas_do_meuplano(db, emp.id)
+    assert e.value.status_code == 424 and "Vínculos" in e.value.detail

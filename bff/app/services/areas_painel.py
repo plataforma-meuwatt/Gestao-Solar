@@ -45,11 +45,21 @@ class Area:
 
 CATALOGO: list[Area] = [
     Area(
-        chave="clientes",
-        rotulo="Clientes",
+        chave="empresas",
+        rotulo="Empresas e seus usuários",
         descricao=(
-            "Cadastrar cliente, entregar senha provisória, vincular as contas dele no "
-            "meuWatt e no meuPlano e conceder usinas."
+            "As empresas de O&M — os clientes da plataforma — e os usuários de cada uma: "
+            "cadastrar empresa e usuário, pôr e tirar usuário de empresa, renovar senha, "
+            "desativar. Quem abre isto vê todas — nenhuma empresa sabe que as outras existem."
+        ),
+        grupo="Operação",
+    ),
+    Area(
+        chave="clientes",
+        rotulo="Ficha do dono de usina",
+        descricao=(
+            "A ficha de cada dono de usina: senha provisória, usinas concedidas, o que "
+            "ele vê no aplicativo e o que recebe no WhatsApp."
         ),
         grupo="Operação",
     ),
@@ -78,28 +88,19 @@ CATALOGO: list[Area] = [
         grupo="Operação",
     ),
     Area(
-        chave="empresas",
-        rotulo="Empresas de O&M",
-        descricao=(
-            "Cadastrar e desligar as empresas que operam dentro da plataforma. Quem abre "
-            "isto vê a lista inteira — nenhuma empresa sabe que as outras existem."
-        ),
-        grupo="Sistema",
-    ),
-    Area(
         chave="rotas",
         rotulo="Rotas",
         descricao="A sonda que exercita as rotas do meuWatt e do meuPlano.",
         grupo="Sistema",
     ),
     Area(
-        chave="conexoes",
-        rotulo="Conexões com os produtos",
+        chave="bot",
+        rotulo="Log do bot",
         descricao=(
-            "Os tokens com que o painel lê o meuWatt e o meuPlano. Quem abre isto "
-            "troca a credencial de leitura de todo o sistema."
+            "O que o assistente do WhatsApp recebeu e respondeu, de quem e de qual empresa "
+            "— inclusive os números sem cadastro que tentaram falar com ele."
         ),
-        grupo="Sistema",
+        grupo="Operação",
     ),
     Area(
         chave="whatsapp",
@@ -126,9 +127,11 @@ def concedidas(db: Session, usuario: User) -> set[str]:
     marcadas para um administrador esconderia que elas vêm do perfil, e desmarcar
     uma não faria nada.
     """
+    # Só as do catálogo: uma área que saiu dele (a de Conexões, quando a plataforma deixou
+    # de ter token) voltaria no "salvar" da tela e seria recusada como desconhecida.
     return set(
         db.scalars(select(AcessoPainel.area).where(AcessoPainel.user_id == usuario.id)).all()
-    )
+    ) & CHAVES
 
 
 def efetivas(db: Session, usuario: User) -> set[str]:

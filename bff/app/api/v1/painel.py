@@ -1,19 +1,22 @@
-"""API do painel: entrada, pontes com os produtos e conciliação de usinas.
+"""API do painel da plataforma (adm-gs): entrada, a sonda das rotas e o inventário de usinas.
 
-A gestão de clientes vive em `painel_clientes.py`.
+A gestão de clientes vive em `painel_clientes.py`; empresas e seus usuários, em
+`painel_empresas.py`.
+
+**A plataforma não tem token** (regra do dono, 23/10/2026): quem lê o meuWatt e o meuPlano
+é a conta de cada EMPRESA, colada pelo gerente dela no oem-gs. Por isso não há mais aqui
+as "pontes com os produtos", e a sonda escolhe com a conexão de qual empresa sondar. Trazer
+e casar usina também é do gerente (oem-gs → Usinas): o adm só vê o inventário, por empresa.
 
 Tudo aqui exige uma sessão de escopo `painel`, e cada rota exige a ÁREA da tela que a
-usa (`core/security.exige_area`, catálogo em `services/areas_painel`): as pontes com os
-produtos ficam em `conexoes`, a sonda em `rotas`, o inventário em `usinas`. Administrador
-passa em todas por perfil; atendimento, só no que o administrador marcou em Usuários do
-sistema.
+usa (`core/security.exige_area`, catálogo em `services/areas_painel`). Administrador
+passa em todas por perfil; atendimento, só no que o administrador marcou em Usuários.
 """
 
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,15 +28,14 @@ from app.core.security import (
     gestor_atual,
 )
 from app.models.integracao import Produto
+from app.models.empresa import Empresa
 from app.models.plant import PlantLink
 from app.models.user import Perfil, User, UserPlantAccess
-from app.services import areas_painel, conciliacao, empresas, integracoes, pessoas, sonda, vinculos
+from app.services import areas_painel, empresas, integracoes, pessoas, sonda
 
 router = APIRouter(prefix="/api/painel", tags=["painel"])
 
-#: As guardas deste arquivo, montadas uma vez. `conexoes` guarda a credencial com que o
-#: painel lê os dois produtos; `rotas`, a sonda; `usinas`, o inventário e a conciliação.
-EXIGE_CONEXOES = exige_area("conexoes")
+#: As guardas deste arquivo, montadas uma vez: `rotas`, a sonda; `usinas`, o inventário.
 EXIGE_ROTAS = exige_area("rotas")
 EXIGE_USINAS = exige_area("usinas")
 
@@ -162,160 +164,7 @@ def eu(db: Session = Depends(get_db), gestor: User = Depends(gestor_atual)) -> E
     )
 
 
-# ------------------------------------------------------------------- integrações
-
-
-class IntegracaoOut(BaseModel):
-    produto: str
-    configurada: bool
-    base_url: str | None = None
-    usuario_servico: str | None = None
-    estado: str
-    detalhe: str | None = None
-    testada_em: datetime | None = None
-    usinas_visiveis: int | None = None
-    # Como esta ponte se autentica. `False` = linha antiga, por conta de serviço — a tela
-    # mostra o aviso de migração em cima dela.
-    por_token: bool = False
-    token_prefixo: str | None = None
-    token_dono_nome: str | None = None
-    token_dono_email: str | None = None
-    token_gravado_em: datetime | None = None
-
-
-class IntegracaoIn(BaseModel):
-    base_url: str = Field(min_length=4)
-    usuario_servico: str = Field(min_length=3)
-    # Vazia mantém a que já está gravada — é o que permite corrigir o endereço sem
-    # redigitar a credencial.
-    senha: str | None = None
-
-
-class TokenIn(BaseModel):
-    base_url: str = Field(min_length=4)
-    #: O valor colado pelo gestor. Sem `min_length` apertado de propósito: quem valida é
-    #: `core/tokens_produto`, que sabe dizer POR QUE está errado — "faltam caracteres" é
-    #: uma resposta melhor do que um 422 do Pydantic dizendo "string curta".
-    token: str = Field(min_length=1)
-
-
-class EventoOut(BaseModel):
-    evento: str
-    ocorrido_em: datetime
-    ator_email: str | None = None
-    token_prefixo: str | None = None
-    detalhe: str | None = None
-    usinas_visiveis: int | None = None
-
-
-def _integracao_out(produto: Produto, integracao) -> IntegracaoOut:
-    if integracao is None:
-        return IntegracaoOut(produto=produto.value, configurada=False, estado="nunca")
-    return IntegracaoOut(
-        produto=produto.value,
-        configurada=True,
-        base_url=integracao.base_url,
-        usuario_servico=integracao.usuario_servico,
-        estado=integracao.estado.value,
-        detalhe=integracao.detalhe_teste,
-        testada_em=integracao.testada_em,
-        usinas_visiveis=integracao.usinas_visiveis,
-        por_token=integracao.por_token,
-        token_prefixo=integracao.token_prefixo,
-        token_dono_nome=integracao.token_dono_nome,
-        token_dono_email=integracao.token_dono_email,
-        token_gravado_em=integracao.token_gravado_em,
-    )
-
-
-@router.get("/integracoes", response_model=list[IntegracaoOut])
-def listar_integracoes(
-    db: Session = Depends(get_db), _: User = Depends(EXIGE_CONEXOES)
-) -> list[IntegracaoOut]:
-    return [_integracao_out(p, i) for p, i in integracoes.listar(db).items()]
-
-
-@router.put("/integracoes/{produto}", response_model=IntegracaoOut)
-def salvar_integracao(
-    produto: Produto,
-    body: IntegracaoIn,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(EXIGE_CONEXOES),
-) -> IntegracaoOut:
-    """Caminho ANTIGO, por conta de serviço. Mantido para não quebrar o que já está
-    gravado; a tela oferece o token."""
-    try:
-        integracao = integracoes.salvar(
-            db, produto, body.base_url, body.usuario_servico, body.senha,
-            ator_email=usuario.identificacao,
-        )
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-    return _integracao_out(produto, integracao)
-
-
-class TesteOut(BaseModel):
-    ok: bool
-    detalhe: str
-    usinas_visiveis: int | None = None
-    #: De quem é o token que respondeu. A tela mostra isto ao lado do resultado porque
-    #: "conectado" com a pessoa errada é um sucesso enganoso.
-    dono_nome: str | None = None
-    dono_email: str | None = None
-
-
-@router.post("/integracoes/{produto}/testar", response_model=TesteOut)
-async def testar_integracao(
-    produto: Produto,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(EXIGE_CONEXOES),
-) -> TesteOut:
-    resultado = await integracoes.testar(db, produto, ator_email=usuario.identificacao)
-    return TesteOut(
-        ok=resultado.ok,
-        detalhe=resultado.detalhe,
-        usinas_visiveis=resultado.usinas,
-        dono_nome=resultado.dono_nome,
-        dono_email=resultado.dono_email,
-    )
-
-
-@router.put("/integracoes/{produto}/token", response_model=TesteOut)
-async def conectar_por_token(
-    produto: Produto,
-    body: TokenIn,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(EXIGE_CONEXOES),
-) -> TesteOut:
-    """Cola um token pessoal e conecta.
-
-    Responde com o resultado do teste, não com a integração: o que o gestor precisa
-    saber neste instante é se funcionou e como quem. Se não funcionou, nada foi gravado
-    — a conexão anterior continua de pé (ver `integracoes.salvar_token`).
-    """
-    resultado = await integracoes.salvar_token(
-        db, produto, body.base_url, body.token, ator_email=usuario.identificacao
-    )
-    return TesteOut(
-        ok=resultado.ok,
-        detalhe=resultado.detalhe,
-        usinas_visiveis=resultado.usinas,
-        dono_nome=resultado.dono_nome,
-        dono_email=resultado.dono_email,
-    )
-
-
-@router.delete("/integracoes/{produto}/token", response_model=IntegracaoOut)
-def desconectar_token(
-    produto: Produto,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(EXIGE_CONEXOES),
-) -> IntegracaoOut:
-    """Para de usar o token deste lado. NÃO o revoga no produto de origem — só quem o
-    emitiu pode fazer isso, lá. A tela avisa, porque a diferença importa."""
-    integracoes.remover_token(db, produto, ator_email=usuario.identificacao)
-    return _integracao_out(produto, integracoes.obter(db, produto))
+# ------------------------------------------------------------------- a sonda
 
 
 class RotaSondadaOut(BaseModel):
@@ -374,19 +223,18 @@ def listar_rotas(
 @router.post("/integracoes/{produto}/rotas/sondar", response_model=VarreduraOut)
 async def sondar_rotas(
     produto: Produto,
+    empresa_id: int,
     db: Session = Depends(get_db),
     usuario: User = Depends(EXIGE_ROTAS),
 ) -> VarreduraOut:
-    """Exercita o catálogo inteiro com o token gravado.
+    """Exercita o catálogo inteiro com a conexão DESTA empresa (a plataforma não tem token).
 
-    Restrito a administrador, e não a qualquer gestor: a varredura é uma dúzia de
-    requisições ao produto de terceiro e usa a credencial de serviço — não é uma tela de
-    consulta que qualquer um abre sem consequência.
-
+    Só leitura, mas uma dúzia de requisições ao produto de terceiro — por isso área própria.
     Fica registrada no histórico da ponte para responder "quando foi a última vez que
     passou inteira?", que é a pergunta de quem investiga uma quebra.
     """
-    varredura = await sonda.varrer(db, produto)
+    empresas.por_id(db, empresa_id)
+    varredura = await sonda.varrer(db, produto, empresa_id)
 
     integracoes.registrar_evento(
         db,
@@ -407,27 +255,6 @@ async def sondar_rotas(
     )
 
 
-@router.get("/integracoes/{produto}/eventos", response_model=list[EventoOut])
-def historico_integracao(
-    produto: Produto,
-    db: Session = Depends(get_db),
-    _: User = Depends(EXIGE_CONEXOES),
-) -> list[EventoOut]:
-    """O que já aconteceu com esta ponte. Responde "desde quando parou?", que o estado
-    atual sozinho não responde."""
-    return [
-        EventoOut(
-            evento=e.evento,
-            ocorrido_em=e.ocorrido_em,
-            ator_email=e.ator_email,
-            token_prefixo=e.token_prefixo,
-            detalhe=e.detalhe,
-            usinas_visiveis=e.usinas_visiveis,
-        )
-        for e in integracoes.historico(db, produto)
-    ]
-
-
 # ---------------------------------------------------------------------- usinas
 
 
@@ -441,6 +268,11 @@ class UsinaOut(BaseModel):
     tem_meuplano: bool
     dono_id: int | None = None
     dono_nome: str | None = None
+    #: A empresa de O&M dona da usina — nula é usina de antes do multiempresa, de ninguém.
+    empresa_id: int | None = None
+    empresa: str | None = None
+    #: Ligada no aplicativo (o gerente liga e desliga no oem-gs).
+    no_app: bool = True
 
 
 @router.get("/usinas", response_model=list[UsinaOut])
@@ -462,8 +294,9 @@ def listar_usinas(
         ).all()
     }
 
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
     saida = []
-    for link in db.scalars(select(PlantLink).where(PlantLink.ativo).order_by(PlantLink.nome)).all():
+    for link in db.scalars(select(PlantLink).order_by(PlantLink.nome)).all():
         dono = donos.get(link.id)
         saida.append(
             UsinaOut(
@@ -476,336 +309,9 @@ def listar_usinas(
                 tem_meuplano=link.tem_meuplano,
                 dono_id=dono[0] if dono else None,
                 dono_nome=dono[1] if dono else None,
+                empresa_id=link.empresa_id,
+                empresa=nomes.get(link.empresa_id) if link.empresa_id else None,
+                no_app=link.ativo,
             )
         )
     return saida
-
-
-# ------------------------------------------------------------------ conciliação
-
-
-class UsinaLado(BaseModel):
-    id: str
-    nome: str
-    cidade: str | None = None
-    uf: str | None = None
-    kwp: float | None = None
-
-
-class CandidatoOut(BaseModel):
-    mp_usina_id: int
-    nome: str
-    pontos: float
-    motivos: list[str]
-
-
-class LinhaConciliacao(BaseModel):
-    """Uma usina do inventário, com o que se sabe dela de cada lado.
-
-    `plant_link_id` nulo = existe num produto e ainda não foi trazida para cá. É o estado
-    inicial de tudo, e é o que distingue "não está no app" de "não existe".
-    """
-
-    chave: str
-    nome: str
-    plant_link_id: int | None = None
-    mw_slug: str | None = None
-    mw_nome: str | None = None
-    mp_usina_id: int | None = None
-    mp_nome: str | None = None
-    cidade: str | None = None
-    uf: str | None = None
-    kwp: float | None = None
-    #: `ambos` · `meuwatt` · `meuplano`
-    origem: str
-    no_app: bool
-    candidatos: list[CandidatoOut] = []
-    #: Para uma usina só do meuPlano: de qual usina do meuWatt ela parece ser par. As duas
-    #: linhas continuam separadas — o sistema não sabe que são a mesma —, mas o gestor não
-    #: precisa cruzar os dois grupos a olho para descobrir.
-    par_provavel_mw: str | None = None
-    par_provavel_nome: str | None = None
-    par_provavel_motivos: list[str] = []
-    #: A micro usina do MICRO (meuWatt) casada com esta — o que faz o aviso de parada dela
-    #: chegar. O nome vem de `GET /conciliacao/micro-usinas`, que a tela já carrega.
-    mw_micro_plant_id: int | None = None
-
-
-class ConciliacaoOut(BaseModel):
-    meuwatt: list[UsinaLado]
-    meuplano: list[UsinaLado]
-    linhas: list[LinhaConciliacao]
-    aviso: str | None = None
-
-
-def _linha_out(linha: conciliacao.Linha) -> LinhaConciliacao:
-    return LinhaConciliacao(
-        chave=linha.chave,
-        nome=linha.nome,
-        plant_link_id=linha.plant_link_id,
-        mw_slug=linha.mw_slug,
-        mw_nome=linha.mw_nome,
-        mp_usina_id=linha.mp_usina_id,
-        mp_nome=linha.mp_nome,
-        cidade=linha.cidade,
-        uf=linha.uf,
-        kwp=linha.kwp,
-        origem=linha.origem,
-        no_app=linha.no_app,
-        candidatos=[
-            CandidatoOut(mp_usina_id=c.mp_usina_id, nome=c.nome, pontos=c.pontos, motivos=c.motivos)
-            for c in linha.candidatos
-        ],
-        par_provavel_mw=linha.par_provavel_mw,
-        par_provavel_nome=linha.par_provavel_nome,
-        par_provavel_motivos=linha.par_provavel_motivos,
-        mw_micro_plant_id=linha.mw_micro_plant_id,
-    )
-
-
-@router.get("/conciliacao", response_model=ConciliacaoOut)
-async def carregar_conciliacao(
-    cliente_id: int,
-    db: Session = Depends(get_db),
-    _: User = Depends(EXIGE_USINAS),
-) -> ConciliacaoOut:
-    """As usinas DAQUELE CLIENTE nos dois produtos, para casar uma com a outra.
-
-    `cliente_id` é obrigatório, e essa é a regra do sistema inteiro: **usina é sempre de
-    um cliente**. Esta rota não tem mais um "inventário completo" para oferecer — e não
-    é perda, é a mesma verdade dita direito. Antes ela lia com uma credencial de serviço e
-    mostrava tudo o que aquela conta enxergava, que é o escopo de um administrador, não o
-    de ninguém a quem a lista dissesse respeito. Conciliar fora de um cliente é casar
-    usinas que não se sabe de quem são.
-
-    Ler com o token do próprio cliente ainda tem uma vantagem que a credencial de serviço
-    nunca teve: as duas listas vêm pela MESMA regra que cada produto aplica no site dele.
-    A usina que ele vê por pertencer a uma organização aparece aqui, e era exatamente o
-    que a rota administrativa antiga não sabia responder.
-
-    Inclui as que existem **só no meuPlano** — manutenção sem monitoramento é normal.
-    """
-    cliente = db.get(User, cliente_id)
-    if cliente is None or cliente.perfil is not Perfil.CLIENTE:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cliente não encontrado")
-
-    usinas_mw: list[dict[str, Any]] = []
-    usinas_mp: list[dict[str, Any]] = []
-    avisos: list[str] = []
-
-    # Cada lado cai sozinho: com um produto não conectado, ainda dá para conferir o outro.
-    try:
-        usinas_mw = await vinculos.cliente_meuwatt(db, cliente.id).usinas()
-    except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo com uma ponte fora
-        avisos.append(f"meuWatt: {exc}")
-
-    try:
-        usinas_mp = await vinculos.cliente_meuplano(db, cliente.id).usinas()
-    except Exception as exc:  # noqa: BLE001
-        avisos.append(f"meuPlano: {exc}")
-
-    links = list(db.scalars(select(PlantLink)).all())
-    linhas = conciliacao.montar(usinas_mw, usinas_mp, links)
-
-    return ConciliacaoOut(
-        meuwatt=[
-            UsinaLado(
-                id=u.get("slug", ""),
-                nome=conciliacao.nome_de(u),
-                cidade=u.get("city"),
-                uf=u.get("state"),
-                kwp=u.get("capacity_kwp") or u.get("total_capacity_kwp"),
-            )
-            for u in usinas_mw
-        ],
-        meuplano=[
-            UsinaLado(
-                id=str(u.get("id", "")),
-                nome=conciliacao.nome_de(u),
-                cidade=u.get("city") or u.get("cidade"),
-                uf=u.get("uf") or u.get("state"),
-                kwp=u.get("potencia_kwp") or u.get("capacity_kwp"),
-            )
-            for u in usinas_mp
-        ],
-        linhas=[_linha_out(l) for l in linhas],
-        aviso=" · ".join(avisos) if avisos else None,
-    )
-
-
-class UsinaIn(BaseModel):
-    """Uma usina do inventário, do jeito que o gestor a definiu.
-
-    Os dois identificadores são opcionais e independentes: dá para gravar uma usina só do
-    meuWatt, só do meuPlano, ou casada. O que não se aceita é nenhum dos dois — seria uma
-    usina que não existe em lugar nenhum.
-    """
-
-    plant_link_id: int | None = None
-    mw_slug: str | None = None
-    mp_usina_id: int | None = None
-    nome: str = Field(min_length=1)
-    cidade: str | None = None
-    uf: str | None = None
-    kwp: float | None = None
-    #: Se ela entra no aplicativo. Desligada, continua existindo aqui com os vínculos e as
-    #: concessões intactos — o gestor pode religá-la sem refazer nada.
-    no_app: bool = True
-    #: A micro usina do MICRO. Diferente dos outros campos, só muda quando VEM na
-    #: requisição: `null` explícito descasa, ausente mantém. Um painel publicado antes deste
-    #: campo não o manda — e cada "Ligar/Desligar" dele apagaria o vínculo em silêncio.
-    mw_micro_plant_id: int | None = None
-
-
-def _conflito(db: Session, campo, valor, exceto_id: int | None) -> PlantLink | None:
-    """Outra usina já usa este identificador? Dois vínculos apontando para a mesma usina de
-    um produto misturariam os dados de duas plantas."""
-    if valor is None:
-        return None
-    condicoes = [campo == valor]
-    if exceto_id is not None:
-        condicoes.append(PlantLink.id != exceto_id)
-    return db.scalar(select(PlantLink).where(*condicoes))
-
-
-@router.put("/conciliacao/usina", response_model=LinhaConciliacao)
-def salvar_usina(
-    body: UsinaIn, db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
-) -> LinhaConciliacao:
-    """Cria ou atualiza uma usina do inventário — casando, descasando ou só ligando no app.
-
-    É um endpoint só para as três coisas porque elas são a mesma operação vista de ângulos
-    diferentes: gravar o estado desejado daquela usina. Separar em `vincular`,
-    `desvincular` e `ativar` obrigaria a tela a chamar duas rotas para "trazer a usina do
-    meuPlano para o app", com a chance de a segunda falhar depois da primeira.
-    """
-    if body.mw_slug is None and body.mp_usina_id is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "A usina precisa existir em pelo menos um dos dois produtos.",
-        )
-
-    link = db.get(PlantLink, body.plant_link_id) if body.plant_link_id else None
-    if body.plant_link_id and link is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
-
-    alvo = link.id if link else None
-    muda_micro = "mw_micro_plant_id" in body.model_fields_set
-    for campo, valor, produto in (
-        (PlantLink.mw_plant_slug, body.mw_slug, "meuWatt"),
-        (PlantLink.mp_usina_id, body.mp_usina_id, "meuPlano"),
-        (PlantLink.mw_micro_plant_id, body.mw_micro_plant_id if muda_micro else None, "MICRO"),
-    ):
-        outro = _conflito(db, campo, valor, alvo)
-        if outro is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"Esta usina do {produto} já pertence a “{outro.nome}”. "
-                "Desfaça o outro vínculo antes.",
-            )
-
-    if link is None:
-        link = PlantLink(nome=body.nome)
-        db.add(link)
-
-    link.mw_plant_slug = body.mw_slug
-    link.mp_usina_id = body.mp_usina_id
-    link.nome = body.nome
-    link.cidade = body.cidade
-    link.uf = body.uf
-    link.kwp = body.kwp
-    link.ativo = body.no_app
-    if muda_micro:
-        link.mw_micro_plant_id = body.mw_micro_plant_id
-    db.commit()
-    db.refresh(link)
-
-    return LinhaConciliacao(
-        chave=f"link:{link.id}",
-        nome=link.nome,
-        plant_link_id=link.id,
-        mw_slug=link.mw_plant_slug,
-        mw_nome=link.nome if link.mw_plant_slug else None,
-        mp_usina_id=link.mp_usina_id,
-        mp_nome=link.nome if link.mp_usina_id else None,
-        cidade=link.cidade,
-        uf=link.uf,
-        kwp=link.kwp,
-        origem=("ambos" if link.mw_plant_slug and link.mp_usina_id
-                else "meuwatt" if link.mw_plant_slug else "meuplano"),
-        no_app=link.ativo,
-        mw_micro_plant_id=link.mw_micro_plant_id,
-    )
-
-
-class MicroUsinaOut(BaseModel):
-    id: int
-    nome: str
-    kwp: float | None = None
-    #: As estações dos portais que formam a usina ("UFV Sitio Solis + UFV Sitio Canadian").
-    estacoes: list[str] = []
-
-
-class MicroUsinasOut(BaseModel):
-    usinas: list[MicroUsinaOut]
-    aviso: str | None = None
-
-
-@router.get("/conciliacao/micro-usinas", response_model=MicroUsinasOut)
-async def micro_usinas(
-    db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
-) -> MicroUsinasOut:
-    """As micro usinas do MICRO do meuWatt, para casar com uma usina daqui.
-
-    Lidas com a credencial de SERVIÇO — a única forma, porque o MICRO não é escopado por
-    usina lá (só administrador lê) — e é o mesmo caso do catálogo da conciliação: a lista
-    de tudo o que existe, para o gestor decidir de quem é. Ponte fora ou conta de serviço
-    sem acesso vira `aviso`, com a lista vazia: a tela de Usinas abre do mesmo jeito.
-    """
-    try:
-        cliente = await integracoes.cliente_meuwatt(db)
-        brutas = await cliente.micro_usinas()
-    except Exception as exc:  # noqa: BLE001 — a tela precisa abrir mesmo com a ponte fora
-        return MicroUsinasOut(usinas=[], aviso=f"MICRO do meuWatt: {exc}")
-    return MicroUsinasOut(
-        usinas=[
-            MicroUsinaOut(
-                id=int(u["id"]),
-                nome=str(u.get("name") or u["id"]),
-                kwp=u.get("capacity_kwp"),
-                estacoes=[str(e.get("name")) for e in u.get("stations") or [] if isinstance(e, dict)],
-            )
-            for u in brutas
-            if u.get("id") is not None
-        ]
-    )
-
-
-@router.delete("/conciliacao/usina/{plant_link_id}", status_code=204)
-def remover_usina(
-    plant_link_id: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_USINAS)
-) -> None:
-    """Tira a usina do Gestão Solar de vez.
-
-    Recusa enquanto houver cliente com ela concedida: apagar levaria junto o acesso dele
-    por cascata, e o sintoma seria uma usina que sumiu do app sem ninguém ter mexido
-    naquele cliente. Para tirar do ar sem perder nada, o caminho é desligar `no_app`.
-    """
-    link = db.get(PlantLink, plant_link_id)
-    if link is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada.")
-
-    donos = db.scalars(
-        select(User.nome)
-        .join(UserPlantAccess, UserPlantAccess.user_id == User.id)
-        .where(UserPlantAccess.plant_link_id == plant_link_id)
-    ).all()
-    if donos:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"“{link.nome}” está concedida a {', '.join(donos)}. "
-            "Tire a usina desse cliente antes, ou apenas desligue-a do aplicativo.",
-        )
-
-    db.delete(link)
-    db.commit()

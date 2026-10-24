@@ -314,19 +314,27 @@ async def test_historico_de_um_produto_nao_mistura_com_o_do_outro(db, monkeypatc
 
 
 async def test_o_resto_do_bff_recebe_um_cliente_com_o_token(db, monkeypatch):
-    _upstream(monkeypatch)
-    await integracoes.salvar_token(db, Produto.MEUWATT, "https://api", MW)
+    from app.models.empresa import Empresa
 
-    cliente = await integracoes.cliente_meuwatt(db)
+    _upstream(monkeypatch)
+    db.add(Empresa(id=1, nome="O&M"))
+    await integracoes.salvar_token(db, Produto.MEUWATT, "https://api", MW, empresa_id=1)
+
+    # A leitura é sempre com a conta de uma EMPRESA: a plataforma não tem token.
+    cliente = await integracoes.cliente_meuwatt(db, 1)
     assert cliente._token_fixo == MW
     assert await cliente._token_servico() == MW  # sem login: o token é a credencial
 
 
 async def test_conexao_antiga_por_senha_continua_funcionando(db):
     """A migração não pode derrubar quem ainda não trocou."""
+    from app.models.empresa import Empresa
+
+    db.add(Empresa(id=1, nome="O&M"))
     db.add(
         Integracao(
             produto=Produto.MEUPLANO,
+            empresa_id=1,
             base_url="https://api",
             usuario_servico="servico@empresa.com.br",
             senha_cifrada=cripto.cifrar("senha-antiga"),
@@ -334,7 +342,7 @@ async def test_conexao_antiga_por_senha_continua_funcionando(db):
     )
     db.commit()
 
-    cliente = await integracoes.cliente_meuplano(db)
+    cliente = await integracoes.cliente_meuplano(db, 1)
     assert cliente._token_fixo is None
     assert cliente._usuario == "servico@empresa.com.br"
     assert cliente._senha == "senha-antiga"

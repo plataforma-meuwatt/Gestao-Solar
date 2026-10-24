@@ -92,10 +92,10 @@ class User(Base):
     #: e nunca "todas as empresas": quem decide o alcance é o perfil, e a leitura acontece
     #: num lugar só (`services/empresas.no_escopo`).
     #:
-    #: Uma conta pertence a UMA empresa. "A mesma pessoa em duas O&M" se resolve com duas
-    #: contas — o mesmo motivo pelo qual quem autentica é o apelido e não o e-mail, e o
-    #: precedente foi `renanmarquezini` (gestor) e `renan.marquezini` (cliente), o mesmo
-    #: humano — par desfeito em 28/09/2026, quando o dono passou a usar uma conta só.
+    #: É a empresa de ORIGEM: a que cuida da conta (senha, celular, tokens, bot). Desde
+    #: 23/10/2026 a conta pode ser TAMBÉM de outras empresas, com o mesmo papel
+    #: (`gs_usuario_empresas`, ver `models/empresa.MembroDaEmpresa`); quem lista "quem é desta
+    #: empresa" usa `services/empresas.contas_da_empresa`, nunca esta coluna sozinha.
     empresa_id: Mapped[int | None] = mapped_column(
         ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True, nullable=True
     )

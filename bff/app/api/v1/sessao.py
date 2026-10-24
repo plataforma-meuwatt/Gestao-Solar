@@ -17,24 +17,29 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.security import ALGORITMO, conferir_senha, gerar_hash_senha
+from app.core.security import (
+    ALGORITMO,
+    conferir_senha,
+    criar_token_empresa,
+    criar_token_tecnico,
+    gerar_hash_senha,
+)
+from app.models.empresa import Empresa
 from app.models.user import User
-from app.services import pessoas
+from app.services import empresas, pessoas
 
 router = APIRouter(prefix="/api/sessao", tags=["sessão · papéis"])
 
 _bearer = HTTPBearer(auto_error=False)
 
 
-def sessao_atual(
-    cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    db: Session = Depends(get_db),
-) -> User:
-    """Quem está falando, venha do portão que vier. Não autoriza nada por si."""
+def _sessao(cred: HTTPAuthorizationCredentials | None, db: Session) -> tuple[User, dict]:
+    """Quem está falando, e o que o token diz (escopo, empresa da sessão)."""
     if cred is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Não autenticado")
     try:
@@ -45,7 +50,15 @@ def sessao_atual(
 
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
-    return usuario
+    return usuario, dados
+
+
+def sessao_atual(
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> User:
+    """Quem está falando, venha do portão que vier. Não autoriza nada por si."""
+    return _sessao(cred, db)[0]
 
 
 class ContaOut(BaseModel):
@@ -161,3 +174,67 @@ def trocar_a_propria_senha(
     # tela do painel continuaria sendo empurrada para a troca no aplicativo.
     usuario.trocar_senha = False
     db.commit()
+
+
+# ── um usuário em mais de uma empresa ───────────────────────────────────────
+
+
+class EmpresaDaContaOut(BaseModel):
+    id: int
+    nome: str
+    ativa: bool
+    #: A empresa que cuida da CONTA (senha, celular, tokens e bot).
+    origem: bool
+    #: A que esta sessão está operando.
+    atual: bool
+
+
+@router.get("/empresas", response_model=list[EmpresaDaContaOut])
+def empresas_da_sessao(
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)
+) -> list[EmpresaDaContaOut]:
+    """As empresas desta conta — o seletor "Trocar empresa" do oem-gs só aparece com duas ou mais."""
+    usuario, dados = _sessao(cred, db)
+    atual = dados.get("empresa") or usuario.empresa_id
+    ids = empresas.empresas_da_conta(db, usuario)
+    por_id = {e.id: e for e in db.scalars(select(Empresa).where(Empresa.id.in_(ids))).all()}
+    return [
+        EmpresaDaContaOut(
+            id=i, nome=por_id[i].nome, ativa=por_id[i].ativa,
+            origem=i == usuario.empresa_id, atual=i == atual,
+        )
+        for i in ids
+        if i in por_id
+    ]
+
+
+class TrocaDeEmpresaIn(BaseModel):
+    empresa_id: int
+
+
+@router.post("/empresa", response_model=TrocaOut)
+def trocar_de_empresa(
+    body: TrocaDeEmpresaIn,
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> TrocaOut:
+    """Passa a operar OUTRA empresa da mesma conta — o gerente (ou o técnico) de mais de uma
+    O&M. A sessão nova vale para a empresa escolhida; a guarda confere a cada requisição
+    que a conta continua sendo de lá."""
+    usuario, dados = _sessao(cred, db)
+    escopo = dados.get("escopo")
+    if escopo not in ("empresa", "tecnico"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Só o gerente e o técnico trocam de empresa.")
+    if body.empresa_id not in empresas.empresas_da_conta(db, usuario):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Esta conta não é desta empresa.")
+    empresa = empresas.por_id(db, body.empresa_id)
+    if not empresa.ativa:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta empresa está desligada.")
+
+    outra = None if body.empresa_id == usuario.empresa_id else body.empresa_id
+    emitir = criar_token_empresa if escopo == "empresa" else criar_token_tecnico
+    token, expira = emitir(usuario.id, outra)
+    return TrocaOut(
+        token=token, expira_em=expira, apelido=usuario.apelido, nome=usuario.nome,
+        escopo=escopo, perfil=usuario.perfil.value, empresa=empresa.nome,
+    )

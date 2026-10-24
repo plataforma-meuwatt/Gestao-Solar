@@ -14,7 +14,7 @@ sair daqui:
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.apelido import ApelidoInvalido
@@ -202,9 +202,15 @@ async def usinas_sugeridas(db: Session, cliente: User) -> list[UsinaSugerida]:
     return saida
 
 
-def definir_usinas(db: Session, cliente: User, plant_link_ids: list[int]) -> None:
+def definir_usinas(
+    db: Session, cliente: User, plant_link_ids: list[int], *, empresa_id: int | None = None
+) -> None:
     """Substitui a lista inteira. Recusa a operação toda se qualquer usina for de outro —
-    parcial deixaria o gestor sem saber o que entrou e o que não."""
+    parcial deixaria o gestor sem saber o que entrou e o que não.
+
+    Com `empresa_id`, substitui só a parte DESTA empresa (e as usinas sem dono): o dono que
+    também é de outra empresa recebe usina de lá, e essa não é do gerente daqui — nem para
+    tirar no "salvar" de uma tela que nem a mostra."""
     donos = _donos_por_usina(db, exceto=cliente.id)
     conflitos = [
         f"“{db.get(PlantLink, pid).nome}” já é de {donos[pid]}"
@@ -216,12 +222,12 @@ def definir_usinas(db: Session, cliente: User, plant_link_ids: list[int]) -> Non
             "Cada usina pertence a um cliente só. " + "; ".join(conflitos) + "."
         )
 
-    atuais = {
-        a.plant_link_id: a
-        for a in db.scalars(
-            select(UserPlantAccess).where(UserPlantAccess.user_id == cliente.id)
-        ).all()
-    }
+    consulta = select(UserPlantAccess).where(UserPlantAccess.user_id == cliente.id)
+    if empresa_id is not None:
+        consulta = consulta.join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id).where(
+            or_(PlantLink.empresa_id == empresa_id, PlantLink.empresa_id.is_(None))
+        )
+    atuais = {a.plant_link_id: a for a in db.scalars(consulta).all()}
     desejadas = set(plant_link_ids)
 
     removidas = [pid for pid in atuais if pid not in desejadas]

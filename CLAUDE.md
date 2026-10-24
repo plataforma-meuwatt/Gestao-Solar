@@ -132,9 +132,30 @@ estão duplicadas byte a byte. As divergências já começaram — o portal roda
 do `build` e o painel não. Ao corrigir defeito nessa camada, procure os irmãos antes de dar
 o trabalho por encerrado.
 
-**O painel é onde o cliente nasce.** Cadastrar, vincular as contas dele no meuWatt e no
-meuPlano, conceder usinas, entregar a senha provisória e conferir no diagnóstico que o dado
-chega dos dois lados. Sem ele, o app não tem a quem servir.
+**O painel são duas portas (o mesmo bundle, `PORTAO`), no modelo do dono (23/10/2026):**
+
+- **adm-gs (plataforma)** — os clientes da plataforma são as EMPRESAS de O&M, e as empresas
+  têm USUÁRIOS. Menu: **Empresas** (entrada; ao abrir uma, os usuários dela — gerentes,
+  técnicos e donos —, as usinas e as últimas mensagens do bot), **Usuários** (o inverso:
+  todo mundo, com a(s) empresa(s) de cada um, a equipe da plataforma marcada), **Usinas**
+  (inventário por empresa, só leitura), **Log do bot**, e em Sistema WhatsApp, Rotas e
+  Diagnóstico. ⛔ **O adm não tem token** (regra do dono): não há tela de conexão da
+  plataforma nem de token de cliente aqui; da pessoa só se vê SE ela tem o token dela. O
+  cliente nasce DENTRO da empresa (não existe mais "Novo cliente" solto, que criava órfão).
+- **oem-gs (gerente da O&M)** — vê um passo abaixo: só os usuários e as usinas da empresa
+  dele. Menu: Usinas, Usuários (cadastro puxado do meuPlano, token de cada pessoa, usinas,
+  senha), **Bot do WhatsApp** (por pessoa: celular, token dela e as partes meuWatt/meuPlano/
+  helper), Conexões (a conta DA EMPRESA nos produtos) e Vínculos.
+
+**Um usuário em mais de uma empresa** (`gs_usuario_empresas`, como o `enterprise_employees`
+do meuWatt): a conta tem a empresa de ORIGEM (`gs_users.empresa_id`, quem cuida de senha,
+celular, tokens e bot) e pode ser também de outras, com o mesmo papel. As duas empresas a
+listam (`services/empresas.contas_da_empresa`); a outra só concede as usinas DELA
+(`clientes.definir_usinas(..., empresa_id=)`, que não toca nas da origem). O gerente de duas
+empresas troca no oem-gs (`POST /api/sessao/empresa` → token com a claim `empresa`, conferida
+a cada requisição por `gestor_empresa_atual`; `empresas.empresa_exigida` lê a empresa da
+SESSÃO). Limite conhecido: o dono em duas empresas SEM token próprio lê, no aplicativo, com a
+conta da empresa de origem — a usina da outra só tem dado com o token dele.
 
 **O portal é o mesmo cliente, no navegador.** Mesma conta e mesmo login do app
 (`POST /api/v1/auth/login`, com `apelido` e `senha`) — o BFF é que recusa a sessão de
@@ -268,7 +289,7 @@ Três consequências:
 
 Quem do staff abre qual tela é `gs_painel_acessos`, uma linha por par (pessoa, área). O
 catálogo mora em `bff/app/services/areas_painel.py`, a guarda é `exige_area` em
-`core/security.py`, e quem concede é Painel → **Usuários do sistema** (só administrador).
+`core/security.py`, e quem concede é adm-gs → **Usuários** (só administrador).
 
 Ao criar tela de painel, três lugares mudam juntos, e faltar um é silencioso:
 
@@ -283,7 +304,7 @@ Duas regras do desenho, que não devem ser "simplificadas":
 - **Administrador abre tudo por perfil, e não tem linha gravada.** Se ele dependesse de
   concessão, um clique errado trancaria o painel para todo mundo e a saída seria linha de
   comando.
-- **Usuários do sistema não é uma área concedível.** Continua em `administrador_atual`.
+- **Usuários não é uma área concedível.** Continua em `administrador_atual`.
   Conceder "mexer em quem administra" a quem não administra é conceder tudo: a pessoa se
   promove a administrador no primeiro clique.
 
@@ -293,7 +314,8 @@ servidor, que confere a área a cada requisição.
 ### Toda rota de upstream entra no catálogo da sonda
 
 `bff/app/services/sonda.py` lista as rotas do meuWatt e do meuPlano de que este sistema
-depende, e o painel (Rotas → *Sondar*) exercita uma a uma com o token gravado.
+depende, e o adm-gs (Rotas → *Sondar*) exercita uma a uma com a conexão da EMPRESA escolhida
+(a plataforma não tem token).
 
 Ao adicionar uma chamada em `bff/app/clients/`, **adicione a rota ao catálogo**. Sem isso
 ela vira ponto cego: quebra num deploy do produto de origem e ninguém sabe até um cliente
@@ -310,8 +332,8 @@ Duas regras do catálogo:
 
 ### Autorização é do BFF, não do app
 
-O BFF lê os upstreams com um **token pessoal** por produto — alguém gera um token na
-própria conta do meuWatt/meuPlano e cola em Painel → Conexões — e filtra pelo escopo
+O BFF lê os upstreams com um **token pessoal** por produto — o gerente cola o da EMPRESA em
+oem-gs → Conexões e o de cada PESSOA em oem-gs → Usuários/Bot — e filtra pelo escopo
 capturado no login (`gs_user_plant_access`). Nunca confie num `plant_id` que veio do
 cliente sem checar contra o escopo do usuário.
 
@@ -396,12 +418,13 @@ esquecido ao mexer em qualquer consulta é isto:
   usa o dele quando houver e cai no da EMPRESA que o atende; nunca no da plataforma. O que
   ele vê continua sendo o concedido (`gs_user_plant_access`) — o token só diz com que
   credencial a leitura acontece, nunca o que ela devolve.
-- **Cada empresa tem a conta DELA no meuWatt e no meuPlano.** `integracoes.obter` recebe a
-  empresa; sem a credencial dela, cai na da plataforma — e esse atalho é **recusado
-  sozinho** a partir da segunda empresa CADASTRADA (ativa ou não), porque servir a
-  credencial da plataforma à segunda empresa é entregar a carteira da primeira.
-  Desativar a outra não devolve o atalho: uma trava que se desarma sozinha não é trava.
-  O token de cada CLIENTE já era dele e não mudou.
+- **Cada empresa tem a conta DELA no meuWatt e no meuPlano, e a plataforma não tem
+  nenhuma** (regra do dono, 23/10/2026: "adm não tem token"). `integracoes.obter` devolve
+  só a linha da empresa — sem ela, não há leitura (o atalho para a credencial da plataforma
+  acabou junto com a credencial; a migração `a8e4f2c61b90` limpou o token da linha sem
+  empresa). O endereço dos produtos vem da configuração (`MEUWATT_API_URL`,
+  `MEUPLANO_API_URL`). O MICRO (só admin lê no meuWatt) é lido com a conta da empresa dona
+  da usina (`integracoes.micro_alertas_das_usinas`). O token de cada CLIENTE é dele.
 
 #### O que a revisão de 30/09/2026 corrigiu, e não pode voltar
 
@@ -747,9 +770,13 @@ orquestrador (DeepSeek, `DEEPSEEK_API_KEY`) usa as ferramentas de GERAÇÃO
 do meuPlano, falando como a pessoa). ⛔ **Regra do dono (23/10/2026): cada um usa o bot com o
 SEU token** (`gs_vinculos_produto`, `so_proprio=True`) — nunca o da empresa nem o da plataforma.
 O administrador da plataforma não usa o bot (não tem token); o do Renan responde à conta de
-gerente dele (`renan.marquezini`). Liberar uma parte exige o token dela (`cadastro.liberar_bot`; o helper
-pede o do meuWatt), e liberada sem token fica parada (`User.bot_ativo`). O aplicativo continua
-caindo no token da empresa; o bot, não. Responde, manda PDF e gráfico
+gerente dele (`renan.marquezini`). Liberar uma parte exige o token dela (`cadastro.liberar_bot`),
+e liberada sem token fica parada (`User.bot_ativo`). O helper fica "em breve" (liberar é
+recusado) até as ferramentas dele existirem — o prompt não o anuncia. O aplicativo continua
+caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_bot_registros`**
+(quem, empresa, resultado, pergunta, resposta, ferramentas, duração, erro — inclusive número
+sem cadastro): adm-gs → Log do bot, e o recorte da empresa no oem-gs → Bot do WhatsApp. A
+conversa é da CONTA: se o número muda de conta, o histórico anterior não entra. Responde, manda PDF e gráfico
 pelo gateway (`/interno/conteudo`, `/interno/digitando`). O `ENCAMINHAR_URLS` do gateway (cópia
 crua da entrega para outro sistema) existe, mas está VAZIO: dois bots no mesmo número
 responderiam em dobro.

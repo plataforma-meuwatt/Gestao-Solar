@@ -27,15 +27,23 @@ def _chave_de_teste(monkeypatch):
     monkeypatch.setattr(cripto, "_fernet", lambda: Fernet(chave))
 
 
+#: A empresa com que se sonda: a plataforma não tem token (regra do dono, 23/10/2026).
+EMPRESA = 1
+
+
 @pytest.fixture
 def conectado(db):
-    """Uma ponte com o meuWatt já conectada por token."""
+    """Uma ponte da EMPRESA com o meuWatt já conectada por token."""
+    from app.models.empresa import Empresa
+
+    db.add(Empresa(id=EMPRESA, nome="Empresa da sonda"))
     linha = Integracao(
         produto=Produto.MEUWATT,
         base_url=BASE,
         token_cifrado=cripto.cifrar(MW),
         token_prefixo="mw_pat_1xNq",
         ativa=True,
+        empresa_id=EMPRESA,
     )
     db.add(linha)
     db.commit()
@@ -131,7 +139,7 @@ def _tudo_responde(mock):
 async def test_caminho_feliz_exercita_todas_e_passa(db, conectado):
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     assert v.ok
     assert all(r.situacao == "ok" for r in v.rotas if r.situacao not in ("nao_sondada",))
@@ -144,7 +152,7 @@ async def test_o_slug_descoberto_alimenta_as_rotas_seguintes(db, conectado):
     """A ordem do catálogo é funcional, não estética: `/plants` precisa vir antes."""
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     detalhe = next(r for r in v.rotas if r.chave == "mw.slots")
     assert "porto-ferreira" in detalhe.caminho and "{slug}" not in detalhe.caminho
@@ -168,7 +176,7 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
     # que uma conta nova enxerga primeiro.
     respx.mock.get(f"{BASE}/enterprises").respond(200, json=[])
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     dependente = next(r for r in v.rotas if r.chave == "mw.slots")
     assert dependente.situacao == "pulada"
@@ -189,7 +197,7 @@ async def test_rota_que_sumiu_e_falha_essencial(db, conectado):
     # este 404 valer sem que o curinga de `/plants/porto-ferreira*` o engula.
     respx.mock.get(f"{BASE}/plants/porto-ferreira/slots").respond(404, json={"detail": "sumiu"})
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     alvo = next(r for r in v.rotas if r.chave == "mw.slots")
     assert alvo.situacao == "falhou" and alvo.status == 404
@@ -205,7 +213,7 @@ async def test_falha_secundaria_nao_derruba_a_ponte(db, conectado):
     respx.mock.get(f"{BASE}/plants/porto-ferreira/utility-bills").respond(500)
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     assert v.ok
     assert "secundárias" in v.detalhe
@@ -221,7 +229,7 @@ async def test_a_fronteira_esta_no_catalogo_e_e_exercitada_com_o_ano(db, conecta
     fronteira.respond(200, json={"year": 2026, "by_month": {"8": 158.1}})
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     alvo = next(r for r in v.rotas if r.chave == "mw.ssu_mensal")
     assert alvo.situacao == "ok" and not alvo.essencial
@@ -241,7 +249,7 @@ async def test_as_rotas_fora_da_varredura_nao_sao_chamadas(db, conectado):
     """
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     arquivo = next(r for r in v.rotas if r.chave == "mw.portal_arquivo")
     assert arquivo.situacao == "nao_sondada" and arquivo.detalhe
@@ -259,7 +267,7 @@ async def test_a_forma_da_resposta_e_registrada_sem_o_conteudo(db, conectado):
     tem por que despejar dado de geração de cliente na tela."""
     _tudo_responde(respx.mock)
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     plants = next(r for r in v.rotas if r.chave == "mw.plants")
     assert set(plants.campos) == {"slug", "name", "id"}
@@ -268,14 +276,17 @@ async def test_a_forma_da_resposta_e_registrada_sem_o_conteudo(db, conectado):
 
 
 async def test_sem_conexao_a_sonda_explica_em_vez_de_falhar(db):
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     assert not v.ok and not v.rotas
-    assert "não está configurada" in v.detalhe
+    assert "ainda não conectou" in v.detalhe and "Conexões" in v.detalhe
 
 
 async def test_conexao_por_senha_pede_token(db):
     """O caminho antigo não serve aqui: a sonda usa o token direto, sem sessão a renovar."""
+    from app.models.empresa import Empresa
+
+    db.add(Empresa(id=EMPRESA, nome="Empresa da sonda"))
     db.add(
         Integracao(
             produto=Produto.MEUPLANO,
@@ -283,11 +294,12 @@ async def test_conexao_por_senha_pede_token(db):
             usuario_servico="servico@empresa.com",
             senha_cifrada=cripto.cifrar("segredo"),
             ativa=True,
+            empresa_id=EMPRESA,
         )
     )
     db.commit()
 
-    v = await sonda.varrer(db, Produto.MEUPLANO)
+    v = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
 
     assert not v.ok and "token pessoal" in v.detalhe
 
@@ -299,7 +311,7 @@ async def test_produto_fora_do_ar_nao_derruba_a_varredura(db, conectado):
         side_effect=httpx.ConnectError("sem rota para o host")
     )
 
-    v = await sonda.varrer(db, Produto.MEUWATT)
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 
     exercitadas = [r for r in v.rotas if r.situacao in ("ok", "falhou", "pulada")]
     assert exercitadas and not v.ok
@@ -418,12 +430,16 @@ MP = "mp_pat_1xNq7BRe4VjtKjjVeAKiQDOPhoccF47X00gaAL"
 
 @pytest.fixture
 def meuplano_conectado(db):
+    from app.models.empresa import Empresa
+
+    db.add(Empresa(id=EMPRESA, nome="Empresa da sonda"))
     linha = Integracao(
         produto=Produto.MEUPLANO,
         base_url=MP_BASE,
         token_cifrado=cripto.cifrar(MP),
         token_prefixo="mp_pat_1xNq",
         ativa=True,
+        empresa_id=EMPRESA,
     )
     db.add(linha)
     db.commit()
@@ -451,7 +467,7 @@ async def test_o_cronograma_sondado_e_o_do_contrato_consolidado(db, meuplano_con
     # o resto do catálogo responde vazio — registrado por ÚLTIMO: o respx casa na ordem
     respx.mock.route(host="api.meuplano.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUPLANO)
+    v = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
 
     r = next(r for r in v.rotas if r.chave == "mp.cronograma")
     assert r.situacao == "ok", r.detalhe
@@ -469,7 +485,7 @@ async def test_sem_contrato_consolidado_o_cronograma_fica_pulado(db, meuplano_co
     )
     respx.mock.route(host="api.meuplano.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUPLANO)
+    v = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
 
     r = next(r for r in v.rotas if r.chave == "mp.cronograma")
     assert r.situacao == "pulada" and "vc_container_id" in (r.detalhe or "")
@@ -491,7 +507,7 @@ async def test_a_lista_de_relatorios_mensais_vazia_nao_sai_verde(db, meuplano_co
     ).respond(200, json={"itens": []})
     respx.mock.route(host="api.meuplano.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUPLANO)
+    v = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
 
     r = next(r for r in v.rotas if r.chave == "mp.vc_relatorios_mensais")
     assert r.situacao == "parcial", r.detalhe
@@ -524,7 +540,7 @@ async def test_com_um_relatorio_liberado_a_forma_e_conferida_de_verdade(db, meup
                                    "pendencias": []}, "texto": "..."})
     respx.mock.route(host="api.meuplano.test").respond(200, json={})
 
-    v = await sonda.varrer(db, Produto.MEUPLANO)
+    v = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
 
     r = next(r for r in v.rotas if r.chave == "mp.vc_relatorios_mensais")
     assert r.situacao == "ok" and "5 campos" in (r.detalhe or "")
@@ -537,6 +553,6 @@ async def test_com_um_relatorio_liberado_a_forma_e_conferida_de_verdade(db, meup
         json={"itens": [{"id": 61, "usina_id": 19, "mes": "2026-08",
                          "tipo": "executivo", "liberado_em": "2026-09-06T16:18:46"}]},
     )
-    v2 = await sonda.varrer(db, Produto.MEUPLANO)
+    v2 = await sonda.varrer(db, Produto.MEUPLANO, EMPRESA)
     r2 = next(r for r in v2.rotas if r.chave == "mp.vc_relatorios_mensais")
     assert r2.situacao == "falhou" and "itens[].competencia" in (r2.detalhe or "")

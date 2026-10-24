@@ -22,14 +22,13 @@ token não verificado troca um problema visível por um invisível.
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.meuplano import MeuPlanoClient
 from app.clients.meuwatt import MeuWattClient
 from app.core.cripto import SegredoInvalido, cifrar, decifrar
 from app.core.tokens_produto import NOME, TokenInvalido, prefixo_visivel, validar
-from app.models.empresa import Empresa
 from app.models.integracao import EstadoTeste, Integracao, IntegracaoEvento, Produto
 
 
@@ -52,55 +51,22 @@ class ResultadoTeste:
 
 
 def obter(db: Session, produto: Produto, empresa_id: int | None = None) -> Integracao | None:
-    """A credencial com que se lê este produto, para esta empresa.
+    """A credencial da EMPRESA neste produto — e só ela.
 
-    **Cada empresa de O&M tem a conta dela no meuWatt e no meuPlano** — decisão do dono,
-    28/09/2026. A linha com `empresa_id` nulo é a da plataforma, que é a única que existia
-    antes disso e continua sendo a que o painel usa para montar o catálogo de usinas.
-
-    Enquanto a empresa não tiver a dela, cai na da plataforma — e é isso que mantém o
-    sistema funcionando durante a migração. Esse atalho é travado por
-    `_conferir_atalho_da_plataforma`: no dia em que existir mais de uma empresa ativa, ele
-    passa a ser recusado com uma frase que diz o que fazer. Servir a credencial da
-    plataforma para a segunda empresa não seria um erro de configuração — seria entregar a
-    carteira de um cliente a outro, sem nada na tela indicando isso.
+    **Cada empresa de O&M tem a conta dela no meuWatt e no meuPlano** (decisão do dono,
+    28/09/2026) e **a plataforma não tem token** (23/10/2026): sem a da empresa, não há
+    leitura. O atalho antigo — cair na credencial da plataforma enquanto a empresa não
+    tinha a sua — acabou junto com a credencial: ele lia a carteira de uma empresa com a
+    conta de outra pessoa.
     """
-    if empresa_id is not None:
-        da_empresa = db.scalar(
-            select(Integracao).where(
-                Integracao.produto == produto, Integracao.empresa_id == empresa_id
-            )
-        )
-        if da_empresa is not None:
-            return da_empresa
-        _conferir_atalho_da_plataforma(db, produto)
-
     return db.scalar(
         select(Integracao).where(
-            Integracao.produto == produto, Integracao.empresa_id.is_(None)
+            Integracao.produto == produto,
+            Integracao.empresa_id == empresa_id
+            if empresa_id is not None
+            else Integracao.empresa_id.is_(None),
         )
     )
-
-
-def _conferir_atalho_da_plataforma(db: Session, produto: Produto) -> None:
-    """A trava que se arma sozinha no dia em que o atalho vira vazamento.
-
-    Com UMA empresa no sistema, a credencial da plataforma é a dela: o atalho é correto e
-    é o que permite migrar sem parar nada. Com DUAS, ela é de uma das duas — e usá-la para
-    a outra devolveria usinas, ordens e faturas do concorrente. A conta é feita aqui, na
-    hora, em vez de depender de alguém lembrar de configurar a segunda antes de cadastrá-la.
-    """
-    # Conta TODAS, não só as ativas: desativar a segunda empresa devolvia o atalho à
-    # primeira, que voltava a ler o meuWatt e o meuPlano com a credencial da PLATAFORMA —
-    # uma trava que se desarma sozinha não é trava.
-    quantas = db.scalar(select(func.count()).select_from(Empresa)) or 0
-    if quantas > 1:
-        raise RuntimeError(
-            f"Esta empresa ainda não tem a conexão dela com o {produto.value}. "
-            "Com mais de uma empresa na plataforma, a credencial da plataforma não pode "
-            "ser usada em nome de nenhuma delas — conecte a conta da empresa em "
-            "Conexões."
-        )
 
 
 def listar(db: Session, empresa_id: int | None = None) -> dict[Produto, Integracao | None]:
@@ -113,17 +79,7 @@ def listar(db: Session, empresa_id: int | None = None) -> dict[Produto, Integrac
     o estado da ponte da B — "Conectado" com a ponte dele quebrada. Delega a `obter`, que
     é onde a regra do nulo mora.
     """
-    def uma(p: Produto) -> Integracao | None:
-        try:
-            return obter(db, p, empresa_id)
-        except RuntimeError:
-            # A trava do atalho disparou: esta empresa não tem ponte própria e não pode
-            # usar a da plataforma. Para uma LISTAGEM isso é "não configurada", que é o
-            # estado que a tela já sabe desenhar — estourar aqui derrubaria a tela de
-            # pontes do cliente inteira, inclusive a do produto que está no ar.
-            return None
-
-    return {p: uma(p) for p in Produto}
+    return {p: obter(db, p, empresa_id) for p in Produto}
 
 
 def registrar_evento(
@@ -177,26 +133,26 @@ def _exigir_credencial(integracao, produto_nome: str) -> None:
     Aconteceu em 04/09/2026, na tela de Energia do portal do cliente: o produto do outro lado
     estava no ar e o que faltava era a credencial gravada aqui.
 
-    A frase certa aponta o lugar do conserto: quem lê é a equipe, e o conserto é reconectar em
-    Painel → Conexões.
+    A frase certa aponta o lugar do conserto: o gerente da empresa reconecta em oem-gs →
+    Conexões (a plataforma não tem token).
     """
     if not integracao.token_cifrado and not integracao.senha_cifrada:
         raise RuntimeError(
-            f"A conexão com o {produto_nome} está ativa mas sem credencial gravada. "
-            f"Reconecte em Painel → Conexões."
+            f"A conexão da empresa com o {produto_nome} está ativa mas sem credencial gravada. "
+            f"O gerente reconecta em oem-gs → Conexões."
         )
 
 
-async def cliente_meuwatt(db: Session, empresa_id: int | None = None) -> MeuWattClient:
-    """Cliente já autenticado com o que estiver gravado — token, de preferência.
+async def cliente_meuwatt(db: Session, empresa_id: int) -> MeuWattClient:
+    """Cliente já autenticado com a conta DA EMPRESA no meuWatt — token, de preferência.
 
-    `empresa_id` diz em nome de QUEM se lê. Omitir significa "a credencial da plataforma",
-    que é o certo para o catálogo de usinas e a sonda, e é o atalho travado de `obter`
-    para todo o resto enquanto a migração não termina.
+    `empresa_id` diz em nome de QUEM se lê, e é obrigatório: a plataforma não tem token.
     """
     integracao = obter(db, Produto.MEUWATT, empresa_id)
     if integracao is None or not integracao.ativa:
-        raise RuntimeError("A ponte com o meuWatt não está configurada.")
+        raise RuntimeError(
+            "Esta empresa ainda não conectou a conta dela no meuWatt (oem-gs → Conexões)."
+        )
     _exigir_credencial(integracao, "meuWatt")
     if integracao.token_cifrado:
         return MeuWattClient(
@@ -230,10 +186,13 @@ _clientes_meuplano: dict[tuple, MeuPlanoClient] = {}
 TETO_DE_CLIENTES_GUARDADOS = 64
 
 
-async def cliente_meuplano(db: Session, empresa_id: int | None = None) -> MeuPlanoClient:
+async def cliente_meuplano(db: Session, empresa_id: int) -> MeuPlanoClient:
+    """O gêmeo do meuPlano, com a conta DA EMPRESA. Obrigatória pelo mesmo motivo."""
     integracao = obter(db, Produto.MEUPLANO, empresa_id)
     if integracao is None or not integracao.ativa:
-        raise RuntimeError("A ponte com o meuPlano não está configurada.")
+        raise RuntimeError(
+            "Esta empresa ainda não conectou a conta dela no meuPlano (oem-gs → Conexões)."
+        )
     _exigir_credencial(integracao, "meuPlano")
 
     # A empresa entra na chave: sem ela, o primeiro cliente guardado atenderia as duas, e
@@ -262,6 +221,42 @@ async def cliente_meuplano(db: Session, empresa_id: int | None = None) -> MeuPla
         _clientes_meuplano.clear()
     _clientes_meuplano[chave] = cliente
     return cliente
+
+
+async def micro_alertas_das_usinas(
+    db: Session, links
+) -> tuple[dict[int, list[dict]], list[str]]:
+    """Os alertas do MICRO do meuWatt de cada usina (por `PlantLink.id`), lidos com a conta
+    da EMPRESA dona de cada uma — a plataforma não tem token. Devolve também o que falhou.
+
+    O MICRO só abre para administrador do meuWatt: a conta de uma empresa que não é admin
+    lá não o lê, e as micro usinas dela ficam sem aviso — dito em `falhas`, nunca "parou".
+    Cada empresa só recebe os alertas das usinas DELA, mesmo que a lista de lá traga todas.
+    """
+    por_empresa: dict[int, list] = {}
+    falhas: list[str] = []
+    for link in links:
+        if not link.mw_micro_plant_id:
+            continue
+        if link.empresa_id is None:
+            falhas.append(f"{link.nome}: usina sem empresa — não há conta de empresa para ler o MICRO.")
+            continue
+        por_empresa.setdefault(link.empresa_id, []).append(link)
+
+    alertas_da_usina: dict[int, list[dict]] = {}
+    for empresa_id, daqui in por_empresa.items():
+        try:
+            alertas = await (await cliente_meuwatt(db, empresa_id)).micro_alertas()
+        except Exception as exc:  # noqa: BLE001 — uma empresa fora não cala as outras
+            falhas.append(str(exc))
+            continue
+        por_micro: dict[int, list] = {}
+        for link in daqui:
+            por_micro.setdefault(link.mw_micro_plant_id, []).append(link)
+        for alerta in alertas:
+            for link in por_micro.get(alerta.get("plant_id"), []):
+                alertas_da_usina.setdefault(link.id, []).append(alerta)
+    return alertas_da_usina, falhas
 
 
 # ── diagnóstico ─────────────────────────────────────────────────────────────

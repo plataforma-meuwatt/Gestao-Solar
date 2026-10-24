@@ -2,7 +2,7 @@
  * O inventário do que este sistema depende nos produtos de origem — e o botão que
  * pergunta a cada rota se ela ainda responde.
  *
- * A tela de Conexões responde "o token vale?". Esta responde "o que ainda funciona?", que
+ * A tela de Conexões (do gerente, no oem-gs) responde "o token vale?". Esta responde "o que ainda funciona?", que
  * é outra pergunta: um token perfeitamente válido convive com uma rota que mudou de lugar
  * no último deploy do meuWatt, e o sintoma disso é uma aba vazia no aplicativo de um
  * cliente, semanas depois.
@@ -22,8 +22,9 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 
-import { Cartao, Erro, Pagina, Selo } from '@/components/base'
+import { Cartao, Erro, Pagina, Selo, Seletor } from '@/components/base'
 import {
+  listarEmpresas,
   listarRotas,
   sondarRotas,
   type Produto,
@@ -39,14 +40,35 @@ const PRODUTOS: { chave: Produto; nome: string; oQueTraz: string }[] = [
 ]
 
 export function Rotas() {
+  // A plataforma não tem token (regra do dono, 23/10/2026): sonda-se com a conta de UMA
+  // empresa, a que o gerente dela colou no oem-gs. Só leitura.
+  const { data: empresas } = useQuery({ queryKey: ['empresas'], queryFn: listarEmpresas })
+  const [escolhida, setEscolhida] = useState('')
+  // Por padrão, a primeira empresa que JÁ conectou a conta dela: sondar com uma sem conexão
+  // só responderia "ainda não conectou".
+  const padrao = empresas?.find((e) => e.conexao_meuwatt || e.conexao_meuplano) ?? empresas?.[0]
+  const empresaId = Number(escolhida || padrao?.id || 0)
   return (
     <Pagina
       titulo="Rotas"
-      apoio="Tudo que o Gestão Solar consome nas duas plataformas. Sondar chama cada rota com o token gravado e mostra o que voltou."
+      apoio="Tudo que o Gestão Solar consome nas duas plataformas. Sondar chama cada rota com a conexão da empresa escolhida e mostra o que voltou."
     >
+      <div className="mb-5 max-w-sm">
+        <Seletor
+          rotulo="Sondar com a conexão de"
+          value={String(empresaId || '')}
+          onChange={(e) => setEscolhida(e.target.value)}
+        >
+          {(empresas ?? []).map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.nome}
+            </option>
+          ))}
+        </Seletor>
+      </div>
       <div className="flex flex-col gap-5">
         {PRODUTOS.map((p) => (
-          <BlocoProduto key={p.chave} {...p} />
+          <BlocoProduto key={`${p.chave}-${empresaId}`} {...p} empresaId={empresaId} />
         ))}
       </div>
     </Pagina>
@@ -57,10 +79,12 @@ function BlocoProduto({
   chave,
   nome,
   oQueTraz,
+  empresaId,
 }: {
   chave: Produto
   nome: string
   oQueTraz: string
+  empresaId: number
 }) {
   // O catálogo em repouso é a base; a varredura, quando existe, o substitui. Guardar em
   // estado local (e não no cache do react-query) é deliberado: a varredura é um evento,
@@ -75,7 +99,7 @@ function BlocoProduto({
   })
 
   const sondar = useMutation({
-    mutationFn: () => sondarRotas(chave),
+    mutationFn: () => sondarRotas(chave, empresaId),
     onSuccess: (r) => {
       setVarrido(r)
       setErro('')
@@ -113,7 +137,7 @@ function BlocoProduto({
         <button
           onClick={() => sondar.mutate()}
           className="btn-secundario ml-auto"
-          disabled={sondar.isPending}
+          disabled={sondar.isPending || !empresaId}
         >
           <Play size={14} />
           {sondar.isPending ? 'Sondando…' : varrido ? 'Sondar de novo' : 'Sondar agora'}

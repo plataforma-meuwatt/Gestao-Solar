@@ -54,7 +54,7 @@ class EuOut(BaseModel):
 @router.get("/eu", response_model=EuOut)
 def eu(db: Session = Depends(get_db), tecnico: User = Depends(tecnico_atual)) -> EuOut:
     v = vinculos.obter(db, tecnico.id, Produto.MEUPLANO)
-    empresa = empresas.por_id(db, tecnico.empresa_id) if tecnico.empresa_id else None
+    empresa = empresas.por_id(db, empresas.empresa_exigida(tecnico))
     return EuOut(
         nome=tecnico.nome,
         apelido=tecnico.apelido,
@@ -126,7 +126,7 @@ async def conectar(corpo: ConectarIn, tecnico: User = Depends(tecnico_atual)) ->
                 "business_id": corpo.business_id,
                 "coexistencia": corpo.evento == EVENTO_COEXISTENCIA,
                 "gs_user_id": tecnico.id,
-                "empresa_id": tecnico.empresa_id,
+                "empresa_id": empresas.empresa_exigida(tecnico),
                 "ator": tecnico.identificacao,
             }
         )

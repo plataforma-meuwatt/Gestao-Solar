@@ -1,51 +1,65 @@
 /**
- * Usuários do sistema — o staff, e o que cada um abre.
+ * Usuários — TODO MUNDO que entra no Gestão Solar, com a(s) empresa(s) de cada um.
  *
- * Não confundir com Clientes: aqui estão as contas que entram NO PAINEL. Cliente entra no
- * aplicativo e no portal, e mora na outra tela.
+ * É o inverso de Empresas (pedido do dono, 23/10/2026): lá se entra na empresa e se vê
+ * quem é dela; aqui se vê a pessoa e as empresas dela, sem travar ninguém numa empresa só —
+ * um usuário pode estar em mais de uma. A equipe da plataforma (administrador e atendimento)
+ * vem junto, marcada, com as telas que cada um abre.
  *
- * Três travas que o backend também aplica, repetidas aqui para a pessoa entender antes de
- * tentar: ninguém remove o próprio acesso de administrador, precisa sobrar ao menos um
- * administrador ativo, e administrador abre todas as telas por perfil — por isso as
- * caixinhas dele aparecem marcadas e desligadas, em vez de fingir que dá para desmarcar.
+ * O adm não tem token: de cada pessoa, só se vê se ela tem o dela no meuWatt e no meuPlano.
+ * Quem cola o token, libera o bot e concede usina é o gerente da empresa, no oem-gs.
+ *
+ * Três travas da equipe que o backend também aplica: ninguém remove o próprio acesso de
+ * administrador, precisa sobrar ao menos um administrador ativo, e administrador abre todas
+ * as telas por perfil — por isso as caixinhas dele aparecem marcadas e desligadas.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, KeyRound, UserPlus, Users } from 'lucide-react'
-import { useState } from 'react'
+import { Building2, Check, ChevronDown, ChevronRight, KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
-import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor } from '@/components/base'
-import { Conexoes } from '@/features/conexoes/Conexoes'
+import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor, Vazio } from '@/components/base'
 import {
   desagruparConta,
   contasParaAgrupar,
   agruparContas,
   catalogoDeAreas,
   criarUsuario,
+  editarConta,
   editarUsuario,
-  listarUsuarios,
+  listarEmpresas,
   redefinirSenhaUsuario,
+  todasAsContas,
   type Area,
+  type Conta,
   type Membro,
 } from '@/features/api'
+import { PAPEL } from '@/features/rotulos'
+import { EmpresasDaConta, ResumoDaConta, SenhaNova } from '@/features/usuarios/Conta'
 import { mensagemDeErro } from '@/lib/api'
 
 export function Usuarios() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
-  const [senhaDe, setSenhaDe] = useState<Membro | null>(null)
+  const [senhaDe, setSenhaDe] = useState<Conta | null>(null)
+  const [empresasDe, setEmpresasDe] = useState<Conta | null>(null)
   const [agrupando, setAgrupando] = useState(false)
   const [erro, setErro] = useState('')
+  const [busca, setBusca] = useState('')
+  const [empresa, setEmpresa] = useState('')
+  const [papel, setPapel] = useState('')
 
-  const { data, isLoading } = useQuery({ queryKey: ['usuarios'], queryFn: listarUsuarios })
+  const { data, isLoading, error } = useQuery({ queryKey: ['contas'], queryFn: todasAsContas })
   const { data: areas } = useQuery({ queryKey: ['areas'], queryFn: catalogoDeAreas })
+  const { data: empresas } = useQuery({ queryKey: ['empresas'], queryFn: listarEmpresas })
 
   const editar = useMutation({
     mutationFn: ({ id, dados }: { id: number; dados: Parameters<typeof editarUsuario>[1] }) =>
       editarUsuario(id, dados),
     onSuccess: () => {
       setErro('')
-      qc.invalidateQueries({ queryKey: ['usuarios'] })
+      qc.invalidateQueries({ queryKey: ['contas'] })
       // O acesso de quem está com a tela aberta pode ser o que acabou de mudar: a casca
       // relê o próprio acesso e o menu acompanha, sem exigir sair e entrar.
       qc.invalidateQueries({ queryKey: ['eu'] })
@@ -53,10 +67,24 @@ export function Usuarios() {
     onError: (e) => setErro(mensagemDeErro(e)),
   })
 
+  const filtradas = useMemo(() => {
+    const t = busca.trim().toLowerCase()
+    return (data ?? []).filter((c) => {
+      if (t && !`${c.nome} ${c.apelido} ${c.email ?? ''}`.toLowerCase().includes(t)) return false
+      if (papel && c.perfil !== papel) return false
+      if (empresa === 'plataforma') return c.da_plataforma
+      if (empresa === 'sem') return !c.da_plataforma && !c.empresas.length
+      if (empresa) return c.empresas.some((e) => String(e.id) === empresa)
+      return true
+    })
+  }, [data, busca, papel, empresa])
+
+  const semEmpresa = (data ?? []).filter((c) => !c.da_plataforma && !c.empresas.length).length
+
   return (
     <Pagina
-      titulo="Usuários do sistema"
-      apoio="Quem entra no painel, e o que cada um abre. Administrador abre todas as telas e é o único que mexe nesta lista; as demais contas abrem só o que estiver marcado."
+      titulo="Usuários"
+      apoio="Todo mundo que entra no Gestão Solar, e de qual empresa é — uma pessoa pode estar em mais de uma. A equipe da plataforma aparece marcada. Para criar alguém de uma empresa, entre na empresa."
       acao={
         <div className="flex gap-2">
           <button onClick={() => setAgrupando(true)} className="btn-secundario">
@@ -65,46 +93,184 @@ export function Usuarios() {
           </button>
           <button onClick={() => setNovo(true)} className="btn-primario">
             <UserPlus size={16} />
-            Novo usuário
+            Novo da plataforma
           </button>
         </div>
       }
     >
       {erro ? <Erro className="mb-4">{erro}</Erro> : null}
+      {semEmpresa ? (
+        <div className="mb-4">
+          <Aviso>
+            {semEmpresa === 1 ? 'Uma conta está' : `${semEmpresa} contas estão`} sem empresa: nenhum
+            gerente as enxerga e o aplicativo delas vem vazio. Use “Empresas” na linha para pôr
+            numa empresa (filtre por “Sem empresa”).
+          </Aviso>
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-3 mb-4">
+        <input
+          className="campo"
+          placeholder="buscar por nome, apelido ou e-mail"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          aria-label="Buscar usuários"
+        />
+        <select className="campo" value={empresa} onChange={(e) => setEmpresa(e.target.value)} aria-label="Empresa">
+          <option value="">Todas as empresas</option>
+          <option value="plataforma">Plataforma (equipe)</option>
+          <option value="sem">Sem empresa</option>
+          {(empresas ?? []).map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.nome}
+            </option>
+          ))}
+        </select>
+        <select className="campo" value={papel} onChange={(e) => setPapel(e.target.value)} aria-label="Papel">
+          <option value="">Todos os papéis</option>
+          {Object.entries(PAPEL).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <Cartao>
         {isLoading ? <Carregando /> : null}
-        {(data ?? []).map((m, i) => (
-          <LinhaMembro
-            key={m.id}
-            membro={m}
-            areas={areas ?? []}
-            primeiro={i === 0}
-            salvando={editar.isPending}
-            aoMudar={(dados) => editar.mutate({ id: m.id, dados })}
-            aoRedefinirSenha={() => setSenhaDe(m)}
-          />
-        ))}
+        {error ? (
+          <div className="p-5">
+            <Erro>{mensagemDeErro(error)}</Erro>
+          </div>
+        ) : null}
+        {data && !filtradas.length ? (
+          <Vazio titulo="Ninguém com esse filtro" descricao="Mude a empresa, o papel ou a busca." />
+        ) : null}
+        {filtradas.map((c, i) =>
+          c.da_plataforma ? (
+            <LinhaDaEquipe
+              key={c.id}
+              conta={c}
+              areas={areas ?? []}
+              primeiro={i === 0}
+              salvando={editar.isPending}
+              aoMudar={(dados) => editar.mutate({ id: c.id, dados })}
+              aoRedefinirSenha={() => setSenhaDe(c)}
+            />
+          ) : (
+            <LinhaDaConta key={c.id} conta={c} primeiro={i === 0} aoAbrirEmpresas={() => setEmpresasDe(c)} />
+          ),
+        )}
       </Cartao>
-
-      <Conexoes embutido />
 
       {novo ? <ModalNovoUsuario areas={areas ?? []} aoFechar={() => setNovo(false)} /> : null}
       {senhaDe ? <ModalRedefinirSenha membro={senhaDe} aoFechar={() => setSenhaDe(null)} /> : null}
-          {agrupando ? <MesmaPessoa aoFechar={() => setAgrupando(false)} /> : null}
-</Pagina>
+      {empresasDe ? <EmpresasDaConta conta={empresasDe} aoFechar={() => setEmpresasDe(null)} /> : null}
+      {agrupando ? <MesmaPessoa aoFechar={() => setAgrupando(false)} /> : null}
+    </Pagina>
   )
 }
 
-function LinhaMembro({
-  membro,
+/** As empresas da conta numa linha: "Splendor O&M (origem) · Eninsa". */
+function TextoDasEmpresas({ conta }: { conta: Conta }) {
+  if (conta.da_plataforma) {
+    return (
+      <span className="flex items-center gap-1.5 text-ambar-texto">
+        <ShieldCheck size={14} />
+        Plataforma
+      </span>
+    )
+  }
+  if (!conta.empresas.length) return <span className="text-alerta">sem empresa</span>
+  return (
+    <span className="flex items-center gap-1.5">
+      <Building2 size={14} />
+      {conta.empresas.map((e) => (e.origem && conta.empresas.length > 1 ? `${e.nome} (origem)` : e.nome)).join(' · ')}
+    </span>
+  )
+}
+
+/** Uma conta de EMPRESA (gerente, técnico, dono) — ou sem empresa ainda. */
+function LinhaDaConta({
+  conta,
+  primeiro,
+  aoAbrirEmpresas,
+}: {
+  conta: Conta
+  primeiro: boolean
+  aoAbrirEmpresas: () => void
+}) {
+  const qc = useQueryClient()
+  const [senhaAberta, setSenhaAberta] = useState(false)
+  const [pronto, setPronto] = useState<string | null>(null)
+  const editar = useMutation({
+    mutationFn: (dados: { ativo?: boolean; senha?: string }) => editarConta(conta.id, dados),
+    onSuccess: (_r, dados) => {
+      if (dados.senha) {
+        setSenhaAberta(false)
+        setPronto('Senha definida. Entregue-a junto com o apelido.')
+      }
+      qc.invalidateQueries({ queryKey: ['contas'] })
+      qc.invalidateQueries({ queryKey: ['empresa-usuarios'] })
+    },
+  })
+
+  return (
+    <div className={`px-5 py-4 ${primeiro ? '' : 'border-t border-borda'}`}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <p className="font-semibold text-forte">
+            {conta.nome}
+            <span className="mono text-xs text-fraco font-normal ml-2">{conta.apelido}</span>
+            {conta.email ? <span className="text-xs text-fraco font-normal ml-2">{conta.email}</span> : null}
+          </p>
+          <div className="text-sm text-rotulo mt-1">
+            <TextoDasEmpresas conta={conta} />
+          </div>
+          <ResumoDaConta conta={conta} />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Selo tom={conta.ativo ? 'ok' : 'sem-dados'}>{conta.ativo ? 'Ativo' : 'Inativo'}</Selo>
+          <button className="btn-fantasma" onClick={aoAbrirEmpresas}>
+            <Building2 size={13} />
+            Empresas
+          </button>
+          {conta.perfil === 'cliente' ? (
+            <Link to={`/clientes/${conta.id}`} className="btn-fantasma">
+              Ficha
+            </Link>
+          ) : null}
+          <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
+            <KeyRound size={13} />
+            Senha
+          </button>
+          <button
+            className="btn-fantasma"
+            disabled={editar.isPending}
+            onClick={() => editar.mutate({ ativo: !conta.ativo })}
+          >
+            {conta.ativo ? 'Desativar' : 'Reativar'}
+          </button>
+        </div>
+      </div>
+      {senhaAberta ? <SenhaNova ocupado={editar.isPending} aoDefinir={(senha) => editar.mutate({ senha })} /> : null}
+      {pronto ? <p className="text-xs text-ok mt-2">{pronto}</p> : null}
+      {editar.error ? <Erro className="mt-2">{mensagemDeErro(editar.error)}</Erro> : null}
+    </div>
+  )
+}
+
+/** Uma conta da EQUIPE da plataforma: perfil, telas que abre, senha e acesso. */
+function LinhaDaEquipe({
+  conta,
   areas,
   primeiro,
   salvando,
   aoMudar,
   aoRedefinirSenha,
 }: {
-  membro: Membro
+  conta: Conta
   areas: Area[]
   primeiro: boolean
   salvando: boolean
@@ -112,77 +278,58 @@ function LinhaMembro({
   aoRedefinirSenha: () => void
 }) {
   const [aberto, setAberto] = useState(false)
-  const ehAdmin = membro.perfil === 'administrador'
+  const ehAdmin = conta.perfil === 'administrador'
 
   return (
     <div className={primeiro ? '' : 'border-t border-borda'}>
-      <div className="flex items-center gap-4 px-5 py-4">
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-forte truncate">{membro.nome}</p>
-          <p className="mono text-xs text-fraco truncate">
-            {/* O apelido primeiro: é ele que a pessoa digita para entrar, e é por ele que
-                se confere de quem é a conta quando dois membros têm nomes parecidos. */}
-            {membro.apelido}
-            {membro.email ? ` · ${membro.email}` : ''}
+      <div className="flex items-start justify-between gap-3 flex-wrap px-5 py-4">
+        <div className="min-w-0">
+          <p className="font-semibold text-forte">
+            {conta.nome}
+            <span className="mono text-xs text-fraco font-normal ml-2">{conta.apelido}</span>
+            {conta.email ? <span className="text-xs text-fraco font-normal ml-2">{conta.email}</span> : null}
           </p>
+          <div className="text-sm text-rotulo mt-1 flex items-center gap-4 flex-wrap">
+            <TextoDasEmpresas conta={conta} />
+            <span>{PAPEL[conta.perfil]}</span>
+            <span>
+              {conta.ultimo_login
+                ? `entrou ${new Date(conta.ultimo_login).toLocaleDateString('pt-BR')}`
+                : 'nunca entrou'}
+            </span>
+          </div>
         </div>
-
-        {membro.ultimo_login ? (
-          <span className="mono text-xs text-fraco hidden sm:block">
-            entrou {new Date(membro.ultimo_login).toLocaleDateString('pt-BR')}
-          </span>
-        ) : (
-          <span className="text-xs text-fraco hidden sm:block">nunca entrou</span>
-        )}
-
-        <select
-          className="campo h-9 w-40 text-sm"
-          value={membro.perfil}
-          onChange={(e) => aoMudar({ perfil: e.target.value as Membro['perfil'] })}
-          aria-label={`Perfil de ${membro.nome}`}
-        >
-          <option value="atendimento">Atendimento</option>
-          <option value="administrador">Administrador</option>
-        </select>
-
-        <button
-          onClick={aoRedefinirSenha}
-          className="btn-fantasma"
-          title={`Definir uma senha nova para ${membro.nome}`}
-        >
-          <KeyRound size={13} />
-          Redefinir senha
-        </button>
-
-        <button
-          onClick={() => aoMudar({ ativo: !membro.ativo })}
-          className="btn-fantasma w-24"
-          title={membro.ativo ? 'Desativar o acesso' : 'Reativar o acesso'}
-        >
-          {membro.ativo ? 'Desativar' : 'Reativar'}
-        </button>
-
-        {membro.ativo ? <Selo tom="ok">Ativo</Selo> : <Selo tom="sem-dados">Inativo</Selo>}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Selo tom={conta.ativo ? 'ok' : 'sem-dados'}>{conta.ativo ? 'Ativo' : 'Inativo'}</Selo>
+          <select
+            className="campo h-9 w-40 text-sm"
+            value={conta.perfil}
+            onChange={(e) => aoMudar({ perfil: e.target.value as Membro['perfil'] })}
+            aria-label={`Perfil de ${conta.nome}`}
+          >
+            <option value="atendimento">Atendimento</option>
+            <option value="administrador">Administrador</option>
+          </select>
+          <button onClick={aoRedefinirSenha} className="btn-fantasma" title={`Definir uma senha nova para ${conta.nome}`}>
+            <KeyRound size={13} />
+            Senha
+          </button>
+          <button onClick={() => aoMudar({ ativo: !conta.ativo })} className="btn-fantasma">
+            {conta.ativo ? 'Desativar' : 'Reativar'}
+          </button>
+        </div>
       </div>
 
-      <div className="px-5 pb-3 -mt-1">
+      <div className="px-5 pb-3 -mt-2">
         <button
           onClick={() => setAberto((v) => !v)}
           className="flex items-center gap-1.5 text-xs text-rotulo hover:text-forte"
         >
           {aberto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          {ehAdmin
-            ? 'Telas: todas, por ser administrador'
-            : `Telas: ${membro.areas.length} de ${areas.length}`}
+          {ehAdmin ? 'Telas: todas, por ser administrador' : `Telas: ${conta.areas.length} de ${areas.length}`}
         </button>
-
         {aberto ? (
-          <PainelDeAreas
-            membro={membro}
-            areas={areas}
-            salvando={salvando}
-            aoSalvar={(chaves) => aoMudar({ areas: chaves })}
-          />
+          <PainelDeAreas membro={conta} areas={areas} salvando={salvando} aoSalvar={(chaves) => aoMudar({ areas: chaves })} />
         ) : null}
       </div>
     </div>
@@ -201,7 +348,7 @@ function PainelDeAreas({
   salvando,
   aoSalvar,
 }: {
-  membro: Membro
+  membro: { perfil: string; areas: string[] }
   areas: Area[]
   salvando: boolean
   aoSalvar: (chaves: string[]) => void
@@ -299,7 +446,7 @@ function ModalNovoUsuario({ areas, aoFechar }: { areas: Area[]; aoFechar: () => 
         areas: perfil === 'administrador' ? [] : [...marcadas],
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['usuarios'] })
+      qc.invalidateQueries({ queryKey: ['contas'] })
       aoFechar()
     },
     onError: (e) => setErro(mensagemDeErro(e)),
@@ -408,7 +555,13 @@ function ModalNovoUsuario({ areas, aoFechar }: { areas: Area[]; aoFechar: () => 
  * Não reaproveita a senha provisória dos clientes: o painel não tem tela de troca para o
  * staff, e uma senha sorteada ficaria sendo a senha da pessoa para sempre.
  */
-function ModalRedefinirSenha({ membro, aoFechar }: { membro: Membro; aoFechar: () => void }) {
+function ModalRedefinirSenha({
+  membro,
+  aoFechar,
+}: {
+  membro: Pick<Membro, 'id' | 'nome' | 'apelido'>
+  aoFechar: () => void
+}) {
   const [senha, setSenha] = useState('')
   const [confirmacao, setConfirmacao] = useState('')
   const [erro, setErro] = useState('')

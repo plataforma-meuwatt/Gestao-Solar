@@ -43,7 +43,10 @@ V1 = Path(__file__).resolve().parents[1] / "app" / "api" / "v1"
 # `painel_empresas.py` esteve aqui por algumas horas, em 28/09/2026, quando a tela de casar
 # empresas morava no painel. Ela mudou de lado — quem tem token é a empresa, não a
 # plataforma — e com ela foi embora a única razão de o painel nomear produto ali.
-DO_GESTOR = {"painel.py", "painel_clientes.py", "empresa.py"}
+#
+# `painel.py` saiu pelo mesmo motivo em 23/10/2026: a plataforma deixou de ter token ("adm
+# não tem token", regra do dono), e com as pontes dela foi embora o que ele nomeava.
+DO_GESTOR = {"painel_clientes.py", "empresa.py"}
 
 #: A exceção, com o motivo — não uma lista para onde empurrar o que der trabalho.
 #:
