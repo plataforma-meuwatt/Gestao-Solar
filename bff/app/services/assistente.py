@@ -88,18 +88,56 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     except SemConexao as e:
         return {"erro": f"Manutenção indisponível: {e}"}
     pergunta = (a.get("pergunta") or "") + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
-    run_id = await mp.assistente_chat(None, [{"role": "user", "content": pergunta}])
+    # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
+    # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
+    mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
+    run_id = await mp.assistente_chat(None, mensagens)
     for _ in range(60):                                   # até ~2 min
         await asyncio.sleep(2)
         r = await mp.assistente_run(None, run_id)
         if r.get("status") == "DONE":
             if r.get("type") == "proposal":
-                return {"texto": "Essa ação precisa ser confirmada no meuPlano (site ou app).",
-                        "proposta": (r.get("preview") or {}).get("summary")}
+                return _proposta_do_meuplano(ctx, r)
             return {"texto": r.get("text") or ""}
         if r.get("status") == "ERROR":
             return {"erro": r.get("error") or "O meuPlano não conseguiu responder."}
     return {"erro": "O meuPlano demorou demais para responder."}
+
+
+#: Quantas mensagens da conversa vão ao meuPlano junto com a pergunta.
+HISTORICO_MEUPLANO = 8
+#: Quanto vale a proposta do meuPlano esperando o CONFIRMO (é para ler o resumo com calma).
+PRAZO_PROPOSTA_MP_S = 600
+
+
+def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
+    """Ação do assistente do meuPlano (criar OS, lançar o dia, lembrete…) volta como PROPOSTA:
+    nada foi gravado lá. Vira o mesmo CONFIRMO <código> do helper; confirmada pela pessoa, o
+    Gestão Solar chama o `/assistant/apply` de lá com o token DELA — é o "Confirmar" da web,
+    e o meuPlano revalida os argumentos e a permissão."""
+    from app.services.integracoes import detalhe_do_upstream
+    from app.services.vinculos import SemConexao, cliente_meuplano
+
+    acao, args = r.get("action") or "", r.get("args") or {}
+    previa = r.get("preview") or {}
+    resumo = previa.get("summary") or acao or "ação no meuPlano"
+
+    async def executar(db: Session, user: User, telefone: str) -> str:
+        try:
+            await cliente_meuplano(db, user.id, so_proprio=True).assistente_aplicar(None, acao, args)
+        except SemConexao as e:
+            return f"❌ Não executado: {e}"
+        except httpx.HTTPStatusError as e:
+            return f"❌ O meuPlano recusou: {detalhe_do_upstream(e.response) or e.response.status_code}. Nada foi feito."
+        except httpx.HTTPError:
+            return ("⚠️ O meuPlano não respondeu a tempo — a ação PODE ter sido gravada. "
+                    "Confira no meuPlano antes de pedir de novo.")
+        return f"✅ Feito no meuPlano: {resumo}"
+
+    proposta = helper.propor(ctx.user.id, resumo, PRAZO_PROPOSTA_MP_S, executar)
+    proposta["detalhes"] = [ln.get("text") for ln in previa.get("lines") or []][:15]
+    proposta["avisos"] = previa.get("warnings") or []
+    return proposta
 
 
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO), **helper.FERRAMENTAS}
@@ -135,8 +173,8 @@ def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
             telefone=telefone[:20], gs_user_id=user.id if user else None,
             empresa_id=user.empresa_id if user else None, resultado=resultado,
             ferramentas=",".join(dict.fromkeys(ferramentas or [])) or None,
-            pergunta=(pergunta or None) and pergunta[:2000],
-            resposta=(resposta or None) and resposta[:2000],
+            pergunta=(pergunta or None) and pergunta[:4000],
+            resposta=(resposta or None) and resposta[:8000],
             duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
             erro=(erro or None) and erro[:1000],
         ))
@@ -178,8 +216,10 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
   monitoramento → ferramentas de geração. Manutenção (OS, cronograma, pendências, estoque, documentos,
   projetos) → `manutencao`. Pergunta que mistura → chame as duas.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
-  `usina_helper`. Ação NUNCA é executada por você: a ferramenta devolve um código; mostre o resumo e peça para a
-  pessoa responder CONFIRMO <código>. Nunca diga que executou.
+  `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
+  completo e já confirmado pela pessoa.
+- Ação (helper ou meuPlano) NUNCA é executada por você: a ferramenta devolve `proposta_pendente` e um código.
+  Mostre o resumo (e os detalhes) e peça para a pessoa responder CONFIRMO <código>. Nunca diga que fez.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
 - Período: calcule as datas a partir de hoje. Compare usinas pela produtividade (kWh/kWp).
 - Responda curto, em português do Brasil, formato WhatsApp (*negrito*, listas curtas): o número pedido
@@ -302,15 +342,6 @@ async def atender(evento: dict) -> None:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]")
             return
-        # A confirmação de uma AÇÃO do helper é conferida aqui, por código — antes de qualquer
-        # modelo. A IA nunca confirma: ela só mostra o resumo e o código à pessoa.
-        if "bot_helper" in user.bot_ativo:
-            confirmacao = await helper.confirmar_por_mensagem(db, user, telefone, texto)
-            if confirmacao is not None:
-                await _texto(telefone, confirmacao)
-                _registrar(db, telefone, user, "respondeu", pergunta=texto, resposta=confirmacao,
-                           ferramentas=["helper_confirmar"], inicio=inicio)
-                return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
         if conv is None:
@@ -330,12 +361,17 @@ async def atender(evento: dict) -> None:
             return
         historico = json.loads(conv.mensagens or "[]")
         historico.append({"role": "user", "content": texto})
-        ctx = ger.Contexto(db=db, user=user, telefone=telefone)
-        await ger.preparar(ctx)
-        if not get_settings().deepseek_api_key:
-            resposta = "O assistente está desligado neste ambiente (falta a chave da IA)."
-        else:
-            resposta = await responder(ctx, historico)
+        # A confirmação de uma AÇÃO (helper ou meuPlano) é conferida aqui, por código — antes
+        # de qualquer modelo. A IA nunca confirma: ela só mostra o resumo e o código à pessoa.
+        # Entra no histórico, para a conversa seguinte saber que foi feito.
+        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto)
+        if resposta is None:
+            ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
+            await ger.preparar(ctx)
+            if not get_settings().deepseek_api_key:
+                resposta = "O assistente está desligado neste ambiente (falta a chave da IA)."
+            else:
+                resposta = await responder(ctx, historico)
         historico.append({"role": "assistant", "content": resposta})
         conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
         conv.gs_user_id = user.id
@@ -344,7 +380,7 @@ async def atender(evento: dict) -> None:
         await tarefa
         await _texto(telefone, para_whatsapp(resposta))
         _registrar(db, telefone, user, "respondeu", pergunta=texto, resposta=resposta,
-                   ferramentas=ctx.ferramentas, inicio=inicio)
+                   ferramentas=ctx.ferramentas if ctx else ["confirmar"], inicio=inicio)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()

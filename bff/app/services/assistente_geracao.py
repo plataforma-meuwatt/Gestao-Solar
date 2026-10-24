@@ -52,6 +52,8 @@ class Contexto:
     enviados: list[str] = field(default_factory=list)
     #: as ferramentas chamadas neste turno — vão para o log do bot (`gs_bot_registros`)
     ferramentas: list[str] = field(default_factory=list)
+    #: a conversa ANTES desta mensagem ({role, content}) — vai ao assistente do meuPlano
+    historico: list[dict] = field(default_factory=list)
 
 
 async def preparar(ctx: Contexto) -> None:

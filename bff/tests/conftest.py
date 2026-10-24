@@ -4,14 +4,25 @@ Nenhum teste bate na API real: além de lento e frágil, um teste que depende de
 ou falha por motivo errado. Os upstreams entram por substituição do módulo `integracoes`.
 """
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import os
 
-from app.core.db import Base
-from app.core.security import gerar_hash_senha
-from app.models.plant import PlantLink
-from app.models.user import Perfil, User
+# ANTES de qualquer `app.*`: o `.env` desta máquina aponta para o banco de PRODUÇÃO, e o que
+# abre `SessionLocal` por conta própria (a tarefa de fundo do bot, por exemplo) escrevia lá.
+# Em 10/2026 cada rodada da suíte deixava um "oi" do +5516999998888 no Log do bot. Banco
+# vazio em memória: o que escapar do `db` abaixo quebra o teste, em vez de gravar em produção.
+os.environ["DATABASE_URL"] = "sqlite://"
+
+import pytest  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app.core.db import Base  # noqa: E402
+from app.core.db import engine as _engine  # noqa: E402
+
+assert _engine.url.get_backend_name() == "sqlite", "a suíte abriria o banco do .env (produção)"
+from app.core.security import gerar_hash_senha  # noqa: E402
+from app.models.plant import PlantLink  # noqa: E402
+from app.models.user import Perfil, User  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

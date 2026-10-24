@@ -8,11 +8,15 @@ PROPOSTA (nada rodou); aqui ela ganha um código de 4 dígitos e fica esperando.
 PESSOA responde `CONFIRMO <código>` — conferido por este código, antes de qualquer modelo —
 o Gestão Solar chama `confirmar`. O modelo não tem ferramenta de confirmar: ele só mostra o
 resumo e o código.
+
+O mesmo `propor` serve à proposta do assistente do meuPlano (criar OS, lançar o dia…):
+`assistente.manutencao` guarda o `/assistant/apply` de lá, e o CONFIRMO é um só.
 """
 from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
@@ -28,16 +32,30 @@ TETO_RESPOSTA = 12000
 
 @dataclass
 class Pendente:
-    proposta: str
     resumo: str
     codigo: str
     expira: float
+    #: Executa a ação confirmada — (db, conta, telefone) → a frase que vai ao WhatsApp.
+    executar: Callable[[Any, Any, str], Awaitable[str]]
 
 
 #: A ação que cada pessoa (id da conta) tem esperando confirmação — uma por vez.
 #: ponytail: em memória, um processo só (o uvicorn da API roda com um worker); com mais de
-#: um, isto vai para o banco. A proposta vale 2 min no helper: perder no deploy é aceitável.
+#: um, isto vai para o banco. A proposta vale minutos: perder no deploy é aceitável.
 PENDENTES: dict[int, Pendente] = {}
+
+
+def propor(user_id: int, resumo: str, prazo_s: int, executar) -> dict:
+    """Guarda a ação desta pessoa com um código e devolve o que o modelo mostra. Nada rodou."""
+    codigo = f"{secrets.randbelow(10000):04d}"
+    PENDENTES[user_id] = Pendente(resumo, codigo, monotonic() + prazo_s, executar)
+    return {
+        "proposta_pendente": resumo,
+        "codigo": codigo,
+        "vale_por_s": prazo_s,
+        "instrucao": ("NADA foi executado. Mostre o resumo à pessoa e peça que ela responda exatamente "
+                      f"'CONFIRMO {codigo}' em até {prazo_s // 60 or 1} min para executar. Nunca diga que fez."),
+    }
 
 _catalogo: tuple[float, dict[str, Any]] | None = None
 
@@ -96,16 +114,21 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     if not d.get("ok"):
         return {"erro": d.get("error") or d.get("reason") or "O helper recusou.", "motivo": d.get("reason")}
     if d.get("tipo") == "proposta":
-        codigo = f"{secrets.randbelow(10000):04d}"
-        prazo = int(d.get("expira_em_s") or 120)
-        PENDENTES[ctx.user.id] = Pendente(d["proposta"], d.get("resumo") or rota, codigo, monotonic() + prazo)
-        return {
-            "proposta_pendente": d.get("resumo") or rota,
-            "codigo": codigo,
-            "vale_por_s": prazo,
-            "instrucao": ("NADA foi executado. Mostre o resumo à pessoa e peça que ela responda exatamente "
-                          f"'CONFIRMO {codigo}' em até {prazo // 60 or 1} min para executar. Nunca diga que fez."),
-        }
+        proposta, resumo = d["proposta"], d.get("resumo") or rota
+
+        async def executar(db, user, telefone: str) -> str:
+            try:
+                r = await _cliente(db, user).confirmar(proposta, "codigo_whatsapp", f"whatsapp {telefone}")
+            except SemConexao as e:
+                return f"❌ Não executado: {e}"
+            if not r.get("ok"):
+                return f"❌ Não executado: {resumo}. {r.get('error') or r.get('reason') or ''}".strip()
+            if r.get("incerto"):
+                return (f"⚠️ {resumo}: o equipamento não respondeu — a ação PODE ter chegado. "
+                        "Confira a leitura antes de repetir.")
+            return f"✅ Executado: {r.get('resumo') or resumo}."
+
+        return propor(ctx.user.id, resumo, int(d.get("expira_em_s") or 120), executar)
     return _corta({"status_http": d.get("status_http"), "resposta": d.get("resposta")})
 
 
@@ -117,23 +140,11 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str) -> str | N
     pendente = PENDENTES.get(user.id)
     if pendente is None or monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
-        return ("Não há ação esperando confirmação (a proposta vale 2 minutos). Nada foi feito — "
-                "peça de novo.")
+        return "Não há ação esperando confirmação (ela vale poucos minutos). Nada foi feito — peça de novo."
     if m.group(1) != pendente.codigo:
         return "O código não confere com a ação pendente. Nada foi feito."
     PENDENTES.pop(user.id, None)          # uma vez só, aconteça o que acontecer
-    from app.services.vinculos import SemConexao
-
-    try:
-        d = await _cliente(db, user).confirmar(pendente.proposta, "codigo_whatsapp", f"whatsapp {telefone}")
-    except SemConexao as e:
-        return f"❌ Não executado: {e}"
-    if not d.get("ok"):
-        return f"❌ Não executado: {pendente.resumo}. {d.get('error') or d.get('reason') or ''}".strip()
-    if d.get("incerto"):
-        return (f"⚠️ {pendente.resumo}: o equipamento não respondeu — a ação PODE ter chegado. "
-                "Confira a leitura antes de repetir.")
-    return f"✅ Executado: {d.get('resumo') or pendente.resumo}."
+    return await pendente.executar(db, user, telefone)
 
 
 _ROTA = {"type": "string", "description": "Rota do helper, ex.: /api/registry/plants, /api/registry/devices, "

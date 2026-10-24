@@ -400,3 +400,56 @@ async def test_mensagem_que_chegou_horas_depois_nao_e_respondida(db, monkeypatch
     assert enviados == []
     linha = db.query(RegistroBot).one()
     assert (linha.resultado, linha.gs_user_id) == ("atrasada", dono.id)
+
+
+# ── o meuPlano pelo bot: a proposta de lá (criar OS…) também só roda com CONFIRMO ───────
+
+
+class _MeuPlanoFalso:
+    def __init__(self):
+        self.conversas, self.aplicadas = [], []
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        return 1
+
+    async def assistente_run(self, token, run_id):
+        return {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico",
+                "args": {"usina_id": 37, "nome": "Roçagem de 5 ruas"},
+                "preview": {"summary": "Abrir a OS 'Roçagem de 5 ruas' na UFV Ibitinga",
+                            "lines": [{"kind": "os", "text": "Técnico: Michel"}], "warnings": []}}
+
+    async def assistente_aplicar(self, token, acao, args):
+        self.aplicadas.append((acao, args))
+        return {"ok": True, "message": "Ação aplicada."}
+
+
+async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_o_codigo_da_pessoa(db, monkeypatch):
+    """O bot perguntava "Confirma que eu crie assim?" e, no "sim", mandava confirmar no site:
+    a proposta de lá vira o mesmo CONFIRMO do helper, e a conversa vai junto ao meuPlano."""
+    from app.services import assistente_helper as h
+    from app.services import vinculos
+
+    falso = _MeuPlanoFalso()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db, uid, so_proprio=False: falso)
+
+    async def _sem_espera(_):
+        return None
+
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    h.PENDENTES.clear()
+    dono = _conta(db, "dono", "+5517997377626")
+    outro = _conta(db, "outro", "+5517997370000")
+    antes = [{"role": "user", "content": "Serviço novo"}, {"role": "assistant", "content": "Confirma que eu crie assim?"}]
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone, historico=antes)
+
+    proposta = await assistente.manutencao(ctx, {"pergunta": "Sim, crie a OS"})
+    assert falso.conversas[0][:2] == antes and falso.conversas[0][-1]["content"].startswith("Sim, crie a OS")
+    assert "NADA foi executado" in proposta["instrucao"] and proposta["detalhes"] == ["Técnico: Michel"]
+    assert falso.aplicadas == []
+
+    codigo = proposta["codigo"]
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, f"CONFIRMO {codigo}")
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")).startswith("✅ Feito no meuPlano")
+    assert falso.aplicadas == [("criar_ordem_servico", {"usina_id": 37, "nome": "Roçagem de 5 ruas"})]
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")

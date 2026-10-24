@@ -703,3 +703,11 @@ class MeuPlanoClient:
 
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
+
+    async def assistente_aplicar(self, token: str | None, acao: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Executa a PROPOSTA que o assistente devolveu (o "Confirmar" da web). O meuPlano
+        revalida os argumentos e a permissão de quem é o token."""
+        r = await self._req(
+            "POST", "/api/v1/meuacesso/assistant/apply", token=token, json={"action": acao, "args": args}
+        )
+        return r.json()

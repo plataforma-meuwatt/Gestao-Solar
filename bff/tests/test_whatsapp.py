@@ -187,14 +187,22 @@ def test_chave_errada_e_recusada(cliente_http, configurado):
     assert cliente_http.post("/api/v1/interno/whatsapp/evento", json=AVISO).status_code == 401
 
 
-def test_com_a_chave_certa_o_aviso_e_aceito(cliente_http, configurado):
-    """202, e não 200: o gateway pode parar de reenviar, e nada foi prometido ao cliente —
-    responder ao que ele escreveu é a frente do robô, que ainda não existe."""
+def test_com_a_chave_certa_o_aviso_e_aceito(cliente_http, configurado, monkeypatch):
+    """202, e não 200: o gateway pode parar de reenviar; responder é do bot, em segundo plano."""
+    from app.services import assistente
+
+    entregues = []
+
+    async def _atender(evento):
+        entregues.append(evento["telefone"])
+
+    monkeypatch.setattr(assistente, "atender", _atender)
     r = cliente_http.post(
         "/api/v1/interno/whatsapp/evento", json=AVISO, headers={"X-Chave-Interna": CHAVE}
     )
     assert r.status_code == 202
     assert r.json() == {"ok": True}
+    assert entregues == ["+5516999998888"]
 
 
 @respx.mock
