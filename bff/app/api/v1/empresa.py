@@ -1321,7 +1321,7 @@ class UsuarioDetalhado(BaseModel):
     bot_meuplano: bool = False
     bot_meuwatt: bool = False
     bot_helper: bool = False
-    #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de qualquer ação (sem ela, o bot só lê).
+    #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com SIM.
     tem_senha_atuacao: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
     meuplano: str | None = None

@@ -832,11 +832,15 @@ transcrita pelo meuPlano (`/assistant/transcribe`, o Whisper do app de campo) co
 meuPlano DA PESSOA; o bot devolve "🎙️ _o que entendeu_" e segue como texto — a senha dita em voz
 alta vale e nunca volta em claro. Arquivo e imagem ainda não são lidos (a resposta diz o nome).
 Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação (SIM) ANTES de sair
-(lá a ferramenta de PDF assina dentro de uma leitura, sem proposta). Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
+(lá a ferramenta de PDF assina dentro de uma leitura, sem proposta). A pergunta sobre o ESTADO
+("a OS 1638 já foi assinada?") é leitura; o pedido com "?" ("pode assinar a OS?", "me manda o
+PDF assinado?") continua pedindo o SIM — na dúvida, é pedido (`_pede_assinatura`). Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
 trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do token. O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele. Qualquer outra
-mensagem DESARMA a ação ("não/cancela" respondem "Cancelado" pelo sistema). UMA ação por mensagem,
+mensagem DESARMA a ação: "não", "cancela", "não quero" SOZINHOS respondem "Cancelado" pelo
+sistema; "Não, o técnico é o Diogo" é correção — a ação cai e a frase vai à IA (`so_cancela`;
+avaliação 12: a correção se perdia). UMA ação por mensagem,
 e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
@@ -845,10 +849,19 @@ de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo.
 o bot cobrava a senha de atuação para concluir uma OS — senha é para EQUIPAMENTO, "desligar,
 ligar, gravar"): a proposta do assistente de lá (criar/concluir OS, lançar o dia, lembrete)
 espera o SIM da pessoa (`Pendente.confirmacao = "sim"`, conferido pelo sistema, valendo só
-depois de o resumo sair; a senha certa também confirma), e confirmada o BFF chama o
+depois de o resumo sair; a senha certa também confirma). O resumo vai com os botões **Sim / Não**
+(`BOTOES_SIM_NAO`; gateway sem botões → texto), e confirma o toque, "sim" ou uma afirmativa curta
+("Sim, pode criar", "Pode sim", "👍") — pergunta nunca confirma, e "Sim, mas troque o técnico" é
+correção (`e_sim`). Quem NÃO tem senha e responde com um número está conversando (a UC, o
+protocolo), não tentando senha (`e_tentativa`). E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
-passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM). **Empresa
+passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM). O
+assistente de lá diz se as tarefas da OS estão feitas e a FECHA quando estão (`situacao_os`,
+`fechar_os`, meuPlano 93a19ea1). **Erro 5xx do apply não é "nada foi feito":** lá a rota grava
+antes do passo que quebra (a OS 1843 ficou criada e vazia, 24/10/2026), então a resposta é
+"PODE ter sido gravada em parte — confira", o resto do pedido é lembrado e o log marca erro; o
+texto da exceção não vai à pessoa. 4xx continua "recusou… Nada foi feito". **Empresa
 desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a
 geração** (a lista de usinas dele fica 5 min em memória). **O token é da pessoa:** a mesma pessoa de
 lá não serve a duas contas, e o token de outra pessoa não troca a ligação em silêncio

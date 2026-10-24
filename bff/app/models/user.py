@@ -112,8 +112,8 @@ class User(Base):
     bot_meuplano: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_meuwatt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_helper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    #: A senha que o bot pede antes de qualquer AÇÃO (ligar, desligar, gravar; criar OS) — só
-    #: números, 6 a 8, e nunca a de login. Sem ela, o bot só lê (`assistente_helper.propor`).
+    #: A senha que o bot pede antes de AÇÃO no equipamento (helper: ligar, desligar, gravar) — só
+    #: números, 6 a 8, e nunca a de login. Ação do meuPlano (criar/fechar OS) confirma com SIM.
     senha_atuacao_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def tem_token(self, produto: str) -> bool:

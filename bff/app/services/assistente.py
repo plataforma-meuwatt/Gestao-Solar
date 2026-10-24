@@ -86,7 +86,22 @@ _MANUTENCAO = {"type": "function", "function": {
 #: Documento ASSINADO com o certificado digital da pessoa é ação. No meuPlano, a ferramenta de
 #: PDF assina dentro de uma LEITURA (sem proposta, sem "Confirmar"), e o Gestão Solar não teria
 #: como pedir a senha depois: ela é pedida AQUI, antes de o pedido sair (avaliação 11).
-ASSINATURA = re.compile(r"(?i)\bassin(?:a|e|o|ad|ar|at|em|ou)|\bcertificado\s+digital")
+ASSINATURA = re.compile(r"(?i)\bassin(?:a|e|ar|em|ad[oa]s?|aturas?)\b|\bcertificado\s+digital")
+#: A pergunta sobre o ESTADO ("a OS 1638 já foi assinada?", "faltam assinar quais?") é leitura —
+#: se não trouxer verbo de pedido. "Pode assinar a OS?" e "me manda o PDF assinado?" são pedidos
+#: com ponto de interrogação, e o "?" sozinho não separa um do outro.
+_ESTADO = re.compile(r"(?i)\b(?:foi|foram|est[áa]|est[ãa]o|t[áa]|ficou|ficaram|j[áa])\s+(?:\w+\s+){0,2}?assinad[oa]s?\b"
+                     r"|\bfalta(?:m|va)?\s+assinar\b|\b(?:tem|t[êe]m|h[áa]|status|situa[çc][ãa]o)\s+(?:d[ae]\s+)?assinaturas?\b")
+_PEDIDO = re.compile(r"(?i)\b(?:pode|podem|poderia|consegue|conseguiria|d[áa]\s+pra|tem\s+como|manda|mande|me\s+passa|"
+                     r"envia|envie|gera|gere|gerar|faz|fa[çc]a|quero|queria|preciso|assina|assine|assinem)\b")
+
+
+def _pede_assinatura(texto: str) -> bool:
+    """Pedido de documento ASSINADO ("me manda o PDF da OS assinado", "pode assinar a OS?"), e não
+    pergunta sobre o estado da assinatura ("a OS 1638 já foi assinada?" — avaliação 12). Na dúvida,
+    é pedido: o que custa é um SIM a mais, e não um documento assinado sem a pessoa saber."""
+    t = texto or ""
+    return bool(ASSINATURA.search(t)) and not (_ESTADO.search(t) and not _PEDIDO.search(t))
 
 
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
@@ -100,7 +115,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
     mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
-    if ASSINATURA.search(pedido) or ASSINATURA.search(ctx.pedido):
+    if _pede_assinatura(pedido) or _pede_assinatura(ctx.pedido):
         return _assinatura_com_senha(ctx, pedido, mensagens)
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     r = await _perguntar_ao_meuplano(mp, mensagens)
@@ -181,7 +196,15 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
         except SemConexao as e:
             return f"❌ Não executado: {e}"
         except httpx.HTTPStatusError as e:
-            return f"❌ O meuPlano recusou: {detalhe_do_upstream(e.response) or e.response.status_code}. Nada foi feito."
+            if e.response.status_code < 500:
+                return (f"❌ O meuPlano recusou: {detalhe_do_upstream(e.response) or e.response.status_code}. "
+                        "Nada foi feito.")
+            # 5xx é erro NO MEIO: lá a rota grava antes do passo que quebra (a OS 1843 ficou vazia
+            # com "nada foi feito" na tela, 24/10/2026). E o texto da exceção não vai à pessoa.
+            log.warning("assistente: o meuPlano deu %s ao aplicar %s: %s", e.response.status_code, acao,
+                        detalhe_do_upstream(e.response))
+            return ("⚠️ O meuPlano deu erro no meio da ação — ela PODE ter sido gravada em parte. Confira no "
+                    "meuPlano antes de pedir de novo.")
         except httpx.HTTPError:
             return ("⚠️ O meuPlano não respondeu a tempo — a ação PODE ter sido gravada. "
                     "Confira no meuPlano antes de pedir de novo.")
@@ -224,7 +247,7 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 #: as 14:32" também (o trecho até o ":" não tem número). O valor nunca começa em "[": os
 #: marcadores do bot ("Senha:[senha oculta]") ficam inteiros (avaliação 11).
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
-                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)(?!\[)([^\s,;]+?)"
+                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:(?:\bé\b|\beh\b)\s*[:=]?|[:=])\s*)(?![\[:=])([^\s,;]+?)"
                       r"(?=[.!?]*(?:\s|$|[,;]))")
 #: "senha 1234", "PIN ab12": três caracteres ou mais — "PIN 3 do conector" e "senha 2 vezes" são
 #: dado técnico e prosa, não segredo.
@@ -245,7 +268,7 @@ _SEGREDO_NUMERO = re.compile(
     r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o" + _DE_ACESSO + r"|c[óo]digo" + _DE_ACESSO + r")\b"
     r"((?:[ \t]+d[eoa]s?[ \t]+(?:[^\W\d_][\w\-]*[ \t]+){0,3}?[^\W\d_][\w\-]*)?[ \t]*"
     r"(?:\b(?:é|eh|para|pra)\b)?[ \t:=,;/.\-]*)"
-    r"(\d+(?:[ .\-]\d+)*)(?!\d|[:h]\d)")
+    r"(\d+(?:(?:\s{1,2}|\s?[.\-/–—]\s?)\d+)*)(?!\d|[:h]\d)")
 
 
 def _sem_segredos(texto: str) -> str:
@@ -640,16 +663,16 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, f"🎙️ _{seguro}_")
                 seguro = pergunta = f"🎙️ {seguro}"
             else:
-                esperava = helper.desarmar(user.id)
-                await _texto(telefone, falha + (f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""))
+                desarmada = helper.desarmar(user.id)
+                await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
         # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
-        confirma = bool(helper.SIM.match(texto)) and helper.espera_sim(user.id)
-        esperava = (False if helper.digitos_da_senha(texto) is not None or confirma
-                    else helper.desarmar(user.id))
-        nota = f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""
+        confirma = helper.e_sim(texto) and helper.espera_sim(user.id)
+        desarmada = None if helper.e_tentativa(user, texto) or confirma else helper.desarmar(user.id)
+        esperava = desarmada is not None
+        nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
@@ -686,6 +709,12 @@ async def _atender(evento: dict) -> None:
         texto_da_ia, bloco_sim = "", None
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava,
                                                        chegou=evento.get("_chegou"), mandada_em=enviada)
+        falhou = resposta is not None and resposta.startswith(("❌", "⚠️"))
+        if falhou and executada is not None and executada.conversa:
+            # O resto do pedido não some calado (avaliação 12: "crie a OS e conclua a 1638" — a
+            # criação falhou e a conclusão nem foi lembrada).
+            pedido = (executada.conversa[-1].get("content") or "").split("\n\n(Resposta para WhatsApp")[0]
+            resposta += f"\n\nDo pedido «{pedido[:200]}», nada além disso foi feito — confira e peça de novo o que faltar."
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
@@ -732,10 +761,11 @@ async def _atender(evento: dict) -> None:
                 else:
                     _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(seguinte)))
                 resposta += "\n\n" + seguinte
-        _registrar(db, telefone, user, "respondeu", pergunta=entrada["content"], resposta=resposta,
-                   ferramentas=ctx.ferramentas if ctx else
+        # A ação confirmada que FALHOU aparece como erro no log (aparecia verde, "Respondeu").
+        _registrar(db, telefone, user, "erro" if falhou else "respondeu", pergunta=entrada["content"],
+                   resposta=resposta, ferramentas=ctx.ferramentas if ctx else
                    ["senha_de_atuacao" if helper.digitos_da_senha(texto) else "confirmacao"],
-                   inicio=inicio, em=enviada)
+                   inicio=inicio, em=enviada, erro=resposta.split("\n")[0] if falhou else None)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()

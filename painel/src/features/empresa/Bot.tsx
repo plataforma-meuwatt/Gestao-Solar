@@ -10,8 +10,9 @@
  *   manutenção;
  * - as CAIXAS dizem sobre o que o bot responde a ela. Ligar só manda a caixa: não regrava
  *   o cadastro (nem no meuPlano), então um meuPlano fora do ar não impede ligar o bot;
- * - a SENHA DE ATUAÇÃO (pedido do dono, 24/10/2026): o bot a pede antes de qualquer ação —
- *   ligar, desligar, gravar, criar OS. Ler não pede. Sem ela, o bot só lê.
+ * - a SENHA DE ATUAÇÃO (pedido do dono, 24/10/2026): o bot a pede antes de ação no EQUIPAMENTO
+ *   (helper: ligar, desligar, gravar). Ação no meuPlano (criar/fechar OS) a pessoa confirma com
+ *   Sim, sem senha. Ler não pede nada.
  *
  * Embaixo, as últimas mensagens das pessoas da empresa — é aqui que o gerente vê por que
  * alguém ficou sem resposta.
@@ -63,9 +64,10 @@ export function BotDaEmpresa() {
         <Aviso>
           Regra: cada pessoa usa o bot com o <strong>token dela</strong> — nunca o da empresa.
           Geração precisa do token do meuWatt dela; manutenção, do token do meuPlano dela. Sem o
-          celular, o bot não sabe quem está escrevendo. <strong>Ação</strong> (ligar, desligar,
-          gravar, criar OS) só roda com a <strong>senha de atuação</strong> da pessoa; ler não pede
-          senha.
+          celular, o bot não sabe quem está escrevendo. <strong>Ação no equipamento</strong> (helper:
+          ligar, desligar, gravar) só roda com a <strong>senha de atuação</strong> da pessoa;{' '}
+          <strong>ação no meuPlano</strong> (criar ou fechar OS) ela confirma com <strong>Sim</strong>;
+          ler não pede nada.
         </Aviso>
       </div>
 
@@ -155,7 +157,7 @@ function situacao(u: UsuarioDetalhado, helperFora: boolean): { tom: Tom; rotulo:
   if (!respondendo.length) return { tom: 'alerta', rotulo: 'Parado: falta o token próprio' }
   if (respondendo.length < liberadas.length) return { tom: 'alerta', rotulo: 'Em parte: falta um token' }
   if (u.bot_helper && helperFora) return { tom: 'alerta', rotulo: 'Em parte: helper fora do ar' }
-  if ((u.bot_helper || u.bot_meuplano) && !u.tem_senha_atuacao) return { tom: 'alerta', rotulo: 'Só lê: sem senha de atuação' }
+  if (u.bot_helper && !u.tem_senha_atuacao) return { tom: 'alerta', rotulo: 'Helper só lê: sem senha de atuação' }
   return { tom: 'ok', rotulo: 'Respondendo' }
 }
 
@@ -241,7 +243,9 @@ function LinhaDoBot({
       <div className="mt-3 flex items-center gap-2 flex-wrap text-sm">
         <Lock size={14} className="text-rotulo" />
         <span className={u.tem_senha_atuacao ? 'text-ok' : 'text-alerta'}>
-          {u.tem_senha_atuacao ? 'Senha de atuação definida' : 'Sem senha de atuação — o bot só lê'}
+          {u.tem_senha_atuacao
+            ? 'Senha de atuação definida'
+            : 'Sem senha de atuação — o bot não comanda equipamento (helper); o meuPlano confirma com Sim'}
         </span>
         <button className="btn-fantasma" onClick={aoAbrirSenha}>
           {u.tem_senha_atuacao ? 'Trocar senha' : 'Definir senha'}
@@ -270,9 +274,10 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
     <Modal titulo={`Senha de atuação de ${usuario.nome}`} aoFechar={aoFechar}>
       <div className="grid gap-4">
         <Aviso>
-          O bot pede esta senha antes de <strong>ligar, desligar, gravar</strong> ou criar algo
-          (helper e meuPlano). Ler não pede. Só números, de 6 a 8 — nada de sequência nem número
-          repetido. Entregue à pessoa como a senha provisória: ela não aparece de novo.
+          O bot pede esta senha antes de <strong>ligar, desligar ou gravar</strong> no equipamento
+          (helper). Ação no meuPlano (criar ou fechar OS) a pessoa confirma com Sim, sem senha. Ler
+          não pede. Só números, de 6 a 8 — nada de sequência nem número repetido. Entregue à pessoa
+          como a senha provisória: ela não aparece de novo.
         </Aviso>
         <Campo
           rotulo="Senha de atuação"

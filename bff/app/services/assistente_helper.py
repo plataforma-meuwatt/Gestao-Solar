@@ -40,8 +40,8 @@ from app.services import assistente_geracao as ger
 #:   "4, 8, 2, 9, 1, 3";
 #: - por extenso: "quatro oito dois nove um três".
 #: Data (24/10/2026, 2026-10-24) e IP nunca são a senha e ficam como estão.
-_GRUPOS = r"\d+(?:(?:\s{1,2}|[.,_\-/])\d+)*"
-_SOLETRADO = r"\d(?:(?:\s|[.,_\-/]){1,3}\d(?!\d)){5,7}"
+_GRUPOS = r"\d+(?:(?:\s{1,2}|,|\s?[._\-/–—]\s?)\d+)*"
+_SOLETRADO = r"\d(?:(?:\s|[.,_\-/–—]){1,3}\d(?!\d)){5,7}"
 _DIGITO_POR_EXTENSO = {"zero": "0", "um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "três": "3",
                        "quatro": "4", "cinco": "5", "seis": "6", "meia": "6", "sete": "7", "oito": "8", "nove": "9"}
 _PALAVRA_DIGITO = r"\b(?:" + "|".join(sorted(_DIGITO_POR_EXTENSO, key=len, reverse=True)) + r")\b"
@@ -50,8 +50,8 @@ _POR_EXTENSO = _PALAVRA_DIGITO + r"(?:[\s,.\-]+" + _PALAVRA_DIGITO + r"){5,7}"
 NUMERO = re.compile(rf"{_SOLETRADO}|{_POR_EXTENSO}|{_GRUPOS}", re.IGNORECASE)
 #: A mensagem INTEIRA é a senha: o número, com ou sem "senha"/"confirmo"/"pin" e pontuação na
 #: frente ("Senha:482913", "senha/482913", "*482913*", "482913?").
-PURA = re.compile(r"^\s*[*_~]*\s*(?:(?:confirmo|senha|pin)\s*)?[:=,./\-]?\s*(.+?)\s*[.!?*_~]*\s*$",
-                  re.IGNORECASE | re.DOTALL)
+PURA = re.compile(r"^\s*[*_~\"'“”«»]*\s*(?:(?:confirmo|senha|pin)\s*)?[:=,./\-–—#]?\s*[\"'“”«»]?\s*(.+?)"
+                  r"\s*[\"'“”«»]?\s*[.!?*_~]*\s*$", re.IGNORECASE | re.DOTALL)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha|pin)\b", re.IGNORECASE)
 #: "senha", "confirmo", "pin" e o que vem até o número (o número logo depois é conferido PRIMEIRO).
 PALAVRA = re.compile(r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}?(?=\d|" + _PALAVRA_DIGITO + ")")
@@ -68,6 +68,7 @@ def _so_digitos(trecho: str) -> str:
 
 
 def _data_ou_ip(trecho: str) -> bool:
+    trecho = re.sub(r"\s+", "", trecho)                 # "24 / 10 / 2026" é a mesma data
     data = _DATA.fullmatch(trecho)
     if data and 1 <= int(data[1]) <= 31 and 1 <= int(data[2]) <= 12:
         return True
@@ -106,8 +107,9 @@ OCULTA = "[senha de atuação]"
 TENTATIVAS = 5
 BLOQUEIO_S = 15 * 60
 TETO_RESPOSTA = 12000
-SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot só lê. Peça ao gerente da sua "
-             "O&M para definir no oem-gs (Bot do WhatsApp). Nada foi feito.")
+SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot não comanda equipamento pelo helper "
+             "(ligar, desligar, gravar). Peça ao gerente da sua O&M para definir no oem-gs (Bot do WhatsApp). "
+             "Nada foi feito.")
 #: A MESMA frase para a senha certa e para a errada, sem ação esperando: senão, mandar números
 #: até a frase mudar descobriria a senha.
 NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — se era "
@@ -116,6 +118,7 @@ BLOQUEADO = "Ações bloqueadas por senha errada por 15 minutos. Nada foi feito.
 #: O que vai ao pé da resposta quando uma mensagem que não era só a senha derrubou a ação.
 ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para executar uma ação, mande só a "
                   "senha, sem outras palavras.)")
+ACAO_CANCELADA_SIM = "(A ação que esperava a sua confirmação foi cancelada. Se ainda quiser, peça de novo.)"
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
@@ -279,10 +282,10 @@ def mascarar(texto: str, analise: Analise) -> str:
     return texto
 
 
-def desarmar(user_id: int) -> bool:
-    """Tira a ação que esperava a senha. Devolve se havia uma (valendo)."""
+def desarmar(user_id: int) -> "Pendente | None":
+    """Tira a ação que esperava a senha/o SIM. Devolve a que havia (valendo), ou `None`."""
     p = PENDENTES.pop(user_id, None)
-    return p is not None and monotonic() <= p.expira
+    return p if p is not None and monotonic() <= p.expira else None
 
 
 def _contar_falhas(user_id: int, falhas: int) -> int:
@@ -324,6 +327,63 @@ def nova_senha(user_id: int) -> None:
     """Senha trocada: zera as tentativas erradas e o bloqueio."""
     _ERROS.pop(user_id, None)
     _BLOQUEIO.pop(user_id, None)
+
+
+#: A resposta afirmativa ("Sim, pode", "Pode sim", "Confirmado", "Isso mesmo", "Sim, crie a OS"):
+#: começa por uma destas e o resto é só palavra NEUTRA — "Sim, mas troque o técnico" é correção,
+#: "Pode me mandar o relatório" é outro pedido. Avaliação 12: o jeito comum de dizer sim cancelava.
+_AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmado", "confirmada", "correto", "certo", "isso",
+           "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado", "show", "bora",
+           "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga"}
+_NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
+                      "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "criar", "crie", "cria", "fechar",
+                      "feche", "fecha", "concluir", "conclua", "seguir", "prosseguir", "ir", "ai", "aí", "agora",
+                      "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo"}
+_SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗]+$")
+
+
+def e_sim(texto: str) -> bool:
+    """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa curta ou só o 👍/✅.
+    Pergunta nunca confirma."""
+    t = (texto or "").strip()
+    if t and _SO_OK.match(t):
+        return True
+    if t.endswith("?"):
+        return False
+    palavras = re.findall(r"[a-zà-ú]+|\d+", t.lower())
+    return (0 < len(palavras) <= 8 and palavras[0] in _AFIRMA
+            and all(p in _NEUTRAS or p.isdigit() for p in palavras[1:]))
+
+
+#: Só o cancelamento ("não", "cancela", "não quero", "deixa pra lá") — curto. "Não, o técnico é o
+#: Diogo" é CORREÇÃO: cancela a ação e vai à IA (avaliação 12: a correção se perdia).
+_CANCELA_PALAVRAS = {"não", "nao", "n", "cancela", "cancele", "cancelar", "desisto", "desiste", "esquece",
+                     "esqueça", "esqueca", "para", "pare", "deixa", "negativo"}
+
+
+_CANCELA_NEUTRAS = _CANCELA_PALAVRAS | {"quero", "obrigado", "obrigada", "precisa", "pra", "lá", "la", "isso",
+                                        "agora", "valeu", "mais", "nada", "por", "enquanto", "faça", "faz", "pode"}
+
+
+def so_cancela(texto: str) -> bool:
+    """A mensagem é SÓ o cancelamento — sem informação nova ("não é amanhã" e "não, corredores"
+    são correções, e vão à IA)."""
+    palavras = re.findall(r"[a-zà-ú]+|\d+", (texto or "").lower())
+    return (0 < len(palavras) <= 4 and palavras[0] in _CANCELA_PALAVRAS
+            and all(p in _CANCELA_NEUTRAS for p in palavras[1:]))
+
+
+def cancelada(p: "Pendente | None") -> str:
+    """O pé da resposta quando a mensagem derrubou a ação que esperava — sem falar de senha na
+    ação do meuPlano (a queixa do dono: "parei de falar da senha e ele traz ainda")."""
+    return ACAO_CANCELADA_SIM if p is not None and p.confirmacao == "sim" else ACAO_CANCELADA
+
+
+def e_tentativa(user, texto: str) -> bool:
+    """A mensagem é uma tentativa de SENHA. O número sozinho de quem NÃO tem senha, com uma ação
+    do meuPlano esperando o SIM, não é — é conversa (a UC, o protocolo que a IA pediu)."""
+    return digitos_da_senha(texto) is not None and bool(
+        getattr(user, "senha_atuacao_hash", None) or not espera_sim(user.id))
 
 
 def espera_sim(user_id: int) -> bool:
@@ -675,7 +735,7 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
       é a mesma da certa.
     - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
-    if SIM.match(texto or "") and espera_sim(user.id):
+    if e_sim(texto) and espera_sim(user.id):
         p = PENDENTES[user.id]
         if monotonic() > p.expira:
             PENDENTES.pop(user.id, None)
@@ -686,8 +746,8 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
         if p.parte not in user.bot_ativo:
             return PARTE_DESLIGADA
         return await p.executar(db, user, telefone)
-    if digitos_da_senha(texto) is None:
-        return CANCELADO if esperava and CANCELA.match(texto or "") else None
+    if not e_tentativa(user, texto):
+        return CANCELADO if esperava and so_cancela(texto) else None
     analise = analise or await analisar(user, texto)
     pendente, vencida = PENDENTES.get(user.id), None
     if pendente is not None and monotonic() > pendente.expira:

@@ -902,7 +902,7 @@ export type UsuarioDetalhado = {
   bot_meuplano: boolean
   bot_meuwatt: boolean
   bot_helper: boolean
-  /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de qualquer ação (sem ela, o bot só lê). */
+  /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com Sim. */
   tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
   meuplano: string | null

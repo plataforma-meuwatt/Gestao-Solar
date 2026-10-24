@@ -1215,7 +1215,9 @@ async def test_nao_faca_com_a_senha_nao_executa(db, bot_local, helper_com_get):
     await _armar(db, dono)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
                               "texto": "não, cancela! a senha é 482913, mas NÃO faça"})
-    assert bot_local.enviados == [h.CANCELADO] and helper_com_get.confirmadas == [] and bot_local.ocultadas == [1]
+    # Frase com mais que o "não" vai à IA (avaliação 12: a correção se perdia), com a ação já caída.
+    assert helper_com_get.confirmadas == [] and bot_local.ocultadas == [1] and "482913" not in bot_local.llm[-1]
+    assert len(bot_local.enviados) == 1 and h.ACAO_CANCELADA in bot_local.enviados[0]
 
 
 async def test_limpar_e_audio_cancelam_a_acao(db, bot_local, helper_com_get):
@@ -1236,15 +1238,19 @@ async def test_limpar_e_audio_cancelam_a_acao(db, bot_local, helper_com_get):
 async def test_a_senha_com_separador_e_reconhecida_e_nao_vaza(db, bot_local, helper_com_get):
     """ "482 913" e "482-913" iam inteiros à IA, ao histórico e ao meuPlano."""
     from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.services import assistente_helper as h
 
     dono = _dono_com_usina(db)
     await _armar(db, dono)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482 913"})
     assert helper_com_get.confirmadas == [("P-1", "pin")] and bot_local.llm == [] and bot_local.ocultadas == [1]
-    for i, escrita in enumerate(("senha 482-913", "482,913", "482  913", "482_913"), start=2):
+    escritas = ("senha 482-913", "482,913", "482  913", "482_913", "482 - 913", "482 . 913", "482–913")
+    for i, escrita in enumerate(escritas, start=2):
         await _armar(db, dono)
         await assistente.atender({"id": i, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": escrita})
-    assert len(helper_com_get.confirmadas) == 5
+    assert len(helper_com_get.confirmadas) == 1 + len(escritas)
+    # Lista e data com espaço não são a senha (avaliação 12).
+    assert h.digitos_da_senha("12, 13, 14") is None and h.digitos_da_senha("24 / 10 / 2026") is None
     assert all("913" not in (r.pergunta or "") for r in db.query(RegistroBot))
     assert "913" not in db.query(ConversaWhatsapp).one().mensagens
 
@@ -1386,6 +1392,8 @@ def test_o_log_esconde_o_numero_do_segredo_em_qualquer_forma():
         ("pin 482 913", "pin ••••"),
         ("Altere a senha do cadeado de pirapozinho para 3262", "Altere a senha do cadeado de pirapozinho para ••••"),
         ("a combinação do cadeado é 3262", "a combinação do cadeado é ••••"),
+        ("senha 482 - 913 ok", "senha •••• ok"),                  # separador com espaço (avaliação 12)
+        ("a senha é: 482 / 913", "a senha é: ••••"),
     ]:
         assert _sem_segredos(texto) == guardado
     for texto in ["código de erro 2043 no inversor 3", "o código da OS 1639", "Senha não confere (2 de 5). Nada foi feito.",
@@ -1591,10 +1599,12 @@ def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
     from app.services.assistente import _sem_segredos
 
     for texto in ["Senha:[senha oculta] pode executar", "a senha é [senha oculta], ok?", "pin=[número oculto] vai",
+                  "minha senha é: [senha oculta]",
                   "Combinação de strings 12 e 13 com corrente baixa", "PIN 3 do conector MC4",
                   "senha 2 vezes errada", "código de erro 2043"]:
         assert _sem_segredos(texto) == texto
     assert _sem_segredos("a senha do wifi é Solar@2024") == "a senha do wifi é ••••"
+    assert _sem_segredos("minha senha é: 4821x") == "minha senha é: ••••"
 
 
 async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
@@ -1706,3 +1716,134 @@ async def test_gateway_que_recusa_botoes_manda_o_resumo_em_texto(db, bot_local, 
     dono = _conta(db, "dono", "+5517997377626")
     await assistente.atender(_ev(dono, 1, "Crie a OS"))
     assert "Abrir a OS" in bot_local.enviados[-1] and h.PENDENTES[dono.id].mostrada_em is not None
+
+
+# ── avaliação 12 (24/10/2026): o SIM do jeito que se fala, a correção, o 500 no meio e a assinatura ──
+
+
+def _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos):
+    """A IA de mentira: "crie …" vai ao meuPlano (`falso`); o resto, "Entendi." — e anota o que viu."""
+    import json as _json
+
+    from app.services import vinculos
+
+    async def _sem_espera(_):
+        return None
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Vou abrir a OS."}
+        vistos.append(msgs[-1]["content"])
+        if msgs[-1]["content"].lower().startswith("crie"):
+            return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+                "name": "manutencao", "arguments": _json.dumps({"pergunta": msgs[-1]["content"]})}}]}
+        return {"content": "Entendi."}
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: falso)
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+
+
+async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_local, monkeypatch):
+    """"Sim, pode criar" — o jeito comum de dizer sim — derrubava a ação do meuPlano e mandava usar
+    a SENHA; "Não, o técnico é o Diogo" virava só "Cancelado", e a correção se perdia."""
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoEmPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")                 # SEM senha de atuação
+    await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa. A OS 1638 mova para concluída"))
+    await assistente.atender(_ev(dono, 2, "Sim, pode criar"))
+    assert falso.aplicadas == ["criar_ordem_servico"] and "Mover a OS 1638" in bot_local.enviados[-1]
+    await assistente.atender(_ev(dono, 3, "Não, o técnico é o Diogo e a data é amanhã"))
+    assert vistos[-1] == "Não, o técnico é o Diogo e a data é amanhã"        # a correção foi à IA
+    assert bot_local.enviados[-1].endswith(h.ACAO_CANCELADA_SIM) and dono.id not in h.PENDENTES
+    assert falso.aplicadas == ["criar_ordem_servico"]
+    assert not any("senha" in (m or "").lower() for m in bot_local.enviados)
+    for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍", "Sim, crie a OS 1639"):
+        assert h.e_sim(sim), sim
+    for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", ""):
+        assert not h.e_sim(outra), outra
+    for nao in ("Não", "não quero", "cancela", "deixa pra lá"):
+        assert h.so_cancela(nao), nao
+    for correcao in ("Não, o técnico é o Diogo", "não é amanhã", "Nao, corredores"):
+        assert not h.so_cancela(correcao), correcao
+
+
+class _MeuPlanoQueQuebra(_MeuPlanoEmPassos):
+    """O /assistant/apply de 24/10/2026: gravou a OS e quebrou no passo seguinte (500)."""
+
+    async def assistente_aplicar(self, token, acao, args):
+        import httpx
+
+        req = httpx.Request("POST", "https://mp/api/v1/meuacesso/assistant/apply")
+        raise httpx.HTTPStatusError("500", request=req, response=httpx.Response(500, request=req, json={
+            "detail": "Erro ao aplicar a ação: 'Depends' object has no attribute 'all'"}))
+
+
+async def test_erro_500_do_meuplano_diz_que_pode_ter_gravado_e_lembra_o_resto_do_pedido(db, bot_local, monkeypatch):
+    """A OS 1843 ficou criada e vazia, e o bot disse "Nada foi feito" com o erro de Python cru; a
+    conclusão da 1638 (o resto do pedido) sumiu calada, e o log mostrava "Respondeu"."""
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoQueQuebra(), [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa. A OS 1638 mova para concluída"))
+    await assistente.atender(_ev(dono, 2, "Sim"))
+    falha = bot_local.enviados[-1]
+    assert falha.startswith("⚠️") and "PODE ter sido gravada" in falha and "OS 1638" in falha
+    assert "Nada foi feito" not in falha and "Depends" not in falha and dono.id not in h.PENDENTES
+    linha = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
+    assert linha.resultado == "erro" and linha.erro.startswith("⚠️")
+
+
+async def test_sem_senha_o_numero_com_o_sim_esperando_e_conversa(db, bot_local, monkeypatch):
+    """Quem não tem senha (o Renan) e responde a proposta do meuPlano com um número (a UC, o
+    protocolo que a IA pediu) ouvia "sem senha o bot só lê" — falso, e de novo a senha numa ação
+    que pede SIM. O número vai à IA, e a ação que esperava cai sem falar de senha."""
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoEmPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa"))
+    await assistente.atender(_ev(dono, 2, "4829137"))
+    assert vistos[-1] == "4829137" and bot_local.enviados[-1].endswith(h.ACAO_CANCELADA_SIM)
+    assert falso.aplicadas == [] and "equipamento" in h.SEM_SENHA
+
+
+async def test_pergunta_sobre_a_assinatura_e_leitura_e_o_pedido_com_interrogacao_pede_sim(db, monkeypatch):
+    """"A OS 1638 já foi assinada?" virava ação ("com a sua ASSINATURA DIGITAL") e nem saía; e
+    "Pode assinar a OS 1639?" é pedido, apesar do "?" — o meuPlano assina dentro de uma leitura."""
+    from app.services import vinculos
+
+    pedidos = []
+
+    class _MP:
+        async def assistente_chat(self, token, mensagens):
+            pedidos.append(mensagens[-1]["content"])
+            return 1
+
+        async def assistente_run(self, token, run_id):
+            return {"status": "DONE", "type": "message", "text": "Sim, assinada em 20/10."}
+
+    async def _sem_espera(_):
+        return None
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: _MP())
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    dono = _conta(db, "dono", "+5517997377626")
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await assistente.manutencao(ctx, {"pergunta": "A OS 1638 já foi assinada pelo cliente?"})
+    assert r == {"texto": "Sim, assinada em 20/10."} and len(pedidos) == 1
+    for pedido in ("Pode assinar a OS 1639?", "Consegue me mandar o PDF assinado?", "Tem como assinar a OS?",
+                   "assina a OS pra mim", "Já está assinada? Se não, assine", "Assinada?"):
+        assert assistente._pede_assinatura(pedido), pedido
+    for leitura in ("Foi assinada?", "Quem assinou a OS?", "As OS de ontem estão assinadas?", "Quais OS faltam assinar?",
+                    "Qual o status da assinatura da OS 1638?"):
+        assert not assistente._pede_assinatura(leitura), leitura
