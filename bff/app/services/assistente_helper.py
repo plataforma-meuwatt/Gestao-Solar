@@ -22,6 +22,7 @@ import asyncio
 import re
 import secrets
 import unicodedata
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -123,6 +124,9 @@ ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para execut
 ACAO_CANCELADA_SIM = "(A ação que esperava a sua confirmação foi cancelada. Se ainda quiser, peça de novo.)"
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
+#: O cancelamento de um passo depois de outros já feitos: "Nada foi feito" escondia a OS que o
+#: passo anterior criou (avaliação 16). Vem seguido do que já foi feito (`assistente._o_que_ficou`).
+CANCELADO_PASSO = "Cancelado: este passo não será executado."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
 #: O "sim" que confirma a ação do meuPlano: a mensagem INTEIRA, conferida pelo sistema (a IA não
 #: confirma nada).
@@ -166,6 +170,9 @@ class Pendente:
     #: O id dos botões Sim / Não DESTE resumo: o toque no Sim de um resumo antigo não confirma a
     #: ação de agora (avaliação 13 — o botão mandava sempre "sim").
     codigo: str = field(default_factory=lambda: secrets.token_hex(4))
+    #: O que a ação confirmada deu (`_rodar`). Enquanto roda, a frase do "pode ter sido feita": se
+    #: a execução estoura no meio, é ela que a pessoa recebe — nunca "tente de novo".
+    desfecho: str | None = None
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -347,9 +354,11 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "certo", "isso", "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado",
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
-           "uhum", "aham", "exatamente", "joia", "jóia", "certeza"}
-#: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode").
-_ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com"}
+           "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima"}
+#: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
+#: "Opa, pode", "Valeu, pode fazer").
+_ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
+          "obrigado", "obrigada"}
 #: O resto da frase só pode ter palavra NEUTRA — lista fechada. Nunca "para" (preposição e o
 #: imperativo de PARAR: "Ok, para tudo!" executava — avaliação 14), "não", "mas", "espera".
 _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
@@ -358,24 +367,59 @@ _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "t
                       "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo", "lançar",
                       "lancar", "lance", "lança", "lanca", "abrir", "abra", "abre", "registrar", "registre",
                       "registra", "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue",
-                      "pra", "assim", "mandar", "mande", "lá", "la", "é"}
+                      "pra", "assim", "mandar", "mande", "lá", "la", "é", "está", "esta"}
+#: Só agradecimento ou ciência ("valeu", "obrigado", "ok, aguardo", "fico no aguardo") — lista
+#: FECHADA, sem palavra de parar (há teste). É a única mensagem mandada antes do resumo que não o
+#: derruba (`mandada_antes_do_resumo`).
+_CIENCIA = {"valeu", "vlw", "obrigado", "obrigada", "obg", "brigado", "brigada", "ok", "okay", "beleza", "blz",
+            "show", "certo", "perfeito", "ótimo", "otimo", "aguardo", "aguardando", "entendi", "entendido",
+            "combinado", "joia", "jóia", "tá", "ta", "bom", "muito", "fico", "no", "e"}
 #: Só o gesto — com o tom de pele que muita gente deixa como padrão (👍🏽 cancelava, avaliação 14).
 _SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
 
 
-def e_sim(texto: str) -> bool:
+def _palavras(texto: str) -> list[str]:
+    return re.findall(r"[a-zà-ú]+|\d+", (texto or "").lower())
+
+
+def _tem(lista, palavra: str) -> bool:
+    """A palavra está na lista — também esticada no chat ("Simm", "okkk", "nããão")."""
+    return palavra in lista or re.sub(r"([a-zà-ú])\1+", r"\1", palavra) in lista
+
+
+def e_sim(texto: str, acao: str = "") -> bool:
     """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa curta ou só o 👍/✅.
-    Pergunta nunca confirma."""
+    Pergunta nunca confirma, nem frase com palavra de parar (`_PARAR`). Depois da afirmativa, só
+    palavra neutra ou do texto da ação (`acao`: "Sim, pode criar a OS de Ibitinga") — e número, só
+    o que está nele: "Pode fechar a 1640" não confirma "Fechar a OS 1638" (avaliação 16)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return True
     if t.endswith("?"):
         return False
-    palavras = re.findall(r"[a-zà-ú]+|\d+", t.lower())
-    while len(palavras) > 1 and palavras[0] in _ANTES and palavras[0] not in _AFIRMA:
+    palavras, da_acao = _palavras(t), set(_palavras(acao))
+    if any(_tem(_PARAR, p) for p in palavras):
+        return False
+    while len(palavras) > 1 and _tem(_ANTES, palavras[0]) and not _tem(_AFIRMA, palavras[0]):
         palavras = palavras[1:]
-    return (0 < len(palavras) <= 8 and palavras[0] in _AFIRMA
-            and all(p in _NEUTRAS or p.isdigit() for p in palavras[1:]))
+    return (0 < len(palavras) <= 8 and _tem(_AFIRMA, palavras[0])
+            and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) for p in palavras[1:]))
+
+
+def responde_sim(user_id: int, texto: str) -> bool:
+    """A mensagem é o SIM da ação do meuPlano esperando (vencida ou não: o "sim" tardio ouve que
+    venceu), conferida contra o que o resumo dela diz (`e_sim`)."""
+    p = PENDENTES.get(user_id)
+    return p is not None and p.confirmacao == "sim" and e_sim(texto, " ".join([p.resumo, *p.detalhes]))
+
+
+def so_ciencia(texto: str) -> bool:
+    """A mensagem é só agradecimento ou ciência ("valeu", "ok, aguardo", 👍). Pergunta não é."""
+    t = (texto or "").strip()
+    if t and _SO_OK.match(t):
+        return True
+    palavras = _palavras(t)
+    return not t.endswith("?") and 0 < len(palavras) <= 6 and all(_tem(_CIENCIA, p) for p in palavras)
 
 
 #: Só o cancelamento ("não", "cancela", "não quero", "deixa pra lá") — curto. "Não, o técnico é o
@@ -386,6 +430,14 @@ _CANCELA_PALAVRAS = {"não", "nao", "n", "cancela", "cancele", "cancelar", "desi
 
 _CANCELA_NEUTRAS = _CANCELA_PALAVRAS | {"quero", "obrigado", "obrigada", "precisa", "pra", "lá", "la", "isso",
                                         "agora", "valeu", "mais", "nada", "por", "enquanto", "faça", "faz", "pode"}
+#: Parar, negar, esperar, restringir ou trocar: com qualquer uma, a frase nunca confirma — nem
+#: quando a palavra está no resumo ("Mover a OS 1638 PARA concluída" e "Ok, para tudo!"). Lista
+#: fechada; nenhuma entra nas neutras nem na ciência (há teste).
+_PARAR = _CANCELA_PALAVRAS | {"parar", "parem", "nem", "nunca", "nada", "jamais", "mas", "porém", "porem", "espera",
+                              "espere", "esperar", "pera", "peraí", "perai", "calma", "segura", "aguarde", "errado",
+                              "errada", "outro", "outra", "outros", "outras", "troca", "troque", "trocar", "muda",
+                              "mude", "mudar", "corrige", "corrija", "sem", "exceto", "menos", "só", "so", "apenas",
+                              "somente"}
 
 
 def so_cancela(texto: str) -> bool:
@@ -416,6 +468,27 @@ BOTAO_ANTIGO = "Esse botão é de um resumo antigo — nada foi feito."
 #: esperando vive em memória e se perde no deploy — avaliação 14: dizia "resumo antigo").
 BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot foi atualizado. Nada foi feito — "
                   "se ainda quiser, peça de novo.")
+#: O toque de novo no Sim/Não de um resumo JÁ confirmado (o WhatsApp deixa os botões tocáveis):
+#: ouvia "Nada foi feito — peça de novo" logo abaixo do ✅, um convite a duplicar a OS (avaliação 16).
+JA_CONFIRMADA = "Essa ação já foi confirmada e não roda de novo. O que houve: {desfecho}"
+#: O desfecho de uma ação que estourou no meio da execução.
+INCERTA = "⚠️ A ação «{resumo}» deu erro no meio — ela PODE ter sido feita. Confira antes de pedir de novo."
+#: O desfecho das ações já confirmadas, pelo código do resumo (conta, código).
+#: ponytail: em memória, as últimas 500; o deploy esquece, e aí vale BOTAO_SEM_ACAO.
+_CONFIRMADAS: OrderedDict[tuple[int, str], str] = OrderedDict()
+
+
+async def _rodar(p: Pendente, db, user, telefone: str) -> str:
+    """Executa a ação confirmada — quem chama já a tirou de PENDENTES: uma vez só — e guarda o
+    desfecho pelo código do resumo."""
+    if p.parte not in user.bot_ativo:
+        return PARTE_DESLIGADA
+    chave = (user.id, p.codigo)
+    _CONFIRMADAS[chave] = p.desfecho = INCERTA.format(resumo=p.resumo)
+    while len(_CONFIRMADAS) > 500:
+        _CONFIRMADAS.popitem(last=False)
+    _CONFIRMADAS[chave] = p.desfecho = await p.executar(db, user, telefone)
+    return p.desfecho
 
 
 def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
@@ -424,6 +497,9 @@ def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
     antigas, e o id leva o código do resumo ("sim:<código>"); sem o código (botão de antes desta
     versão), não há como saber de qual resumo veio. O Não de um resumo vencido ouve que venceu,
     como o Sim (ia à IA)."""
+    feita = _CONFIRMADAS.get((user_id, (botao or "").partition(":")[2]))
+    if feita is not None:
+        return JA_CONFIRMADA.format(desfecho=feita.split("\n")[0])
     p = PENDENTES.get(user_id)
     if p is None:
         return BOTAO_SEM_ACAO
@@ -435,11 +511,14 @@ def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
     return None
 
 
-def mandada_antes_do_resumo(user_id: int, chegou: float | None, mandada_em: datetime | None) -> bool:
-    """A mensagem saiu do celular antes de o resumo da ação de agora chegar ("valeu" mandado
-    enquanto o bot buscava o próximo passo): não é resposta a ele, e não o derruba (avaliação 14)."""
+def mandada_antes_do_resumo(user_id: int, texto: str, chegou: float | None, mandada_em: datetime | None) -> bool:
+    """A mensagem de CIÊNCIA ("valeu" mandado enquanto o bot buscava o próximo passo) que saiu do
+    celular antes de o resumo da ação de agora chegar: não é resposta a ele, e não o derruba
+    (avaliação 14). Só ela: "cancela", "não" e a correção ("não, é o 12") derrubam como qualquer
+    mensagem — poupar toda mensagem de antes deixava a senha seguinte executar o 13 (avaliação 16)."""
     p = PENDENTES.get(user_id)
-    return p is not None and p.mostrada_em is not None and _antes_do_resumo(p, chegou, mandada_em)
+    return (p is not None and p.mostrada_em is not None and so_ciencia(texto)
+            and _antes_do_resumo(p, chegou, mandada_em))
 
 
 def espera_sim(user_id: int) -> bool:
@@ -466,6 +545,10 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
                               "Mostre o resumo e diga que o gerente da O&M define a senha dela no oem-gs "
                               "(Bot do WhatsApp). Leitura continua liberada.")}
     if ctx.proposta is not None:
+        if ctx.proposta.confirmacao == "sim":           # avaliação 16: a IA ouvia "senha" na do meuPlano
+            seguir = (" — depois do Sim, o sistema segue sozinho para o próximo passo do pedido"
+                      if ctx.proposta.conversa is not None else "")
+            return {"erro": f"Uma ação por vez: já há uma esperando o Sim da pessoa nesta mensagem. Fale só dela{seguir}."}
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
     p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
                  parte, confirmacao=confirmacao, conversa=conversa, pedido=getattr(ctx, "pedido", "") or "",
@@ -623,8 +706,9 @@ async def usina_helper_catalogo(ctx: ger.Contexto, a: dict) -> dict:
 
 
 #: Campos que trazem o SLUG da usina num item de resposta do helper (o `plant_id` dele é o
-#: slug). Nome de exibição não entra: "Pirapozinho" não é "pirapozinho" e o item sumiria.
-_CAMPOS_DE_USINA = ("api_slug", "slug", "plant_id")
+#: slug; `plant`, o da trilha de auditoria `/api/audit/list` e dos mapas de bits do ABS —
+#: avaliação 16). Nome de exibição não entra: "Pirapozinho" não é "pirapozinho" e o item sumiria.
+_CAMPOS_DE_USINA = ("api_slug", "slug", "plant_id", "plant")
 
 
 def _so_liberadas(dados: Any, liberadas: set[str]) -> Any:
@@ -792,7 +876,7 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
       é a mesma da certa.
     - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
-    if e_sim(texto) and espera_sim(user.id):
+    if responde_sim(user.id, texto):
         p = PENDENTES[user.id]
         if monotonic() > p.expira:
             PENDENTES.pop(user.id, None)
@@ -800,9 +884,7 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
         if _antes_do_resumo(p, chegou, mandada_em):
             return ANTES_DO_RESUMO_SIM.format(limite=_limite(p))
         PENDENTES.pop(user.id, None)                       # uma vez só, aconteça o que acontecer
-        if p.parte not in user.bot_ativo:
-            return PARTE_DESLIGADA
-        return await p.executar(db, user, telefone)
+        return await _rodar(p, db, user, telefone)
     # `tentativa` vem de quem chama, decidida ANTES de desarmar: depois, a ação do meuPlano já não
     # está esperando e o número da conversa viraria tentativa de senha.
     if not (e_tentativa(user, texto) if tentativa is None else tentativa):
@@ -823,9 +905,7 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
             return ANTES_DO_RESUMO.format(limite=_limite(pendente))
         PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
         _ERROS.pop(user.id, None)
-        if pendente.parte not in user.bot_ativo:
-            return PARTE_DESLIGADA
-        return await pendente.executar(db, user, telefone)
+        return await _rodar(pendente, db, user, telefone)
     total = _contar_falhas(user.id, 1)
     if total >= TENTATIVAS:
         return (f"Senha errada {TENTATIVAS} vezes: " + ("o pedido foi descartado e " if pendente else "")

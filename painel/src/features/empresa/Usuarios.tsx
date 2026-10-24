@@ -551,9 +551,9 @@ export function UsinasDoUsuario({
       ) : (
         <div className="grid gap-4">
           <Aviso>
-            A lista é completa: o que ficar desmarcado é retirado dele. Hoje ele recebe{' '}
+            A lista é completa: o que ficar desmarcado é retirado desta pessoa. Hoje recebe{' '}
             {usuario.usinas} {usuario.usinas === 1 ? 'usina' : 'usinas'} — marque tudo o que
-            ele deve ver.
+            deve ver.
           </Aviso>
 
           {/* A herdada entra na LISTA, marcada — não só num aviso.
@@ -833,13 +833,13 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           >
             <option value="cliente">Dono de usina — entra no aplicativo</option>
             <option value="gestor_empresa">Gerente — opera a empresa com você</option>
-            <option value="tecnico">Técnico — usa o bot (helper e geração) nas usinas da empresa e conecta o próprio WhatsApp</option>
+            <option value="tecnico">Técnico — usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
           </select>
           <p className="text-xs text-fraco mt-1.5">
             {perfil === 'cliente'
-              ? 'Vê apenas as usinas que você conceder a ele.'
+              ? 'Vê apenas as usinas que você conceder.'
               : perfil === 'tecnico'
-                ? 'Entra no painel só para conectar o WhatsApp Business dele. Depois, ligue a conta dele do meuPlano em Token — é ela que diz quais tickets são dele.'
+                ? 'Entra no painel só para conectar o próprio WhatsApp Business. Depois, ligue em Token a conta desta pessoa no meuPlano — é ela que diz de quem é cada ticket.'
                 : 'Vê e opera tudo desta empresa, como você.'}
           </p>
         </div>

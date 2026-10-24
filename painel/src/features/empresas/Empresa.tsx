@@ -347,7 +347,7 @@ function NovoUsuario({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
             aria-label="Papel na empresa"
           >
             <option value="gestor_empresa">Gerente — opera a empresa no oem-gs</option>
-            <option value="tecnico">Técnico — usa o bot (helper e geração) nas usinas da empresa e conecta o próprio WhatsApp</option>
+            <option value="tecnico">Técnico — usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
             <option value="cliente">Dono de usina — entra no aplicativo</option>
           </select>
         </div>

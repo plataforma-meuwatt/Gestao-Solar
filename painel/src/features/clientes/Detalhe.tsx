@@ -282,7 +282,7 @@ function ContaNoProduto({
         <p className="text-sm font-semibold text-forte">{nome}</p>
         {temToken ? (
           <Selo tom={vinculo!.estado === 'falhou' ? 'parado' : 'ok'}>
-            {vinculo!.estado === 'falhou' ? 'token dele com problema' : 'tem o token dele'}
+            {vinculo!.estado === 'falhou' ? 'token próprio com problema' : 'tem token próprio'}
           </Selo>
         ) : (
           <Selo tom="sem-dados">sem token próprio</Selo>
@@ -456,7 +456,7 @@ function ModalDados({
         {erro ? <Erro>{erro}</Erro> : null}
         <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} required autoFocus />
         <p className="text-xs text-fraco">
-          A empresa dele se muda em Usuários → Empresas (uma pessoa pode estar em mais de uma).
+          A empresa se muda em Usuários → Empresas (uma pessoa pode estar em mais de uma).
           E-mail e celular, o gerente da empresa edita no oem-gs — ligados ao meuPlano, valem
           nos dois.
         </p>

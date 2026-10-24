@@ -1769,9 +1769,10 @@ async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_loc
     assert bot_local.enviados[-1].endswith(h.ACAO_CANCELADA_SIM) and dono.id not in h.PENDENTES
     assert falso.aplicadas == ["criar_ordem_servico"]
     assert not any("senha" in (m or "").lower() for m in bot_local.enviados)
-    for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍", "Sim, crie a OS 1639",
+    for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍",
                 "Confirmar", "pode confirmar", "Aprovado", "De acordo", "tá certo", "Pode lançar", "Sim, pode abrir"):
         assert h.e_sim(sim), sim
+    assert h.e_sim("Sim, crie a OS 1639", "Abrir a OS 1639")    # o número, só o do resumo (avaliação 16)
     for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", "",
                   "de jeito nenhum", "tá errado"):
         assert not h.e_sim(outra), outra
@@ -2169,3 +2170,279 @@ async def test_o_toque_depois_do_deploy_e_o_nao_vencido_dizem_o_que_houve(db, bo
     h.PENDENTES[dono.id].expira = monotonic() - 1        # venceu
     await assistente.atender(_toque(dono, 4, sim=False))
     assert bot_local.enviados[-1].startswith("A ação esperava a sua resposta até as") and dono.id not in h.PENDENTES
+
+
+# ── avaliação 16 (24/10/2026): a correção de antes do resumo, o sim com outro número, o resultado que
+#    sempre chega, o toque repetido, o passo cancelado, a IA que divide o pedido, a trilha do helper ──
+
+
+async def test_correcao_mandada_antes_do_resumo_derruba_a_acao(db, bot_local, helper_com_get, monkeypatch):
+    """"desliga o inversor 13" e, com a IA ainda pensando, "não, espera! é o 12": a correção não
+    derrubava a ação (toda mensagem de antes do resumo era poupada), e a senha seguinte desligava o 13.
+    Só a CIÊNCIA ("valeu", "ok, aguardo") mandada antes do resumo é poupada."""
+    import asyncio as aio
+
+    from app.services import assistente_helper as h
+
+    pensando, chamou = aio.Event(), aio.Event()
+    _ia_que_desliga(monkeypatch, pensando, chamou)
+    dono = _dono_com_usina(db)
+    pedido = aio.create_task(assistente.atender(_ev(dono, 1, "desliga o inversor 13")))
+    await chamou.wait()
+    correcao = aio.create_task(assistente.atender(_ev(dono, 2, "não, espera! é o inversor 12, não o 13")))
+    for _ in range(3):
+        await aio.sleep(0)                                 # a correção entra na fila do número
+    pensando.set()
+    await aio.gather(pedido, correcao)
+    assert "Ação esperando a sua senha" in bot_local.enviados[0]
+    assert dono.id not in h.PENDENTES and bot_local.enviados[1].endswith(h.ACAO_CANCELADA)
+    await assistente.atender(_ev(dono, 3, "482913"))
+    assert helper_com_get.confirmadas == [] and bot_local.enviados[-1] == h.NADA_ESPERANDO
+    for ciencia in ("valeu", "Obrigado!", "ok, aguardo", "Fico no aguardo", "👍", "valeuuu", "muito obrigada"):
+        assert h.so_ciencia(ciencia), ciencia
+    for outra in ("cancela", "não", "não, é o 12", "ok?", "Ok, para tudo", "", "valeu, cancela", "ok 1638"):
+        assert not h.so_ciencia(outra), outra
+
+
+async def test_cancela_mandado_enquanto_o_bot_busca_o_proximo_passo_derruba_o_passo(db, bot_local, monkeypatch):
+    """Sim no 1º passo; enquanto o bot busca o 2º no meuPlano, a pessoa manda "cancela": o 2º passo
+    aparecia com os botões e continuava armado (o "cancela" ia à IA como conversa)."""
+    import asyncio
+
+    from app.services import assistente_helper as h
+
+    ceder = asyncio.sleep
+    segura = asyncio.Event()
+    falso = _MeuPlanoQueDemora(segura)
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    monkeypatch.setattr(assistente.asyncio, "sleep", lambda s: ceder(0))
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    sim = asyncio.create_task(assistente.atender(_toque(dono, 2)))
+    for _ in range(50):                                   # o ✅ saiu; o bot espera o meuPlano
+        await ceder(0)
+        if any((m or "").startswith("✅") for m in bot_local.enviados):
+            break
+    cancela = asyncio.create_task(assistente.atender(_ev(dono, 3, "cancela")))
+    for _ in range(5):
+        await ceder(0)
+    segura.set()
+    await sim
+    await cancela
+    assert "Fechar a OS 1638" in bot_local.enviados[-2] and dono.id not in h.PENDENTES
+    assert bot_local.enviados[-1].startswith(h.CANCELADO_PASSO) and "OS 1843" in bot_local.enviados[-1]
+    assert falso.aplicadas == ["criar_ordem_servico"]
+
+
+async def test_o_sim_com_outro_numero_nao_confirma_a_acao_de_agora(db, bot_local, monkeypatch):
+    """O resumo diz "Fechar a OS 1638" e a pessoa responde "Pode fechar a 1640": qualquer número
+    valia como palavra neutra, e a 1638 era fechada. Número fora do resumo não confirma."""
+    from app.services import assistente_helper as h
+
+    for frase in ("Pode fechar a 1640", "Faz a 1639 e a 1640", "Sim, a 1640", "Ok, pode abrir a OS 1700"):
+        assert not h.e_sim(frase, "Fechar a OS 1638"), frase
+    assert h.e_sim("Pode fechar a 1638", "Fechar a OS 1638") and h.e_sim("Sim, a OS 1638", "Fechar a OS 1638")
+    falso, vistos = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")
+    assistente._proposta_do_meuplano(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
+                                     {"action": "fechar_os", "args": {"os_id": 1638},
+                                      "preview": {"summary": "Fechar a OS 1638"}})
+    h.mostrada(dono.id)
+    await assistente.atender(_ev(dono, 1, "Pode fechar a 1640"))
+    assert falso.aplicadas == [] and vistos[-1] == "Pode fechar a 1640"     # foi à IA, como pedido novo
+    assert bot_local.enviados[-1].endswith(h.ACAO_CANCELADA_SIM) and dono.id not in h.PENDENTES
+
+
+async def test_os_sins_comuns_confirmam_e_palavra_de_parar_nunca(db, bot_local, monkeypatch):
+    """"Ótimo", "Sim, está correto", "Opa, pode", "Valeu, pode fazer", "Simm" e "Sim, pode criar a OS de
+    Ibitinga" cancelavam a ação. Palavra do resumo conta como neutra — menos a de parar, que nunca
+    confirma, nem quando está no resumo ("Mover a OS 1638 PARA concluída")."""
+    from app.services import assistente_helper as h
+
+    ibitinga = "Criar OS em UFV Ibitinga com 1 tarefa(s)"
+    for sim in ("Ótimo", "Sim, está correto", "Opa, pode", "Valeu, pode fazer", "Simm", "Siiim, pode",
+                "Sim, pode criar a OS de Ibitinga"):
+        assert h.e_sim(sim, ibitinga), sim
+    for nao in ("Valeu", "Ok, nããão", "Sim, mas só a 1638", "Sim, pode criar a OS de Pereiras"):
+        assert not h.e_sim(nao, ibitinga), nao
+    for nao, acao in (("Ok, para tudo!", "Mover a OS 1638 para CONCLUÍDA"), ("Sim, sem a tarefa", "Criar OS sem tarefa"),
+                      ("Pode, só a 1638", "Fechar só a OS 1638 e a 1640")):
+        assert not h.e_sim(nao, acao), nao
+    for lista in (h._AFIRMA, h._ANTES, h._NEUTRAS, h._CIENCIA):
+        assert lista.isdisjoint(h._PARAR), lista & h._PARAR
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    await assistente.atender(_ev(dono, 2, "Sim, pode criar a OS de Ibitinga"))
+    assert falso.aplicadas == ["criar_ordem_servico"]
+
+
+class _MeuPlanoQueLe:
+    """O meuPlano que propõe pelo que LÊ: fechar a 1638 só se a última mensagem falar dela."""
+
+    def __init__(self):
+        self.aplicadas, self.conversas = [], []
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        return len(self.conversas)
+
+    async def assistente_run(self, token, run_id):
+        if "1638" in self.conversas[run_id - 1][-1]["content"] and "fechar_os" not in self.aplicadas:
+            return {"status": "DONE", "type": "proposal", "action": "fechar_os", "args": {"os_id": 1638},
+                    "preview": {"summary": "Fechar a OS 1638", "lines": [], "warnings": []}}
+        if self.aplicadas:
+            return {"status": "DONE", "type": "message", "text": "Pronto."}
+        return {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"usina_id": 37},
+                "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
+
+    async def assistente_aplicar(self, token, acao, args):
+        self.aplicadas.append(acao)
+        return {"ok": True, "data": {"os_id": 1843 if acao == "criar_ordem_servico" else 1638}}
+
+
+async def test_a_ia_que_divide_o_pedido_ouve_sim_e_o_resto_vai_ao_meuplano(db, bot_local, monkeypatch):
+    """A IA dividiu o pedido em duas chamadas: a 2ª ouvia "esperando a SENHA" (a ação do meuPlano pede
+    Sim), e depois do Sim o meuPlano não sabia do resto — respondia "Pronto." e a 1638 sumia calada."""
+    import json as _json
+
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoQueLe(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            vistos.extend(m["content"] for m in msgs if m["role"] == "tool")
+            return {"content": "Vou criar a OS."}
+        return {"content": "", "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "manutencao", "arguments": _json.dumps(
+                {"pergunta": "Crie uma OS de roçagem em Ibitinga com o Michel"})}},
+            {"id": "b", "type": "function", "function": {"name": "manutencao", "arguments": _json.dumps(
+                {"pergunta": "Mova a OS 1638 para concluída"})}}]}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    assert any("esperando o Sim" in v for v in vistos) and not any("esperando a senha" in v for v in vistos)
+    await assistente.atender(_toque(dono, 2))
+    assert falso.aplicadas == ["criar_ordem_servico"] and "Fechar a OS 1638" in bot_local.enviados[-1]
+    assert PEDIDO_DOIS_PASSOS in falso.conversas[-1][-1]["content"]     # o pedido da pessoa foi junto
+    await assistente.atender(_toque(dono, 3))
+    assert falso.aplicadas == ["criar_ordem_servico", "fechar_os"] and dono.id not in h.PENDENTES
+
+
+async def test_falha_ao_gravar_a_conversa_nao_engole_o_resultado_da_acao(db, bot_local, monkeypatch):
+    """O Sim cria a OS no meuPlano e a gravação da conversa cai logo depois (pooler cheio): a pessoa
+    recebia "Tente de novo em instantes" e não o ✅ — e repetir criaria a OS em dobro."""
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    commit, cair = db.commit, []
+
+    def _commit():
+        if cair:
+            cair.clear()
+            raise RuntimeError("server closed the connection unexpectedly")
+        return commit()
+
+    aplicar = falso.assistente_aplicar
+
+    async def _aplicar(token, acao, args):
+        feito = await aplicar(token, acao, args)
+        cair.append(1)                                    # a próxima ida ao banco cai
+        return feito
+
+    monkeypatch.setattr(falso, "assistente_aplicar", _aplicar)
+    monkeypatch.setattr(db, "commit", _commit)
+    await assistente.atender(_toque(dono, 2))
+    assert falso.aplicadas == ["criar_ordem_servico"]
+    assert any((m or "").startswith("✅ Feito no meuPlano: Criar OS") for m in bot_local.enviados)
+    assert not any("Tente de novo" in (m or "") for m in bot_local.enviados)
+    assert "Fechar a OS 1638" in bot_local.enviados[-1]          # e o pedido segue para o próximo passo
+
+
+async def test_o_resultado_que_nao_saiu_vai_de_novo_e_nunca_tente_de_novo(db, bot_local, monkeypatch):
+    """Depois de a ação rodar, um erro no turno (o gateway caiu ao mandar o ✅) mandava "Tente de novo"
+    — um convite a criar a OS em dobro. Agora vai o resultado da ação."""
+    from app.clients.whatsapp import GatewayIndisponivel
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    enviar, caiu = assistente.whatsapp.enviar_conteudo, []
+
+    async def _enviar(**k):
+        if (k.get("texto") or "").startswith("✅") and not caiu:
+            caiu.append(1)
+            raise GatewayIndisponivel("Não foi possível falar com o gateway de WhatsApp: tempo esgotado")
+        return await enviar(**k)
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    await assistente.atender(_toque(dono, 2))
+    assert falso.aplicadas == ["criar_ordem_servico"] and caiu
+    assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Criar OS")
+    assert not any("Tente de novo" in (m or "") for m in bot_local.enviados)
+
+
+async def test_o_toque_de_novo_no_sim_de_uma_acao_feita_diz_que_ja_foi(db, bot_local, monkeypatch):
+    """Toque duplo (ou um toque minutos depois) no Sim de um resumo JÁ executado ouvia "Nada foi feito
+    — se ainda quiser, peça de novo", logo abaixo do ✅ da mesma ação."""
+    import asyncio
+
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    toque = _toque(dono, 2)
+    await asyncio.gather(assistente.atender(toque), assistente.atender({**toque, "id": 3}))
+    ja = bot_local.enviados[-1]
+    assert ja.startswith("Essa ação já foi confirmada") and "✅ Feito no meuPlano: Criar OS" in ja and "OS 1843" in ja
+    assert "Nada foi feito" not in ja and falso.aplicadas == ["criar_ordem_servico"]
+    await assistente.atender({**toque, "id": 4, "texto": "Não", "botao": toque["botao"].replace("sim:", "nao:")})
+    assert bot_local.enviados[-1] == ja and falso.aplicadas == ["criar_ordem_servico"]
+    assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1638"     # o passo seguinte continua esperando
+
+
+async def test_nao_no_segundo_passo_diz_o_que_o_primeiro_ja_fez(db, bot_local, monkeypatch):
+    """Sim no 1º passo (a OS 1843 nasce), Não no 2º: "Cancelado… Nada foi feito" escondia a OS 1843."""
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    await assistente.atender(_toque(dono, 2))
+    await assistente.atender(_toque(dono, 3, sim=False))
+    resposta = bot_local.enviados[-1]
+    assert resposta.startswith(h.CANCELADO_PASSO) and "Nada foi feito" not in resposta
+    assert (f"Do seu pedido «{PEDIDO_DOIS_PASSOS}», antes disso já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) "
+            "(OS 1843, PROGRAMADA)") in resposta
+    assert falso.aplicadas == ["criar_ordem_servico"] and dono.id not in h.PENDENTES
+
+
+async def test_a_trilha_de_auditoria_do_helper_so_traz_as_usinas_liberadas(db, helper_com_get, monkeypatch):
+    """`GET /api/audit/list` diz a usina em `plant`, campo que o recorte não olhava: os eventos de usina
+    NÃO liberada passavam inteiros (com e-mail e IP de quem fez)."""
+    from app.services import assistente_helper as h
+
+    eventos = [{"id": 1, "plant": "pirapozinho", "email": "a@x.com"}, {"id": 2, "plant": "de-outro", "email": "b@y.com"},
+               {"id": 3, "plant": None, "action": "login"}]
+    chamar = helper_com_get.chamar
+
+    async def _chamar(rota, corpo, origem, metodo="POST"):
+        if rota.startswith("/api/audit/list"):
+            return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": {"ok": True, "events": eventos}}
+        return await chamar(rota, corpo, origem, metodo)
+
+    monkeypatch.setattr(helper_com_get, "chamar", _chamar)
+    dono = _dono_com_usina(db)
+    r = await h.usina_helper(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
+                             {"rota": "/api/audit/list?limit=50", "metodo": "GET"})
+    assert [e["id"] for e in r["resposta"]["events"]] == [1, 3]

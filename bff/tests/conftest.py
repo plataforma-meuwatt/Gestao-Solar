@@ -11,6 +11,11 @@ import os
 # Em 10/2026 cada rodada da suíte deixava um "oi" do +5516999998888 no Log do bot. Banco
 # vazio em memória: o que escapar do `db` abaixo quebra o teste, em vez de gravar em produção.
 os.environ["DATABASE_URL"] = "sqlite://"
+# A chave de cifra também é DA SUÍTE, gerada a cada rodada: com a do `.env` (a de produção), três
+# testes do bot só passavam nesta máquina — e o teste não tem por que tocar segredo de produção.
+from cryptography.fernet import Fernet  # noqa: E402
+
+os.environ["GS_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -42,7 +47,8 @@ def _memoria_do_bot_limpa():
     from app.services import assistente, assistente_geracao, assistente_helper
 
     for guardado in (assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
-                     assistente_helper._CONFERENCIAS, assistente_geracao._USINAS_MW, assistente._ATENDIDAS,
+                     assistente_helper._CONFERENCIAS, assistente_helper._CONFIRMADAS,
+                     assistente_geracao._USINAS_MW, assistente._ATENDIDAS,
                      # a trava por número presa ao laço de eventos do teste anterior estoura no seguinte
                      assistente._TRAVAS):
         guardado.clear()

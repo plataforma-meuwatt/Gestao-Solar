@@ -842,10 +842,13 @@ Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação (SIM) 
 PDF assinado?") continua pedindo o SIM — na dúvida, é pedido (`_pede_assinatura`). Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
 trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do token. O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
-nomeia a usina é filtrada por ele. Qualquer outra
+nomeia a usina é filtrada por ele (`_CAMPOS_DE_USINA`: `api_slug`, `slug`, `plant_id` e `plant` —
+o da trilha `/api/audit/list`, que passava inteira; avaliação 16). Qualquer outra
 mensagem DESARMA a ação: "não", "cancela", "não quero" SOZINHOS respondem "Cancelado" pelo
-sistema; "Não, o técnico é o Diogo" é correção — a ação cai e a frase vai à IA (`so_cancela`;
-avaliação 12: a correção se perdia). UMA ação por mensagem,
+sistema — no passo 2 de um pedido, dizendo o que os passos de antes JÁ fizeram (`_o_que_ficou`;
+"Nada foi feito" escondia a OS 1843, avaliação 16); "Não, o técnico é o Diogo" é correção — a
+ação cai e a frase vai à IA (`so_cancela`; avaliação 12: a correção se perdia). UMA ação por
+mensagem (a 2ª chamada ouve "esperando o Sim" na do meuPlano — "a senha" só na do helper),
 e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
@@ -860,18 +863,33 @@ toque num resumo antigo — o WhatsApp mantém os botões — recebe "Esse botã
 — nada foi feito" e não mexe na ação de agora; sem ação esperando (venceu, ou o deploy apagou a
 memória), "Essa confirmação não vale mais…"; e o Não de um resumo vencido ouve que venceu, como o
 Sim (`helper.resposta_ao_botao`; o gateway guarda o id em `wa_mensagens.botao`, migração
-`e2b4d6f8a0c1`). Mensagem que saiu do celular ANTES de o resumo chegar (o "valeu" mandado enquanto
-o bot buscava o próximo passo) não derruba a ação (`helper.mandada_antes_do_resumo`). Confirma o toque, "sim" ou uma afirmativa curta
-("Sim, pode criar", "Pode sim", "De acordo", "tá certo", "Tudo certo", "👍", "👍🏽") — pergunta
-nunca confirma, "Sim, mas troque o técnico" é correção, e palavra de PARAR nunca entra na lista
-fechada de neutras ("Ok, para tudo!" executava — avaliação 14) (`e_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
+`e2b4d6f8a0c1`); o toque de novo num resumo JÁ confirmado ouve "Essa ação já foi confirmada e não
+roda de novo. O que houve: …" (`_CONFIRMADAS`; avaliação 16: ouvia "Nada foi feito — peça de
+novo" logo abaixo do ✅). Só a mensagem de CIÊNCIA ("valeu", "obrigado", "ok, aguardo", 👍 — lista
+fechada `_CIENCIA`) que saiu do celular ANTES de o resumo chegar não derruba a ação
+(`helper.mandada_antes_do_resumo`); "cancela", "não" e a correção ("não, é o 12") derrubam como
+qualquer mensagem (avaliação 16: a senha seguinte desligava o 13). Confirma o toque, "sim" ou uma afirmativa curta
+("Sim, pode criar", "Pode sim", "De acordo", "tá certo", "Tudo certo", "Ótimo", "Opa, pode",
+"Valeu, pode fazer", "Simm", "👍", "👍🏽") — pergunta nunca confirma, "Sim, mas troque o técnico" é
+correção. Depois da afirmativa, só palavra neutra ou do RESUMO ("Sim, pode criar a OS de
+Ibitinga"), e NÚMERO só o do resumo: "Pode fechar a 1640" não confirma "Fechar a OS 1638"
+(avaliação 16). Palavra de parar, negar, esperar ou restringir (`_PARAR`: "para", "não", "mas",
+"espera", "só", "sem"…) nunca confirma, nem quando está no resumo ("Mover a OS 1638 PARA
+concluída"), e nunca entra nas listas de neutras e de ciência — há teste ("Ok, para tudo!"
+executava — avaliação 14) (`e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
 UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —
 a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
-passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM), com o
-"digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). A proposta guarda o
+passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
+avaliação 16), com o
+"digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). **O resultado de
+uma ação confirmada sempre chega:** falhar ao gravar a conversa não derruba o turno (`_guardar`), e
+erro depois de a ação rodar nunca vira "Tente de novo" (repetir criaria a OS em dobro) — vai o
+desfecho dela, ou "PODE ter sido feita — confira" se a execução estourou no meio
+(`Pendente.desfecho`, avaliação 16). A proposta guarda o
 pedido nas palavras da PESSOA e o que dele já foi feito (`Pendente.pedido`/`feitos`): passo que falha
 diz "Do seu pedido «…», antes disso já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou
 ao meuPlano —, e próximo passo que não vem (erro ou demora de lá) vira "⚠️ Não consegui pedir ao
@@ -904,7 +922,8 @@ entregas da Meta paradas há mais de 2 min e mensagens que o BFF não recebeu �
 configuração estava toda verde e o bot surdo havia um dia. Mensagem com mais de 2 h fica no log
 como `atrasada`, sem resposta. ⛔ **A suíte do BFF não pode abrir o `.env`:** ele aponta para a
 produção, e o `conftest.py` troca o `DATABASE_URL` antes de importar o app (um teste deixava
-um "oi" falso no Log do bot a cada rodada). Responde, manda PDF e gráfico
+um "oi" falso no Log do bot a cada rodada) e gera a `GS_ENCRYPTION_KEY` da suíte (três testes do
+bot só passavam com a de produção — avaliação 16). Responde, manda PDF e gráfico
 pelo gateway (`/interno/conteudo`, `/interno/digitando`) — **pela rede interna do Docker**
 (`WHATSAPP_GATEWAY_URL=http://gestaosolar-whatsapp:8120`; e o gateway chama a API em
 `BFF_URL=http://gestaosolar-api:8100`), por apelido fixo de rede no Coolify
