@@ -377,10 +377,15 @@ async def projeto(ctx: Contexto, a: dict) -> dict:
 
 
 async def paradas(ctx: Contexto, a: dict) -> dict:
+    """As paradas pela MESMA régua da tela de Paradas (`paradas.ler_do_detector`): só a parada
+    relevante conta, perda sem conta feita é nula, período não analisado é "sem dados" — o bot e
+    o portal davam números diferentes para o mesmo mês (avaliação 13)."""
+    from app.api.v1.paradas import SEM_CONTA, ParadasOut, ler_do_detector
+
     u = _usina(ctx, a.get("usina"))
     ini, fim = _periodo(a.get("inicio"), a.get("fim"))
-    q = await ctx.mw.paradas_detector(u["id"], f"{ini.isoformat()}T00:00:00-03:00", f"{fim.isoformat()}T23:59:59-03:00")
-    linhas = q.get("rows") or []
+    saida = ParadasOut(recorte="periodo", inicio=ini.isoformat(), fim=fim.isoformat())
+    linhas = await ler_do_detector(ctx.mw, u["id"], saida)
     abertas = [x for x in linhas if not x.get("resolved_at")]
 
     def conta(campo, rot=None):
@@ -394,17 +399,19 @@ async def paradas(ctx: Contexto, a: dict) -> dict:
         return {"inversor": x.get("slot_label"), "skid": x.get("transformer_name"), "inicio": x.get("stopped_at"),
                 "fim": x.get("resolved_at"), "minutos": x.get("off_minutes"), "causa": _CAUSA.get(x.get("cause"), x.get("cause")),
                 "situacao": _RESOLUCAO.get(x.get("resolution_reason"), x.get("resolution_reason")),
-                "relevancia": x.get("materiality"), "perda_kwh": _r(x.get("shadow_loss_kwh"), 2)}
+                "perda_kwh": None if x.get("loss_method") in SEM_CONTA else _r(x.get("shadow_loss_kwh"), 2)}
 
-    perda = [x.get("shadow_loss_kwh") for x in linhas if x.get("shadow_loss_kwh") is not None]
-    return {"usina": u["nome"], "inicio": ini.isoformat(), "fim": fim.isoformat(), "total": len(linhas),
-            "relevantes": sum(x.get("materiality") == "material" for x in linhas), "em_aberto": len(abertas),
-            "fechadas": len(linhas) - len(abertas), "perda_total_kwh": _r(sum(perda), 1) if perda else None,
-            "minutos_parados_total": sum(x.get("off_minutes") or 0 for x in linhas),
+    return {"usina": u["nome"], "inicio": saida.inicio, "fim": saida.fim, "total": saida.total,
+            "em_aberto": saida.em_aberto if saida.total is not None else None,
+            "fechadas": saida.total - saida.em_aberto if saida.total is not None else None,
+            "perda_total_kwh": saida.perda_kwh, "minutos_parados_total": saida.tempo_parado_min,
             "por_causa": conta("cause", _CAUSA), "por_inversor": conta("slot_label"),
             "abertas": [item(x) for x in abertas][:20],
             "maiores_perdas": [item(x) for x in sorted(linhas, key=lambda x: -(x.get("shadow_loss_kwh") or 0))[:10]],
-            "nota": "'material' = parada relevante; 'immaterial'/'blip' = piscadas curtas."}
+            "aviso": saida.aviso,
+            "nota": ("Só paradas relevantes, como na tela de Paradas (piscadas curtas e buracos de leitura ficam de "
+                     "fora). Total nulo = o detector não analisou o período (não é zero). Perda nula = em alguma "
+                     "parada o detector não fez a conta (sem par para comparar) — diga isso, não some zero.")}
 
 
 async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
@@ -520,8 +527,9 @@ FERRAMENTAS = {
         "GHI de satélite sempre) e a estação agora. Vento/chuva/umidade não existem.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "projeto": (projeto, _f("projeto", "Real × projeto PVsyst por mês (energia, PR e irradiação de projeto, "
         "disponibilidade, perdas) — 'gerou conforme o PVsyst? por que não?'.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
-    "paradas": (paradas, _f("paradas", "Paradas de inversor no período: total, relevantes, em aberto, fechadas, por "
-        "causa, por inversor, maiores perdas.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
+    "paradas": (paradas, _f("paradas", "Paradas de inversor no período, pela mesma régua da tela de Paradas: total, "
+        "em aberto, fechadas, tempo parado, perda, por causa, por inversor, maiores perdas.",
+        {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "relatorio_pdf": (relatorio_pdf, _f("relatorio_pdf", "Manda como ARQUIVO o PDF do relatório MENSAL do monitoramento "
         "(geracao | paradas | resumo executivo).", {"usina": _USINA, "mes": _MES, "tipo": {"type": "string",
         "enum": ["geracao", "paradas", "resumo"]}}, ["mes"])),

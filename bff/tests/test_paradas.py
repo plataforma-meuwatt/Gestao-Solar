@@ -445,3 +445,27 @@ def test_o_coletor_antigo_saiu_do_cliente_e_da_sonda():
 
     assert not hasattr(MeuWattClient, "paradas")
     assert not [r for r in sonda.MEUWATT if "breakdowns/range" in r.caminho]
+
+
+async def test_o_bot_conta_as_paradas_pela_mesma_regua_da_tela(db, dono):
+    """O bot do WhatsApp contava toda linha do detector — piscada curta, buraco de leitura — e somava
+    o 0,0 do `no_peers` como perda zero: o mesmo mês saía com um número no portal e outro no bot. Agora
+    os dois leem `paradas.ler_do_detector`."""
+    from app.services import assistente_geracao as ger
+
+    linhas = [
+        _linha(1, "2026-08-03T10:00:00-03:00", "2026-08-03T12:00:00-03:00", off=120, perda=50.0),
+        _linha(2, "2026-08-04T10:00:00-03:00", None, off=30, perda=0.0, metodo="no_peers"),
+        _linha(3, "2026-08-05T10:00:00-03:00", "2026-08-05T10:05:00-03:00", off=5, perda=0.0,
+               materialidade="immaterial"),
+        _linha(4, "2026-08-06T10:00:00-03:00", "2026-08-06T11:00:00-03:00", off=60, materialidade="data_gap"),
+    ]
+    ctx = ger.Contexto(db=db, user=dono, telefone="+5516999998888", mw=ClienteFalso(linhas),
+                       usinas={"porto-ferreira": {"id": 9378, "nome": "Porto Ferreira", "slug": "porto-ferreira"}})
+    r = await ger.paradas(ctx, {"usina": "Porto Ferreira", "inicio": "2026-08-01", "fim": "2026-08-31"})
+    assert (r["total"], r["em_aberto"], r["fechadas"], r["minutos_parados_total"], r["perda_total_kwh"]) == (
+        2, 1, 1, 150.0, None)
+    assert [x["perda_kwh"] for x in r["maiores_perdas"]] == [50.0, None] and r["aviso"] is None
+    # Antes da rodada do detector: "não analisado", não "nenhuma parada".
+    r = await ger.paradas(ctx, {"usina": "Porto Ferreira", "inicio": "2026-01-05", "fim": "2026-01-20"})
+    assert r["total"] is None and r["em_aberto"] is None and "não analisou" in r["aviso"]

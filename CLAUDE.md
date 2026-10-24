@@ -740,7 +740,9 @@ tela de Paradas de lá), desde 24/10/2026 — `bff/app/api/v1/paradas.py`. O col
 (`/plants/{slug}/breakdowns/range`, que respondia 500 em todas as usinas) saiu do cliente e
 da sonda; regra da casa: não volta. O detector pede o id NUMÉRICO da usina (vem de
 `GET /plants/{slug}`); só a linha `material` é parada; e a `run` da resposta diz que período
-ele analisou — "não analisado" sai nulo, nunca "nenhuma parada".
+ele analisou — "não analisado" sai nulo, nunca "nenhuma parada". A régua é UMA
+(`paradas.ler_do_detector`): a tela e o bot do WhatsApp (`assistente_geracao.paradas`) contam a
+mesma parada, a mesma perda (nula onde o detector não fez a conta) e o mesmo "não analisado".
 
 ---
 

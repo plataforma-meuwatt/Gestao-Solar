@@ -251,19 +251,33 @@ async def paradas_da_usina(
 
     try:
         plant_id = await _id_no_meuwatt(cliente, link.mw_plant_slug)
+    except Exception as exc:  # noqa: BLE001
+        saida.aviso = f"Falha ao ler o detector de paradas do monitoramento: {_motivo(exc)}."
+        return saida
+    await ler_do_detector(cliente, plant_id, saida)
+    return saida
+
+
+async def ler_do_detector(cliente, plant_id: int, saida: ParadasOut) -> list[dict[str, Any]]:
+    """As paradas do período de `saida` (`inicio`/`fim`), pelo detector: preenche `saida` e
+    devolve as linhas cruas das paradas que entraram. É a régua ÚNICA — a tela de Paradas e o
+    bot do WhatsApp (`assistente_geracao.paradas`, que mostra causa e inversor) contam a mesma
+    parada, a mesma perda e o mesmo "não analisado"."""
+    inicio, fim = date.fromisoformat(saida.inicio), date.fromisoformat(saida.fim)
+    try:
         resposta = await cliente.paradas_detector(
             plant_id, _meia_noite(inicio), _meia_noite(fim + timedelta(days=1))
         )
-        paradas = [p for p in map(_de_linha, resposta["rows"]) if p]
+        pares = [(p, linha) for linha in resposta["rows"] if (p := _de_linha(linha))]
         run = resposta.get("run") or {}
         desde, ate = _instante(run.get("window_start")), _instante(run.get("window_end"))
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Falha ao ler o detector de paradas do monitoramento: {_motivo(exc)}."
-        return saida
+        return []
 
     if desde is None or ate is None or desde.date() > fim:
         saida.aviso = "O detector de paradas do monitoramento não analisou este período."
-        return saida
+        return []
 
     avisos: list[str] = []
     if desde.date() > inicio:
@@ -280,6 +294,7 @@ async def paradas_da_usina(
             "o que aconteceu depois ainda não entrou."
         )
 
-    _consolidar(saida, [p for p in paradas if _no_periodo(p, inicio, fim)], "detector")
+    dentro = [(p, linha) for p, linha in pares if _no_periodo(p, inicio, fim)]
+    _consolidar(saida, [p for p, _ in dentro], "detector")
     saida.aviso = " ".join(avisos) or None
-    return saida
+    return [linha for _, linha in dentro]
