@@ -594,8 +594,10 @@ async def test_criar_a_os_e_concluir_a_outra_vira_dois_sim_em_sequencia(db, bot_
     # A fala da IA em texto, e o resumo numa mensagem só dele, com os botões Sim / Não.
     assert bot_local.enviados[-2] == "Vou abrir a OS." and bot_local.tipos[-2] == ("text", [])
     assert "Abrir a OS" in bot_local.enviados[-1] and bot_local.tipos[-1] == ("botoes", ["Sim", "Não"])
-    # O toque no botão chega como mensagem `interactive` com o título.
-    await assistente.atender({**_ev(dono, 2, "Sim"), "tipo": "interactive"})
+    # O toque no botão chega como mensagem `interactive` com o título e o id ("sim:<código do resumo>").
+    from app.services import assistente_helper as h
+
+    await assistente.atender({**_ev(dono, 2, "Sim"), "tipo": "interactive", "botao": f"sim:{h.PENDENTES[dono.id].codigo}"})
     assert falso.aplicadas == ["criar_ordem_servico"]
     assert bot_local.enviados[-2].startswith("✅ Feito no meuPlano") and "(OS 1639" in bot_local.enviados[-2]
     assert "Mover a OS 1638 para CONCLUÍDA" in bot_local.enviados[-1]
@@ -666,11 +668,12 @@ def bot_local(db, monkeypatch):
     """O turno inteiro (`atender`) contra o banco de teste, com o gateway e a IA de mentira."""
     import types
 
-    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[], tipos=[])
+    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[], tipos=[], botoes=[])
 
     async def _enviar(**k):
         estado.enviados.append(k.get("texto"))
         estado.tipos.append((k.get("tipo"), [b["titulo"] for b in k.get("botoes") or []]))
+        estado.botoes.append([b["id"] for b in k.get("botoes") or []])
         return {"ok": True}
 
     async def _ocultar(mid, texto=None):
@@ -1599,7 +1602,9 @@ def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
     from app.services.assistente import _sem_segredos
 
     for texto in ["Senha:[senha oculta] pode executar", "a senha é [senha oculta], ok?", "pin=[número oculto] vai",
-                  "minha senha é: [senha oculta]",
+                  "minha senha é: [senha oculta]", "a senha é a mesma do login?", "o código é o mesmo de ontem",
+                  "você ainda não tem senha de atuação. Quem define isso é o gerente da O&M",
+                  "Você ainda não tem senha de atuação. Quem define é Marcos, o gerente.",
                   "Combinação de strings 12 e 13 com corrente baixa", "PIN 3 do conector MC4",
                   "senha 2 vezes errada", "código de erro 2043"]:
         assert _sem_segredos(texto) == texto
@@ -1676,7 +1681,7 @@ async def test_o_botao_nao_cancela_a_acao_do_meuplano(db, bot_local, monkeypatch
     monkeypatch.setattr(ger, "preparar", _nada)
     dono = _conta(db, "dono", "+5517997377626")
     await assistente.atender(_ev(dono, 1, "Crie a OS"))
-    await assistente.atender({**_ev(dono, 2, "Não"), "tipo": "interactive"})
+    await assistente.atender({**_ev(dono, 2, "Não"), "tipo": "interactive", "botao": f"nao:{h.PENDENTES[dono.id].codigo}"})
     assert bot_local.enviados[-1] == h.CANCELADO and dono.id not in h.PENDENTES and falso.aplicadas == []
 
 
@@ -1764,9 +1769,11 @@ async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_loc
     assert bot_local.enviados[-1].endswith(h.ACAO_CANCELADA_SIM) and dono.id not in h.PENDENTES
     assert falso.aplicadas == ["criar_ordem_servico"]
     assert not any("senha" in (m or "").lower() for m in bot_local.enviados)
-    for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍", "Sim, crie a OS 1639"):
+    for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍", "Sim, crie a OS 1639",
+                "Confirmar", "pode confirmar", "Aprovado", "De acordo", "tá certo", "Pode lançar", "Sim, pode abrir"):
         assert h.e_sim(sim), sim
-    for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", ""):
+    for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", "",
+                  "de jeito nenhum", "tá errado"):
         assert not h.e_sim(outra), outra
     for nao in ("Não", "não quero", "cancela", "deixa pra lá"):
         assert h.so_cancela(nao), nao
@@ -1876,3 +1883,197 @@ async def test_o_que_o_meuplano_responde_chega_em_texto_de_gente(db, monkeypatch
     assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "Sim") == (
         "❌ O meuPlano recusou: Conclua todas as tarefas antes de fechar a OS. Pendentes: 1 de 1. Nada foi feito.")
     assert assistente._o_que_nasceu({"os_id": 1638, "task_id": 8873, "sessao_id": 4131}) == " (OS 1638, tarefa 8873)"
+    # O que o resumo do meuPlano já diz não se repete (avaliação 13: "(OS 1638, tarefa 8873)" duas vezes).
+    assert assistente._o_que_nasceu({"os_id": 1638, "task_id": 8873}, "Concluir a ficha (tarefa 8873, OS 1638)") == ""
+    assert assistente._o_que_nasceu({"os_id": 1638, "status": "FECHADA"}, "Fechar a OS 1638") == " (FECHADA)"
+    assert assistente._o_que_nasceu({"os_id": 16381}, "Fechar a OS 1638") == " (OS 16381)"
+    assert assistente._o_que_nasceu({"os_id": 9, "status": "FECHADA"}, "Mover a OS 9 para FECHADA") == ""
+
+
+# ── avaliação 13 (24/10/2026): o pedido de vários passos quando um passo falha, o botão antigo ──
+
+
+PEDIDO_DOIS_PASSOS = "Crie a OS e a tarefa. A OS 1638 mova para concluída"
+
+
+class _MeuPlanoDoisPassos:
+    """1º criar a OS (nasce a 1843); 2º o próximo passo. `segundo`: "proposta" (fechar a 1638) ou
+    "erro" (o modelo de lá falhou). `falha_2`: o status do apply no 2º passo (409 = a 1638 tem tarefa
+    pendente, como no ensaio contra o meuPlano real; 500 = erro no meio)."""
+
+    def __init__(self, segundo="proposta", falha_2=None, eventos=None):
+        self.aplicadas, self.conversas, self.segundo, self.falha_2 = [], [], segundo, falha_2
+        self.eventos = eventos if eventos is not None else []
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        self.eventos.append("meuplano_chat")
+        return len(self.conversas)
+
+    async def assistente_run(self, token, run_id):
+        if run_id == 1:
+            return {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"usina_id": 37},
+                    "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
+        if self.segundo == "erro":
+            return {"status": "ERROR", "error": "O modelo não respondeu."}
+        return {"status": "DONE", "type": "proposal", "action": "fechar_os", "args": {"os_id": 1638},
+                "preview": {"summary": "Fechar a OS 1638", "lines": [], "warnings": []}}
+
+    async def assistente_aplicar(self, token, acao, args):
+        import httpx
+
+        if acao == "fechar_os" and self.falha_2:
+            req = httpx.Request("POST", "https://mp/api/v1/meuacesso/assistant/apply")
+            raise httpx.HTTPStatusError(str(self.falha_2), request=req, response=httpx.Response(
+                self.falha_2, request=req, json={"detail": "Conclua todas as tarefas antes de fechar a OS. Pendentes: 1 de 1."}))
+        self.aplicadas.append(acao)
+        return {"ok": True, "data": {"os_id": 1843, "status": "PROGRAMADA"} if acao == "criar_ordem_servico"
+                else {"os_id": 1638, "status": "FECHADA"}}
+
+
+def _toque(dono, n, sim=True):
+    """O toque no botão do resumo que está esperando: o id leva o código dele."""
+    from app.services import assistente_helper as h
+
+    return {**_ev(dono, n, "Sim" if sim else "Não"), "tipo": "interactive",
+            "botao": f"{'sim' if sim else 'nao'}:{h.PENDENTES[dono.id].codigo}"}
+
+
+async def test_falha_num_passo_seguinte_diz_o_pedido_da_pessoa_e_o_que_ja_foi_feito(db, bot_local, monkeypatch):
+    """O 2º passo ("fechar a 1638") falhou: a resposta citava como "o pedido" a instrução INTERNA que
+    o bot mandou ao meuPlano ("✅ Feito… Se o meu pedido tinha mais passos, proponha o próximo")."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    for status, comeco in ((409, "❌ O meuPlano recusou"), (500, "⚠️")):
+        from app.services import assistente_helper as h
+
+        h.PENDENTES.clear()
+        _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoDoisPassos(falha_2=status), [])
+        dono = _conta(db, f"dono{status}", f"+55179973{status:05d}")
+        await assistente.atender(_ev(dono, status * 10 + 1, PEDIDO_DOIS_PASSOS))
+        await assistente.atender(_toque(dono, status * 10 + 2))
+        assert "Fechar a OS 1638" in bot_local.enviados[-1]
+        await assistente.atender(_toque(dono, status * 10 + 3))
+        falha = bot_local.enviados[-1]
+        assert falha.startswith(comeco) and "proponha o próximo" not in falha and "Feito no meuPlano" not in falha
+        assert (f"Do seu pedido «{PEDIDO_DOIS_PASSOS}», já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) "
+                "(OS 1843, PROGRAMADA). O resto não foi feito") in falha
+        assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
+
+
+async def test_o_resto_do_pedido_que_nao_vem_e_dito(db, bot_local, monkeypatch):
+    """O meuPlano não deu o próximo passo (erro do modelo de lá, ou passou de 2 min): a pessoa
+    recebia só o "✅ Feito" da OS nova, e nada dizia que a 1638 ficou sem fazer."""
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoDoisPassos(segundo="erro"), [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    n = len(bot_local.enviados)
+    await assistente.atender(_toque(dono, 2))
+    feito, aviso = bot_local.enviados[n:]
+    assert feito.startswith("✅ Feito no meuPlano: Criar OS")
+    assert aviso == (f"⚠️ Não consegui pedir ao meuPlano o resto do seu pedido «{PEDIDO_DOIS_PASSOS}»: O modelo "
+                     "não respondeu. O resto não foi feito — confira e peça de novo o que faltar.")
+    linha = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
+    assert linha.resultado == "erro" and linha.erro == aviso and dono.id not in h.PENDENTES
+
+
+async def test_o_digitando_volta_logo_depois_do_feito(db, bot_local, monkeypatch):
+    """O próximo passo leva de 20 a 65 s no meuPlano, e o "digitando…" já tinha sido desligado: a
+    pessoa via o ✅ e nada dizia que vinha mais."""
+    eventos = []
+    _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoDoisPassos(eventos=eventos), [])
+
+    async def _digitando(wamid):
+        eventos.append("digitando")
+
+    enviar = assistente.whatsapp.enviar_conteudo
+
+    async def _enviar(**k):
+        eventos.append("envio:" + (k.get("texto") or "")[:1])
+        return await enviar(**k)
+
+    monkeypatch.setattr(assistente.whatsapp, "digitando", _digitando)
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender({**_ev(dono, 1, PEDIDO_DOIS_PASSOS), "wamid": "wamid.1"})
+    eventos.clear()
+    await assistente.atender({**_toque(dono, 2), "wamid": "wamid.2"})
+    i_feito = eventos.index("envio:✅")
+    assert eventos[i_feito + 1:i_feito + 3] == ["digitando", "meuplano_chat"]
+
+
+async def test_o_botao_de_um_resumo_antigo_nao_confirma_a_acao_de_agora(db, bot_local, monkeypatch):
+    """O botão mandava sempre "sim": o toque no Sim de um resumo antigo (a OS que a pessoa desistiu
+    de criar) confirmava a ação esperando AGORA. Agora o id leva o código do resumo."""
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    codigo = h.PENDENTES[dono.id].codigo
+    assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]   # o id que volta no toque
+    toque_a = _toque(dono, 2)                              # o Sim do resumo A, guardado
+    await assistente.atender(_toque(dono, 3, sim=False))   # desistiu de A
+    assert bot_local.enviados[-1] == h.CANCELADO
+    await assistente.atender(_ev(dono, 4, "crie: feche a 1638"))   # resumo B: fechar a OS 1638
+    for velho in (toque_a, {**_ev(dono, 5, "Sim"), "tipo": "interactive"}):   # o de A e um sem código
+        await assistente.atender(velho)
+        assert bot_local.enviados[-1] == h.BOTAO_ANTIGO and falso.aplicadas == []
+    assert dono.id in h.PENDENTES                          # a ação de agora continua esperando
+    await assistente.atender(_toque(dono, 6))
+    assert falso.aplicadas == ["fechar_os"]
+
+
+async def test_quem_tem_senha_e_responde_um_numero_a_acao_do_meuplano_nao_ouve_de_senha(db, bot_local, monkeypatch):
+    """Ação do meuPlano (confirma com Sim) e a pessoa — que TEM senha — manda um número: virava
+    tentativa de senha ("Senha não confere (1 de 5)") e contava para o bloqueio. Agora é conversa; e
+    se o número for a senha, ela some como numa frase, sem executar nada."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    for numero, a_ia_ve in (("4829137", "4829137"), ("482913", "[senha oculta]")):
+        await assistente.atender(_ev(dono, len(vistos) + 10, "crie a OS"))
+        await assistente.atender(_ev(dono, len(vistos) + 20, numero))
+        assert vistos[-1] == a_ia_ve and bot_local.enviados[-1].count(h.ACAO_CANCELADA_SIM) == 1
+        assert "Senha não confere" not in bot_local.enviados[-1] and dono.id not in h._ERROS
+    assert "ação do meuPlano se confirma com Sim" in bot_local.enviados[-1] and falso.aplicadas == []
+    assert h.e_tentativa(dono, "482913")                   # sem ação do meuPlano esperando, é tentativa
+
+
+def test_a_migracao_poe_em_erro_a_confirmacao_que_falhou(db):
+    """A linha do Sim que deixou a OS 1843 vazia ficou verde ("Respondeu"); a resposta da IA que
+    começa por ❌ não é ação e fica como está."""
+    import importlib.util
+    import types
+    from pathlib import Path
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    caminho = next(Path(__file__).parents[1].glob("alembic/versions/d0e2f4a6b8c1_*.py"))
+    spec = importlib.util.spec_from_file_location("mig_erro", caminho)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+    db.add_all([
+        RegistroBot(telefone="+5517997377626", resultado="respondeu", ferramentas="confirmacao",
+                    resposta="❌ O meuPlano recusou: Erro ao aplicar a ação. Nada foi feito.\n\nDo pedido…"),
+        RegistroBot(telefone="+5517997377626", resultado="respondeu", ferramentas="manutencao",
+                    resposta="❌ Não achei a usina."),
+        RegistroBot(telefone="+5517997377626", resultado="respondeu", ferramentas="confirmacao",
+                    resposta="✅ Feito no meuPlano: Fechar a OS 1638"),
+    ])
+    db.commit()
+    mig.op = types.SimpleNamespace(get_bind=db.connection)
+    mig.upgrade()
+    db.commit()
+    assert [(r.resultado, r.erro) for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
+        ("erro", "❌ O meuPlano recusou: Erro ao aplicar a ação. Nada foi feito."),
+        ("respondeu", None), ("respondeu", None)]

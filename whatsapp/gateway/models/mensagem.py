@@ -92,6 +92,8 @@ class Mensagem(Base):
     texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Áudio, documento, imagem: `{id, mime, nome, legenda}` (o id é o da Meta, para baixar).
     midia: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: O id do botão tocado ("sim:<código do resumo>"): de QUAL resumo veio o toque.
+    botao: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     #: Hora do evento SEGUNDO A META, não a do servidor. É ela que a janela de 24 h conta.
     ocorrida_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

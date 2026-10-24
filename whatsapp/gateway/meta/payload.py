@@ -32,6 +32,9 @@ class MensagemRecebida:
     #: Áudio, documento, imagem, vídeo: `{id, mime, nome, legenda}`. O id é o da Meta, para
     #: baixar o arquivo quando alguém precisar (o bot transcreve o áudio).
     midia: dict[str, Any] | None = None
+    #: O id do botão tocado (`interactive.button_reply.id`). O texto é o título ("Sim"); o id diz
+    #: DE QUAL resumo era o botão — o WhatsApp mantém os botões das mensagens antigas.
+    botao: str | None = None
 
 
 @dataclass
@@ -127,6 +130,12 @@ def _texto_da_mensagem(m: dict[str, Any], tipo: str) -> str | None:
     return None
 
 
+def _botao(m: dict[str, Any], tipo: str) -> str | None:
+    corpo = m.get("interactive") if tipo == "interactive" else None
+    parte = (corpo or {}).get("button_reply") if isinstance(corpo, dict) else None
+    return str(parte["id"])[:80] if isinstance(parte, dict) and parte.get("id") else None
+
+
 #: Os tipos que trazem um arquivo na Meta (o conteúdo não vem no corpo, só o id).
 TIPOS_COM_ARQUIVO = ("audio", "voice", "document", "image", "video")
 
@@ -218,6 +227,7 @@ def ler(corpo: dict[str, Any]) -> Leitura:
                         nome_perfil=perfis.get(wa_id),
                         phone_number_id=nosso or None,
                         midia=_midia(m, tipo),
+                        botao=_botao(m, tipo),
                     )
                 )
 

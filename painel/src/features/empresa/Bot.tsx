@@ -256,7 +256,7 @@ function LinhaDoBot({
   )
 }
 
-/** A senha de atuação: o bot a pede antes de qualquer ação. Só números — é digitada no
+/** A senha de atuação: o bot a pede antes de ação no equipamento (helper). Só números — é digitada no
  *  celular —, e a de login nunca serve: ela não deve ser escrita no WhatsApp. */
 function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
   const qc = useQueryClient()

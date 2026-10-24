@@ -47,6 +47,7 @@ def _corpo(m: Mensagem) -> dict:
         # Só o que diz o que é o arquivo; o id da Meta fica aqui (o BFF pede o arquivo por
         # `/interno/mensagens/{id}/midia`).
         "midia": {k: v for k, v in m.midia.items() if k != "id"} if m.midia else None,
+        "botao": m.botao,
     }
 
 

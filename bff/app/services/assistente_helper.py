@@ -13,12 +13,14 @@ Solar chama `confirmar` com `confirmado_por="pin"` (o contrato do helper: quem p
 tira a mensagem do log, do histórico e do gateway.
 
 O mesmo `propor` serve à proposta do assistente do meuPlano (criar OS, lançar o dia…):
-`assistente.manutencao` guarda o `/assistant/apply` de lá, e a senha é uma só.
+`assistente.manutencao` guarda o `/assistant/apply` de lá — e ela se confirma com SIM (os botões
+Sim / Não), não com a senha: senha é para equipamento (dono, 24/10/2026).
 """
 from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -157,6 +159,13 @@ class Pendente:
     #: A conversa com o meuPlano até esta proposta: depois de feita, o bot segue para o próximo
     #: passo do MESMO pedido (lá é uma proposta por vez — "crie a OS e conclua a 1638").
     conversa: list[dict] | None = None
+    #: O pedido nas palavras da pessoa e o que dele já foi feito nesta sequência: se um passo
+    #: falha, a resposta diz o que ficou — e não a instrução interna do bot (avaliação 13).
+    pedido: str = ""
+    feitos: tuple[str, ...] = ()
+    #: O id dos botões Sim / Não DESTE resumo: o toque no Sim de um resumo antigo não confirma a
+    #: ação de agora (avaliação 13 — o botão mandava sempre "sim").
+    codigo: str = field(default_factory=lambda: secrets.token_hex(4))
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -209,7 +218,7 @@ def _pode_conferir(user_id: int) -> bool:
     return True
 
 
-async def analisar(user, texto: str) -> Analise:
+async def analisar(user, texto: str, tentativa: bool = True) -> Analise:
     """A senha conferida UMA vez por mensagem, fora do laço da API (`to_thread`: o pbkdf2 leva
     ~0,45 s).
 
@@ -219,12 +228,14 @@ async def analisar(user, texto: str) -> Analise:
       seguem legíveis para a IA (avaliação 9). Frase nunca conta erro nem bloqueia.
     - Conferidos no máximo `MAX_CONFERIDOS` números distintos — primeiro os que vêm depois de
       "senha"/"pin", depois na ordem do texto —; os demais são escondidos sem conferir. Passado o
-      limite por hora, todo candidato é escondido sem conferir — o oráculo para ali."""
+      limite por hora, todo candidato é escondido sem conferir — o oráculo para ali.
+    - `tentativa=False` (o número sozinho com uma ação do meuPlano esperando o SIM — `e_tentativa`):
+      é conferido como numa frase, com o limite por hora, e nunca conta erro."""
     if user is None or not user.senha_atuacao_hash:
         return Analise()
     texto = texto or ""
     digitos = digitos_da_senha(texto)
-    if digitos is not None:
+    if digitos is not None and tentativa:
         if monotonic() < _BLOQUEIO.get(user.id, 0):
             return Analise(pura=True, bloqueada=True)
         acertou = await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash)
@@ -332,13 +343,19 @@ def nova_senha(user_id: int) -> None:
 #: A resposta afirmativa ("Sim, pode", "Pode sim", "Confirmado", "Isso mesmo", "Sim, crie a OS"):
 #: começa por uma destas e o resto é só palavra NEUTRA — "Sim, mas troque o técnico" é correção,
 #: "Pode me mandar o relatório" é outro pedido. Avaliação 12: o jeito comum de dizer sim cancelava.
-_AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmado", "confirmada", "correto", "certo", "isso",
-           "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado", "show", "bora",
-           "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga"}
+_AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confirmado", "confirmada", "correto",
+           "certo", "isso", "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado",
+           "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
+           "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo"}
+#: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "então pode").
+_ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e"}
 _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
                       "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "criar", "crie", "cria", "fechar",
                       "feche", "fecha", "concluir", "conclua", "seguir", "prosseguir", "ir", "ai", "aí", "agora",
-                      "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo"}
+                      "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo", "lançar",
+                      "lancar", "lance", "lança", "lanca", "abrir", "abra", "abre", "registrar", "registre",
+                      "registra", "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue",
+                      "pra", "para", "assim"}
 _SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗]+$")
 
 
@@ -351,6 +368,8 @@ def e_sim(texto: str) -> bool:
     if t.endswith("?"):
         return False
     palavras = re.findall(r"[a-zà-ú]+|\d+", t.lower())
+    while len(palavras) > 1 and palavras[0] in _ANTES and palavras[0] not in _AFIRMA:
+        palavras = palavras[1:]
     return (0 < len(palavras) <= 8 and palavras[0] in _AFIRMA
             and all(p in _NEUTRAS or p.isdigit() for p in palavras[1:]))
 
@@ -380,10 +399,23 @@ def cancelada(p: "Pendente | None") -> str:
 
 
 def e_tentativa(user, texto: str) -> bool:
-    """A mensagem é uma tentativa de SENHA. O número sozinho de quem NÃO tem senha, com uma ação
-    do meuPlano esperando o SIM, não é — é conversa (a UC, o protocolo que a IA pediu)."""
-    return digitos_da_senha(texto) is not None and bool(
-        getattr(user, "senha_atuacao_hash", None) or not espera_sim(user.id))
+    """A mensagem é uma tentativa de SENHA: só o número, sem ação do meuPlano esperando o SIM. Com
+    ela esperando, o número é conversa (a UC, o protocolo que a IA pediu) — tenha a pessoa senha ou
+    não: ação do meuPlano não pede senha, e o número não conta erro nem bloqueia (avaliação 13). Se
+    for a senha, some como numa frase (`analisar`, com o limite por hora)."""
+    return digitos_da_senha(texto) is not None and not espera_sim(user.id)
+
+
+#: O toque num botão de um resumo que não é o da ação esperando agora.
+BOTAO_ANTIGO = "Esse botão é de um resumo antigo — nada foi feito."
+
+
+def botao_antigo(user_id: int, botao: str | None) -> bool:
+    """O botão tocado não é do resumo da ação esperando agora ("sim:<código>"/"nao:<código>"): o
+    WhatsApp mantém os botões das mensagens antigas. Sem o código (botão de antes desta versão)
+    também — não há como saber de qual resumo veio, e o resumo antigo não confirma o de agora."""
+    p = PENDENTES.get(user_id)
+    return p is None or botao not in (f"sim:{p.codigo}", f"nao:{p.codigo}")
 
 
 def espera_sim(user_id: int) -> bool:
@@ -394,7 +426,7 @@ def espera_sim(user_id: int) -> bool:
 
 
 def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper",
-           confirmacao: str = "senha", conversa: list[dict] | None = None) -> dict:
+           confirmacao: str = "senha", conversa: list[dict] | None = None, feitos: tuple[str, ...] = ()) -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
 
     - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
@@ -412,7 +444,8 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
     if ctx.proposta is not None:
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
     p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
-                 parte, confirmacao=confirmacao, conversa=conversa)
+                 parte, confirmacao=confirmacao, conversa=conversa, pedido=getattr(ctx, "pedido", "") or "",
+                 feitos=tuple(feitos))
     PENDENTES[user.id] = ctx.proposta = p
     if confirmacao == "sim":
         return {
@@ -719,7 +752,7 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
 
 async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: Analise | None = None,
                                  esperava: bool = False, chegou: float | None = None,
-                                 mandada_em: datetime | None = None) -> str | None:
+                                 mandada_em: datetime | None = None, tentativa: bool | None = None) -> str | None:
     """A mensagem que é APENAS a senha de atuação → executa a ação esperando. `None` = segue
     para a conversa (com os candidatos já escondidos por quem chama).
 
@@ -746,7 +779,9 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
         if p.parte not in user.bot_ativo:
             return PARTE_DESLIGADA
         return await p.executar(db, user, telefone)
-    if not e_tentativa(user, texto):
+    # `tentativa` vem de quem chama, decidida ANTES de desarmar: depois, a ação do meuPlano já não
+    # está esperando e o número da conversa viraria tentativa de senha.
+    if not (e_tentativa(user, texto) if tentativa is None else tentativa):
         return CANCELADO if esperava and so_cancela(texto) else None
     analise = analise or await analisar(user, texto)
     pendente, vencida = PENDENTES.get(user.id), None

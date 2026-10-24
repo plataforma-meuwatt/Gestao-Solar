@@ -508,7 +508,7 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Abre uma conversa e consome cota do modelo lá."),
     Rota("mp.assistente_aplicar", "POST", "/api/v1/meuacesso/assistant/apply",
-         "A ação proposta pelo assistente do meuPlano, confirmada pela pessoa com a senha de atuação (WhatsApp)",
+         "A ação proposta pelo assistente do meuPlano, confirmada pela pessoa com o Sim (WhatsApp)",
          essencial=False, sonda=False,
          nao_sondada_porque="Grava no meuPlano (cria OS, lança dia…) — só roda com a confirmação da pessoa."),
     Rota("mp.transcrever", "POST", "/api/v1/meuacesso/assistant/transcribe",

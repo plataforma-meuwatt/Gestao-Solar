@@ -166,18 +166,29 @@ PRAZO_PROPOSTA_MP_S = 600
 _NUMEROS = {"os_id": "OS", "task_id": "tarefa"}
 
 
-def _o_que_nasceu(dados: Any) -> str:
+def _o_que_nasceu(dados: Any, resumo: str = "") -> str:
     """O número do que o meuPlano criou ("OS 1639, PROGRAMADA") — sem ele a pessoa não acha
-    na tela o que acabou de pedir."""
+    na tela o que acabou de pedir. O que o resumo já diz não se repete."""
     if not isinstance(dados, dict):
         return ""
-    partes = [f"{rotulo} {dados[k]}" for k, rotulo in _NUMEROS.items() if dados.get(k)]
-    if dados.get("status"):
+    partes = [f"{rotulo} {dados[k]}" for k, rotulo in _NUMEROS.items()
+              if dados.get(k) and not re.search(rf"(?<!\d){dados[k]}(?!\d)", resumo)]
+    if dados.get("status") and str(dados["status"]) not in resumo:
         partes.append(str(dados["status"]))
     return f" ({', '.join(partes)})" if partes else ""
 
 
-def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | None = None) -> dict:
+def _o_que_ficou(p: Any) -> str:
+    """O que do pedido da pessoa foi feito e o que não foi, quando um passo falha — nas palavras
+    DELA, nunca a instrução que o bot mandou ao meuPlano (avaliação 13)."""
+    de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
+    if p.feitos:
+        return f"{de}, já foi feito: {'; '.join(p.feitos)}. O resto não foi feito — confira e peça de novo o que faltar."
+    return f"{de}, nada além disso foi feito — confira e peça de novo o que faltar."
+
+
+def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | None = None,
+                          feitos: tuple[str, ...] = ()) -> dict:
     """Ação do assistente do meuPlano (criar/concluir OS, lançar o dia, lembrete…) volta como
     PROPOSTA: nada foi gravado lá. A pessoa confirma com SIM (pedido do dono, 24/10/2026: a senha
     de atuação é para equipamento — "desligar, ligar, gravar" —, e o bot a cobrava para concluir
@@ -211,11 +222,11 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
         except httpx.HTTPError:
             return ("⚠️ O meuPlano não respondeu a tempo — a ação PODE ter sido gravada. "
                     "Confira no meuPlano antes de pedir de novo.")
-        return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"))
+        return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"), resumo)
 
     detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
     proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
-                             parte="bot_meuplano", confirmacao="sim", conversa=conversa)
+                             parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos)
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
@@ -248,9 +259,12 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 #: leem o log; a conversa com a pessoa continua inteira). Só com separador ou com dígito logo
 #: depois — "[senha de atuação]" e "a senha de vocês" ficam como estão, e "a senha de novo até
 #: as 14:32" também (o trecho até o ":" não tem número). O valor nunca começa em "[": os
-#: marcadores do bot ("Senha:[senha oculta]") ficam inteiros (avaliação 11).
+#: marcadores do bot ("Senha:[senha oculta]") ficam inteiros (avaliação 11). E tem 3 caracteres
+#: ou mais, sem o trecho atravessar o fim da frase: "a senha é a mesma" e "senha de atuação. Quem
+#: define isso é o gerente" ficam inteiros (avaliação 13).
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
-                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:(?:\bé\b|\beh\b)\s*[:=]?|[:=])\s*)(?![\[:=])([^\s,;]+?)"
+                      r"((?:\s+d[eoa]s?\s+[^\n:=\d.!?;]{1,30}?)?\s*(?:(?:\bé\b|\beh\b)\s*[:=]?|[:=])\s*)(?![\[:=])"
+                      r"([^\s,;]{3,}?)"
                       r"(?=[.!?]*(?:\s|$|[,;]))")
 #: "senha 1234", "PIN ab12": três caracteres ou mais — "PIN 3 do conector" e "senha 2 vezes" são
 #: dado técnico e prosa, não segredo.
@@ -414,13 +428,16 @@ async def responder(ctx: ger.Contexto, historico: list[dict]) -> str:
 
 
 # --------------------------------------------------------------------------- transporte
-async def _digitando_enquanto(wamid: str | None, fim: asyncio.Event) -> None:
-    """Mantém o "digitando…" (a Meta apaga aos 25 s) até a resposta sair."""
+async def _digitando_enquanto(wamid: str | None, fim: asyncio.Event, ja_avisou: bool = False) -> None:
+    """Mantém o "digitando…" (a Meta apaga aos 25 s) até a resposta sair. `ja_avisou`: quem chama
+    mandou o primeiro aviso (para ele sair antes de qualquer espera)."""
     while wamid and not fim.is_set():
         try:
-            await whatsapp.digitando(wamid)
+            if not ja_avisou:
+                await whatsapp.digitando(wamid)
         except Exception:                                  # noqa: BLE001
             return
+        ja_avisou = False
         try:
             await asyncio.wait_for(fim.wait(), 20)
         except TimeoutError:
@@ -446,10 +463,13 @@ def para_whatsapp(texto: str) -> str:
 #: Os botões do resumo de ação do meuPlano (dono, 24/10/2026: "ao invés de digitar sim, tem como
 #: enviar botão, sim e não?"). O toque volta como mensagem com o título — "Sim" confirma, "Não"
 #: cancela, pelo mesmo caminho do que se digita.
-BOTOES_SIM_NAO = [{"id": "sim", "titulo": "Sim"}, {"id": "nao", "titulo": "Não"}]
+def botoes_sim_nao(codigo: str) -> list[dict]:
+    """Os botões de UM resumo: o id leva o código dele, e o toque num resumo antigo não confirma a
+    ação de agora (`helper.botao_antigo`)."""
+    return [{"id": f"sim:{codigo}", "titulo": "Sim"}, {"id": f"nao:{codigo}", "titulo": "Não"}]
 
 
-async def _botoes(telefone: str, corpo: str) -> bool:
+async def _botoes(telefone: str, corpo: str, codigo: str) -> bool:
     """O resumo da ação com os botões Sim / Não. O corpo de uma mensagem com botões vai até 1024
     caracteres: o resumo maior vai antes, em texto. Gateway que recusa botões: vai em texto."""
     saiu = True
@@ -457,7 +477,8 @@ async def _botoes(telefone: str, corpo: str) -> bool:
         saiu = await _texto(telefone, corpo)
         corpo = "Confirma a ação acima?"
     try:
-        r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="botoes", texto=corpo, botoes=BOTOES_SIM_NAO)
+        r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="botoes", texto=corpo,
+                                           botoes=botoes_sim_nao(codigo))
     except whatsapp.GatewayIndisponivel:
         log.warning("assistente: o gateway recusou os botões; o resumo vai em texto", exc_info=True)
         return await _texto(telefone, corpo) and saiu
@@ -539,13 +560,19 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
 async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, feito: str) -> str:
     """Depois de uma ação do meuPlano feita, o próximo passo do MESMO pedido: lá é uma proposta por
     vez, e "crie a OS e conclua a 1638" voltava só com a criação — o resto se perdia (24/10/2026).
-    O meuPlano decide se há próximo; havendo, vira outra proposta com SIM. Sem próximo, nada."""
+    O meuPlano decide se há próximo; havendo, vira outra proposta com SIM. Sem próximo, nada. Sem
+    resposta de lá, a pessoa fica sabendo que o resto do pedido não foi feito (avaliação 13)."""
     from app.services.vinculos import SemConexao, cliente_meuplano
+
+    def nao_seguiu(motivo: Any) -> str:
+        pedido = f" «{p.pedido[:200]}»" if p.pedido else ""
+        return (f"⚠️ Não consegui pedir ao meuPlano o resto do seu pedido{pedido}: {motivo}. O resto não foi "
+                "feito — confira e peça de novo o que faltar.")
 
     try:
         mp = cliente_meuplano(db, user.id, so_proprio=True)
-    except SemConexao:
-        return ""
+    except SemConexao as e:
+        return nao_seguiu(e)
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
                 {"role": "user", "content": f"{feito}. Se o meu pedido tinha mais passos, proponha o próximo agora; "
                                             "se não tinha, responda só: Pronto."}]
@@ -554,10 +581,12 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
         r = await _perguntar_ao_meuplano(mp, conversa)
     except Exception:                                      # noqa: BLE001 — o feito já foi dito
         log.warning("assistente: não seguiu para o próximo passo no meuPlano", exc_info=True)
-        return ""
+        return nao_seguiu("ele não respondeu")
+    if r.get("erro"):
+        return nao_seguiu(str(r["erro"]).rstrip(". "))
     if r.get("type") == "proposal":
-        ctx = ger.Contexto(db=db, user=user, telefone=telefone)
-        _proposta_do_meuplano(ctx, r, conversa)
+        ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
+        _proposta_do_meuplano(ctx, r, conversa, feitos=(*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
         return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
     texto = (r.get("texto") or "").strip()
     return "" if not texto or (texto.lower().startswith("pronto") and len(texto) < 40) else texto
@@ -628,9 +657,13 @@ async def _atender(evento: dict) -> None:
         user = conta_do_telefone(db, telefone)
         # A senha, conferida UMA vez e fora do laço da API, antes de qualquer saída: a mensagem
         # que É a senha some inteira; numa frase, só a senha some ("[senha oculta]") — e do
-        # gateway sai só ela, não a frase.
-        analise = await helper.analisar(user, texto)
+        # gateway sai só ela, não a frase. Com uma ação do meuPlano esperando o SIM, o número
+        # sozinho é conversa (`e_tentativa`), decidido aqui, antes de a ação ser desarmada.
+        tentativa = user is not None and helper.e_tentativa(user, texto)
+        analise = await helper.analisar(user, texto, tentativa)
         seguro = helper.OCULTA if analise.pura else helper.mascarar(texto, analise)
+        if user is not None:
+            pergunta = seguro                              # analisada: a UC e o protocolo ficam legíveis
         if seguro != texto:
             pergunta = seguro
             await _ocultar_no_gateway(evento.get("id"), seguro)
@@ -661,7 +694,8 @@ async def _atender(evento: dict) -> None:
             # que nunca é repetida em claro (avaliação 11: o bot anterior no número ouvia áudio).
             texto, falha = await _ouvir(db, user, evento)
             if texto:
-                analise = await helper.analisar(user, texto)
+                tentativa = helper.e_tentativa(user, texto)
+                analise = await helper.analisar(user, texto, tentativa)
                 seguro = helper.OCULTA if analise.pura else helper.mascarar(texto, analise)
                 await _texto(telefone, f"🎙️ _{seguro}_")
                 seguro = pergunta = f"🎙️ {seguro}"
@@ -670,10 +704,17 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
+        if evento.get("tipo") == "interactive" and helper.botao_antigo(user.id, evento.get("botao")):
+            # O Sim/Não de um resumo que não é o da ação de agora (o WhatsApp mantém os botões das
+            # mensagens antigas): não confirma, não cancela e não vai à IA (avaliação 13).
+            await _texto(telefone, helper.BOTAO_ANTIGO)
+            _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=helper.BOTAO_ANTIGO,
+                       ferramentas=["confirmacao"], inicio=inicio, em=enviada)
+            return
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
         # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
         confirma = helper.e_sim(texto) and helper.espera_sim(user.id)
-        desarmada = None if helper.e_tentativa(user, texto) or confirma else helper.desarmar(user.id)
+        desarmada = None if tentativa or confirma else helper.desarmar(user.id)
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
         if not texto:
@@ -709,15 +750,15 @@ async def _atender(evento: dict) -> None:
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
         executada = helper.PENDENTES.get(user.id)         # a ação que esta mensagem pode confirmar
-        texto_da_ia, bloco_sim = "", None
+        texto_da_ia, bloco_sim, erro_do_resto = "", None, None
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava,
-                                                       chegou=evento.get("_chegou"), mandada_em=enviada)
+                                                       chegou=evento.get("_chegou"), mandada_em=enviada,
+                                                       tentativa=tentativa)
         falhou = resposta is not None and resposta.startswith(("❌", "⚠️"))
-        if falhou and executada is not None and executada.conversa:
+        if falhou and executada is not None and executada.conversa is not None:
             # O resto do pedido não some calado (avaliação 12: "crie a OS e conclua a 1638" — a
-            # criação falhou e a conclusão nem foi lembrada).
-            pedido = (executada.conversa[-1].get("content") or "").split("\n\n(Resposta para WhatsApp")[0]
-            resposta += f"\n\nDo pedido «{pedido[:200]}», nada além disso foi feito — confira e peça de novo o que faltar."
+            # criação falhou e a conclusão nem foi lembrada), dito com as palavras da pessoa.
+            resposta += "\n\n" + _o_que_ficou(executada)
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
@@ -729,7 +770,10 @@ async def _atender(evento: dict) -> None:
                 resposta = await responder(ctx, historico)
             resposta += nota
             if analise.escondeu_senha:
-                resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa "
+                resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela é só para equipamento — "
+                             "ação do meuPlano se confirma com Sim. Nada foi executado.)"
+                             if desarmada is not None and desarmada.confirmacao == "sim" else
+                             "\n\n(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa "
                              "mensagem só dela. Nada foi executado.)")
             if ctx.proposta is not None:
                 # O que a pessoa confirma é texto do SISTEMA, não da IA — e a ação do meuPlano vai
@@ -746,29 +790,46 @@ async def _atender(evento: dict) -> None:
         await tarefa
         if bloco_sim is not None:
             saiu = await _texto(telefone, para_whatsapp(texto_da_ia)) if texto_da_ia.strip() else True
-            saiu = await _botoes(telefone, bloco_sim) and saiu
+            saiu = await _botoes(telefone, bloco_sim, ctx.proposta.codigo) and saiu
         else:
             saiu = await _texto(telefone, para_whatsapp(resposta))
         _resumo_saiu(db, user, saiu)
         if (executada is not None and executada.conversa is not None and resposta.startswith("✅")
                 and helper.PENDENTES.get(user.id) is not executada):
-            # O próximo passo do MESMO pedido ("crie a OS e conclua a 1638"): lá é uma proposta por vez.
-            seguinte = await _seguir_no_meuplano(db, user, telefone, executada, resposta)
+            # O próximo passo do MESMO pedido ("crie a OS e conclua a 1638"): lá é uma proposta por vez,
+            # e leva de 20 a 65 s — o "digitando…" volta logo depois do ✅ (avaliação 13).
+            fim_seguinte, avisou = asyncio.Event(), False
+            if evento.get("wamid"):
+                try:
+                    await whatsapp.digitando(evento["wamid"])  # já: o ✅ saiu e vem mais
+                    avisou = True
+                except Exception:                          # noqa: BLE001 — o aviso não segura o passo
+                    log.warning("assistente: sem o digitando do próximo passo", exc_info=True)
+            digitando = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim_seguinte, avisou))
+            try:
+                seguinte = await _seguir_no_meuplano(db, user, telefone, executada, resposta)
+            finally:
+                fim_seguinte.set()
+                await digitando
+            if seguinte.startswith("⚠️"):
+                erro_do_resto = seguinte
             if seguinte:
                 historico.append({"role": "assistant", "content": seguinte})
                 conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
                 db.commit()
                 proxima = helper.PENDENTES.get(user.id)
                 if proxima is not None and proxima.mostrada_em is None and proxima.confirmacao == "sim":
-                    _resumo_saiu(db, user, await _botoes(telefone, seguinte))      # o próximo passo, com botões
+                    _resumo_saiu(db, user, await _botoes(telefone, seguinte, proxima.codigo))  # com botões
                 else:
                     _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(seguinte)))
                 resposta += "\n\n" + seguinte
-        # A ação confirmada que FALHOU aparece como erro no log (aparecia verde, "Respondeu").
-        _registrar(db, telefone, user, "erro" if falhou else "respondeu", pergunta=entrada["content"],
+        # A ação confirmada que FALHOU — ou o resto do pedido que não veio — aparece como erro no
+        # log (aparecia verde, "Respondeu").
+        erro = resposta.split("\n")[0] if falhou else erro_do_resto
+        _registrar(db, telefone, user, "erro" if erro else "respondeu", pergunta=entrada["content"],
                    resposta=resposta, ferramentas=ctx.ferramentas if ctx else
-                   ["senha_de_atuacao" if helper.digitos_da_senha(texto) else "confirmacao"],
-                   inicio=inicio, em=enviada, erro=resposta.split("\n")[0] if falhou else None)
+                   ["senha_de_atuacao" if tentativa else "confirmacao"],
+                   inicio=inicio, em=enviada, erro=erro)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()

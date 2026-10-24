@@ -959,7 +959,7 @@ export const editarContaDaEmpresa = (
     nome?: string
     email?: string
     telefone?: string
-    /** 4 a 8 números: a que o bot pede antes de ligar, desligar, gravar ou criar. */
+    /** 6 a 8 números: a que o bot pede antes de ação no equipamento (helper: ligar, desligar, gravar). */
     senha_atuacao?: string
   } & Partial<Record<ProdutoDoBot, boolean>>,
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)

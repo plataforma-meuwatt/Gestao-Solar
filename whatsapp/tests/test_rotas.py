@@ -416,3 +416,18 @@ def test_resposta_com_botoes_sai_como_interativa_da_meta(cliente, credencial, mo
         assert cliente.post("/interno/conteudo", headers=h,
                             json={"telefone": "+5517997377626", "tipo": "botoes", **ruim}).status_code in (400, 422)
     assert len(enviados) == 1
+
+
+def test_o_toque_no_botao_chega_ao_bot_com_o_id_do_resumo(cliente, credencial, db, monkeypatch):
+    """O título ("Sim") não diz de QUAL resumo era o botão; o id diz — e vai guardado, para a
+    varredura também repassá-lo (avaliação 13: o Sim de um resumo antigo confirmava o de agora)."""
+    avisos = _bff_falso(monkeypatch)
+    monkeypatch.setattr(webhook, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    corpo = json.dumps({"entry": [{"changes": [{"value": {"messages": [
+        {"from": "5516999998888", "id": "wamid.B9", "timestamp": "1789000000", "type": "interactive",
+         "interactive": {"type": "button_reply", "button_reply": {"id": "sim:a1b2c3d4", "title": "Sim"}}}]}}]}]}).encode()
+    r = cliente.post("/webhook", content=corpo, headers={CABECALHO_ASSINATURA: assinatura_da_meta(APP_SECRET, corpo)})
+    assert r.status_code == 200
+    assert [(a["texto"], a["botao"]) for a in avisos] == [("Sim", "sim:a1b2c3d4")]
+    assert db.query(Mensagem).filter_by(wamid="wamid.B9").one().botao == "sim:a1b2c3d4"

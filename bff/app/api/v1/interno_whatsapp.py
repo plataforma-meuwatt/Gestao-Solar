@@ -8,7 +8,7 @@ São duas rotas, e elas respondem perguntas diferentes:
 
 - **`/evento`** — chegou mensagem de alguém. O BFF entrega ao bot (`assistente.atender`), em
   segundo plano e uma por número de cada vez: ele casa o número com uma conta, confere a
-  senha de atuação e responde pelo gateway.
+  confirmação (o Sim, ou a senha de atuação da ação no equipamento) e responde pelo gateway.
 - **`/status`** — o que aconteceu com o que NÓS mandamos: entregue, lida, falhou. Esta
   fecha o log de notificações, que sem ela pararia em "mandei" e nunca saberia se chegou.
 """
@@ -52,6 +52,8 @@ class EventoIn(BaseModel):
     ocorrida_em: str | None = None
     #: Áudio, documento, imagem: `{mime, nome, legenda}` (o arquivo, o bot pede ao gateway).
     midia: dict | None = None
+    #: O id do botão tocado ("sim:<código do resumo>"): de qual resumo veio o toque.
+    botao: str | None = None
 
 
 @router.post("/evento", status_code=202, dependencies=[Depends(_porta)])

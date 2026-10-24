@@ -117,11 +117,13 @@ def test_resposta_de_botao_vira_texto():
             "messages": [
                 {"from": "5516999998888", "id": "wamid.BTN", "timestamp": "1789000000",
                  "type": "interactive",
-                 "interactive": {"type": "button_reply", "button_reply": {"id": "1", "title": "Sim"}}}
+                 "interactive": {"type": "button_reply", "button_reply": {"id": "sim:a1b2c3d4", "title": "Sim"}}}
             ]
         }
     )
-    assert payload.ler(corpo).mensagens[0].texto == "Sim"
+    m = payload.ler(corpo).mensagens[0]
+    # O título é o texto; o id diz de QUAL resumo era o botão (avaliação 13).
+    assert (m.texto, m.botao) == ("Sim", "sim:a1b2c3d4")
 
 
 def test_status_traduzido_e_erro_lido():

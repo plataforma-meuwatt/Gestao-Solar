@@ -849,14 +849,24 @@ de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo.
 o bot cobrava a senha de atuação para concluir uma OS — senha é para EQUIPAMENTO, "desligar,
 ligar, gravar"): a proposta do assistente de lá (criar/concluir OS, lançar o dia, lembrete)
 espera o SIM da pessoa (`Pendente.confirmacao = "sim"`, conferido pelo sistema, valendo só
-depois de o resumo sair; a senha certa também confirma). O resumo vai com os botões **Sim / Não**
-(`BOTOES_SIM_NAO`; gateway sem botões → texto), e confirma o toque, "sim" ou uma afirmativa curta
-("Sim, pode criar", "Pode sim", "👍") — pergunta nunca confirma, e "Sim, mas troque o técnico" é
-correção (`e_sim`). Quem NÃO tem senha e responde com um número está conversando (a UC, o
-protocolo), não tentando senha (`e_tentativa`). E confirmada o BFF chama o
+depois de o resumo sair). O resumo vai com os botões **Sim / Não** (`botoes_sim_nao`; gateway
+sem botões → texto), cada um com o CÓDIGO do resumo no id ("sim:<código>", `Pendente.codigo`): o
+toque num resumo antigo — o WhatsApp mantém os botões — recebe "Esse botão é de um resumo antigo
+— nada foi feito" e não mexe na ação de agora (`helper.botao_antigo`; o gateway guarda o id em
+`wa_mensagens.botao`, migração `e2b4d6f8a0c1`). Confirma o toque, "sim" ou uma afirmativa curta
+("Sim, pode criar", "Pode sim", "De acordo", "tá certo", "👍") — pergunta nunca confirma, e "Sim,
+mas troque o técnico" é correção (`e_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
+UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
+cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —
+a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
-passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM). O
+passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM), com o
+"digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). A proposta guarda o
+pedido nas palavras da PESSOA e o que dele já foi feito (`Pendente.pedido`/`feitos`): passo que falha
+diz "Do seu pedido «…», já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou
+ao meuPlano —, e próximo passo que não vem (erro ou demora de lá) vira "⚠️ Não consegui pedir ao
+meuPlano o resto do seu pedido…", com o log em erro (avaliação 13). O
 assistente de lá diz se as tarefas da OS estão feitas e a FECHA quando estão (`situacao_os`,
 `fechar_os`, meuPlano 93a19ea1; com tarefa pendente, a ficha se conclui por
 `registrar_execucao_tarefa` antes). **O meuPlano sabe QUEM pergunta pelo token** (meuPlano
