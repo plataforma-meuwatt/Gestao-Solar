@@ -1847,3 +1847,32 @@ async def test_pergunta_sobre_a_assinatura_e_leitura_e_o_pedido_com_interrogacao
     for leitura in ("Foi assinada?", "Quem assinou a OS?", "As OS de ontem estão assinadas?", "Quais OS faltam assinar?",
                     "Qual o status da assinatura da OS 1638?"):
         assert not assistente._pede_assinatura(leitura), leitura
+
+
+class _MeuPlanoQueRecusa(_MeuPlanoEmPassos):
+    """Fechar a OS com tarefa pendente: 409 com a frase de lá, que termina em ponto (o ensaio contra o
+    meuPlano real, 24/10/2026)."""
+
+    async def assistente_aplicar(self, token, acao, args):
+        import httpx
+
+        req = httpx.Request("POST", "https://mp/api/v1/meuacesso/assistant/apply")
+        raise httpx.HTTPStatusError("409", request=req, response=httpx.Response(409, request=req, json={
+            "detail": "Conclua todas as tarefas antes de fechar a OS. Pendentes: 1 de 1."}))
+
+
+async def test_o_que_o_meuplano_responde_chega_em_texto_de_gente(db, monkeypatch):
+    """O ensaio contra o meuPlano real mostrou "Pendentes: 1 de 1.. Nada foi feito." e
+    "(OS 1638, task_id: 8873, sessao_id: 4131)" — nome de campo do sistema na mensagem."""
+    from app.services import assistente_helper as h
+    from app.services import vinculos
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: _MeuPlanoQueRecusa())
+    dono = _conta(db, "dono", "+5517997377626")
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    assistente._proposta_do_meuplano(ctx, {"action": "fechar_os", "args": {"os_id": 1638},
+                                           "preview": {"summary": "Fechar a OS 1638"}})
+    h.mostrada(dono.id)
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "Sim") == (
+        "❌ O meuPlano recusou: Conclua todas as tarefas antes de fechar a OS. Pendentes: 1 de 1. Nada foi feito.")
+    assert assistente._o_que_nasceu({"os_id": 1638, "task_id": 8873, "sessao_id": 4131}) == " (OS 1638, tarefa 8873)"

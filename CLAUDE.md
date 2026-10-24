@@ -858,7 +858,13 @@ protocolo), não tentando senha (`e_tentativa`). E confirmada o BFF chama o
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
 passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM). O
 assistente de lá diz se as tarefas da OS estão feitas e a FECHA quando estão (`situacao_os`,
-`fechar_os`, meuPlano 93a19ea1). **Erro 5xx do apply não é "nada foi feito":** lá a rota grava
+`fechar_os`, meuPlano 93a19ea1; com tarefa pendente, a ficha se conclui por
+`registrar_execucao_tarefa` antes). **O meuPlano sabe QUEM pergunta pelo token** (meuPlano
+0e06a465): o assistente de lá resolvia o solicitante só por JWT, o `mp_pat_` virava anônimo e
+anônimo enxerga TODAS as usinas de todas as empresas; agora valem o escopo, o nível e a
+audiência da pessoa, como na web (inclusive revelar senha de equipamento a quem tem nível para
+isso). Ensaiado em 24/10/2026 contra o código real do meuPlano numa cópia local do banco, sem
+rede: criar a OS → SIM → fechar a 1638 (recusa com o que falta) → concluir a ficha → fechar. **Erro 5xx do apply não é "nada foi feito":** lá a rota grava
 antes do passo que quebra (a OS 1843 ficou criada e vazia, 24/10/2026), então a resposta é
 "PODE ter sido gravada em parte — confira", o resto do pedido é lembrado e o log marca erro; o
 texto da exceção não vai à pessoa. 4xx continua "recusou… Nada foi feito". **Empresa

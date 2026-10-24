@@ -162,13 +162,16 @@ HISTORICO_MEUPLANO = 8
 PRAZO_PROPOSTA_MP_S = 600
 
 
+#: Os números que a pessoa procura na tela, com o nome que ela usa ("sessao_id" é do sistema).
+_NUMEROS = {"os_id": "OS", "task_id": "tarefa"}
+
+
 def _o_que_nasceu(dados: Any) -> str:
     """O número do que o meuPlano criou ("OS 1639, PROGRAMADA") — sem ele a pessoa não acha
     na tela o que acabou de pedir."""
     if not isinstance(dados, dict):
         return ""
-    partes = [f"OS {dados['os_id']}"] if dados.get("os_id") else []
-    partes += [f"{k}: {v}" for k, v in dados.items() if k.endswith("_id") and k != "os_id" and v]
+    partes = [f"{rotulo} {dados[k]}" for k, rotulo in _NUMEROS.items() if dados.get(k)]
     if dados.get("status"):
         partes.append(str(dados["status"]))
     return f" ({', '.join(partes)})" if partes else ""
@@ -197,8 +200,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
             return f"❌ Não executado: {e}"
         except httpx.HTTPStatusError as e:
             if e.response.status_code < 500:
-                return (f"❌ O meuPlano recusou: {detalhe_do_upstream(e.response) or e.response.status_code}. "
-                        "Nada foi feito.")
+                motivo = str(detalhe_do_upstream(e.response) or e.response.status_code).rstrip(". ")
+                return f"❌ O meuPlano recusou: {motivo}. Nada foi feito."
             # 5xx é erro NO MEIO: lá a rota grava antes do passo que quebra (a OS 1843 ficou vazia
             # com "nada foi feito" na tela, 24/10/2026). E o texto da exceção não vai à pessoa.
             log.warning("assistente: o meuPlano deu %s ao aplicar %s: %s", e.response.status_code, acao,
