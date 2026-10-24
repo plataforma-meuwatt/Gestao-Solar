@@ -364,13 +364,15 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
            "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
-           "afirmativo", "tranquilo"}
+           "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
 #: tinha "com").
 _EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: nenhum)?|sem d[úu]vidas?(?: nenhuma)?|"
-                             r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza))\b")
+                             r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza)|"
+                             r"n[ãa]o tem (?:problemas?|erro)|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
+                             r"nada (?:a|pra|para) acrescentar)\b")
 #: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
 #: "Opa, pode", "Valeu, pode fazer").
 _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
@@ -383,7 +385,25 @@ _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "t
                       "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo", "lançar",
                       "lancar", "lance", "lança", "lanca", "abrir", "abra", "abre", "registrar", "registre",
                       "registra", "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue",
-                      "pra", "assim", "mandar", "mande", "lá", "la", "é", "está", "esta"}
+                      "pra", "assim", "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa",
+                      "esse"}
+#: O próprio verbo da ação confirma ("Fecha", "Feche aí" para "Fechar a OS 1638…"; avaliação 17): as
+#: formas de cada verbo das ações do meuPlano, lista FECHADA, casadas com o PRIMEIRO verbo do resumo —
+#: "Fecha" não confirma "Criar OS…", e "Conclua" não casa com "concluídas" no meio do resumo.
+_VERBOS = {forma: raiz for raiz, formas in (
+    ("fechar", ("fechar", "fecha", "feche", "fechem")), ("criar", ("criar", "cria", "crie", "criem")),
+    ("concluir", ("concluir", "conclua", "conclui", "concluam")),
+    ("lancar", ("lancar", "lanca", "lance", "lancem")), ("abrir", ("abrir", "abra", "abre", "abram")),
+    ("registrar", ("registrar", "registra", "registre")), ("executar", ("executar", "executa", "execute")),
+    ("aprovar", ("aprovar", "aprova", "aprove")), ("trocar", ("trocar", "troca", "troque")),
+    ("mover", ("mover", "move", "mova")), ("programar", ("programar", "programa", "programe")),
+    ("agendar", ("agendar", "agenda", "agende")), ("enviar", ("enviar", "envia", "envie")),
+) for forma in formas}
+#: O que pode acompanhar uma afirmativa sem trazer assunto novo, mas sem deixar claro que é SIM ("Sim,
+#: pode deixar", "Ok, vou ver"): o sistema pergunta de novo. Palavra fora disto é assunto novo ("Ok, e
+#: Pereiras", "Pode mandar o PDF") — vai à IA (avaliação 17: era engolido).
+_SEM_ASSUNTO = {"deixar", "comigo", "vou", "ver", "vejo", "vamos", "vamo", "acho", "talvez", "pensar",
+                "hum", "hmm", "né", "ne", "que", "eu"}
 #: Só agradecimento ou ciência ("valeu", "obrigado", "ok, aguardo", "fico no aguardo") — lista
 #: FECHADA, sem palavra de parar (há teste). É a única mensagem mandada antes do resumo que não o
 #: derruba (`mandada_antes_do_resumo`).
@@ -398,6 +418,10 @@ def _palavras(texto: str) -> list[str]:
     return re.findall(r"[a-zà-ú]+|\d+", (texto or "").lower())
 
 
+def _verbo(palavra: str) -> str | None:
+    return _VERBOS.get(unicodedata.normalize("NFKD", palavra).encode("ascii", "ignore").decode())
+
+
 def _tem(lista, palavra: str) -> bool:
     """A palavra está na lista — também esticada no chat ("Simm", "okkk", "nããão")."""
     return palavra in lista or re.sub(r"([a-zà-ú])\1+", r"\1", palavra) in lista
@@ -410,27 +434,38 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
       1638", avaliação 15);
     - "outra": pergunta, negação, parada, restrição, troca fora do resumo, número fora dele, ou o que
       não começa por afirmativa — derruba a ação;
-    - "duvida": CURTA (até 4 palavras), começa como afirmativa, sem nada disso, mas não é um SIM limpo
-      ("Sim, pode deixar") — não confirma nem derruba: o sistema pergunta de novo (avaliação 16). Mais
-      longa é outro assunto ("Pode me mandar o relatório da Porto Ferreira"): derruba e vai à IA, que
-      fica sabendo do cancelamento — perguntar de novo engoliria o pedido."""
+    - "duvida": CURTA (até 4 palavras), começa como afirmativa, sem nada disso e SEM assunto novo, mas
+      não é um SIM limpo ("Sim, pode deixar", "Ok, vou ver") — não confirma nem derruba: o sistema
+      pergunta de novo (avaliação 16). Com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
+      longa, é outro pedido: derruba e vai à IA, que fica sabendo do cancelamento — perguntar de novo
+      engoliria o pedido (avaliação 17)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return "sim"
     if t.endswith("?"):
         return "outra"
     palavras, da_acao = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower())), set(_palavras(acao))
-    # A palavra de TROCAR que está no próprio resumo ("Pode trocar" para "Trocar o equipamento…") não
-    # impede; negar, parar e restringir, nunca — nem no resumo ("Mover a OS 1638 PARA concluída").
-    if any(_tem(_PARAR, p) and not (_tem(_TROCA, p) and _tem(da_acao, p)) for p in palavras):
+    verbo_da_acao = _verbo(_palavras(acao)[0]) if _palavras(acao) else None
+
+    def mesmo_verbo(p: str) -> bool:
+        return verbo_da_acao is not None and _verbo(p) == verbo_da_acao
+
+    # A palavra de TROCAR que está no próprio resumo ("Pode trocar"/"Troque" para "Trocar o
+    # equipamento…") não impede; negar, parar e restringir, nunca — nem no resumo ("Mover a OS 1638
+    # PARA concluída").
+    if any(_tem(_PARAR, p) and not (_tem(_TROCA, p) and (_tem(da_acao, p) or mesmo_verbo(p))) for p in palavras):
         return "outra"
     while len(palavras) > 1 and _tem(_ANTES, palavras[0]) and not _tem(_AFIRMA, palavras[0]):
         palavras = palavras[1:]
-    if not palavras or not _tem(_AFIRMA, palavras[0]) or any(p.isdigit() and p not in da_acao for p in palavras):
+    if (not palavras or not (_tem(_AFIRMA, palavras[0]) or mesmo_verbo(palavras[0]))
+            or any(p.isdigit() and p not in da_acao for p in palavras)):
         return "outra"
-    if len(palavras) <= 8 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) for p in palavras[1:]):
+    if len(palavras) <= 8 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or mesmo_verbo(p) for p in palavras[1:]):
         return "sim"
-    return "duvida" if len(palavras) <= 4 else "outra"
+    if len(palavras) <= 4 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or _tem(_SEM_ASSUNTO, p)
+                                  for p in palavras[1:]):
+        return "duvida"
+    return "outra"
 
 
 def e_sim(texto: str, acao: str = "") -> bool:
@@ -709,13 +744,24 @@ async def alcancavel() -> tuple[bool | None, str]:
     rede = await bot.rede()
     idade = rede.get("vpn_ultimo_contato_s")
     if not rede.get("ok"):
-        return False, "Helper responde, mas não deu para conferir a rede até as usinas (VPN)."
+        return False, f"{_HELPER_RESPONDE} não deu para conferir a rede até as usinas (VPN)."
     if idade is None:
-        return False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato."
+        return False, f"{_HELPER_RESPONDE} a rede até as usinas (VPN) nunca fez contato."
     if idade > VPN_PARADA_S:
-        return False, (f"Helper responde, mas a rede até as usinas (VPN) está sem contato há {_duracao(idade)}: "
+        return False, (f"{_HELPER_RESPONDE} a rede até as usinas (VPN) está sem contato há {_duracao(idade)}: "
                        "leitura e comando de equipamento não chegam lá.")
     return True, "Helper e rede das usinas no ar: o bot lê e comanda as usinas por ele."
+
+
+_HELPER_RESPONDE = "Helper responde, mas"
+
+
+def rotulo_do_helper(alcancavel: bool | None, resumo: str | None) -> str | None:
+    """A CAUSA, curta, para o selo e a linha de cada pessoa: "Helper fora do ar" quando era a VPN
+    mandava o gerente procurar no lugar errado (avaliação 17). `None` = sem problema a mostrar."""
+    if alcancavel is not False:
+        return None
+    return "VPN das usinas parada" if (resumo or "").startswith(_HELPER_RESPONDE) else "Helper fora do ar"
 
 
 #: O wg0 renova o contato a cada 25 s (PersistentKeepalive); 5 min sem contato é rede parada.

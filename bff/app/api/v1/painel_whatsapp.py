@@ -347,6 +347,8 @@ class SaudeDoCanalOut(BaseModel):
     #: O helper responde ao bot agora? `None` = não configurado neste ambiente.
     helper_alcancavel: bool | None = None
     helper_resumo: str | None = None
+    #: A causa, curta ("VPN das usinas parada" / "helper fora do ar"), para o selo.
+    helper_rotulo: str | None = None
 
 
 @router.get("/saude", response_model=SaudeDoCanalOut)
@@ -369,6 +371,7 @@ async def saude_atual(db: Session) -> SaudeDoCanalOut:
     # Gateway e helper ao mesmo tempo: um depois do outro, o selo levava 2,7 s (avaliação 10).
     saida, helper = await asyncio.gather(_saude_do_canal(db), _helper())
     saida.helper_alcancavel, saida.helper_resumo = helper
+    saida.helper_rotulo = assistente_helper.rotulo_do_helper(*helper)
     return saida
 
 

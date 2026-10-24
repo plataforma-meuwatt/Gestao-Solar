@@ -1195,8 +1195,13 @@ async def test_o_selo_fica_vermelho_sem_contato_com_a_vpn(monkeypatch):
             return next(respostas)
 
     monkeypatch.setattr(h, "HelperBot", _Falso)
-    assert (await h.alcancavel()) == (False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato.")
+    vpn = await h.alcancavel()
+    assert vpn == (False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato.")
     assert (await h.alcancavel())[0] is False
+    # a causa curta do selo (avaliação 17: dizia "helper fora do ar" quando era a VPN)
+    assert h.rotulo_do_helper(*vpn) == "VPN das usinas parada"
+    assert h.rotulo_do_helper(False, "Helper fora do alcance do bot: sem resposta") == "Helper fora do ar"
+    assert h.rotulo_do_helper(True, "Helper e rede das usinas no ar") is None and h.rotulo_do_helper(None, "") is None
 
 
 def test_leitura_sem_usina_nomeada_vem_so_com_as_liberadas():
@@ -2561,6 +2566,30 @@ async def test_o_sim_do_jeito_que_se_fala_confirma_a_acao_no_turno(db, bot_local
         await assistente.atender(_ev(dono, 10 * i + 1, frase))
         assert falso.aplicadas == [(acao, args)], frase
     assert not any("foi cancelada" in (m or "") for m in bot_local.enviados)
+
+
+def test_o_verbo_da_acao_e_o_sim_falado_confirmam_e_assunto_novo_vai_a_ia():
+    """Avaliação 17: "Fecha", "Feche", "Não tem problema" e "Top" cancelavam o "Fechar a OS 1638"; e
+    um pedido novo curto que começa por "Ok/Pode" ("Ok, e Pereiras", "Pode mandar o PDF") era
+    ENGOLIDO — o sistema só repetia "toque em Sim" e a IA nunca via o pedido."""
+    from app.services import assistente_helper as h
+
+    fechar = "Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas."
+    criar = "Criar OS em UFV Ibitinga com 1 tarefa(s), programada para 2026-10-23 com Michel."
+    trocar = "Trocar o equipamento do ponto 11260 pelo 8615."
+    r = h._resposta_ao_resumo
+    for t in ("Fecha", "Feche", "Fecha aí", "Pode fechar ela", "Não tem problema", "Vai em frente",
+              "Pode ir em frente", "Sim, só isso", "Sim, nada a acrescentar", "Top", "Boa", "Massa", "Yes", "Si"):
+        assert r(t, fechar) == "sim", t
+    assert r("Troque", trocar) == "sim" and r("Cria", criar) == "sim"
+    # o verbo é o da AÇÃO (o primeiro do resumo): "Fecha" não cria OS, "Conclua" não casa com "concluídas"
+    for t, resumo in (("Fecha", criar), ("Conclua", fechar), ("Fecha a 1640", fechar), ("Troque o técnico", criar),
+                      ("Não tem problema se não fechar", fechar), ("Feche não", fechar)):
+        assert r(t, resumo) == "outra", t
+    for t in ("Ok, e Pereiras", "Pode mandar o PDF", "Beleza, geração de hoje", "Ok, qual o técnico", "Pode ver Pereiras"):
+        assert r(t, fechar) == "outra", t                                 # assunto novo: vai à IA
+    for t in ("Sim, pode deixar", "Ok, vou ver"):
+        assert r(t, fechar) == "duvida", t                                # sem assunto: pergunta de novo
 
 
 async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):

@@ -855,7 +855,10 @@ e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da re
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
 srvclaude com a idade do contato do wg0 (exige a mesma chave de chamador) — VPN parada há mais
-de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo. **A ação do meuPlano confirma com SIM, não com a senha** (dono, 24/10/2026:
+de 5 min deixa o selo vermelho; a causa curta vem da API (`helper_rotulo`: "VPN das usinas parada" ou
+"Helper fora do ar"), no selo e na linha de cada pessoa do Bot do WhatsApp — "helper fora do ar"
+quando era a VPN mandava procurar no lugar errado (avaliação 17). Gateway e helper são conferidos ao
+mesmo tempo. **A ação do meuPlano confirma com SIM, não com a senha** (dono, 24/10/2026:
 o bot cobrava a senha de atuação para concluir uma OS — senha é para EQUIPAMENTO, "desligar,
 ligar, gravar"): a proposta do assistente de lá (criar/concluir OS, lançar o dia, lembrete)
 espera o SIM da pessoa (`Pendente.confirmacao = "sim"`, conferido pelo sistema, valendo só
@@ -885,10 +888,15 @@ concluída"; e "Pode, só a 1638" fecharia a 1640 de "Fechar só a OS 1638 e a 1
 tudo!" executava — avaliação 14). A afirmativa de mais de uma palavra ("Sim, com certeza", "Sem
 problema", "Sem dúvida", "Claro que sim", "Sim senhor", "Por favor") é lista FECHADA e vale para
 qualquer resumo (`_EXPRESSOES_SIM`; avaliação 16: cancelavam, e "com certeza" só confirmava resumo
-com "com"). A CURTA (até 4 palavras) que começa como afirmativa sem negação nem correção, mas não
-é um SIM limpo ("Sim, pode deixar"), não confirma nem derruba: o SISTEMA pergunta de novo, com os
-botões, sem ir à IA (`pergunta_de_novo`); a mais longa é outro assunto ("Pode me mandar o relatório
-da Porto Ferreira") — derruba e vai à IA, que fica sabendo, em vez de o pedido ser engolido — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
+com "com"; avaliação 17: também "Não tem problema", "Vai em frente", "Sim, só isso", "Top",
+"Boa", "Massa", "Yes"). O PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí" para "Fechar a OS
+1638…"): formas de cada verbo das ações do meuPlano, lista fechada (`_VERBOS`), casadas só com o
+PRIMEIRO verbo do resumo — "Fecha" não confirma "Criar OS…". A CURTA (até 4 palavras) que começa como
+afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
+"Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
+sem ir à IA (`pergunta_de_novo`); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
+longa, é outro pedido — derruba e vai à IA, que fica sabendo, em vez de o pedido ser engolido
+(avaliação 17). Limite: o sim com outro pedido junto ("sim, pode fechar e me manda o PDF") derruba — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
 pergunto de novo" (`_resposta_ao_resumo`, `e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
 UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —

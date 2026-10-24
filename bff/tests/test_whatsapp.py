@@ -264,6 +264,24 @@ async def test_o_gerente_ve_se_o_bot_esta_ouvindo_sem_o_detalhe_tecnico(db, conf
 
 
 @respx.mock
+async def test_o_selo_do_helper_diz_a_causa_e_nao_so_que_esta_fora(db, configurado, monkeypatch):
+    """O gerente lia "Em parte: helper fora do ar" quando o helper respondia e a parada era a VPN
+    das usinas (avaliação 17): a causa curta vem da API, para o selo e para a linha de cada pessoa."""
+    from app.api.v1.empresa import bot_ouvindo
+    from app.services import assistente_helper
+
+    respx.get(f"{GW}/interno/saude").mock(return_value=httpx.Response(200, json={
+        "eventos_parados": 0, "eventos_com_erro": 0, "mensagens_sem_aviso": 0}))
+
+    async def _vpn():
+        return False, "Helper responde, mas a rede até as usinas (VPN) está sem contato há 24 h: leitura…"
+
+    monkeypatch.setattr(assistente_helper, "alcancavel", _vpn)
+    r = await bot_ouvindo(db=db, _gerente=None)
+    assert (r.helper_alcancavel, r.helper_rotulo) == (False, "VPN das usinas parada")
+
+
+@respx.mock
 def test_autor_das_credenciais_que_nao_existe_mais_vem_marcado(cliente_http, administrador, configurado):
     """A tela dizia "Gravado por renanmarquezini" — a conta foi juntada à de hoje em 28/09."""
     rota = respx.get(f"{GW}/interno/credenciais")

@@ -135,7 +135,7 @@ function SaudeDoCanalCartao() {
       {data.helper_alcancavel !== null ? (
         <div className="flex items-center gap-3 flex-wrap mt-2">
           <Selo tom={data.helper_alcancavel ? 'ok' : 'parado'}>
-            {data.helper_alcancavel ? 'Helper alcançável' : 'Helper fora'}
+            {data.helper_alcancavel ? 'Helper alcançável' : (data.helper_rotulo ?? 'Helper fora do ar')}
           </Selo>
           <span className={`text-sm ${data.helper_alcancavel ? 'text-rotulo' : 'text-parado'}`}>{data.helper_resumo}</span>
         </div>

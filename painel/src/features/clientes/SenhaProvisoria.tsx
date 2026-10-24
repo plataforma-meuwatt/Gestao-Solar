@@ -69,7 +69,7 @@ export function SenhaProvisoria({
         ) : copia === 'copiado' ? (
           <p className="flex items-center gap-2 text-sm text-ok">
             <Check size={15} />
-            Mensagem copiada. Cole no WhatsApp ou no e-mail do cliente.
+            Mensagem copiada. Cole no WhatsApp ou no e-mail da pessoa.
           </p>
         ) : (
           <p className="flex items-start gap-2 text-sm text-alerta">

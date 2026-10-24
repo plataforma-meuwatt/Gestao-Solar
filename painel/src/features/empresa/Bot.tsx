@@ -78,7 +78,7 @@ export function BotDaEmpresa() {
           {canal.helper_alcancavel !== null ? (
             <>
               <Selo tom={canal.helper_alcancavel ? 'ok' : 'parado'}>
-                {canal.helper_alcancavel ? 'Helper alcançável' : 'Helper fora'}
+                {canal.helper_alcancavel ? 'Helper alcançável' : (canal.helper_rotulo ?? 'Helper fora do ar')}
               </Selo>
               {!canal.helper_alcancavel ? <span className="text-sm text-parado">{canal.helper_resumo}</span> : null}
             </>
@@ -111,7 +111,7 @@ export function BotDaEmpresa() {
               aoAbrirTokens={() => setTokensDe(u)}
               aoAbrirCelular={() => setCelularDe(u)}
               aoAbrirSenha={() => setSenhaDe(u)}
-              helperFora={canal?.helper_alcancavel === false}
+              helperFora={canal?.helper_alcancavel === false ? (canal.helper_rotulo ?? 'Helper fora do ar') : null}
             />
           ))
         )}
@@ -147,16 +147,17 @@ export function BotDaEmpresa() {
 }
 
 /** O que o bot faz de fato com esta pessoa, numa palavra e num tom — inclusive o que não
- *  depende do cadastro: o helper fora do ar e a falta de senha de atuação ("Respondendo" com
- *  as duas coisas paradas enganava, avaliação 11). */
-function situacao(u: UsuarioDetalhado, helperFora: boolean): { tom: Tom; rotulo: string } {
+ *  depende do cadastro: o helper fora do ar (ou a VPN das usinas parada: a causa vem da API,
+ *  avaliação 17) e a falta de senha de atuação ("Respondendo" com as duas coisas paradas
+ *  enganava, avaliação 11). */
+function situacao(u: UsuarioDetalhado, helperFora: string | null): { tom: Tom; rotulo: string } {
   const liberadas = PARTES_DO_BOT.filter((p) => u[p.campo])
   if (!liberadas.length) return { tom: 'sem-dados', rotulo: 'Desligado' }
   if (!u.telefone) return { tom: 'alerta', rotulo: 'Parado: sem celular' }
   const respondendo = liberadas.filter((p) => u.produtos.includes(p.token))
   if (!respondendo.length) return { tom: 'alerta', rotulo: 'Parado: falta o token próprio' }
   if (respondendo.length < liberadas.length) return { tom: 'alerta', rotulo: 'Em parte: falta um token' }
-  if (u.bot_helper && helperFora) return { tom: 'alerta', rotulo: 'Em parte: helper fora do ar' }
+  if (u.bot_helper && helperFora) return { tom: 'alerta', rotulo: `Em parte: ${helperFora}` }
   if (u.bot_helper && !u.tem_senha_atuacao) return { tom: 'alerta', rotulo: 'Helper só lê: sem senha de atuação' }
   return { tom: 'ok', rotulo: 'Respondendo' }
 }
@@ -174,7 +175,7 @@ function LinhaDoBot({
   aoAbrirTokens: () => void
   aoAbrirCelular: () => void
   aoAbrirSenha: () => void
-  helperFora: boolean
+  helperFora: string | null
 }) {
   const qc = useQueryClient()
   const mudar = useMutation({
