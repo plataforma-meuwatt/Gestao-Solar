@@ -183,7 +183,8 @@ def _o_que_ficou(p: Any) -> str:
     DELA, nunca a instrução que o bot mandou ao meuPlano (avaliação 13)."""
     de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
     if p.feitos:
-        return f"{de}, já foi feito: {'; '.join(p.feitos)}. O resto não foi feito — confira e peça de novo o que faltar."
+        return (f"{de}, antes disso já foi feito: {'; '.join(p.feitos)}. O resto não foi feito — confira e peça de "
+                "novo o que faltar.")
     return f"{de}, nada além disso foi feito — confira e peça de novo o que faltar."
 
 

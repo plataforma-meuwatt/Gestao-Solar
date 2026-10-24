@@ -864,7 +864,7 @@ a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM), com o
 "digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). A proposta guarda o
 pedido nas palavras da PESSOA e o que dele já foi feito (`Pendente.pedido`/`feitos`): passo que falha
-diz "Do seu pedido «…», já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou
+diz "Do seu pedido «…», antes disso já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou
 ao meuPlano —, e próximo passo que não vem (erro ou demora de lá) vira "⚠️ Não consegui pedir ao
 meuPlano o resto do seu pedido…", com o log em erro (avaliação 13). O
 assistente de lá diz se as tarefas da OS estão feitas e a FECHA quando estão (`situacao_os`,

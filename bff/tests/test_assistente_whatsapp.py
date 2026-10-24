@@ -1956,7 +1956,7 @@ async def test_falha_num_passo_seguinte_diz_o_pedido_da_pessoa_e_o_que_ja_foi_fe
         await assistente.atender(_toque(dono, status * 10 + 3))
         falha = bot_local.enviados[-1]
         assert falha.startswith(comeco) and "proponha o próximo" not in falha and "Feito no meuPlano" not in falha
-        assert (f"Do seu pedido «{PEDIDO_DOIS_PASSOS}», já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) "
+        assert (f"Do seu pedido «{PEDIDO_DOIS_PASSOS}», antes disso já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) "
                 "(OS 1843, PROGRAMADA). O resto não foi feito") in falha
         assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
 
