@@ -26,11 +26,20 @@ class HelperBot:
             "Authorization": f"Bearer {token}",
         }
 
-    async def _post(self, caminho: str, corpo: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, caminho: str, corpo: dict[str, Any], espera_s: float = 120) -> dict[str, Any]:
         """Devolve o JSON do helper, inclusive nos erros (`{"ok": false, "reason", "error"}`):
-        a frase do helper é a que diz o que fazer (`sem_login`, `ocupada_por_outro`…)."""
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(f"{self.base_url}/api/bot/{caminho}", headers=self._cabecalhos, json=corpo)
+        a frase do helper é a que diz o que fazer (`sem_login`, `ocupada_por_outro`…).
+
+        Sem conexão = nada chegou lá. Tempo esgotado depois de enviar = PODE ter chegado
+        (`incerto`): numa confirmação, dizer "falhou" convidaria a mandar de novo."""
+        try:
+            async with httpx.AsyncClient(timeout=espera_s) as c:
+                r = await c.post(f"{self.base_url}/api/bot/{caminho}", headers=self._cabecalhos, json=corpo)
+        except httpx.ConnectError:
+            return {"ok": False, "reason": "helper_fora", "error": "O helper não respondeu (túnel ou serviço fora do ar)."}
+        except httpx.TimeoutException:
+            return {"ok": False, "incerto": True, "reason": "sem_resposta",
+                    "error": f"O helper não respondeu em {int(espera_s)} s."}
         try:
             dados = r.json()
         except ValueError:
@@ -44,6 +53,9 @@ class HelperBot:
         return await self._post("chamar", {"rota": rota, "metodo": metodo, "corpo": corpo, "origem": origem})
 
     async def confirmar(self, proposta: str, confirmado_por: str, origem: str) -> dict[str, Any]:
+        """O ajuste em massa (2.26.0) espera o lote inteiro até ~150 s, e o filtro do túnel corta
+        em 200 s: espera 190 s."""
         return await self._post(
-            "confirmar", {"proposta": proposta, "confirmado_por": confirmado_por, "origem": origem}
+            "confirmar", {"proposta": proposta, "confirmado_por": confirmado_por, "origem": origem},
+            espera_s=190,
         )

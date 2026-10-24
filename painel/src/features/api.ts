@@ -517,24 +517,6 @@ export const clientesDaEmpresa = () =>
 export const usuariosDaEmpresa = () =>
   apiEmpresa.get<UsuarioDaEmpresa[]>('/usuarios').then((r) => r.data)
 
-export type ItemDaCarteira = {
-  id: number
-  nome: string
-  detalhe: string | null
-  empresa_id: number | null
-  empresa_nome: string | null
-}
-
-export type Carteira = { usinas: ItemDaCarteira[]; clientes: ItemDaCarteira[] }
-
-export const carteiraDaEmpresa = (id: number) =>
-  api.get<Carteira>(`/empresas/${id}/carteira`).then((r) => r.data)
-
-/** As listas COMPLETAS: o que sair delas fica sem dono. Sem `clientes`, as contas ficam
- *  como estão (usuário se põe e se tira pela lista de usuários da empresa). */
-export const salvarCarteira = (id: number, dados: { usinas: number[]; clientes?: number[] }) =>
-  api.put<Carteira>(`/empresas/${id}/carteira`, dados).then((r) => r.data)
-
 export type ConexaoDaEmpresa = {
   produto: Produto
   configurada: boolean
@@ -567,21 +549,6 @@ export const conectarEmpresa = (produto: Produto, dados: { base_url: string; tok
 
 export const desconectarEmpresa = (produto: Produto) =>
   apiEmpresa.delete<void>(`/conexoes/${produto}/token`).then(() => undefined)
-
-export type GerenteCriado = {
-  id: number
-  nome: string
-  apelido: string
-  senha: string
-  /** A conta nova ficou no seu grupo de papéis — "Trocar papel" já a mostra. */
-  agrupada: boolean
-}
-
-/** A senha aparece UMA vez. Não é guardada em texto: quem perder, redefine. */
-export const criarGerente = (
-  empresaId: number,
-  dados: { nome: string; apelido: string; email?: string | null; minha?: boolean },
-) => api.post<GerenteCriado>(`/empresas/${empresaId}/gerente`, dados).then((r) => r.data)
 
 export type EmpresaDoProduto = {
   id: number
@@ -919,6 +886,8 @@ export type UsuarioDetalhado = {
   bot_meuplano: boolean
   bot_meuwatt: boolean
   bot_helper: boolean
+  /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de qualquer ação (sem ela, o bot só lê). */
+  tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
   meuplano: string | null
   /** A conta é de OUTRA empresa e também desta: o nome da que cuida dela. Daqui só se
@@ -968,8 +937,15 @@ export const desconectarContaDoCliente = (usuarioId: number, produto: Produto) =
 
 export const editarContaDaEmpresa = (
   usuarioId: number,
-  dados: { ativo?: boolean; senha?: string; nome?: string; email?: string; telefone?: string } &
-    Partial<Record<ProdutoDoBot, boolean>>,
+  dados: {
+    ativo?: boolean
+    senha?: string
+    nome?: string
+    email?: string
+    telefone?: string
+    /** 4 a 8 números: a que o bot pede antes de ligar, desligar, gravar ou criar. */
+    senha_atuacao?: string
+  } & Partial<Record<ProdutoDoBot, boolean>>,
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 
 /** As usinas que esta conta recebe hoje — a tela precisa antes de salvar a lista completa. */

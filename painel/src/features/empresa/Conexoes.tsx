@@ -158,7 +158,11 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
           {ligada ? (
             <button
               className="btn-secundario"
-              onClick={() => desconectar.mutate()}
+              onClick={() =>
+                window.confirm(
+                  `Desconectar a conta da empresa no ${NOME[conexao.produto]}? Quem lê com ela — os donos de usina sem token próprio — fica sem dado do ${NOME[conexao.produto]} até conectar de novo.`,
+                ) && desconectar.mutate()
+              }
               disabled={desconectar.isPending}
             >
               Desconectar

@@ -9,14 +9,16 @@
  *   token — nunca o da empresa): sem o do meuWatt não há geração, sem o do meuPlano não há
  *   manutenção;
  * - as CAIXAS dizem sobre o que o bot responde a ela. Ligar só manda a caixa: não regrava
- *   o cadastro (nem no meuPlano), então um meuPlano fora do ar não impede ligar o bot.
+ *   o cadastro (nem no meuPlano), então um meuPlano fora do ar não impede ligar o bot;
+ * - a SENHA DE ATUAÇÃO (pedido do dono, 24/10/2026): o bot a pede antes de qualquer ação —
+ *   ligar, desligar, gravar, criar OS. Ler não pede. Sem ela, o bot só lê.
  *
  * Embaixo, as últimas mensagens das pessoas da empresa — é aqui que o gerente vê por que
  * alguém ficou sem resposta.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, MessageCircle } from 'lucide-react'
+import { KeyRound, Lock, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio, type Tom } from '@/components/base'
@@ -47,6 +49,7 @@ export function BotDaEmpresa() {
   const { data: canal } = useQuery({ queryKey: ['empresa', 'bot-ouvindo'], queryFn: botOuvindo, refetchInterval: 60_000 })
   const [tokensDe, setTokensDe] = useState<UsuarioDetalhado | null>(null)
   const [celularDe, setCelularDe] = useState<UsuarioDetalhado | null>(null)
+  const [senhaDe, setSenhaDe] = useState<UsuarioDetalhado | null>(null)
 
   const daqui = (data ?? []).filter((u) => u.cuidada_por === null)
   const deOutra = (data ?? []).filter((u) => u.cuidada_por !== null)
@@ -60,7 +63,9 @@ export function BotDaEmpresa() {
         <Aviso>
           Regra: cada pessoa usa o bot com o <strong>token dela</strong> — nunca o da empresa.
           Geração precisa do token do meuWatt dela; manutenção, do token do meuPlano dela. Sem o
-          celular, o bot não sabe quem está escrevendo.
+          celular, o bot não sabe quem está escrevendo. <strong>Ação</strong> (ligar, desligar,
+          gravar, criar OS) só roda com a <strong>senha de atuação</strong> da pessoa; ler não pede
+          senha.
         </Aviso>
       </div>
 
@@ -95,6 +100,7 @@ export function BotDaEmpresa() {
               primeiro={i === 0}
               aoAbrirTokens={() => setTokensDe(u)}
               aoAbrirCelular={() => setCelularDe(u)}
+              aoAbrirSenha={() => setSenhaDe(u)}
             />
           ))
         )}
@@ -124,6 +130,7 @@ export function BotDaEmpresa() {
 
       {tokensDe ? <Tokens usuario={tokensDe} aoFechar={() => setTokensDe(null)} /> : null}
       {celularDe ? <Celular usuario={celularDe} aoFechar={() => setCelularDe(null)} /> : null}
+      {senhaDe ? <SenhaDeAtuacao usuario={senhaDe} aoFechar={() => setSenhaDe(null)} /> : null}
     </Pagina>
   )
 }
@@ -144,11 +151,13 @@ function LinhaDoBot({
   primeiro,
   aoAbrirTokens,
   aoAbrirCelular,
+  aoAbrirSenha,
 }: {
   usuario: UsuarioDetalhado
   primeiro: boolean
   aoAbrirTokens: () => void
   aoAbrirCelular: () => void
+  aoAbrirSenha: () => void
 }) {
   const qc = useQueryClient()
   const mudar = useMutation({
@@ -214,8 +223,77 @@ function LinhaDoBot({
           )
         })}
       </div>
+      <div className="mt-3 flex items-center gap-2 flex-wrap text-sm">
+        <Lock size={14} className="text-rotulo" />
+        <span className={u.tem_senha_atuacao ? 'text-ok' : 'text-alerta'}>
+          {u.tem_senha_atuacao ? 'Senha de atuação definida' : 'Sem senha de atuação — o bot só lê'}
+        </span>
+        <button className="btn-fantasma" onClick={aoAbrirSenha}>
+          {u.tem_senha_atuacao ? 'Trocar senha' : 'Definir senha'}
+        </button>
+      </div>
       {mudar.error ? <Erro className="mt-2">{mensagemDeErro(mudar.error)}</Erro> : null}
     </div>
+  )
+}
+
+/** A senha de atuação: o bot a pede antes de qualquer ação. Só números — é digitada no
+ *  celular —, e a de login nunca serve: ela não deve ser escrita no WhatsApp. */
+function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
+  const qc = useQueryClient()
+  const [senha, setSenha] = useState('')
+  const [repetida, setRepetida] = useState('')
+  const diferentes = repetida.length > 0 && senha !== repetida
+  const salvar = useMutation({
+    mutationFn: () => editarContaDaEmpresa(usuario.id, { senha_atuacao: senha }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['empresa'] })
+      aoFechar()
+    },
+  })
+  return (
+    <Modal titulo={`Senha de atuação de ${usuario.nome}`} aoFechar={aoFechar}>
+      <div className="grid gap-4">
+        <Aviso>
+          O bot pede esta senha antes de <strong>ligar, desligar, gravar</strong> ou criar algo
+          (helper e meuPlano). Ler não pede. Só números, de 4 a 8 — nada de sequência nem número
+          repetido. Entregue à pessoa como a senha provisória: ela não aparece de novo.
+        </Aviso>
+        <Campo
+          rotulo="Senha de atuação"
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          maxLength={8}
+          value={senha}
+          onChange={(e) => setSenha(e.target.value.replace(/\D/g, ''))}
+          autoFocus
+        />
+        <Campo
+          rotulo="Repita a senha"
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          maxLength={8}
+          value={repetida}
+          onChange={(e) => setRepetida(e.target.value.replace(/\D/g, ''))}
+          nota={diferentes ? 'As duas não batem.' : undefined}
+        />
+        {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+        <div className="flex justify-end gap-2">
+          <button className="btn-secundario" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn-primario"
+            disabled={salvar.isPending || senha.length < 4 || senha !== repetida}
+            onClick={() => salvar.mutate()}
+          >
+            {salvar.isPending ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

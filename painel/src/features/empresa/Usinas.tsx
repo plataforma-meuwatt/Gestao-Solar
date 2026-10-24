@@ -56,7 +56,7 @@ const GRUPOS: { origem: LinhaDeUsina['origem']; titulo: string; icone: typeof Su
     titulo: 'Só no portal do fabricante',
     icone: Cpu,
     apoio:
-      'Do MICRO do meuWatt (Solis, Canadian, TSUN). Sozinha ela já é uma usina — há cliente cujo único monitoramento é esse.',
+      'Do MICRO do meuWatt (Solis, Canadian, TSUN). Sozinha ela já é uma usina — há dono de usina cujo único monitoramento é esse.',
   },
 ]
 

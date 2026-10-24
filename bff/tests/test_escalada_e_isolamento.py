@@ -122,21 +122,23 @@ async def test_conta_da_plataforma_nao_aparece_na_lista_do_gerente(db, cenario):
         assert "admin.plataforma" not in apelidos
 
 
-def test_a_carteira_da_empresa_nao_adota_conta_da_plataforma(db, cenario):
-    """A entrada do ataque: `PUT /empresas/{id}/carteira` gravava `empresa_id` em qualquer
-    id marcado em `clientes`, sem olhar o perfil. Fechar só a saída deixaria o estado
-    existindo — e o próximo caminho a esquecer a guarda o encontraria pronto."""
-    from app.api.v1.painel_empresas import CarteiraIn, salvar_carteira
+def test_as_rotas_sem_tela_que_furavam_as_travas_nao_existem():
+    """`PUT /carteira` adotava conta da plataforma e tirava a empresa do último gerente;
+    `PUT /gerente/{apelido}` fazia de qualquer conta — administrador inclusive — gerente, e
+    deixava outra empresa sem gerente (avaliação de 24/10/2026). Nenhuma tela as usava: a
+    empresa ganha gente pelas rotas de `/usuarios`, que passam pelas travas."""
+    from app.main import app
 
-    emp, _gerente, admin = cenario
-    admin.empresa_id = None
-    db.commit()
-
-    salvar_carteira(
-        emp.id, CarteiraIn(usinas=[], clientes=[admin.id]), db=db, _gestor=admin
-    )
-    db.refresh(admin)
-    assert admin.empresa_id is None, "administrador não entra na carteira de inquilino"
+    rotas = {(m, r.path) for r in app.routes for m in getattr(r, "methods", ())}
+    for metodo, caminho in (
+        ("GET", "/api/painel/empresas/{empresa_id}/carteira"),
+        ("PUT", "/api/painel/empresas/{empresa_id}/carteira"),
+        ("POST", "/api/painel/empresas/{empresa_id}/gerente"),
+        ("PUT", "/api/painel/empresas/{empresa_id}/gerente/{apelido}"),
+        ("GET", "/api/painel/contas-livres"),
+    ):
+        assert (metodo, caminho) not in rotas, f"{metodo} {caminho} voltou"
+    assert ("POST", "/api/painel/empresas/{empresa_id}/usuarios") in rotas
 
 
 # ------------------------------------------------- 2. a empresa desativada

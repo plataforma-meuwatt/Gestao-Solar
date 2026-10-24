@@ -91,6 +91,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
     mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
+    ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     run_id = await mp.assistente_chat(None, mensagens)
     for _ in range(60):                                   # até ~2 min
         await asyncio.sleep(2)
@@ -124,7 +125,9 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
 
     async def executar(db: Session, user: User, telefone: str) -> str:
         try:
-            await cliente_meuplano(db, user.id, so_proprio=True).assistente_aplicar(None, acao, args)
+            mp = cliente_meuplano(db, user.id, so_proprio=True)
+            db.commit()                                   # solta a conexão enquanto o meuPlano grava
+            await mp.assistente_aplicar(None, acao, args)
         except SemConexao as e:
             return f"❌ Não executado: {e}"
         except httpx.HTTPStatusError as e:
@@ -134,7 +137,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
                     "Confira no meuPlano antes de pedir de novo.")
         return f"✅ Feito no meuPlano: {resumo}"
 
-    proposta = helper.propor(ctx.user.id, resumo, PRAZO_PROPOSTA_MP_S, executar)
+    proposta = helper.propor(ctx.user, resumo, PRAZO_PROPOSTA_MP_S, executar)
     proposta["detalhes"] = [ln.get("text") for ln in previa.get("lines") or []][:15]
     proposta["avisos"] = previa.get("warnings") or []
     return proposta
@@ -206,7 +209,8 @@ def permitidas(user) -> list[str]:
 
 # --------------------------------------------------------------------------- orquestrador
 def _sistema(ctx: ger.Contexto) -> str:
-    usinas = ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento"
+    usinas = (f"o meuWatt não respondeu agora ({ctx.mw_falha}) — geração indisponível nesta mensagem"
+              if ctx.mw_falha else ", ".join(u["nome"] for u in ctx.usinas.values()) or "nenhuma com monitoramento")
     ativo = ctx.user.bot_ativo
     areas = [n for n, c in (("geração/monitoramento (meuWatt)", "bot_meuwatt"),
                             ("manutenção (meuPlano)", "bot_meuplano"),
@@ -223,8 +227,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo e já confirmado pela pessoa.
-- Ação (helper ou meuPlano) NUNCA é executada por você: a ferramenta devolve `proposta_pendente` e um código.
-  Mostre o resumo (e os detalhes) e peça para a pessoa responder CONFIRMO <código>. Nunca diga que fez.
+- Ação (helper ou meuPlano: ligar, desligar, gravar, criar) NUNCA é executada por você: a ferramenta devolve
+  `proposta_pendente`. Mostre o resumo (e os detalhes) e peça a SENHA DE ATUAÇÃO da pessoa — quem confere é o
+  sistema. Nunca peça a senha de login, nunca escreva uma senha, nunca diga que fez. Ler não pede senha.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
 - Período: calcule as datas a partir de hoje. Compare usinas pela produtividade (kWh/kWp).
 - Responda curto, em português do Brasil, formato WhatsApp (*negrito*, listas curtas): o número pedido
@@ -267,6 +272,7 @@ async def responder(ctx: ger.Contexto, historico: list[dict]) -> str:
     msgs: list[dict] = [{"role": "system", "content": _sistema(ctx)}, *historico]
     ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
     for _ in range(MAX_RODADAS):
+        ctx.db.commit()                                   # solta a conexão enquanto a IA pensa
         m = await _llm(msgs, ferramentas)
         chamadas = m.get("tool_calls") or []
         if not chamadas:
@@ -332,10 +338,41 @@ async def atender(evento: dict) -> None:
         await _atender(evento)
 
 
+def _empresa_fora(db: Session, user: User) -> str | None:
+    """"Desligar a empresa" para o bot também — o adm promete que "param de entrar na hora".
+    Conta sem empresa não é atendida: ninguém responde por ela (avaliação de 24/10/2026)."""
+    from app.models.empresa import Empresa
+
+    if user.empresa_id is None:
+        return ("Sua conta não está em nenhuma empresa de O&M no Gestão Solar, então o assistente não "
+                "atende. Fale com a sua O&M.")
+    empresa = db.get(Empresa, user.empresa_id)
+    if empresa is None or not empresa.ativa:
+        return ("O acesso da sua empresa ao Gestão Solar está desligado, então o assistente não atende. "
+                "Fale com a sua O&M.")
+    return None
+
+
+async def _ocultar_no_gateway(mensagem_id: Any) -> None:
+    """A senha digitada sai também do gateway (a linha da mensagem e a entrega crua da Meta)."""
+    if not mensagem_id:
+        return
+    try:
+        await whatsapp.ocultar_texto(int(mensagem_id))
+    except Exception:                                      # noqa: BLE001 — não derruba a resposta
+        log.warning("assistente: não ocultou a senha no gateway (mensagem %s)", mensagem_id, exc_info=True)
+
+
 async def _atender(evento: dict) -> None:
     telefone = evento.get("telefone") or ("+" + evento.get("wa_id", ""))
     texto = (evento.get("texto") or "").strip()
+    enviada = _enviada_em(evento.get("ocorrida_em"))      # o log mostra quando a pessoa MANDOU
+    # Mensagem com cara de senha nunca vai em claro ao log, nem se der erro no meio.
+    pergunta = helper.OCULTA if helper.SENHA.match(texto) else texto
     db = SessionLocal()
+    # O turno solta a conexão antes de cada espera longa (IA, meuPlano, helper): sem expirar
+    # os objetos, o commit não custa uma ida ao banco (~200 ms) para reler a conta.
+    db.expire_on_commit = False
     fim = asyncio.Event()
     inicio = monotonic()
     user: User | None = None
@@ -345,24 +382,28 @@ async def _atender(evento: dict) -> None:
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
-            # O log mostra a hora em que a pessoa MANDOU (é a que ela lembra); a de chegada vai no texto.
-            _registrar(db, telefone, user, "atrasada", pergunta=texto or f"[{evento.get('tipo') or 'mídia'}]",
-                       em=_enviada_em(evento.get("ocorrida_em")),
+            _registrar(db, telefone, user, "atrasada", pergunta=pergunta or f"[{evento.get('tipo') or 'mídia'}]",
+                       em=enviada,
                        erro=f"Chegou ao bot só em {hora_brt(datetime.now(UTC).isoformat())} (o canal ficou parado) "
                             "— não respondida.")
             return
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):
                 await _texto(telefone, DESCONHECIDO)
-                _registrar(db, telefone, None, "sem_conta", pergunta=texto, resposta=DESCONHECIDO)
+                _registrar(db, telefone, None, "sem_conta", pergunta=pergunta, resposta=DESCONHECIDO, em=enviada)
+            return
+        fora = _empresa_fora(db, user)
+        if fora is not None:
+            await _texto(telefone, fora)
+            _registrar(db, telefone, user, "nao_liberado", pergunta=pergunta, resposta=fora, em=enviada, erro=fora)
             return
         if not user.bot_liberado:
             await _texto(telefone, NAO_LIBERADO)
-            _registrar(db, telefone, user, "nao_liberado", pergunta=texto, resposta=NAO_LIBERADO)
+            _registrar(db, telefone, user, "nao_liberado", pergunta=pergunta, resposta=NAO_LIBERADO, em=enviada)
             return
         if not texto:
             await _texto(telefone, "Por enquanto eu entendo só mensagem de texto.")
-            _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]")
+            _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", em=enviada)
             return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
@@ -379,15 +420,18 @@ async def _atender(evento: dict) -> None:
             db.commit()
             fim.set()
             await _texto(telefone, "🧹 Conversa zerada. Pode mandar um pedido novo.")
-            _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio)
+            _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio, em=enviada)
             return
         historico = json.loads(conv.mensagens or "[]")
         historico.append({"role": "user", "content": texto})
-        # A confirmação de uma AÇÃO (helper ou meuPlano) é conferida aqui, por código — antes
-        # de qualquer modelo. A IA nunca confirma: ela só mostra o resumo e o código à pessoa.
-        # Entra no histórico, para a conversa seguinte saber que foi feito.
+        # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
+        # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
+        # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto)
-        if resposta is None:
+        if resposta is not None:
+            historico[-1]["content"] = helper.OCULTA
+            await _ocultar_no_gateway(evento.get("id"))
+        else:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
             await ger.preparar(ctx)
             if not get_settings().deepseek_api_key:
@@ -401,14 +445,14 @@ async def _atender(evento: dict) -> None:
         fim.set()
         await tarefa
         await _texto(telefone, para_whatsapp(resposta))
-        _registrar(db, telefone, user, "respondeu", pergunta=texto, resposta=resposta,
-                   ferramentas=ctx.ferramentas if ctx else ["confirmar"], inicio=inicio)
+        _registrar(db, telefone, user, "respondeu", pergunta=historico[-2]["content"], resposta=resposta,
+                   ferramentas=ctx.ferramentas if ctx else ["senha_de_atuacao"], inicio=inicio, em=enviada)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()
         fim.set()
-        _registrar(db, telefone, user, "erro", pergunta=texto,
-                   ferramentas=ctx.ferramentas if ctx else None, inicio=inicio,
+        _registrar(db, telefone, user, "erro", pergunta=pergunta,
+                   ferramentas=ctx.ferramentas if ctx else None, inicio=inicio, em=enviada,
                    erro=f"{type(exc).__name__}: {exc}")
         try:
             await _texto(telefone, "Tive um problema para responder agora. Tente de novo em instantes.")

@@ -210,43 +210,6 @@ def test_area_de_empresas_existe_no_catalogo():
     assert "empresas" in areas_painel.CHAVES
 
 
-# --------------------------------------------------------------- a carteira
-
-
-def test_atribuir_carteira_nao_rouba_o_que_e_de_outra_empresa(db, carteiras, administrador):
-    """Defeito guardado: a tela manda o id de uma usina que é de OUTRA empresa e a
-    atribuição a transfere. O dono aparece escrito ao lado de cada linha, então marcar o
-    item de outro é engano — e engano não pode mover carteira."""
-    from app.api.v1.painel_empresas import CarteiraIn, carteira, salvar_carteira
-
-    a, b, _g = carteiras
-    da_b = [u for u in carteira(b.id, db=db, _gestor=administrador).usinas if u.empresa_id == b.id]
-    assert da_b, "cenário inválido: a empresa B precisa ter usina"
-
-    salvar_carteira(
-        a.id,
-        CarteiraIn(usinas=[u.id for u in da_b], clientes=[]),
-        db=db,
-        _gestor=administrador,
-    )
-
-    depois = {u.id: u.empresa_id for u in carteira(b.id, db=db, _gestor=administrador).usinas}
-    for u in da_b:
-        assert depois[u.id] == b.id, "a usina mudou de dono por um id no corpo da requisição"
-
-
-def test_tirar_da_carteira_deixa_sem_dono(db, carteiras, administrador):
-    """O que sai da lista fica sem dono — reversível e visível —, nunca em outra empresa."""
-    from app.api.v1.painel_empresas import CarteiraIn, carteira, salvar_carteira
-
-    a, _b, _g = carteiras
-    depois = salvar_carteira(
-        a.id, CarteiraIn(usinas=[], clientes=[]), db=db, _gestor=administrador
-    )
-    da_a = [u for u in depois.usinas if u.nome == "Usina da A"]
-    assert da_a and da_a[0].empresa_id is None
-
-
 # ------------------------------------------------------- credencial por empresa
 
 
@@ -301,12 +264,10 @@ def test_o_gerente_nasce_dentro_da_empresa_e_ja_entra(db, duas_empresas, adminis
     do sistema só cria staff da plataforma, então sem esta rota não havia como existir um
     `gestor_empresa` — e o portão dele nunca seria usado por ninguém."""
     from app.api.v1.painel import EntrarIn, entrar
-    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.api.v1.painel_empresas import NovoUsuarioIn, criar_usuario_da_empresa
 
     a, _b = duas_empresas
-    criado = criar_gerente(
-        a.id, GerenteIn(nome="Maria Gerente", apelido="maria.om"), db=db, gestor=administrador
-    )
+    criado = criar_usuario_da_empresa(a.id, NovoUsuarioIn(nome="Maria Gerente", apelido="maria.om", perfil=Perfil.GESTOR_EMPRESA), db=db, gestor=administrador)
     assert criado.apelido == "maria.om" and criado.senha
 
     # A senha entregue funciona, e a sessão sai no portão da empresa certa.
@@ -383,31 +344,6 @@ def test_a_plataforma_nao_casa_empresa(db):
 
     assert not hasattr(painel_empresas, "catalogo")
     assert not hasattr(painel_empresas, "salvar_vinculos")
-
-
-def test_promover_conta_existente_a_gerente(db, duas_empresas, administrador, carteiras):
-    """"Criar gerente" não serve para quem já está no sistema: a conta traz usinas
-    concedidas, tokens de produto e histórico, e recriá-la perderia tudo."""
-    from app.api.v1.painel_empresas import tornar_gerente
-
-    a, _b = duas_empresas
-    cliente = db.scalar(select(User).where(User.apelido == "cliente.b"))
-
-    saida = tornar_gerente(a.id, cliente.apelido, db=db, gestor=administrador)
-    assert saida.perfil == "gestor_empresa"
-    db.refresh(cliente)
-    assert cliente.empresa_id == a.id and cliente.abre_empresa
-
-
-def test_o_administrador_nao_se_rebaixa_a_gerente(db, duas_empresas, administrador):
-    """Ele perderia o painel no mesmo instante, e a saída seria outro administrador ou o
-    banco. O caminho certo é uma conta para cada papel."""
-    from app.api.v1.painel_empresas import tornar_gerente
-
-    a, _b = duas_empresas
-    with pytest.raises(HTTPException) as erro:
-        tornar_gerente(a.id, administrador.apelido, db=db, gestor=administrador)
-    assert erro.value.status_code == 400
 
 
 # ------------------------------------------------------ os papéis de uma pessoa
@@ -536,11 +472,11 @@ def test_o_gerente_nao_aparece_na_tela_do_staff_da_plataforma(db, duas_empresas,
     """Defeito guardado: o gerente de um inquilino aparecia em Usuários do sistema por
     herança do filtro `!= CLIENTE` — misturado com quem administra a plataforma. Uma linha
     errada ali o promoveria a administrador do sistema inteiro."""
-    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.api.v1.painel_empresas import NovoUsuarioIn, criar_usuario_da_empresa
     from app.api.v1.painel_usuarios import listar
 
     a, _b = duas_empresas
-    criar_gerente(a.id, GerenteIn(nome="Gerente", apelido="ger.um"), db=db, gestor=administrador)
+    criar_usuario_da_empresa(a.id, NovoUsuarioIn(nome="Gerente", apelido="ger.um", perfil=Perfil.GESTOR_EMPRESA), db=db, gestor=administrador)
 
     apelidos = {m.apelido for m in listar(db=db, _=administrador)}
     assert "ger.um" not in apelidos
@@ -550,45 +486,24 @@ def test_o_gerente_nao_aparece_na_tela_do_staff_da_plataforma(db, duas_empresas,
 def test_editar_gerente_pela_tela_do_staff_e_recusado(db, duas_empresas, administrador):
     """A mesma trava, do outro lado: mesmo sabendo o id, a rota do staff não mexe em conta
     que não é da plataforma."""
-    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
+    from app.api.v1.painel_empresas import NovoUsuarioIn, criar_usuario_da_empresa
     from app.api.v1.painel_usuarios import MembroPatch, editar
 
     a, _b = duas_empresas
-    novo = criar_gerente(a.id, GerenteIn(nome="Gerente Dois", apelido="ger.dois"), db=db, gestor=administrador)
+    novo = criar_usuario_da_empresa(a.id, NovoUsuarioIn(nome="Gerente Dois", apelido="ger.dois", perfil=Perfil.GESTOR_EMPRESA), db=db, gestor=administrador)
 
     with pytest.raises(HTTPException) as erro:
         editar(novo.id, MembroPatch(perfil=Perfil.ADMINISTRADOR), db=db, admin=administrador)  # type: ignore[arg-type]
     assert erro.value.status_code == 404
 
 
-def test_criar_gerente_marcando_que_e_meu_ja_agrupa(db, duas_empresas, administrador):
-    """O caso do dono: administrar a plataforma e gerenciar a O&M. Marcando "é minha", a
-    conta nasce no mesmo grupo e o seletor de papel já a mostra — sem uma segunda tela para
-    alguém esquecer."""
-    from app.api.v1.painel_empresas import GerenteIn, criar_gerente
-    from app.services import pessoas
-
-    a, _b = duas_empresas
-    criado = criar_gerente(
-        a.id, GerenteIn(nome="Eu, gerente", apelido="eu.om", minha=True), db=db, gestor=administrador
-    )
-    assert criado.agrupada
-
-    db.refresh(administrador)
-    apelidos = {c.apelido for c in pessoas.contas_da_pessoa(db, administrador)}
-    assert apelidos == {administrador.apelido, "eu.om"}
-
-    # E a troca já funciona para baixo, sem senha.
-    assert pessoas.trocar(db, administrador, "eu.om", None).apelido == "eu.om"
-
-
 def test_a_empresa_so_administra_quem_e_dela(db, duas_empresas, administrador):
     """Defeito guardado: trocar o número na barra de endereço e redefinir a senha de
     qualquer conta do sistema a partir de uma tela de empresa."""
-    from app.api.v1.painel_empresas import GerenteIn, UsuarioPatch, criar_gerente, editar_usuario_da_empresa
+    from app.api.v1.painel_empresas import NovoUsuarioIn, UsuarioPatch, criar_usuario_da_empresa, editar_usuario_da_empresa
 
     a, b = duas_empresas
-    da_b = criar_gerente(b.id, GerenteIn(nome="Da B", apelido="ger.b"), db=db, gestor=administrador)
+    da_b = criar_usuario_da_empresa(b.id, NovoUsuarioIn(nome="Da B", apelido="ger.b", perfil=Perfil.GESTOR_EMPRESA), db=db, gestor=administrador)
 
     with pytest.raises(HTTPException) as erro:
         editar_usuario_da_empresa(

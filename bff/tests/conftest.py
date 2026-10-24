@@ -34,6 +34,19 @@ def _gateway_sem_espera(monkeypatch):
     monkeypatch.setattr(whatsapp, "ESPERAS_S", (0.0, 0.0))
 
 
+@pytest.fixture(autouse=True)
+def _memoria_do_bot_limpa():
+    """O bot guarda em memória (por id de conta) a ação esperando senha, as senhas erradas e
+    a lista de usinas do meuWatt. Cada teste tem banco novo e os ids recomeçam: sem limpar,
+    o que um teste deixou valeria para a conta de mesmo id do seguinte."""
+    from app.services import assistente_geracao, assistente_helper
+
+    for guardado in (assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
+                     assistente_geracao._USINAS_MW):
+        guardado.clear()
+    yield
+
+
 @pytest.fixture
 def db():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})

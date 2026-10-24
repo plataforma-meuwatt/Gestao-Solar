@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -54,6 +55,15 @@ class Contexto:
     ferramentas: list[str] = field(default_factory=list)
     #: a conversa ANTES desta mensagem ({role, content}) — vai ao assistente do meuPlano
     historico: list[dict] = field(default_factory=list)
+    #: o meuWatt não respondeu nesta mensagem: só a GERAÇÃO fica de fora (a frase vai à IA)
+    mw_falha: str | None = None
+
+
+#: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".
+#: ponytail: em memória e por processo; uma concessão nova no GS vale na hora (o recorte é
+#: refeito a cada mensagem), só a lista do meuWatt espera até 5 min.
+_USINAS_MW: dict[int, tuple[float, list[dict]]] = {}
+USINAS_MW_TTL_S = 300
 
 
 async def preparar(ctx: Contexto) -> None:
@@ -71,7 +81,20 @@ async def preparar(ctx: Contexto) -> None:
         ctx.mw = cliente_meuwatt(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao:
         return
-    for p in await ctx.mw.usinas():
+    guardada = _USINAS_MW.get(ctx.user.id)
+    if guardada and time.monotonic() - guardada[0] < USINAS_MW_TTL_S:
+        lista = guardada[1]
+    else:
+        ctx.db.commit()                                   # solta a conexão enquanto o meuWatt responde
+        try:
+            lista = await ctx.mw.usinas()
+        except Exception as e:                            # noqa: BLE001 — meuWatt fora não cala a manutenção
+            from app.services.integracoes import Produto, traduzir_falha
+
+            ctx.mw, ctx.mw_falha = None, traduzir_falha(e, Produto.MEUWATT).detalhe
+            return
+        _USINAS_MW[ctx.user.id] = (time.monotonic(), lista)
+    for p in lista:
         link = concedidas.get(p.get("slug"))
         if link is not None:
             ctx.usinas[p["slug"]] = {"nome": link.nome or p.get("name"), "slug": p["slug"], "id": p.get("id"),
@@ -86,6 +109,8 @@ def _norm(s: str | None) -> str:
 
 
 def _usina(ctx: Contexto, nome: str | None) -> dict:
+    if ctx.mw_falha:
+        raise Recusa(f"O monitoramento (meuWatt) não respondeu agora: {ctx.mw_falha} Tente de novo em instantes.")
     if ctx.mw is None or not ctx.usinas:
         raise Recusa("Não há usina com monitoramento liberada para você no Gestão Solar.")
     todas = list(ctx.usinas.values())

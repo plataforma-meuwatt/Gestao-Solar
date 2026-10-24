@@ -49,8 +49,8 @@ const ROTULO_EVENTO: Record<string, string> = {
 }
 
 const APOIO =
-  'O número de WhatsApp da PLATAFORMA — o do bot —, pelo qual as notificações saem e as mensagens dos ' +
-  'clientes chegam. O token vale o que a conta que o gerou vale, e o segredo do app é o ' +
+  'O número de WhatsApp da PLATAFORMA — o do bot —, pelo qual as notificações saem e as mensagens das ' +
+  'pessoas chegam. O token vale o que a conta que o gerou vale, e o segredo do app é o ' +
   'que prova que uma entrega veio mesmo da Meta.'
 
 function quando(iso: string | null | undefined) {
@@ -156,7 +156,11 @@ export function Whatsapp() {
               Trocar credenciais
             </button>
             <button
-              onClick={() => remover.mutate()}
+              onClick={() =>
+                window.confirm(
+                  'Remover as credenciais do número da plataforma? O bot fica surdo e nenhuma notificação sai até alguém colar de novo o token, o segredo do app e o token de verificação da Meta.',
+                ) && remover.mutate()
+              }
               className="btn-fantasma text-parado"
               disabled={remover.isPending}
               title="Apaga os segredos daqui. Não revoga nada na Meta."
@@ -391,7 +395,6 @@ function Gravado({ dados }: { dados: NonNullable<Awaited<ReturnType<typeof crede
           <dt className="text-rotulo">Gravado por</dt>
           <dd className="text-forte">
             {dados.atualizada_por}
-            <span className="mono text-xs text-fraco"> · {quando(dados.atualizada_em)}</span>
           </dd>
         </>
       ) : null}

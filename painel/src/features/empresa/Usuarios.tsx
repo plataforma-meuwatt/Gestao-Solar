@@ -650,8 +650,11 @@ export function UsinasDoUsuario({
  * Com ele, a leitura passa a acontecer **como ela**: as usinas que ela enxergaria lá, pela
  * regra de lá — e o produto passa a aceitar que ela entre com a senha daqui.
  */
-export function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
+export function Tokens({ usuario: inicial, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
   const qc = useQueryClient()
+  // A linha FRESCA: conectar ou desconectar atualiza a lista, e o modal tem de acompanhar.
+  const { data: lista } = useQuery({ queryKey: ['empresa', 'usuarios-detalhados'], queryFn: usuariosDetalhados })
+  const usuario = lista?.find((u) => u.id === inicial.id) ?? inicial
   const [produto, setProduto] = useState<Produto>('meuwatt')
   const [token, setToken] = useState('')
   const [resultado, setResultado] = useState<{ ok: boolean; detalhe: string } | null>(null)
@@ -691,7 +694,11 @@ export function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFec
                 <button
                   className="btn-fantasma"
                   disabled={desconectar.isPending}
-                  onClick={() => desconectar.mutate(p)}
+                  onClick={() =>
+                    window.confirm(
+                      `Desconectar o token do ${NOME_DO_PRODUTO[p]} de ${usuario.nome}? O bot dela para de responder sobre ${p === 'meuwatt' ? 'geração e helper' : 'manutenção'} até colar outro.`,
+                    ) && desconectar.mutate(p)
+                  }
                 >
                   Desconectar
                 </button>
@@ -716,6 +723,8 @@ export function Tokens({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFec
           <p className="rotulo-campo">Token gerado na conta dela</p>
           <input
             className="campo mt-1"
+            type="password"
+            autoComplete="off"
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder="cole aqui"

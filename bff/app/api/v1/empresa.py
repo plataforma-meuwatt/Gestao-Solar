@@ -1315,6 +1315,8 @@ class UsuarioDetalhado(BaseModel):
     bot_meuplano: bool = False
     bot_meuwatt: bool = False
     bot_helper: bool = False
+    #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de qualquer ação (sem ela, o bot só lê).
+    tem_senha_atuacao: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
     meuplano: str | None = None
     #: A conta é de OUTRA empresa e também desta (usuário em mais de uma empresa): o nome
@@ -1396,6 +1398,7 @@ async def usuarios_detalhados(
             tokens_de=tokens_de.get(c.id, {}),
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
+            tem_senha_atuacao=bool(c.senha_atuacao_hash),
             meuplano=ligado_mp.get(c.id),
             cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
             sugestao_meuplano=(
@@ -1482,6 +1485,9 @@ class ContaPatch(BaseModel):
     bot_meuplano: bool | None = None
     bot_meuwatt: bool | None = None
     bot_helper: bool | None = None
+    #: A SENHA DE ATUAÇÃO (4 a 8 números) que o bot pede antes de ligar, desligar, gravar ou
+    #: criar. O gerente define e entrega à pessoa, como a senha provisória.
+    senha_atuacao: str | None = None
 
 
 @router.patch("/usuarios/{usuario_id}", response_model=UsuarioDetalhado)
@@ -1514,6 +1520,15 @@ async def editar_conta_da_empresa(
                 status.HTTP_400_BAD_REQUEST, "A senha precisa de pelo menos 8 caracteres."
             )
         conta.senha_hash = gerar_hash_senha(body.senha)
+    if body.senha_atuacao is not None:
+        from app.services import assistente_helper
+
+        try:
+            limpa = assistente_helper.validar_senha_atuacao(body.senha_atuacao)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        conta.senha_atuacao_hash = gerar_hash_senha(limpa)
+        assistente_helper.nova_senha(conta.id)
     if body.nome is not None or body.email is not None or body.telefone is not None:
         from app.services import cadastro
         await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
@@ -1539,6 +1554,7 @@ async def editar_conta_da_empresa(
         or 0,
         telefone=exibir_telefone(conta.telefone),
         bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
+        tem_senha_atuacao=bool(conta.senha_atuacao_hash),
         meuplano=_nome_no_meuplano(db, conta.id),
     )
 

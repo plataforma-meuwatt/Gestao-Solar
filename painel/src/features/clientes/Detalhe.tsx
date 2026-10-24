@@ -272,7 +272,7 @@ function ContaNoProduto({
             {vinculo!.estado === 'falhou' ? 'token dele com problema' : 'tem o token dele'}
           </Selo>
         ) : (
-          <Selo tom="sem-dados">sem o token dele</Selo>
+          <Selo tom="sem-dados">sem token próprio</Selo>
         )}
         {temToken && vinculo!.login_externo ? <Selo tom="ok">login via Gestão Solar</Selo> : null}
       </div>

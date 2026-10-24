@@ -456,16 +456,3 @@ async def testar(db: Session, cliente: User, produto: Produto) -> ResultadoConex
 
     resultado.login_externo = vinculo.login_externo
     return resultado
-
-
-def desconectar(db: Session, cliente: User, produto: Produto) -> None:
-    """Apaga o vínculo inteiro — token junto.
-
-    Não guarda o token "para o caso de reconectar": ele continua valendo do lado do
-    produto até ser revogado lá, e um segredo guardado sem uso é risco sem contrapartida.
-    Reconectar é colar de novo.
-    """
-    vinculo = obter(db, cliente.id, produto)
-    if vinculo is not None:
-        db.delete(vinculo)
-        db.commit()

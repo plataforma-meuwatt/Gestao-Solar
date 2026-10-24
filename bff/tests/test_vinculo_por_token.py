@@ -263,18 +263,6 @@ class TestTestarEDesconectar:
         # O produto estar fora do ar não é motivo para jogar fora a credencial.
         assert v.token_cifrado is not None
 
-    async def test_desconectar_apaga_o_vinculo_inteiro(
-        self, db, cliente, administrador, monkeypatch
-    ):
-        _responde(monkeypatch)
-        await vinculos.conectar(db, cliente, Produto.MEUWATT, MW, por=administrador)
-
-        vinculos.desconectar(db, cliente, Produto.MEUWATT)
-
-        assert vinculos.obter(db, cliente.id, Produto.MEUWATT) is None
-        # Nem um resto cifrado: guardar segredo sem uso é risco sem contrapartida.
-        assert db.query(VinculoProduto).count() == 0
-
     def test_ler_sem_token_diz_o_que_fazer(self, db, cliente):
         with pytest.raises(vinculos.SemConexao, match="cola o token"):
             vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT)

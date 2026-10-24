@@ -18,9 +18,22 @@ def _token(db, conta, *produtos):
     db.refresh(conta)
 
 
+def _empresa(db):
+    """A O&M ativa de quem fala com o bot — conta sem empresa (ou de empresa desligada) não é
+    atendida."""
+    from app.models.empresa import Empresa
+
+    emp = db.query(Empresa).filter_by(nome="O&M do bot").one_or_none()
+    if emp is None:
+        emp = Empresa(nome="O&M do bot")
+        db.add(emp)
+        db.commit()
+    return emp
+
+
 def _conta(db, apelido, telefone, ativo=True, bot=True):
     u = User(apelido=apelido, email=f"{apelido}@x.com", nome=apelido.title(), perfil=Perfil.CLIENTE,
-             telefone=telefone, ativo=ativo, bot_meuplano=bot, bot_meuwatt=bot)
+             telefone=telefone, ativo=ativo, bot_meuplano=bot, bot_meuwatt=bot, empresa_id=_empresa(db).id)
     db.add(u)
     db.commit()
     if bot:
@@ -329,34 +342,86 @@ def helper_ligado(monkeypatch):
     return falso
 
 
-async def test_acao_do_helper_so_roda_com_o_codigo_da_propria_pessoa(db, helper_ligado):
+async def test_acao_do_helper_so_roda_com_a_senha_de_atuacao_da_propria_pessoa(db, helper_ligado):
+    """Pedido do dono (24/10/2026): "o bot peça senha para qualquer ação que envolva atuação
+    (desligar, ligar, gravar); ler não precisa"."""
+    from app.core.security import gerar_hash_senha
     from app.services import assistente_helper as h
 
     dono = _conta(db, "dono", "+5517997377626")
     outro = _conta(db, "outro", "+5517997370000")
     for u in (dono, outro):
         u.bot_helper = True
+        u.senha_atuacao_hash = gerar_hash_senha("482913")
     db.commit()
     assert {"usina_helper", "usina_helper_catalogo"} <= set(assistente.permitidas(dono))
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
 
-    # Leitura passa direto; ação NÃO roda — vira código.
+    # Leitura passa direto, sem senha; ação NÃO roda — fica esperando a senha.
     assert (await h.usina_helper(ctx, {"rota": "/api/registry/plants"}))["status_http"] == 200
     proposta = await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
-    assert "NADA foi executado" in proposta["instrucao"] and helper_ligado.confirmadas == []
-    codigo = proposta["codigo"]
+    assert "NADA foi executado" in proposta["instrucao"] and "SENHA DE" in proposta["instrucao"]
+    assert "codigo" not in proposta and helper_ligado.confirmadas == []
 
-    # Outra pessoa, com o mesmo código, não executa a ação de ninguém.
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, f"CONFIRMO {codigo}")
-    errado = "0000" if codigo != "0000" else "1111"
-    assert "não confere" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"confirmo {errado}")
+    # Outra pessoa, com a MESMA senha, não executa a ação de ninguém.
+    assert "Não há ação esperando" in await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")
+    assert "não confere" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "483913")
     assert helper_ligado.confirmadas == []
-    # O código certo, da própria pessoa: executa UMA vez.
-    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")).startswith("✅")
-    assert helper_ligado.confirmadas == [("P-1", "codigo_whatsapp")]
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")
-    # Mensagem comum não é confirmação.
+    # A senha certa, da própria pessoa: executa UMA vez, e diz ao helper como confirmou.
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "confirmo 482913")).startswith("✅")
+    assert helper_ligado.confirmadas == [("P-1", "pin")]
+    assert "Não há ação esperando" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    # Mensagem comum não é senha.
     assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "qual a geração de hoje?") is None
+
+
+async def test_sem_senha_de_atuacao_o_bot_so_le(db, helper_ligado):
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_helper = True
+    db.commit()
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    proposta = await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    assert proposta["sem_senha_de_atuacao"] and dono.id not in h.PENDENTES
+    assert "não tem senha de atuação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "confirmo 482913")
+    # Número solto de quem não tem senha é só um número: segue para a conversa.
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "2024") is None
+    assert helper_ligado.confirmadas == []
+
+
+async def test_senha_errada_bloqueia_e_sem_acao_a_resposta_nao_entrega_a_senha(db, helper_ligado):
+    """Sem ação esperando, senha certa e errada recebem a MESMA frase (senão mandar números até
+    a frase mudar descobriria a senha). Com ação esperando, 5 erros descartam e bloqueiam."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_helper, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
+    db.commit()
+    certa = await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    errada = await h.confirmar_por_mensagem(db, dono, dono.telefone, "111222")
+    assert certa == errada
+
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    for i in range(1, h.TENTATIVAS):
+        assert f"({i} de {h.TENTATIVAS})" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
+    assert "bloqueadas" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
+    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    assert "bloqueadas" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert helper_ligado.confirmadas == []
+    h.nova_senha(dono.id)                                  # o gerente define outra: zera o bloqueio
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).startswith("✅")
+
+
+def test_a_senha_de_atuacao_nao_pode_ser_facil():
+    from app.services.assistente_helper import validar_senha_atuacao
+
+    for ruim in ("123", "123456789", "12a4", "1111", "1234", "98765"):
+        with pytest.raises(ValueError):
+            validar_senha_atuacao(ruim)
+    assert validar_senha_atuacao(" 482913 ") == "482913"
 
 
 async def test_liberar_o_helper_pede_a_porta_configurada_e_o_token_do_meuwatt(db, monkeypatch):
@@ -428,7 +493,7 @@ class _MeuPlanoFalso:
         return {"ok": True, "message": "Ação aplicada."}
 
 
-async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_o_codigo_da_pessoa(db, monkeypatch):
+async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_a_senha_da_pessoa(db, monkeypatch):
     """O bot perguntava "Confirma que eu crie assim?" e, no "sim", mandava confirmar no site:
     a proposta de lá vira o mesmo CONFIRMO do helper, e a conversa vai junto ao meuPlano."""
     from app.services import assistente_helper as h
@@ -442,8 +507,13 @@ async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_o_codigo_da_pessoa(db,
 
     monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
     h.PENDENTES.clear()
+    from app.core.security import gerar_hash_senha
+
     dono = _conta(db, "dono", "+5517997377626")
     outro = _conta(db, "outro", "+5517997370000")
+    for u in (dono, outro):
+        u.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
     antes = [{"role": "user", "content": "Serviço novo"}, {"role": "assistant", "content": "Confirma que eu crie assim?"}]
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone, historico=antes)
 
@@ -452,11 +522,10 @@ async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_o_codigo_da_pessoa(db,
     assert "NADA foi executado" in proposta["instrucao"] and proposta["detalhes"] == ["Técnico: Michel"]
     assert falso.aplicadas == []
 
-    codigo = proposta["codigo"]
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, f"CONFIRMO {codigo}")
-    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")).startswith("✅ Feito no meuPlano")
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).startswith("✅ Feito no meuPlano")
     assert falso.aplicadas == [("criar_ordem_servico", {"usina_id": 37, "nome": "Roçagem de 5 ruas"})]
-    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")
+    assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
 
 
 def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
@@ -508,3 +577,161 @@ async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch)
     assert sobreposicao == []
     conversa = [m["content"] for m in __import__("json").loads(db.query(ConversaWhatsapp).one().mensagens)]
     assert conversa == ["Serviço novo", "resposta a Serviço novo", "amanhã ele volta", "resposta a amanhã ele volta"]
+
+
+# ── avaliação de 24/10/2026: empresa desligada, meuWatt fora, a senha fora do log ──────
+
+
+@pytest.fixture
+def bot_local(db, monkeypatch):
+    """O turno inteiro (`atender`) contra o banco de teste, com o gateway e a IA de mentira."""
+    import types
+
+    estado = types.SimpleNamespace(enviados=[], ocultadas=[], llm=[])
+
+    async def _enviar(**k):
+        estado.enviados.append(k.get("texto"))
+        return {"ok": True}
+
+    async def _ocultar(mid):
+        estado.ocultadas.append(mid)
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        estado.llm.append(msgs[-1]["content"])
+        return {"content": "resposta da IA"}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente.whatsapp, "digitando", _nada)
+    monkeypatch.setattr(assistente.whatsapp, "ocultar_texto", _ocultar)
+    monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(assistente.get_settings(), "deepseek_api_key", "x")
+    return estado
+
+
+async def test_empresa_desligada_ou_conta_sem_empresa_cala_o_bot(db, bot_local, monkeypatch):
+    """"Desligar" a empresa no adm promete que a gente dela para de entrar NA HORA — o bot
+    respondia normalmente."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")
+    _empresa(db).ativa = False
+    db.commit()
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "oi"})
+    sem = _conta(db, "sem.empresa", "+5517997370000")
+    sem.empresa_id = None
+    db.commit()
+    await assistente.atender({"id": 2, "telefone": sem.telefone, "wa_id": "2", "tipo": "text", "texto": "oi"})
+
+    assert bot_local.llm == []
+    assert "desligado" in bot_local.enviados[0] and "nenhuma empresa" in bot_local.enviados[1]
+    assert [r.resultado for r in db.query(RegistroBot).order_by(RegistroBot.id)] == ["nao_liberado"] * 2
+
+
+async def test_meuwatt_fora_nao_cala_a_manutencao(db, bot_local, monkeypatch):
+    """Com o meuWatt fora (ou o token dele revogado), uma pergunta de manutenção recebia
+    "Tive um problema para responder agora": a lista de usinas era pedida sem tratar erro."""
+    import httpx
+
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.models.plant import PlantLink
+    from app.models.user import UserPlantAccess
+    from app.services import vinculos
+
+    class _MwFora:
+        async def usinas(self):
+            raise httpx.ConnectError("sem rota")
+
+    dono = _conta(db, "dono", "+5517997377626")
+    usina = PlantLink(nome="Usina", mw_plant_slug="usina", empresa_id=dono.empresa_id)
+    db.add(usina)
+    db.commit()
+    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=usina.id))
+    db.commit()
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db_, uid, so_proprio=False: _MwFora())
+
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "OS abertas?"})
+    assert bot_local.enviados == ["resposta da IA"]
+    assert db.query(RegistroBot).one().resultado == "respondeu"
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    await ger.preparar(ctx)
+    assert ctx.mw_falha and ctx.mw is None
+    with pytest.raises(ger.Recusa, match="não respondeu agora"):
+        ger._usina(ctx, "Usina")
+
+
+async def test_a_senha_nao_vai_a_ia_nem_ao_log_nem_ao_historico(db, bot_local, helper_ligado):
+    from app.core.security import gerar_hash_senha
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_helper, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
+    db.commit()
+    await h.usina_helper(ger.Contexto(db=db, user=dono, telefone=dono.telefone),
+                         {"rota": "/api/act", "corpo": {"acao": "off"}})
+    await assistente.atender({"id": 77, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482913"})
+
+    assert bot_local.llm == [] and helper_ligado.confirmadas == [("P-1", "pin")]
+    assert bot_local.ocultadas == [77] and bot_local.enviados[0].startswith("✅")
+    linha = db.query(RegistroBot).one()
+    assert linha.pergunta == h.OCULTA and linha.ferramentas == "senha_de_atuacao"
+    conversa = db.query(ConversaWhatsapp).one().mensagens
+    assert "482913" not in conversa and h.OCULTA in conversa
+
+
+async def test_a_linha_do_log_tem_a_hora_em_que_a_pessoa_mandou(db, bot_local, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")
+    mandou = datetime.now(UTC) - timedelta(minutes=1)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "oi",
+                              "ocorrida_em": mandou.isoformat()})
+    em = db.query(RegistroBot).one().em
+    assert abs(((em if em.tzinfo else em.replace(tzinfo=UTC)) - mandou).total_seconds()) < 1
+
+
+def test_o_ajuste_em_massa_volta_item_por_item_com_a_conferencia():
+    from app.services.assistente_helper import _desfecho
+
+    r = {"ok": True, "resultado": {"fase": "fim", "conferencia": {"tudo_confirmado": True}, "itens": [
+        {"nome": "TEMP-SKID-01", "sigla": "trd", "antes": 3, "valor": 2, "unidade": "s", "st": "ok"},
+        {"nome": "TEMP-SKID-02", "sigla": "trd", "antes": 2, "valor": 2, "unidade": "s", "st": "ja"},
+    ]}}
+    texto = _desfecho("Ajuste em massa em 2 relés", r)
+    assert "TEMP-SKID-01 trd: 3 → 2 s — ✅ confirmado" in texto and "já estava" in texto
+    assert texto.endswith("✅ A leitura final confere com tudo.")
+    r["resultado"]["conferencia"]["tudo_confirmado"] = False
+    assert "NÃO confere" in _desfecho("Ajuste", r)
+    assert "PODE ter chegado" in _desfecho("Desligar o inversor 3", {"ok": False, "incerto": True})
+
+
+async def test_o_helper_que_nao_responde_a_tempo_e_incerto_e_nao_falha():
+    """A confirmação do lote espera até ~150 s; com 60 s o bot dizia "tive um problema" com
+    a ação rodando — e a pessoa mandaria de novo."""
+    import httpx
+    import respx
+
+    from app.clients.helper_bot import HelperBot
+
+    with respx.mock:
+        respx.post("http://helper.test/api/bot/confirmar").mock(side_effect=httpx.ReadTimeout("lento"))
+        respx.post("http://helper.test/api/bot/chamar").mock(side_effect=httpx.ConnectError("fora"))
+        bot = HelperBot("http://helper.test", "gestao-solar", "chave", "tok")
+        r = await bot.confirmar("P-1", "pin", "whatsapp")
+        assert r["incerto"] and not r["ok"]
+        assert (await bot.chamar("/api/read", {}, "whatsapp"))["reason"] == "helper_fora"

@@ -248,3 +248,29 @@ def test_a_saude_do_canal_conta_o_que_esta_parado(cliente, db):
     assert r.status_code == 200
     d = r.json()
     assert d["eventos_parados"] == 1 and d["eventos_com_erro"] == 1 and "Truncation" in d["ultimo_erro"]
+
+
+def test_a_senha_digitada_sai_da_mensagem_e_da_entrega_crua(cliente, db):
+    """O bot pede a senha de atuação no WhatsApp: guardada aqui, ela ficaria em claro."""
+    from datetime import UTC, datetime
+
+    from gateway.models.mensagem import Mensagem, WebhookEvento
+
+    corpo = {"entry": [{"changes": [{"value": {"messages": [
+        {"id": "wamid.SENHA", "type": "text", "text": {"body": "482913"}},
+        {"id": "wamid.OUTRA", "type": "text", "text": {"body": "bom dia"}},
+    ]}}]}]}
+    ev = WebhookEvento(corpo=corpo, processado_em=datetime.now(UTC))
+    m = Mensagem(wamid="wamid.SENHA", direcao="entrada", wa_id="5517997377626", tipo="text", texto="482913",
+                 ocorrida_em=datetime.now(UTC))
+    db.add_all([ev, m])
+    db.commit()
+
+    assert cliente.post(f"/interno/mensagens/{m.id}/ocultar").status_code == 401
+    r = cliente.post(f"/interno/mensagens/{m.id}/ocultar", headers={"X-Chave-Interna": "chave-interna-de-teste"})
+    assert r.status_code == 204
+    db.expire_all()
+    assert db.get(Mensagem, m.id).texto == "[senha de atuação]"
+    msgs = db.get(WebhookEvento, ev.id).corpo["entry"][0]["changes"][0]["value"]["messages"]
+    assert [x["text"]["body"] for x in msgs] == ["[senha de atuação]", "bom dia"]
+    assert "482913" not in str(db.get(WebhookEvento, ev.id).corpo)

@@ -437,8 +437,10 @@ Os testes de `tests/test_escalada_e_isolamento.py` são um por achado.
   qualquer conta marcada, inclusive administrador — e aí `PATCH /api/empresa/usuarios/{id}`
   trocava a senha dele e o gerente entrava no painel da plataforma. Toda rota de
   `/api/empresa/*` que recebe id de conta passa por `_conta_da_empresa`, que recusa
-  `pessoas.DA_PLATAFORMA` com **404 sem nome**; e a carteira não adota mais conta de
-  plataforma, para o estado nem existir. Fechar só um dos dois lados deixaria a porta.
+  `pessoas.DA_PLATAFORMA` com **404 sem nome**. Em 24/10/2026 a `carteira` (e o
+  `PUT /gerente/{apelido}`, o `POST /gerente` e o `/contas-livres`) SAÍRAM: nenhuma tela as
+  usava, e elas furavam a trava do último gerente. Gente entra na empresa só pelas rotas de
+  `/usuarios`; há um teste que falha se alguma delas voltar.
 - ⛔ **Desativar a empresa PARA a leitura, em todos os portões.** A conferência de
   `Empresa.ativa` mora em `core/security.py` (`_empresa_ativa`), chamada por
   `usuario_atual` e `gestor_empresa_atual` — ali passam todas as requisições
@@ -773,12 +775,22 @@ O administrador da plataforma não usa o bot (não tem token); o do Renan respon
 gerente dele (`renan.marquezini`). Liberar uma parte exige o token dela (`cadastro.liberar_bot`),
 e liberada sem token fica parada (`User.bot_ativo`). **O helper** (`assistente_helper.py`,
 porta `/api/bot/*` do mw-modbus-helper pelo túnel `HELPER_BOT_URL`, chave `HELPER_BOT_CHAVE`):
-leitura volta na hora; AÇÃO vira proposta com um código de 4 dígitos, e só executa quando a
-PESSOA responde `CONFIRMO <código>` — conferido por código, antes do modelo (a IA não tem
-ferramenta de confirmar), uma vez, em até 2 min. **A ação do meuPlano usa o mesmo CONFIRMO:**
-a proposta do assistente de lá (criar OS, lançar o dia, lembrete) ganha o código, e confirmada
-o BFF chama o `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao
-meuPlano, que é sem estado. **O token é da pessoa:** a mesma pessoa de
+leitura volta na hora; AÇÃO vira proposta e só executa com a **SENHA DE ATUAÇÃO** da pessoa
+(pedido do dono, 24/10/2026: "o bot peça senha para qualquer ação que envolva atuação —
+desligar, ligar, gravar; ler não precisa"). `gs_users.senha_atuacao_hash`: 4 a 8 números,
+definida pelo gerente em oem-gs → Bot do WhatsApp, nunca a de login. Conferida antes do modelo
+(`assistente_helper.confirmar_por_mensagem`: a IA não vê a senha nem tem ferramenta de
+confirmar), uma vez; 5 erros com ação esperando bloqueiam por 15 min, e sem ação esperando a
+resposta é a mesma com senha certa ou errada (não vira oráculo). A mensagem da senha sai do log,
+do histórico e do gateway (`POST /interno/mensagens/{id}/ocultar`, que limpa também a entrega
+crua da Meta). Ao helper vai `confirmado_por: "pin"` (o contrato dele: quem pede a senha é o
+chamador). O ajuste em massa do helper (2.26.0) volta item por item com a conferência da
+leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter chegado", nunca
+"falhou". **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
+lançar o dia, lembrete) espera a senha, e confirmada o BFF chama o `/assistant/apply` de lá com
+o token da pessoa (10 min); a conversa vai junto ao meuPlano, que é sem estado. **Empresa
+desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a
+geração** (a lista de usinas dele fica 5 min em memória). **O token é da pessoa:** a mesma pessoa de
 lá não serve a duas contas, e o token de outra pessoa não troca a ligação em silêncio
 (`vinculos.conectar`); a tela mostra de quem é cada token. O aplicativo continua
 caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_bot_registros`**
