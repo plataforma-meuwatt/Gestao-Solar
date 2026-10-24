@@ -23,7 +23,7 @@ export function Pagina({
 }) {
   return (
     <div className="max-w-5xl">
-      <header className="flex items-start gap-4 mb-6">
+      <header className="flex flex-wrap items-start gap-4 mb-6">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-forte tracking-tight">{titulo}</h1>
           {apoio ? <p className="text-sm text-rotulo mt-1 max-w-[60ch]">{apoio}</p> : null}
@@ -47,9 +47,11 @@ export function Cartao({
   className?: string
 }) {
   return (
-    <section className={`cartao ${className}`}>
+    // `min-w-0`: dentro de um `grid`, o cartão não pode crescer até o tamanho do conteúdo —
+    // a 390 px a página da empresa vazava para a direita e cortava os botões.
+    <section className={`cartao min-w-0 ${className}`}>
       {titulo || acao ? (
-        <header className="flex items-center gap-3 px-5 pt-4 pb-3">
+        <header className="flex flex-wrap items-center gap-3 px-5 pt-4 pb-3">
           {titulo ? <h2 className="rotulo-secao">{titulo}</h2> : null}
           {acao ? <div className="ml-auto">{acao}</div> : null}
         </header>

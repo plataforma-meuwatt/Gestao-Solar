@@ -128,7 +128,7 @@ function UsuariosDaEmpresa({ empresa }: { empresa: Empresa }) {
     <Cartao
       titulo={`Usuários · ${data?.length ?? '…'}`}
       acao={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className="btn-fantasma" onClick={() => setExistente(true)}>
             <Users size={13} />
             Pôr quem já existe
