@@ -147,23 +147,27 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO), **hel
 MAX_ATRASO = timedelta(hours=2)
 
 
-def _atrasada(ocorrida_em: str | None) -> bool:
+def _enviada_em(ocorrida_em: str | None) -> datetime | None:
+    """A hora em que a PESSOA mandou (a da Meta), não a em que chegou aqui."""
     if not ocorrida_em:
-        return False
+        return None
     try:
         quando = datetime.fromisoformat(ocorrida_em)
     except ValueError:
-        return False
-    if quando.tzinfo is None:
-        quando = quando.replace(tzinfo=UTC)
-    return datetime.now(UTC) - quando > MAX_ATRASO
+        return None
+    return quando if quando.tzinfo else quando.replace(tzinfo=UTC)
+
+
+def _atrasada(ocorrida_em: str | None) -> bool:
+    quando = _enviada_em(ocorrida_em)
+    return quando is not None and datetime.now(UTC) - quando > MAX_ATRASO
 
 
 # --------------------------------------------------------------------------- log
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
                pergunta: str | None = None, resposta: str | None = None,
                ferramentas: list[str] | None = None, inicio: float | None = None,
-               erro: str | None = None) -> None:
+               erro: str | None = None, em: datetime | None = None) -> None:
     """Uma linha no log do bot (adm-gs → Log do bot). Falhar aqui nunca derruba a resposta.
 
     ponytail: guarda tudo, sem expurgo; quando o volume pesar, apaga o que passou de 90 dias.
@@ -177,6 +181,7 @@ def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
             resposta=(resposta or None) and resposta[:8000],
             duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
             erro=(erro or None) and erro[:1000],
+            **({"em": em} if em else {}),
         ))
         db.commit()
     except Exception:                                      # noqa: BLE001
@@ -312,8 +317,22 @@ async def _texto(telefone: str, texto: str) -> None:
         await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=texto[i:i + 3900])
 
 
+#: Uma conversa por vez por número. Duas mensagens seguidas ("Serviço novo" e, 8 s depois,
+#: "amanhã ele volta para terminar", 24/10/2026) rodavam juntas: o bot respondeu as duas em
+#: paralelo, se contradisse, e a última a terminar regravou a conversa sem a outra.
+#: ponytail: em memória (a API roda num processo só); com mais de um worker, trava no banco.
+_TRAVAS: dict[str, asyncio.Lock] = {}
+
+
 async def atender(evento: dict) -> None:
-    """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202."""
+    """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202. As mensagens do
+    mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
+    chave = evento.get("wa_id") or evento.get("telefone") or ""
+    async with _TRAVAS.setdefault(chave, asyncio.Lock()):
+        await _atender(evento)
+
+
+async def _atender(evento: dict) -> None:
     telefone = evento.get("telefone") or ("+" + evento.get("wa_id", ""))
     texto = (evento.get("texto") or "").strip()
     db = SessionLocal()
@@ -326,8 +345,11 @@ async def atender(evento: dict) -> None:
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
+            # O log mostra a hora em que a pessoa MANDOU (é a que ela lembra); a de chegada vai no texto.
             _registrar(db, telefone, user, "atrasada", pergunta=texto or f"[{evento.get('tipo') or 'mídia'}]",
-                       erro=f"Enviada às {hora_brt(evento.get('ocorrida_em'))} e chegou ao bot só agora — não respondida.")
+                       em=_enviada_em(evento.get("ocorrida_em")),
+                       erro=f"Chegou ao bot só em {hora_brt(datetime.now(UTC).isoformat())} (o canal ficou parado) "
+                            "— não respondida.")
             return
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):

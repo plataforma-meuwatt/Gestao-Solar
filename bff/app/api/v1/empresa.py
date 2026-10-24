@@ -1502,6 +1502,9 @@ async def editar_conta_da_empresa(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Você ficaria sem acesso no mesmo instante."
         )
+    if body.ativo is False:
+        # A conta pode ser a única gerente de OUTRA empresa em que também está.
+        svc.exigir_outro_gerente_em_todas(db, conta)
 
     if body.ativo is not None:
         conta.ativo = body.ativo

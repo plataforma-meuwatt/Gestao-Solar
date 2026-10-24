@@ -274,7 +274,12 @@ def registros_do_bot(
 ) -> list[RegistroBotOut]:
     """O log, do mais novo para o mais velho. Uma fonte para o adm-gs (tudo) e o oem-gs
     (só as contas da empresa)."""
-    consulta = select(RegistroBot).order_by(RegistroBot.id.desc()).limit(max(1, min(limite, 500)))
+    # Pela hora em que a pessoa mandou: a mensagem que chegou atrasada entra no lugar dela.
+    consulta = (
+        select(RegistroBot)
+        .order_by(RegistroBot.em.desc(), RegistroBot.id.desc())
+        .limit(max(1, min(limite, 500)))
+    )
     if empresa_id is not None:
         consulta = consulta.where(RegistroBot.empresa_id == empresa_id)
     if usuario_id is not None:

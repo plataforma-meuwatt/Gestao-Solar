@@ -194,3 +194,30 @@ def test_conta_sem_empresa_mostra_a_pista_do_cadastro_antigo(db, cenario, admini
     db.commit()
     conta = next(c for c in todas_as_contas(db=db, admin=administrador) if c.apelido == "janderson")
     assert conta.empresas == [] and conta.empresa_antiga == "Eninsa"
+
+
+async def test_a_trava_do_ultimo_gerente_vale_em_todos_os_caminhos(db, cenario, administrador):
+    """Avaliação de 24/10/2026: a tela Usuários do adm (`PATCH /contas/{id}`) desativava o
+    único gerente sem conferir. E a conta vale em TODAS as empresas dela: desativá-la pela
+    empresa de origem não pode deixar sem gerente a outra em que ela também está."""
+    from app.api.v1.empresa import ContaPatch as ContaDaEmpresaPatch, editar_conta_da_empresa
+    from app.api.v1.painel_usuarios import ContaPatch, editar_conta
+
+    a, b, _ua, _ub, ger_a, ger_b, _dono = cenario
+    with pytest.raises(HTTPException) as erro:
+        editar_conta(ger_b.id, ContaPatch(ativo=False), db=db, admin=administrador)
+    assert erro.value.status_code == 400 and "único gerente" in erro.value.detail
+
+    # ger_a2 é da A (com outro gerente lá) e o ÚNICO gerente da B, onde também está.
+    ger_a2 = User(apelido="ger.a2", nome="Ger A2", perfil=Perfil.GESTOR_EMPRESA, empresa_id=a.id)
+    db.add(ger_a2)
+    db.commit()
+    empresas.por_na_empresa(db, ger_a2, b.id, administrador)
+    ger_b.ativo = False
+    db.commit()
+    with pytest.raises(HTTPException) as erro:
+        await editar_conta_da_empresa(ger_a2.id, ContaDaEmpresaPatch(ativo=False), db, ger_a)
+    assert erro.value.status_code == 400
+    ger_b.ativo = True
+    db.commit()
+    assert (await editar_conta_da_empresa(ger_a2.id, ContaDaEmpresaPatch(ativo=False), db, ger_a)).ativo is False

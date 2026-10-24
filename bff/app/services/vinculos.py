@@ -176,8 +176,8 @@ def token_do_cliente(
             return decifrar(vinculo.token_cifrado)
         except SegredoInvalido as exc:
             raise SemConexao(
-                f"O token do {NOME[produto]} deste cliente não abre com a chave atual. "
-                f"Cole o token de novo na ficha dele."
+                f"O token do {NOME[produto]} desta pessoa não abre com a chave atual. "
+                f"O gerente da empresa cola o token de novo no oem-gs (Usuários)."
             ) from exc
 
     if so_proprio:
@@ -189,9 +189,9 @@ def token_do_cliente(
 
     if vinculo is None or not vinculo.token_cifrado:
         raise SemConexao(
-            f"Nem este cliente nem a empresa dele têm conexão com o {NOME[produto]}. "
-            f"Conecte a conta da empresa em Conexões, ou cole o token do cliente na "
-            f"ficha dele."
+            f"Nem esta pessoa nem a empresa dela têm conexão com o {NOME[produto]}. "
+            f"O gerente da empresa conecta a conta da empresa em Conexões, ou cola o token "
+            f"da pessoa em Usuários (oem-gs)."
         )
     raise SemConexao(
         f"A conexão com o {NOME[produto]} deste cliente não está utilizável."

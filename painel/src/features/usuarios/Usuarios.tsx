@@ -35,7 +35,7 @@ import {
   type Conta,
   type Membro,
 } from '@/features/api'
-import { PAPEL } from '@/features/rotulos'
+import { PAPEL, confirmaAtivacao } from '@/features/rotulos'
 import { EmpresasDaConta, ResumoDaConta, SenhaNova } from '@/features/usuarios/Conta'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -253,7 +253,7 @@ function LinhaDaConta({
           <button
             className="btn-fantasma"
             disabled={editar.isPending}
-            onClick={() => editar.mutate({ ativo: !conta.ativo })}
+            onClick={() => confirmaAtivacao(conta.nome, conta.ativo) && editar.mutate({ ativo: !conta.ativo })}
           >
             {conta.ativo ? 'Desativar' : 'Reativar'}
           </button>
@@ -319,7 +319,7 @@ function LinhaDaEquipe({
             <KeyRound size={13} />
             Senha
           </button>
-          <button onClick={() => aoMudar({ ativo: !conta.ativo })} className="btn-fantasma">
+          <button onClick={() => confirmaAtivacao(conta.nome, conta.ativo) && aoMudar({ ativo: !conta.ativo })} className="btn-fantasma">
             {conta.ativo ? 'Desativar' : 'Reativar'}
           </button>
         </div>

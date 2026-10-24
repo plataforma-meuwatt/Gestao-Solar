@@ -400,6 +400,10 @@ async def test_mensagem_que_chegou_horas_depois_nao_e_respondida(db, monkeypatch
     assert enviados == []
     linha = db.query(RegistroBot).one()
     assert (linha.resultado, linha.gs_user_id) == ("atrasada", dono.id)
+    # O log mostra a hora em que a pessoa MANDOU (dois dias atrás), não a da chegada.
+    enviada = linha.em if linha.em.tzinfo else linha.em.replace(tzinfo=UTC)
+    assert abs((enviada - datetime.fromisoformat(velha)).total_seconds()) < 1
+    assert "Chegou ao bot só em" in linha.erro
 
 
 # ── o meuPlano pelo bot: a proposta de lá (criar OS…) também só roda com CONFIRMO ───────
@@ -466,3 +470,41 @@ def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
     assert r["status_http"] == 200 and [u["api_slug"] for u in r["resposta"]["plants"]] == [f"u{i}" for i in range(6)]
     assert "gateways" not in r["resposta"]["plants"][0] and "aviso" in r
     assert _corta({"status_http": 200, "resposta": {"x": 1}}) == {"status_http": 200, "resposta": {"x": 1}}
+
+
+async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch):
+    """24/10/2026: "Serviço novo" e, 8 s depois, "amanhã ele volta para terminar" rodaram
+    juntas — duas respostas que se contradiziam, e a conversa ficou sem uma das trocas."""
+    import asyncio
+
+    from app.models.conversa_whatsapp import ConversaWhatsapp
+
+    rodando, sobreposicao = [], []
+
+    async def _llm(msgs, ferramentas=None):
+        if rodando:
+            sobreposicao.append(msgs[-1]["content"])
+        rodando.append(1)
+        await asyncio.sleep(0.05)
+        rodando.pop()
+        return {"content": f"resposta a {msgs[-1]['content']}"}
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _nada)
+    monkeypatch.setattr(assistente.whatsapp, "digitando", _nada)
+    monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    monkeypatch.setattr(assistente.get_settings(), "deepseek_api_key", "x")
+    dono = _conta(db, "dono", "+5517997377626")
+
+    await asyncio.gather(
+        assistente.atender({"telefone": dono.telefone, "wa_id": "5517997377626", "tipo": "text", "texto": "Serviço novo"}),
+        assistente.atender({"telefone": dono.telefone, "wa_id": "5517997377626", "tipo": "text", "texto": "amanhã ele volta"}),
+    )
+    assert sobreposicao == []
+    conversa = [m["content"] for m in __import__("json").loads(db.query(ConversaWhatsapp).one().mensagens)]
+    assert conversa == ["Serviço novo", "resposta a Serviço novo", "amanhã ele volta", "resposta a amanhã ele volta"]

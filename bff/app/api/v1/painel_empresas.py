@@ -511,7 +511,7 @@ def editar_usuario_da_empresa(
     svc.por_id(db, empresa_id)
     alvo = _conta_desta_empresa(db, empresa_id, usuario_id)
     if body.ativo is False or (body.perfil is not None and body.perfil is not Perfil.GESTOR_EMPRESA):
-        svc.exigir_outro_gerente(db, empresa_id, alvo)
+        svc.exigir_outro_gerente_em_todas(db, alvo)
 
     if body.ativo is not None:
         alvo.ativo = body.ativo

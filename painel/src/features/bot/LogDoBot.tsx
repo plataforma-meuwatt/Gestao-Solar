@@ -147,26 +147,34 @@ export function LinhaDoLog({ registro: r, primeiro }: { registro: RegistroBot; p
   return (
     <div className={primeiro ? '' : 'border-t border-borda'}>
       <button
-        className="w-full text-left px-5 py-3 flex items-center gap-3 hover:bg-superficie-alta/40"
+        className="w-full text-left px-5 py-3 flex items-start sm:items-center gap-3 hover:bg-superficie-alta/40"
         onClick={() => setAberta((v) => !v)}
       >
-        {aberta ? <ChevronDown size={14} className="shrink-0 text-fraco" /> : <ChevronRight size={14} className="shrink-0 text-fraco" />}
-        <span className="mono text-xs text-fraco w-28 shrink-0">{quando(r.em)}</span>
+        {aberta ? <ChevronDown size={14} className="shrink-0 text-fraco mt-1 sm:mt-0" /> : <ChevronRight size={14} className="shrink-0 text-fraco mt-1 sm:mt-0" />}
+        <span className="mono text-xs text-fraco w-28 shrink-0 hidden sm:block">{quando(r.em)}</span>
         <span className="min-w-0 flex-1">
-          <span className="text-sm text-forte">
+          <span className="text-sm text-forte break-words">
             {r.usuario ? `${r.usuario} (${r.apelido})` : r.telefone}
           </span>
           <span className="text-xs text-fraco ml-2">{r.empresa ?? (r.usuario ? 'sem empresa' : '')}</span>
           {r.pergunta ? (
             <span className="block text-xs text-rotulo truncate">{r.pergunta}</span>
           ) : null}
+          {/* No celular, quando e o resultado descem para baixo do nome: lado a lado, o selo
+              cobria o número e a pergunta virava uma letra (avaliação de 24/10/2026). */}
+          <span className="flex sm:hidden flex-wrap items-center gap-x-2 gap-y-1 mt-1.5">
+            <span className="mono text-xs text-fraco">{quando(r.em)}</span>
+            <Selo tom={res.tom}>{res.rotulo}</Selo>
+          </span>
         </span>
         {r.duracao_ms !== null ? (
           <span className="mono text-xs text-fraco hidden sm:block">
             {(r.duracao_ms / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s
           </span>
         ) : null}
-        <Selo tom={res.tom}>{res.rotulo}</Selo>
+        <span className="hidden sm:block shrink-0">
+          <Selo tom={res.tom}>{res.rotulo}</Selo>
+        </span>
       </button>
       {aberta ? (
         <div className="px-5 pb-4 pl-12 grid gap-2 text-sm">

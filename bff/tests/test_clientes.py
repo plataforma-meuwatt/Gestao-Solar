@@ -49,7 +49,7 @@ def test_email_repetido_entre_clientes_e_recusado(db, administrador):
     """Dois clientes com o mesmo e-mail são quase sempre o mesmo cliente cadastrado duas
     vezes — e o sintoma seria usina aparecendo na conta errada."""
     svc.criar(db, nome="Renan", apelido="renan", email="a@b.com", empresa=None, criado_por=administrador)
-    with pytest.raises(svc.RegraDeNegocio, match="Já existe um cliente"):
+    with pytest.raises(svc.RegraDeNegocio, match="Já existe um dono de usina"):
         svc.criar(db, nome="Outro", apelido="outro", email="A@B.com", empresa=None, criado_por=administrador)
 
 

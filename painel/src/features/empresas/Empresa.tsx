@@ -31,7 +31,7 @@ import {
 } from '@/features/api'
 import { estadoDaConexao } from '@/features/empresas/Empresas'
 import { LinhaDoLog } from '@/features/bot/LogDoBot'
-import { PAPEL } from '@/features/rotulos'
+import { PAPEL, confirmaAtivacao } from '@/features/rotulos'
 import { ResumoDaConta, SenhaNova } from '@/features/usuarios/Conta'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -253,7 +253,7 @@ function LinhaDoUsuario({
           <button
             className="btn-fantasma"
             disabled={editar.isPending}
-            onClick={() => editar.mutate({ ativo: !usuario.ativo })}
+            onClick={() => confirmaAtivacao(usuario.nome, usuario.ativo) && editar.mutate({ ativo: !usuario.ativo })}
           >
             {usuario.ativo ? 'Desativar' : 'Reativar'}
           </button>

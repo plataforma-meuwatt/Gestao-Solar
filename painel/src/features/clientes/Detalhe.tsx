@@ -175,7 +175,11 @@ export function DetalheCliente() {
           {cliente.usinas.length === 0 ? (
             <Vazio
               titulo="Nenhuma usina concedida"
-              descricao="Ele entra no aplicativo, mas não vê usina nenhuma até o gerente da empresa dele conceder, no oem-gs."
+              descricao={
+                cliente.empresa
+                  ? 'Ele entra no aplicativo, mas não vê usina nenhuma até o gerente da empresa dele conceder, no oem-gs.'
+                  : 'Esta conta não é de empresa nenhuma: nenhum gerente a enxerga, e ninguém pode conceder usina a ela. Ponha numa empresa em Usuários → Empresas.'
+              }
             />
           ) : (
             cliente.usinas.map((u, i) => (

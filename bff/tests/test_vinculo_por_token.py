@@ -276,7 +276,7 @@ class TestTestarEDesconectar:
         assert db.query(VinculoProduto).count() == 0
 
     def test_ler_sem_token_diz_o_que_fazer(self, db, cliente):
-        with pytest.raises(vinculos.SemConexao, match="cole o token"):
+        with pytest.raises(vinculos.SemConexao, match="cola o token"):
             vinculos.token_do_cliente(db, cliente.id, Produto.MEUWATT)
 
 

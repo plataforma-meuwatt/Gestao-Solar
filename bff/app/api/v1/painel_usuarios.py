@@ -423,6 +423,10 @@ def editar_conta(
     conta = db.get(User, conta_id)
     if conta is None or conta.perfil in DA_PLATAFORMA:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    if body.ativo is False:
+        from app.services.empresas import exigir_outro_gerente_em_todas
+
+        exigir_outro_gerente_em_todas(db, conta)
     if body.ativo is not None:
         conta.ativo = body.ativo
     if body.senha:

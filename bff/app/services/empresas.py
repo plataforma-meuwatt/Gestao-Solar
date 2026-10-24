@@ -181,3 +181,11 @@ def exigir_outro_gerente(db: Session, empresa_id: int, conta: User) -> None:
             "É o único gerente ativo desta empresa: sem ele, ninguém opera a empresa no oem-gs. "
             "Crie ou promova outro gerente antes.",
         )
+
+
+def exigir_outro_gerente_em_todas(db: Session, conta: User) -> None:
+    """Desativar ou rebaixar vale para a CONTA — em todas as empresas dela. Toda rota que
+    faz isso passa aqui (adm: Empresa e Usuários; oem: Usuários): a tela Usuários do adm
+    desativava o único gerente sem conferir (avaliação de 24/10/2026)."""
+    for empresa_id in empresas_da_conta(db, conta):
+        exigir_outro_gerente(db, empresa_id, conta)

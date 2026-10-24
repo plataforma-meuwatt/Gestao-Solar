@@ -32,6 +32,14 @@ export function textoDoBot(liberado: ProdutoDoBot[], tokens: Produto[], temCelul
   return partes.join(' · ') || 'bloqueado'
 }
 
+/** Desativar tira a pessoa na hora (painel, aplicativo e bot): pergunta antes. Reativar, não. */
+export function confirmaAtivacao(nome: string, ativoAgora: boolean): boolean {
+  return (
+    !ativoAgora ||
+    window.confirm(`Desativar ${nome}? A pessoa para de entrar na hora (painel, aplicativo e bot). Dá para reativar depois.`)
+  )
+}
+
 export function quando(iso: string | null): string {
   if (!iso) return 'nunca'
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })

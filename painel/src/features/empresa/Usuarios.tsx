@@ -40,7 +40,7 @@ import {
   type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
-import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, textoDoBot } from '@/features/rotulos'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, confirmaAtivacao, textoDoBot } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -261,7 +261,7 @@ function Linha({
             <button
               className="btn-fantasma"
               disabled={editar.isPending}
-              onClick={() => editar.mutate({ ativo: !usuario.ativo })}
+              onClick={() => confirmaAtivacao(usuario.nome, usuario.ativo) && editar.mutate({ ativo: !usuario.ativo })}
             >
               {usuario.ativo ? 'Desativar' : 'Reativar'}
             </button>

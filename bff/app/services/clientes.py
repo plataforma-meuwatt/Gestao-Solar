@@ -69,7 +69,7 @@ def criar(
     if email and db.scalar(
         select(User).where(User.email == email, User.perfil == Perfil.CLIENTE)
     ) is not None:
-        raise RegraDeNegocio(f"Já existe um cliente com o e-mail {email}.")
+        raise RegraDeNegocio(f"Já existe um dono de usina com o e-mail {email}.")
 
     senha = gerar_senha_provisoria()
     usuario = User(
@@ -219,7 +219,7 @@ def definir_usinas(
     ]
     if conflitos:
         raise RegraDeNegocio(
-            "Cada usina pertence a um cliente só. " + "; ".join(conflitos) + "."
+            "Cada usina pertence a um dono só. " + "; ".join(conflitos) + "."
         )
 
     consulta = select(UserPlantAccess).where(UserPlantAccess.user_id == cliente.id)
