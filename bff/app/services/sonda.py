@@ -308,7 +308,7 @@ MEUPLANO: list[Rota] = [
     Rota("mp.owners", "GET", "/api/v1/meuacesso/owners/",
          "As empresas de O&M (organizações PRESTADORAS) de lá, para casar com as daqui",
          params={"kind": "PRESTADORA"}),
-    Rota("mp.usinas", "GET", "/api/v1/meuacesso/usinas",
+    Rota("mp.usinas", "GET", "/api/v1/meuacesso/usinas/",
          "A lista de usinas do lado da manutenção",
          captura={"usina_id": "id"}),
     Rota("mp.ordens", "GET", "/api/v1/meuacesso/service-orders",

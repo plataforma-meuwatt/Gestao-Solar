@@ -167,7 +167,8 @@ class MeuPlanoClient:
         O meuPlano devolve ora uma lista, ora um envelope paginado; normalizado aqui para
         o resto do BFF não precisar saber disso.
         """
-        dados = await self._get("/api/v1/meuacesso/usinas", token=token)
+        # Com a barra: sem ela o meuPlano responde 307 e cada leitura paga duas idas.
+        dados = await self._get("/api/v1/meuacesso/usinas/", token=token)
         if isinstance(dados, dict):
             return dados.get("items") or dados.get("results") or []
         return dados or []

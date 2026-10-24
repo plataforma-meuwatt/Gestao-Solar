@@ -611,7 +611,18 @@ async def catalogo_de_usinas(
         ler_mp = (await integracoes.cliente_meuplano(db, empresa_id)).usinas()
     except Exception as exc:  # noqa: BLE001
         ler_mp = _falha(exc)
-    usinas_mw, usinas_mp, micro = await asyncio.gather(ler_mw, ler_mp, ler_micro, return_exceptions=True)
+
+    def _daqui():
+        """O que é DESTE banco, lido enquanto os produtos respondem (o banco fica nos EUA: ~200 ms
+        por ida). A sessão é só desta thread até ela acabar — as leituras acima não a tocam."""
+        links = list(db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all())
+        # "Não mostrar esta usina": preferência de TELA desta empresa (ver `esta_oculta`).
+        ocultas = {(o.produto, o.identificador)
+                   for o in db.scalars(select(UsinaOculta).where(UsinaOculta.empresa_id == empresa_id)).all()}
+        return svc.por_id(db, empresa_id).mp_tenant_id, links, ocultas
+
+    (usinas_mw, usinas_mp, micro), (organizacao, links, ocultas) = await asyncio.gather(
+        asyncio.gather(ler_mw, ler_mp, ler_micro, return_exceptions=True), asyncio.to_thread(_daqui))
     if isinstance(usinas_mw, BaseException):
         avisos.append(_aviso(Produto.MEUWATT, usinas_mw))
         usinas_mw = []
@@ -621,28 +632,16 @@ async def catalogo_de_usinas(
     # Casada a organização da empresa no meuPlano (Vínculos), só as usinas em que ELA é a
     # prestadora ou a gestora: o token de quem é admin do sistema lá enxerga todas, e o
     # gerente só deve ver as dele ("respectivamente somente as usinas dele").
-    organizacao = svc.por_id(db, empresa_id).mp_tenant_id
     if organizacao is not None:
         usinas_mp = [
             u for u in usinas_mp
             if organizacao in (u.get("prestadora_owner_id"), u.get("gestora_owner_id"))
         ]
 
-    links = list(
-        db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all()
-    )
-
     # "Não mostrar esta usina": preferência de TELA desta empresa. A usina some da lista de
     # trazer e nada mais muda — o dono dela, no aplicativo, continua vendo o que foi
     # concedido. Só as que AINDA NÃO foram trazidas são escondidas: esconder uma que já
     # está aqui faria a linha sumir com os vínculos dela dentro.
-    ocultas = {
-        (o.produto, o.identificador)
-        for o in db.scalars(
-            select(UsinaOculta).where(UsinaOculta.empresa_id == empresa_id)
-        ).all()
-    }
-
     def esta_oculta(l) -> bool:
         if l.plant_link_id is not None:
             return False

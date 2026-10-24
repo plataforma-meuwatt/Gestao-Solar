@@ -515,7 +515,7 @@ async def test_o_cronograma_sondado_e_o_do_contrato_consolidado(db, meuplano_con
     """A rota de cliente responde 404 para contrato só em rascunho. A sonda tem de escolher
     um contrato COM versão consolidada — senão o vermelho seria culpa da sonda, não do
     produto. Aqui o primeiro contrato da lista é rascunho de propósito."""
-    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas/").respond(
         200, json=[{"id": 7, "name": "Porto Ferreira"}]
     )
     respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/contratos").respond(
@@ -543,7 +543,7 @@ async def test_o_cronograma_sondado_e_o_do_contrato_consolidado(db, meuplano_con
 
 @respx.mock
 async def test_sem_contrato_consolidado_o_cronograma_fica_pulado(db, meuplano_conectado):
-    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas/").respond(200, json=[{"id": 7}])
     respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/contratos").respond(
         200, json=[{"id": 30, "numero": 300, "versao_consolidada": None}]
     )
@@ -565,7 +565,7 @@ async def test_a_lista_de_relatorios_mensais_vazia_nao_sai_verde(db, meuplano_co
     um rename de `itens[].id` passaria em verde para sempre, e a aba abriria vazia sem
     ninguém ter sido avisado. Agora a rodada diz que não conferiu.
     """
-    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas/").respond(200, json=[{"id": 7}])
     respx.mock.get(
         f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/relatorios-mensais"
     ).respond(200, json={"itens": []})
@@ -589,7 +589,7 @@ async def test_a_lista_de_relatorios_mensais_vazia_nao_sai_verde(db, meuplano_co
 async def test_com_um_relatorio_liberado_a_forma_e_conferida_de_verdade(db, meuplano_conectado):
     """E quando vem item, a linha volta a ser vigilância: os cinco campos são conferidos e o
     id colhido é o de um documento LIBERADO (`captura_exige='liberado_em'`)."""
-    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas").respond(200, json=[{"id": 7}])
+    respx.mock.get(f"{MP_BASE}/api/v1/meuacesso/usinas/").respond(200, json=[{"id": 7}])
     respx.mock.get(
         f"{MP_BASE}/api/v1/meuacesso/visao-cliente/usinas/7/relatorios-mensais"
     ).respond(
