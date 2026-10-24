@@ -125,7 +125,7 @@ ACAO_CANCELADA_SIM = "(A ação que esperava a sua confirmação foi cancelada. 
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 #: O cancelamento de um passo depois de outros já feitos: "Nada foi feito" escondia a OS que o
-#: passo anterior criou (avaliação 16). Vem seguido do que já foi feito (`assistente._o_que_ficou`).
+#: passo anterior criou (avaliação 15). Vem seguido do que já foi feito (`assistente._o_que_ficou`).
 CANCELADO_PASSO = "Cancelado: este passo não será executado."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
 #: O "sim" que confirma a ação do meuPlano: a mensagem INTEIRA, conferida pelo sistema (a IA não
@@ -391,7 +391,7 @@ def e_sim(texto: str, acao: str = "") -> bool:
     """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa curta ou só o 👍/✅.
     Pergunta nunca confirma, nem frase com palavra de parar (`_PARAR`). Depois da afirmativa, só
     palavra neutra ou do texto da ação (`acao`: "Sim, pode criar a OS de Ibitinga") — e número, só
-    o que está nele: "Pode fechar a 1640" não confirma "Fechar a OS 1638" (avaliação 16)."""
+    o que está nele: "Pode fechar a 1640" não confirma "Fechar a OS 1638" (avaliação 15)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return True
@@ -469,7 +469,7 @@ BOTAO_ANTIGO = "Esse botão é de um resumo antigo — nada foi feito."
 BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot foi atualizado. Nada foi feito — "
                   "se ainda quiser, peça de novo.")
 #: O toque de novo no Sim/Não de um resumo JÁ confirmado (o WhatsApp deixa os botões tocáveis):
-#: ouvia "Nada foi feito — peça de novo" logo abaixo do ✅, um convite a duplicar a OS (avaliação 16).
+#: ouvia "Nada foi feito — peça de novo" logo abaixo do ✅, um convite a duplicar a OS (avaliação 15).
 JA_CONFIRMADA = "Essa ação já foi confirmada e não roda de novo. O que houve: {desfecho}"
 #: O desfecho de uma ação que estourou no meio da execução.
 INCERTA = "⚠️ A ação «{resumo}» deu erro no meio — ela PODE ter sido feita. Confira antes de pedir de novo."
@@ -515,7 +515,7 @@ def mandada_antes_do_resumo(user_id: int, texto: str, chegou: float | None, mand
     """A mensagem de CIÊNCIA ("valeu" mandado enquanto o bot buscava o próximo passo) que saiu do
     celular antes de o resumo da ação de agora chegar: não é resposta a ele, e não o derruba
     (avaliação 14). Só ela: "cancela", "não" e a correção ("não, é o 12") derrubam como qualquer
-    mensagem — poupar toda mensagem de antes deixava a senha seguinte executar o 13 (avaliação 16)."""
+    mensagem — poupar toda mensagem de antes deixava a senha seguinte executar o 13 (avaliação 15)."""
     p = PENDENTES.get(user_id)
     return (p is not None and p.mostrada_em is not None and so_ciencia(texto)
             and _antes_do_resumo(p, chegou, mandada_em))
@@ -545,7 +545,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
                               "Mostre o resumo e diga que o gerente da O&M define a senha dela no oem-gs "
                               "(Bot do WhatsApp). Leitura continua liberada.")}
     if ctx.proposta is not None:
-        if ctx.proposta.confirmacao == "sim":           # avaliação 16: a IA ouvia "senha" na do meuPlano
+        if ctx.proposta.confirmacao == "sim":           # avaliação 15: a IA ouvia "senha" na do meuPlano
             seguir = (" — depois do Sim, o sistema segue sozinho para o próximo passo do pedido"
                       if ctx.proposta.conversa is not None else "")
             return {"erro": f"Uma ação por vez: já há uma esperando o Sim da pessoa nesta mensagem. Fale só dela{seguir}."}
@@ -707,7 +707,7 @@ async def usina_helper_catalogo(ctx: ger.Contexto, a: dict) -> dict:
 
 #: Campos que trazem o SLUG da usina num item de resposta do helper (o `plant_id` dele é o
 #: slug; `plant`, o da trilha de auditoria `/api/audit/list` e dos mapas de bits do ABS —
-#: avaliação 16). Nome de exibição não entra: "Pirapozinho" não é "pirapozinho" e o item sumiria.
+#: avaliação 15). Nome de exibição não entra: "Pirapozinho" não é "pirapozinho" e o item sumiria.
 _CAMPOS_DE_USINA = ("api_slug", "slug", "plant_id", "plant")
 
 

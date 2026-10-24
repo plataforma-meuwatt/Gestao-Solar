@@ -1772,7 +1772,7 @@ async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_loc
     for sim in ("Sim", "sim!", "Pode sim", "Confirmado", "Isso mesmo", "ok", "👍",
                 "Confirmar", "pode confirmar", "Aprovado", "De acordo", "tá certo", "Pode lançar", "Sim, pode abrir"):
         assert h.e_sim(sim), sim
-    assert h.e_sim("Sim, crie a OS 1639", "Abrir a OS 1639")    # o número, só o do resumo (avaliação 16)
+    assert h.e_sim("Sim, crie a OS 1639", "Abrir a OS 1639")    # o número, só o do resumo (avaliação 15)
     for outra in ("Sim, mas troque o técnico", "Pode me mandar o relatório", "sim?", "Segue o protocolo 1234", "",
                   "de jeito nenhum", "tá errado"):
         assert not h.e_sim(outra), outra
@@ -2172,7 +2172,7 @@ async def test_o_toque_depois_do_deploy_e_o_nao_vencido_dizem_o_que_houve(db, bo
     assert bot_local.enviados[-1].startswith("A ação esperava a sua resposta até as") and dono.id not in h.PENDENTES
 
 
-# ── avaliação 16 (24/10/2026): a correção de antes do resumo, o sim com outro número, o resultado que
+# ── avaliação 15 (24/10/2026): a correção de antes do resumo, o sim com outro número, o resultado que
 #    sempre chega, o toque repetido, o passo cancelado, a IA que divide o pedido, a trilha do helper ──
 
 
@@ -2387,6 +2387,45 @@ async def test_o_resultado_que_nao_saiu_vai_de_novo_e_nunca_tente_de_novo(db, bo
     assert falso.aplicadas == ["criar_ordem_servico"] and caiu
     assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Criar OS")
     assert not any("Tente de novo" in (m or "") for m in bot_local.enviados)
+
+
+async def test_quebra_depois_do_feito_diz_que_o_resto_pode_faltar(db, bot_local, monkeypatch):
+    """O ✅ saiu e o turno quebrou ao buscar o próximo passo do pedido: a pessoa ficava sem resposta
+    nenhuma, esperando o resto."""
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+
+    async def _quebra(*a, **k):
+        raise RuntimeError("o banco caiu")
+
+    monkeypatch.setattr(assistente, "_seguir_no_meuplano", _quebra)
+    n = len(bot_local.enviados)
+    await assistente.atender(_toque(dono, 2))
+    feito, aviso = bot_local.enviados[n:]
+    assert feito.startswith("✅ Feito no meuPlano: Criar OS") and falso.aplicadas == ["criar_ordem_servico"]
+    assert aviso == ("⚠️ Não consegui conferir se o seu pedido tinha mais passos. Já foi feito: Criar OS em UFV "
+                     "Ibitinga com 1 tarefa(s). Se faltava algo, peça de novo.")
+
+
+async def test_quebra_depois_de_um_passo_recusado_nao_diz_que_foi_feito(db, bot_local, monkeypatch):
+    falso = _MeuPlanoDoisPassos(falha_2=409)
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    await assistente.atender(_toque(dono, 2))
+    real, vezes = assistente._resumo_saiu, []
+
+    def _quebra_uma_vez(db, user, saiu):
+        if not vezes:
+            vezes.append(1)
+            raise RuntimeError("o banco caiu")
+        return real(db, user, saiu)
+
+    monkeypatch.setattr(assistente, "_resumo_saiu", _quebra_uma_vez)
+    await assistente.atender(_toque(dono, 3))
+    assert vezes and bot_local.enviados[-1].startswith("❌ O meuPlano recusou")
 
 
 async def test_o_toque_de_novo_no_sim_de_uma_acao_feita_diz_que_ja_foi(db, bot_local, monkeypatch):

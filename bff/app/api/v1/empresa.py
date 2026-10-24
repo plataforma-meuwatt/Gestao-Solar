@@ -594,18 +594,30 @@ async def catalogo_de_usinas(
     nunca pelo inventário inteiro: um `PlantLink` de outra empresa não aparece aqui.
     """
     empresa_id = svc.empresa_exigida(gerente)
-    usinas_mw: list[dict] = []
-    usinas_mp: list[dict] = []
     avisos: list[str] = []
 
+    # As três leituras dos produtos (usinas do meuWatt, do meuPlano e o MICRO) correm JUNTAS:
+    # uma atrás da outra, o catálogo levava 5–8 s em produção (avaliação 15). Os clientes
+    # saem do banco ANTES — a sessão do SQLAlchemy não é de duas tarefas ao mesmo tempo.
+    async def _falha(exc: Exception):
+        raise exc
+
     try:
-        usinas_mw = await (await integracoes.cliente_meuwatt(db, empresa_id)).usinas()
+        mw = await integracoes.cliente_meuwatt(db, empresa_id)
+        ler_mw, ler_micro = mw.usinas(), mw.micro_usinas()
     except Exception as exc:  # noqa: BLE001 — cada lado cai sozinho
-        avisos.append(_aviso(Produto.MEUWATT, exc))
+        ler_mw, ler_micro = _falha(exc), _falha(exc)
     try:
-        usinas_mp = await (await integracoes.cliente_meuplano(db, empresa_id)).usinas()
+        ler_mp = (await integracoes.cliente_meuplano(db, empresa_id)).usinas()
     except Exception as exc:  # noqa: BLE001
-        avisos.append(_aviso(Produto.MEUPLANO, exc))
+        ler_mp = _falha(exc)
+    usinas_mw, usinas_mp, micro = await asyncio.gather(ler_mw, ler_mp, ler_micro, return_exceptions=True)
+    if isinstance(usinas_mw, BaseException):
+        avisos.append(_aviso(Produto.MEUWATT, usinas_mw))
+        usinas_mw = []
+    if isinstance(usinas_mp, BaseException):
+        avisos.append(_aviso(Produto.MEUPLANO, usinas_mp))
+        usinas_mp = []
     # Casada a organização da empresa no meuPlano (Vínculos), só as usinas em que ELA é a
     # prestadora ou a gestora: o token de quem é admin do sistema lá enxerga todas, e o
     # gerente só deve ver as dele ("respectivamente somente as usinas dele").
@@ -672,8 +684,9 @@ async def catalogo_de_usinas(
     # daqui porque já vieram como `PlantLink` acima.
     ja_trazidas = {l.mw_micro_plant_id for l in links if l.mw_micro_plant_id}
     try:
-        cru = await (await integracoes.cliente_meuwatt(db, empresa_id)).micro_usinas()
-        for m in (cru.get("plants", []) if isinstance(cru, dict) else (cru or [])):
+        if isinstance(micro, BaseException):
+            raise micro
+        for m in (micro.get("plants", []) if isinstance(micro, dict) else (micro or [])):
             mid = m.get("id")
             if mid is None or mid in ja_trazidas:
                 continue
@@ -1510,8 +1523,9 @@ class ContaPatch(BaseModel):
     bot_meuplano: bool | None = None
     bot_meuwatt: bool | None = None
     bot_helper: bool | None = None
-    #: A SENHA DE ATUAÇÃO (6 a 8 números) que o bot pede antes de ligar, desligar, gravar ou
-    #: criar. O gerente define e entrega à pessoa, como a senha provisória.
+    #: A SENHA DE ATUAÇÃO (6 a 8 números) que o bot pede antes de ligar, desligar ou gravar no
+    #: equipamento (helper). Ação do meuPlano (criar ou concluir OS) confirma com Sim, sem ela. O
+    #: gerente define e entrega à pessoa, como a senha provisória.
     senha_atuacao: str | None = None
 
 

@@ -455,3 +455,51 @@ def test_o_MICRO_e_aquecido_pelo_ciclo_que_ja_roda():
     assert asyncio.run(plants.aquecer_micro(SemMicro())) == 0, (
         "sem micro usina cadastrada, a leitura mais cara do sistema foi paga à toa"
     )
+
+
+def _meuplano_da_empresa(db):
+    db.add(Integracao(produto=Produto.MEUPLANO, base_url="https://mp.test", token_cifrado=cripto.cifrar("mp_pat_x"),
+                      token_prefixo="mp_pat_x", ativa=True, empresa_id=_empresa(db)))
+    db.commit()
+
+
+@respx.mock
+async def test_o_catalogo_le_os_dois_produtos_ao_mesmo_tempo(db, ponte):
+    """O catálogo do oem levava 5–8 s em produção (avaliação 15): as três leituras (usinas do
+    meuWatt, do meuPlano e o MICRO) corriam uma atrás da outra. Juntas, a tela espera a mais
+    lenta, não a soma."""
+    import asyncio
+
+    from app.api.v1 import empresa
+
+    _meuplano_da_empresa(db)
+    no_ar, pico = set(), []
+
+    def _lenta(nome, corpo):
+        async def responder(request):
+            no_ar.add(nome)
+            pico.append(len(no_ar))
+            await asyncio.sleep(0.05)
+            no_ar.discard(nome)
+            return httpx.Response(200, json=corpo)
+        return responder
+
+    respx.get(f"{BASE}/plants").mock(side_effect=_lenta("mw", [{"slug": "ufv-a", "name": "UFV A"}]))
+    respx.get(f"{BASE}/micro/plants").mock(side_effect=_lenta("micro", {"plants": [{"id": 9, "name": "UFV Micro"}]}))
+    respx.get("https://mp.test/api/v1/meuacesso/usinas").mock(side_effect=_lenta("mp", [{"id": 3, "name": "UFV B"}]))
+    r = await empresa.catalogo_de_usinas(db=db, gerente=_gerente(db))
+    assert max(pico) == 3
+    assert sorted(l.origem for l in r.linhas) == ["meuplano", "meuwatt", "micro"] and r.avisos == []
+
+
+@respx.mock
+async def test_o_catalogo_com_um_produto_fora_mostra_o_outro_e_um_aviso_so(db, ponte):
+    from app.api.v1 import empresa
+
+    _meuplano_da_empresa(db)
+    respx.get(f"{BASE}/plants").respond(401, json={"detail": "Token revogado."})
+    respx.get(f"{BASE}/micro/plants").respond(401, json={"detail": "Token revogado."})
+    respx.get("https://mp.test/api/v1/meuacesso/usinas").respond(200, json=[{"id": 3, "name": "UFV B"}])
+    r = await empresa.catalogo_de_usinas(db=db, gerente=_gerente(db))
+    assert [l.nome for l in r.linhas] == ["UFV B"]
+    assert len(r.avisos) == 1 and "Token revogado" in r.avisos[0]

@@ -149,7 +149,7 @@ function UsuariosDaEmpresa({ empresa }: { empresa: Empresa }) {
       ) : !data?.length ? (
         <Vazio
           titulo="Ninguém nesta empresa ainda"
-          descricao="Crie o gerente dela em “Novo usuário”: é ele que cadastra os técnicos e os donos de usina, cola o token de cada um e libera o bot."
+          descricao="Crie o gerente dela em “Novo usuário”: é quem cadastra os técnicos e os donos de usina, cola o token de cada um e libera o bot."
         />
       ) : (
         data.map((u, i) => <LinhaDoUsuario key={u.id} empresa={empresa} usuario={u} primeiro={i === 0} />)
@@ -263,7 +263,7 @@ function LinhaDoUsuario({
             onClick={() => {
               if (
                 window.confirm(
-                  `Tirar ${usuario.nome} de ${empresa.nome}? A conta continua existindo; as usinas que ela recebe desta empresa saem junto.` +
+                  `Tirar ${usuario.nome} de ${empresa.nome}? A conta continua existindo; as usinas que essa conta recebe desta empresa saem junto.` +
                     (usuario.outras_empresas.length || usuario.cuidada_por
                       ? ''
                       : ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa — nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'),

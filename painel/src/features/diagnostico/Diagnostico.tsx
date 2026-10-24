@@ -33,7 +33,7 @@ export function Diagnostico() {
   return (
     <Pagina
       titulo="Diagnóstico"
-      apoio="Confira o que o dono de usina recebe, e de onde cada número vem, antes de ele abrir o aplicativo."
+      apoio="Confira o que o dono de usina recebe, e de onde cada número vem, antes de a pessoa abrir o aplicativo."
     >
       <div className="mb-5 max-w-md">
         <label className="rotulo-campo" htmlFor="cliente">
@@ -73,7 +73,7 @@ export function Diagnostico() {
             {diag.usinas.length === 0 ? (
               <Vazio
                 titulo="Nenhuma usina concedida"
-                descricao="Este dono entra no aplicativo e não vê usina nenhuma. Quem concede é o gerente da empresa dele, no oem-gs."
+                descricao="Este dono entra no aplicativo e não vê usina nenhuma. Quem concede é o gerente da empresa que atende essa conta, no oem-gs."
               />
             ) : (
               diag.usinas.map((u, i) => (

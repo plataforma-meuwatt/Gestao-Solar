@@ -483,7 +483,7 @@ function Formulario({
         value={configId}
         onChange={(e) => setConfigId(e.target.value)}
         className="mono"
-        nota="Facebook Login for Business → Configurações. É o que deixa cada técnico conectar o WhatsApp dele."
+        nota="Facebook Login for Business → Configurações. É o que deixa cada técnico conectar o próprio WhatsApp."
       />
       <Campo
         rotulo="Token de acesso"

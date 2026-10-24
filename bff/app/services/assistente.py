@@ -575,7 +575,7 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     except SemConexao as e:
         return nao_seguiu(e)
     # O pedido nas palavras da pessoa vai junto: a IA pode ter mandado ao meuPlano só uma parte dele
-    # (dividiu em duas chamadas, e a 2ª foi recusada), e o resto sumia calado (avaliação 16).
+    # (dividiu em duas chamadas, e a 2ª foi recusada), e o resto sumia calado (avaliação 15).
     pedido = f" O meu pedido inteiro: «{p.pedido}»." if p.pedido else ""
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
                 {"role": "user", "content": f"{feito}.{pedido} Se o meu pedido tinha mais passos, proponha o "
@@ -599,7 +599,7 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
 def _guardar(db: Session) -> None:
     """Grava a conversa. Falhar aqui não derruba o turno: a ação confirmada já rodou, e o
     resultado dela tem de chegar à pessoa — "Tente de novo" depois de criar a OS a criaria em
-    dobro (avaliação 16). A conversa fica sem esta troca."""
+    dobro (avaliação 15). A conversa fica sem esta troca."""
     try:
         db.commit()
     except Exception:                                      # noqa: BLE001
@@ -669,7 +669,7 @@ async def _atender(evento: dict) -> None:
     user: User | None = None
     ctx: ger.Contexto | None = None
     # A ação que esta mensagem pode confirmar, e se a resposta do turno já saiu: depois de a ação
-    # rodar, um erro nunca vira "Tente de novo" (avaliação 16).
+    # rodar, um erro nunca vira "Tente de novo" (avaliação 15).
     executada: helper.Pendente | None = None
     respondeu = False
     try:
@@ -735,7 +735,7 @@ async def _atender(evento: dict) -> None:
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
         # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
         # …a não ser o "valeu" (só ciência) que saiu do celular ANTES de o resumo chegar: não é
-        # resposta a ele (avaliação 14). "Cancela" e "não, é o 12" de antes derrubam (avaliação 16).
+        # resposta a ele (avaliação 14). "Cancela" e "não, é o 12" de antes derrubam (avaliação 15).
         confirma = helper.responde_sim(user.id, texto)
         antes = helper.mandada_antes_do_resumo(user.id, texto, evento.get("_chegou"), enviada)
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id)
@@ -780,7 +780,7 @@ async def _atender(evento: dict) -> None:
                                                        tentativa=tentativa)
         if resposta == helper.CANCELADO and desarmada is not None and desarmada.feitos:
             # O passo cancelado não desfaz os de antes: "Nada foi feito" escondia a OS que o passo
-            # anterior criou (avaliação 16).
+            # anterior criou (avaliação 15).
             resposta = f"{helper.CANCELADO_PASSO} {_o_que_ficou(desarmada)}"
         falhou = resposta is not None and resposta.startswith(("❌", "⚠️"))
         if falhou and executada is not None and executada.conversa is not None:
@@ -870,11 +870,18 @@ async def _atender(evento: dict) -> None:
                    erro=f"{type(exc).__name__}: {exc}")
         try:
             # A ação confirmada JÁ rodou (ou estourou no meio): o resultado dela chega à pessoa, e
-            # nunca "Tente de novo" — repetir criaria a OS em dobro (avaliação 16).
+            # nunca "Tente de novo" — repetir criaria a OS em dobro (avaliação 15).
             if executada is None or executada.desfecho is None:
                 await _texto(telefone, "Tive um problema para responder agora. Tente de novo em instantes.")
             elif not respondeu:
                 await _texto(telefone, para_whatsapp(executada.desfecho))
+            elif executada.conversa is not None and executada.desfecho.startswith("✅"):
+                # O ✅ saiu e o turno quebrou antes de saber se o pedido tinha mais passos: silêncio
+                # deixava a pessoa esperando o resto.
+                feito = "; ".join([*executada.feitos, executada.resumo])
+                await _texto(telefone, para_whatsapp(
+                    f"⚠️ Não consegui conferir se o seu pedido tinha mais passos. Já foi feito: {feito}. "
+                    "Se faltava algo, peça de novo."))
         except Exception:                                  # noqa: BLE001
             pass
     finally:
