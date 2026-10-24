@@ -102,8 +102,12 @@ def url_do_webhook() -> str:
     Mora aqui porque é o cliente quem sabe onde o gateway está. A tela precisa dele para
     copiar: errar esse campo não dá erro nenhum, só silêncio — a Meta entrega em outro lugar
     e as mensagens dos clientes somem.
+
+    É o endereço PÚBLICO (`WHATSAPP_GATEWAY_URL_PUBLICA`): a API fala com o gateway pela rede
+    interna do Docker, que a Meta não alcança.
     """
-    return f"{_base()}/webhook"
+    publica = get_settings().whatsapp_gateway_url_publica.rstrip("/")
+    return f"{publica or _base()}/webhook"
 
 
 async def estado() -> dict[str, Any]:

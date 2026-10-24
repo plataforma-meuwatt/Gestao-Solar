@@ -765,7 +765,7 @@ export type RegistroBot = {
   usuario: string | null
   apelido: string | null
   empresa: string | null
-  resultado: 'respondeu' | 'sem_conta' | 'nao_liberado' | 'sem_texto' | 'zerou' | 'erro'
+  resultado: 'respondeu' | 'sem_conta' | 'nao_liberado' | 'sem_texto' | 'zerou' | 'atrasada' | 'erro'
   ferramentas: string[]
   pergunta: string | null
   resposta: string | null

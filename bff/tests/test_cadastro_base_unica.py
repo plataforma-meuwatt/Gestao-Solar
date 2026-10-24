@@ -148,3 +148,31 @@ async def test_sugere_ligar_quem_tem_o_mesmo_email_na_organizacao(cenario):
     db.add(conta2)
     db.commit()
     assert cadastro.sugestoes(db, emp.id, mp.pessoas, [conta2]) == {}
+
+
+async def test_o_nome_da_ficha_do_adm_grava_no_meuplano_tambem(cenario):
+    """O mesmo furo do celular, no nome: a ficha do adm gravava direto, e a sincronização
+    seguinte desfazia a edição de quem é ligado ao meuPlano."""
+    from app.api.v1.painel_clientes import ClientePatch, editar_cliente
+
+    db, emp, conta, mp = cenario
+    await cadastro.ligar(db, conta, emp.id, 7)
+    await editar_cliente(conta.id, ClientePatch(nome="Ana Souza Lima"), db=db, _=None)
+    assert conta.nome == "Ana Souza Lima" and mp.gravado[-1] == (7, {"name": "Ana Souza Lima"})
+
+
+def test_tirar_o_token_do_meuplano_nao_desliga_o_cadastro(cenario):
+    from app.api.v1.empresa import desconectar_conta_do_cliente
+    from app.models.integracao import Produto
+    from app.models.user import VinculoProduto
+
+    db, emp, conta, mp = cenario
+    db.add(VinculoProduto(gs_user_id=conta.id, produto="meuplano", usuario_remoto_id="7",
+                          usuario_remoto_nome="Ana Souza", token_cifrado="x", token_prefixo="mp_pat_x"))
+    db.commit()
+    gerente = User(apelido="ger", nome="Ger", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id)
+    db.add(gerente)
+    db.commit()
+    desconectar_conta_do_cliente(conta.id, Produto.MEUPLANO, db=db, gerente=gerente)
+    v = cadastro.vinculo_meuplano(db, conta.id)
+    assert v is not None and v.usuario_remoto_id == "7" and v.token_cifrado is None

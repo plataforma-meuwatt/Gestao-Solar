@@ -106,7 +106,7 @@ def test_sem_telefone_nao_e_apto(db, cliente, administrador):
     cliente.telefone = None
     db.commit()
     assert svc.apto(cliente) is False
-    assert "telefone" in svc.motivo_de_nao_receber(cliente).lower()
+    assert "celular" in svc.motivo_de_nao_receber(cliente).lower()
 
 
 def test_sem_aceite_nao_e_apto(db, cliente):

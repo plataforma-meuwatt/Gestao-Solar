@@ -107,7 +107,7 @@ def motivo_de_nao_receber(cliente: User) -> str | None:
     if not cliente.ativo:
         return "A conta está desativada."
     if not cliente.telefone:
-        return "Falta o telefone do cliente."
+        return "Falta o celular do dono de usina."
     if cliente.whatsapp_aceite_em is None:
         return "Falta registrar o aceite do cliente (cláusula do contrato)."
     return None

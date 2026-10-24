@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
 
@@ -101,6 +102,22 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
 
 
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO), **helper.FERRAMENTAS}
+
+
+#: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
+MAX_ATRASO = timedelta(hours=2)
+
+
+def _atrasada(ocorrida_em: str | None) -> bool:
+    if not ocorrida_em:
+        return False
+    try:
+        quando = datetime.fromisoformat(ocorrida_em)
+    except ValueError:
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=UTC)
+    return datetime.now(UTC) - quando > MAX_ATRASO
 
 
 # --------------------------------------------------------------------------- log
@@ -265,6 +282,11 @@ async def atender(evento: dict) -> None:
     ctx: ger.Contexto | None = None
     try:
         user = conta_do_telefone(db, telefone)
+        if _atrasada(evento.get("ocorrida_em")):
+            # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
+            # responder agora seria conversar com o passado. Fica no log, sem resposta.
+            _registrar(db, telefone, user, "atrasada", pergunta=texto or f"[{evento.get('tipo') or 'mídia'}]")
+            return
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):
                 await _texto(telefone, DESCONHECIDO)

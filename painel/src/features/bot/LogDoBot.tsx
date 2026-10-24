@@ -22,6 +22,7 @@ const RESULTADO: Record<RegistroBot['resultado'], { tom: Tom; rotulo: string }> 
   nao_liberado: { tom: 'alerta', rotulo: 'Bot não liberado' },
   sem_texto: { tom: 'sem-dados', rotulo: 'Não era texto' },
   zerou: { tom: 'sem-dados', rotulo: 'Conversa zerada' },
+  atrasada: { tom: 'alerta', rotulo: 'Chegou atrasada — sem resposta' },
   erro: { tom: 'parado', rotulo: 'Erro' },
 }
 

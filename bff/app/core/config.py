@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     # repassa ao gateway, que cifra e guarda. Vazio = a tela de administração do WhatsApp
     # diz que o gateway não está configurado neste ambiente, em vez de falhar no meio.
     whatsapp_gateway_url: str = ""
+    #: O endereço PÚBLICO do gateway — o do webhook cadastrado na Meta. A API fala com o
+    #: gateway pela rede interna (`whatsapp_gateway_url`); a Meta, de fora, só pelo público.
+    #: Vazio = o mesmo de `whatsapp_gateway_url`.
+    whatsapp_gateway_url_publica: str = ""
     #: A chave da porta interna, a MESMA dos dois lados. É ela que separa o BFF do resto do
     #: mundo na hora de mandar mensagem — e o gateway do resto do mundo na hora de avisar.
     whatsapp_chave_interna: str = ""

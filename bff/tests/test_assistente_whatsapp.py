@@ -376,3 +376,27 @@ async def test_liberar_o_helper_pede_a_porta_configurada_e_o_token_do_meuwatt(db
     _token(db, conta, "meuwatt")
     cadastro.liberar_bot(conta, "bot_helper", True)
     assert conta.bot_helper and "bot_helper" in conta.bot_ativo
+
+
+async def test_mensagem_que_chegou_horas_depois_nao_e_respondida(db, monkeypatch):
+    """24/10/2026: a fila do gateway travou e havia mensagens de dois dias antes esperando.
+    Destravada, o bot responderia ao passado — agora fica no log como `atrasada`."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    enviados = []
+
+    async def _enviar(**k):
+        enviados.append(k)
+        return {"ok": True}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    dono = _conta(db, "dono", "+5517997377626")
+    velha = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    await assistente.atender({"telefone": dono.telefone, "tipo": "text", "texto": "oi", "wamid": "w1", "ocorrida_em": velha})
+    assert enviados == []
+    linha = db.query(RegistroBot).one()
+    assert (linha.resultado, linha.gs_user_id) == ("atrasada", dono.id)

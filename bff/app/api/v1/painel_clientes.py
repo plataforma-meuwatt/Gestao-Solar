@@ -221,15 +221,19 @@ class ClientePatch(BaseModel):
 
 
 @router.patch("/clientes/{cliente_id}", response_model=ClienteResumo)
-def editar_cliente(
+async def editar_cliente(
     cliente_id: int,
     body: ClientePatch,
     db: Session = Depends(get_db),
     _: User = Depends(EXIGE_CLIENTES),
 ) -> ClienteResumo:
     cliente = _cliente(db, cliente_id)
-    if body.nome is not None:
-        cliente.nome = body.nome.strip()
+    if body.nome is not None and body.nome.strip():
+        # O mesmo caminho do oem-gs: ligado ao meuPlano, o nome grava lá também (base única)
+        # — senão a próxima sincronização desfaria a edição.
+        from app.services import cadastro
+
+        await cadastro.gravar(db, cliente, cliente.empresa_id, nome=body.nome.strip())
     if body.ativo is not None:
         cliente.ativo = body.ativo
     db.commit()

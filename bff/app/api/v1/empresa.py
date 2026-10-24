@@ -1425,9 +1425,17 @@ def desconectar_conta_do_cliente(
     conta = _conta_da_empresa(db, usuario_id, empresa_id)
 
     vinculo = vinculos.obter(db, conta.id, produto)
-    if vinculo is not None:
+    if vinculo is None:
+        return
+    if produto is Produto.MEUPLANO:
+        # A MESMA linha guarda a ligação do cadastro com a pessoa do meuPlano (base única):
+        # tirar o token não desfaz a ligação — para isso há "Desligar", no Cadastro.
+        vinculo.token_cifrado = vinculo.token_prefixo = vinculo.token_gravado_em = None
+        vinculo.estado, vinculo.detalhe, vinculo.usinas_visiveis = "nunca", None, None
+        vinculo.login_externo_em = None
+    else:
         db.delete(vinculo)
-        db.commit()
+    db.commit()
 
 
 class ContaPatch(BaseModel):
