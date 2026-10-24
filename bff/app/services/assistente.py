@@ -183,19 +183,31 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 # --------------------------------------------------------------------------- log
 #: "senha: 1234", "a senha do cadeado é ab12", "PIN 4821": o valor sai do log (o adm e o gerente
 #: leem o log; a conversa com a pessoa continua inteira). Só com separador ou com dígito logo
-#: depois — "[senha de atuação]" e "a senha de vocês" ficam como estão.
+#: depois — "[senha de atuação]" e "a senha de vocês" ficam como estão, e "a senha de novo até
+#: as 14:32" também (o trecho até o ":" não tem número).
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
-                      r"((?:\s+d[eoa]s?\s+[^\n:=]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)([^\s,;]+?)(?=[.!?]*(?:\s|$|[,;]))")
+                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)([^\s,;]+?)(?=[.!?]*(?:\s|$|[,;]))")
 _SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
 #: "Altere a senha do cadeado de pirapozinho para 3262" (estava em claro no log de produção,
 #: avaliação 9). Com "para/pra" o valor precisa ter dígito: "senha para o gerente" é prosa.
 _SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
                            r"((?:\s+d[eoa]s?\s+[^\n:=]{1,40}?)?\s+(?:para|pra)\s+)"
                            r"([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
+#: O NÚMERO inteiro, com qualquer pontuação antes e com os grupos ("senha,482913",
+#: "senha/482913", "pin 482 913", "senha do cadeado 3262", "o código do portão 4455" — em claro
+#: no log até a avaliação 10). "código" só quando é de porta/portão/cadeado: "código de erro
+#: 2043" é dado útil. Hora ("até as 14:32") não é segredo.
+_SEGREDO_NUMERO = re.compile(
+    r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o"
+    r"|c[óo]digo(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acesso|cofre|guarita|cerca)))\b"
+    r"((?:[ \t]+d[eoa]s?[ \t]+(?:[^\W\d_][\w\-]*[ \t]+){0,3}?[^\W\d_][\w\-]*)?[ \t]*"
+    r"(?:\b(?:é|eh|para|pra)\b)?[ \t:=,;/.\-]*)"
+    r"(\d+(?:[ .\-]\d+)*)(?!\d|[:h]\d)")
 
 
 def _sem_segredos(texto: str) -> str:
-    for padrao in (_SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
+    # O do número primeiro: os outros mascaram só o primeiro grupo ("pin •••• 913").
+    for padrao in (_SEGREDO_NUMERO, _SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
     return texto
 
@@ -354,9 +366,14 @@ def para_whatsapp(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
-async def _texto(telefone: str, texto: str) -> None:
+async def _texto(telefone: str, texto: str) -> bool:
+    """Manda em pedaços de 3.900. Devolve se TODOS saíram (o gateway responde `ok: false` quando a
+    Meta recusa, sem erro HTTP)."""
+    saiu = True
     for i in range(0, len(texto), 3900):
-        await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=texto[i:i + 3900])
+        r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=texto[i:i + 3900])
+        saiu = saiu and bool((r or {}).get("ok"))
+    return saiu
 
 
 #: Uma conversa por vez por número. Duas mensagens seguidas ("Serviço novo" e, 8 s depois,
@@ -370,6 +387,8 @@ async def atender(evento: dict) -> None:
     """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202. As mensagens do
     mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
     chave = evento.get("wa_id") or evento.get("telefone") or ""
+    # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
+    evento = {**evento, "_chegou": monotonic()}
     async with _TRAVAS.setdefault(chave, asyncio.Lock()):
         await _atender(evento)
 
@@ -476,7 +495,8 @@ async def _atender(evento: dict) -> None:
         # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
-        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava)
+        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava,
+                                                       chegou=evento.get("_chegou"), mandada_em=enviada)
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
@@ -499,13 +519,22 @@ async def _atender(evento: dict) -> None:
         db.commit()
         fim.set()
         await tarefa
-        await _texto(telefone, para_whatsapp(resposta))
+        saiu = await _texto(telefone, para_whatsapp(resposta))
+        if ctx is not None and ctx.proposta is not None:
+            # A senha só passa a valer depois que o resumo SAIU; se não saiu, a pessoa não o
+            # viu, e a ação não fica esperando.
+            if saiu:
+                helper.mostrada(user.id)
+            else:
+                helper.desarmar(user.id)
         _registrar(db, telefone, user, "respondeu", pergunta=historico[-2]["content"], resposta=resposta,
                    ferramentas=ctx.ferramentas if ctx else ["senha_de_atuacao"], inicio=inicio, em=enviada)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()
         fim.set()
+        if ctx is not None and ctx.proposta is not None and ctx.proposta.mostrada_em is None:
+            helper.desarmar(user.id)                       # o resumo não chegou: nada fica esperando
         _registrar(db, telefone, user, "erro", pergunta=pergunta,
                    ferramentas=ctx.ferramentas if ctx else None, inicio=inicio, em=enviada,
                    erro=f"{type(exc).__name__}: {exc}")

@@ -151,7 +151,9 @@ def _aplicar_da_pessoa(db: Session, conta: User, p: dict[str, Any]) -> list[str]
         conta.nome = p["name"]
     if p.get("email"):
         conta.email = p["email"]
-    if p.get("phone"):
+    if p.get("phone") and not _mesmo_celular(p["phone"], conta.telefone):
+        # Só quando MUDOU: conferir e adotar a cada sincronização custava duas idas ao banco
+        # por pessoa em toda abertura da tela de Usuários (avaliação 10).
         try:
             conta.telefone = celular_livre(db, p["phone"], conta.id)
             adotar_mensagens(db, conta)
@@ -160,10 +162,18 @@ def _aplicar_da_pessoa(db: Session, conta: User, p: dict[str, Any]) -> list[str]
     return avisos
 
 
+def _mesmo_celular(valor: str, atual: str | None) -> bool:
+    try:
+        return normalizar(valor) == atual
+    except TelefoneInvalido:
+        return False
+
+
 def adotar_mensagens(db: Session, conta: User) -> None:
     """O número ganhou conta: as mensagens que ele mandou ao bot ANTES (sem cadastro) passam a
-    ser desta pessoa no Log do bot — e aparecem no oem da empresa dela. As 17 do celular do
-    Kewyn ficavam como número solto (avaliação de 24/10/2026)."""
+    ser desta pessoa no Log do bot — e aparecem no oem da empresa dela. Roda quando o celular
+    MUDA, dentro da gravação de quem chama (que dá o commit); as que já estavam soltas antes
+    disto existir passaram uma vez na migração `c6d8e0f2a4b6` (as 17 do Kewyn)."""
     from sqlalchemy import update
 
     from app.models.conversa_whatsapp import RegistroBot
@@ -257,23 +267,25 @@ async def todas_as_pessoas(db: Session, empresa_id: int) -> list[dict[str, Any]]
 
 
 def sugestoes(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None,
-              contas: list[User]) -> dict[int, dict[str, Any]]:
+              contas: list[User], ligadas: list[tuple[str, int]] | None = None) -> dict[int, dict[str, Any]]:
     """Conta daqui ainda SEM ligação ao meuPlano cujo e-mail é o de uma pessoa da organização
     da empresa lá, ainda livre: `{conta_id: pessoa}`. É o "ligar" sugerido — a auditoria de
-    24/10/2026 achou Camila e kewyn no meuPlano, com celular, e "só do Gestão Solar" aqui."""
+    24/10/2026 achou Camila e kewyn no meuPlano, com celular, e "só do Gestão Solar" aqui.
+    `ligadas`: os vínculos do meuPlano `(id lá, conta daqui)` já lidos por quem chama."""
     from app.models.empresa import Empresa
 
     empresa = db.get(Empresa, empresa_id)
     if not pessoas or empresa is None or empresa.mp_tenant_id is None:
         return {}
-    ligadas = set(db.scalars(select(VinculoProduto.usuario_remoto_id).where(
-        VinculoProduto.produto == Produto.MEUPLANO.value)).all())
-    contas_ligadas = set(db.scalars(select(VinculoProduto.gs_user_id).where(
-        VinculoProduto.produto == Produto.MEUPLANO.value)).all())
+    if ligadas is None:
+        ligadas = db.execute(select(VinculoProduto.usuario_remoto_id, VinculoProduto.gs_user_id).where(
+            VinculoProduto.produto == Produto.MEUPLANO.value)).all()
+    remotas = {r for r, _ in ligadas}
+    contas_ligadas = {c for _, c in ligadas}
     por_email = {
         (p.get("email") or "").strip().lower(): p
         for p in _da_organizacao(pessoas, empresa.mp_tenant_id)
-        if p.get("email") and str(p.get("id")) not in ligadas
+        if p.get("email") and str(p.get("id")) not in remotas
     }
     return {
         c.id: por_email[c.email.strip().lower()]
@@ -282,13 +294,16 @@ def sugestoes(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None
     }
 
 
-async def sincronizar(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None = None) -> int:
+async def sincronizar(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None = None,
+                      ligadas: list[tuple[User, str]] | None = None) -> int:
     """O que mudou no meuPlano chega aqui (nome, e-mail, celular das contas LIGADAS). Melhor
     esforço: sem o meuPlano, a tela mostra o que está guardado. Devolve quantas mudaram.
-    `pessoas`: a lista já lida (para a tela não ir duas vezes ao meuPlano)."""
-    ligadas = db.execute(
-        select(User, VinculoProduto.usuario_remoto_id).join(VinculoProduto, VinculoProduto.gs_user_id == User.id)
-        .where(VinculoProduto.produto == Produto.MEUPLANO.value, User.empresa_id == empresa_id)).all()
+    `pessoas`: a lista já lida (para a tela não ir duas vezes ao meuPlano); `ligadas`: as
+    contas desta empresa ligadas ao meuPlano, `(conta, id lá)`, já lidas por quem chama."""
+    if ligadas is None:
+        ligadas = db.execute(
+            select(User, VinculoProduto.usuario_remoto_id).join(VinculoProduto, VinculoProduto.gs_user_id == User.id)
+            .where(VinculoProduto.produto == Produto.MEUPLANO.value, User.empresa_id == empresa_id)).all()
     if not ligadas:
         return 0
     if pessoas is None:

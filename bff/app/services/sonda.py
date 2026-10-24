@@ -367,7 +367,7 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Depende de um id de usuário do meuPlano, que só existe no "
                             "contexto de um dono de usina já vinculado. A tela de Diagnóstico "
-                            "exercita este caminho com o cliente escolhido."),
+                            "exercita este caminho com o dono de usina escolhido."),
     Rota("mp.notificacoes", "GET", "/api/v1/meuacesso/me/notifications",
          "Notificações do app", essencial=False),
     Rota("mp.nao_lidas", "GET", "/api/v1/meuacesso/me/notifications/unread-count",

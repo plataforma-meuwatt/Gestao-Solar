@@ -488,7 +488,12 @@ function UsinasDaEmpresa({ empresa }: { empresa: Empresa }) {
       ) : (
         <>
           {dela.map((u, i) => (
-            <div key={u.id} className={`px-5 py-3 flex items-center gap-4 ${i ? 'border-t border-borda' : ''}`}>
+            // No celular, o que é a usina desce para baixo do nome: lado a lado, o nome virava uma
+            // coluna de uma palavra por linha (avaliação 10, 390 px).
+            <div
+              key={u.id}
+              className={`px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4 ${i ? 'border-t border-borda' : ''}`}
+            >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-forte">{u.nome}</p>
                 <p className="text-xs text-fraco">
@@ -497,12 +502,14 @@ function UsinasDaEmpresa({ empresa }: { empresa: Empresa }) {
                   {` · dono: ${u.dono_nome ?? 'ninguém ainda'}`}
                 </p>
               </div>
-              <span className="text-xs text-rotulo">
-                {[u.tem_meuwatt ? 'monitorada' : u.tem_micro ? 'portal do fabricante' : null, u.tem_meuplano ? 'com manutenção' : null]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-              <Selo tom={u.no_app ? 'ok' : 'sem-dados'}>{u.no_app ? 'No app' : 'Desligada'}</Selo>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs text-rotulo">
+                  {[u.tem_meuwatt ? 'monitorada' : u.tem_micro ? 'portal do fabricante' : null, u.tem_meuplano ? 'com manutenção' : null]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+                <Selo tom={u.no_app ? 'ok' : 'sem-dados'}>{u.no_app ? 'No app' : 'Desligada'}</Selo>
+              </div>
             </div>
           ))}
           <p className="px-5 py-3 border-t border-borda text-xs text-fraco">

@@ -794,24 +794,38 @@ escrita numa frase também é tentativa. **Desde a 8ª avaliação: SÓ a mensag
 senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dígitos são juntados
 antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem
 (o bloco promete "qualquer outra mensagem cancela", e "não faça! senha 482913" executava).
-Numa FRASE, cada número que pode ser a senha (6 a 8 dígitos solto — IP, data, hora, CEP e
-valor com ponto ficam fora — ou os grupos logo depois de "senha/confirmo/pin") é conferido, até
-20 por pessoa por hora, e SÓ a senha some ("[senha oculta]", com aviso à pessoa e à IA): UC,
-protocolo e IP seguem legíveis (avaliação 9). Frase nunca conta erro nem bloqueia; passado o
+Numa FRASE, o que pode ser a senha é conferido e SÓ a senha some ("[senha oculta]", com aviso à
+pessoa e à IA): UC, protocolo e IP seguem legíveis (avaliação 9). Candidato
+(`assistente_helper.candidatos_a_senha`, avaliação 10 — "Senha:482913", "senha,482913",
+"senha/482913" e o 4º número da frase iam em claro): todo número de 6 a 8 dígitos, colado ou não
+em pontuação; os grupos depois de "senha/confirmo/pin" com qualquer pontuação no meio; e 2 ou 3
+grupos de 2 a 4 dígitos ("482 913", "4829-13", "482.913") — pedaço de IP, data com barra e
+"1.500.000" ficam fora deste. Até 3 números distintos por mensagem (os de depois de "senha"
+primeiro) e 20 por pessoa por hora; o que passa disso vira "[número oculto]" sem conferir. Frase nunca conta erro nem bloqueia; passado o
 teto da hora, todo candidato vira "[número oculto]" sem conferir (o oráculo para ali). O
 gateway guarda a frase SEM a senha (não a mensagem inteira). A tentativa (a mensagem que é só o
 número, com até 3 grupos separados por espaço, ponto, vírgula, hífen ou sublinhado) é conferida
 com `to_thread`; cada erro conta; 5 em 15 min bloqueiam. O número que ganha conta leva para ela
-as mensagens que mandou antes (`cadastro.adotar_mensagens`). O log mascara "senha … é/:/= X",
-"senha … para X" e "PIN 1234". Na hora da senha, a parte do bot da ação é conferida de novo. O
-bloco diz a hora-limite ("até as 14:32"). O recorte de usinas do bot é `usinas_do_bot`: o do
+as mensagens que mandou antes (`cadastro.adotar_mensagens`, quando o celular MUDA — dentro da
+gravação de quem chama; as que já estavam soltas passaram uma vez na migração `c6d8e0f2a4b6`). O log mascara "senha … é/:/= X",
+"senha … para X", "PIN 1234" e o NÚMERO inteiro depois de senha/pin/combinação, com qualquer
+pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "senha do cadeado 3262";
+"código" só de portão/porta/cadeado — "código de erro 2043" fica). Na hora da senha, a parte do bot da ação é conferida de novo. O
+bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
+(avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
+leu): `_atender` marca a saída do bloco (`assistente_helper.mostrada`, só se o gateway disse
+`ok`; se não saiu, a ação é desarmada), e a senha que entrou na fila do número antes disso —
+ou cuja hora da Meta é anterior — recebe "não vale, mande outra vez" e a ação continua
+esperando. Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
+trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do token. O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele. Qualquer outra
 mensagem DESARMA a ação ("não/cancela" respondem "Cancelado" pelo sistema). UMA ação por mensagem,
 e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
-srvclaude com a idade do contato do wg0 — VPN parada há mais de 5 min deixa o selo vermelho. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
+srvclaude com a idade do contato do wg0 (exige a mesma chave de chamador) — VPN parada há mais
+de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
 lançar o dia, lembrete) espera a senha, e confirmada o BFF chama o `/assistant/apply` de lá com
 o token da pessoa (10 min); a conversa vai junto ao meuPlano, que é sem estado. **Empresa
 desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a

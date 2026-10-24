@@ -197,3 +197,77 @@ async def test_o_numero_que_ganha_conta_leva_as_mensagens_de_antes(db):
     dele = db.query(RegistroBot).filter_by(telefone="+5517997367733").one()
     assert (dele.gs_user_id, dele.empresa_id) == (kewyn.id, emp.id)
     assert db.query(RegistroBot).filter_by(telefone="+5517990000000").one().gs_user_id is None
+
+
+# ── avaliação 10 (24/10/2026): a adoção que não ficava gravada, e a tela de 3,6 s ─────────
+
+
+async def test_o_celular_que_chega_do_meuplano_leva_as_mensagens_e_fica_gravado(cenario):
+    """`sincronizar` adotava as mensagens antigas do número e não dava commit (só commitava se
+    nome, e-mail ou celular mudassem): o rollback do fim da requisição desfazia a adoção."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    db, emp, conta, mp = cenario
+    await cadastro.ligar(db, conta, emp.id, 7)
+    mp.pessoas[0]["phone"] = "(16) 97777-6666"
+    db.add(RegistroBot(telefone="+5516977776666", resultado="sem_conta", pergunta="oi"))
+    db.commit()
+    assert await cadastro.sincronizar(db, emp.id) == 1
+    db.rollback()                                          # o que o fim da requisição faria
+    linha = db.query(RegistroBot).one()
+    assert (linha.gs_user_id, linha.empresa_id) == (conta.id, emp.id)
+
+
+async def test_sincronizar_sem_mudanca_nao_vai_ao_banco_por_pessoa(cenario):
+    """Celular igual ao de lá não é reconferido nem readotado a cada abertura da tela: eram
+    duas idas ao banco (~200 ms cada) por pessoa ligada."""
+    from sqlalchemy import event
+
+    db, emp, conta, mp = cenario
+    await cadastro.ligar(db, conta, emp.id, 7)
+    eid, _ = emp.id, conta.nome                            # carregados, como a tela os tem
+    idas = []
+    event.listen(db.bind, "before_cursor_execute", lambda *a: idas.append(a[2]))
+    assert await cadastro.sincronizar(db, eid, mp.pessoas, ligadas=[(conta, "7")]) == 0
+    assert idas == []
+
+
+def test_a_migracao_adota_as_mensagens_soltas_de_quem_tem_o_numero(db):
+    """As 17 do Kewyn, de antes de a adoção existir: passam uma vez, pela migração. Número com
+    DUAS contas ativas (não deveria haver) e número sem conta ficam como estão."""
+    import importlib.util
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    caminho = next(Path(__file__).parents[1].glob("alembic/versions/c6d8e0f2a4b6_*.py"))
+    spec = importlib.util.spec_from_file_location("mig_adota", caminho)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    emp = Empresa(nome="Splendor O&M")
+    db.add(emp)
+    db.commit()
+    db.add_all([
+        # A conta DESLIGADA com o mesmo número vem antes: a mensagem é da que está ativa.
+        User(apelido="kewyn-antigo", nome="Kewyn", perfil=Perfil.CLIENTE, empresa_id=emp.id,
+             telefone="+5517997367733", ativo=False),
+        User(apelido="kewyn", nome="Kewyn", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id, telefone="+5517997367733"),
+        User(apelido="a", nome="A", perfil=Perfil.CLIENTE, empresa_id=emp.id, telefone="+5517990000001"),
+        User(apelido="b", nome="B", perfil=Perfil.CLIENTE, empresa_id=emp.id, telefone="+5517990000001"),
+        User(apelido="velho", nome="Velho", perfil=Perfil.CLIENTE, empresa_id=emp.id, telefone="+5517990000002",
+             ativo=False),
+        *[RegistroBot(telefone="+5517997367733", resultado="atrasada", pergunta=f"m{i}") for i in range(3)],
+        RegistroBot(telefone="+5517990000001", resultado="sem_conta", pergunta="dois donos"),
+        RegistroBot(telefone="+5517990000002", resultado="sem_conta", pergunta="conta desligada"),
+        RegistroBot(telefone="+5517990000009", resultado="sem_conta", pergunta="ninguém"),
+    ])
+    db.commit()
+    db.execute(text(mig.SQL))
+    db.commit()
+    kewyn = db.query(User).filter_by(apelido="kewyn").one()
+    por = {r.pergunta: r.gs_user_id for r in db.query(RegistroBot)}
+    assert [por[f"m{i}"] for i in range(3)] == [kewyn.id] * 3
+    assert por["dois donos"] is None and por["conta desligada"] is None and por["ninguém"] is None

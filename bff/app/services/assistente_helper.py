@@ -21,27 +21,34 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
 
 from app.clients.helper_bot import HelperBot
 from app.core.config import get_settings
+from app.core.datas import BRT
 from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
-#: A mensagem INTEIRA é uma tentativa de senha: só o número, ou "senha 482913", "confirmo 482913".
 #: A mensagem INTEIRA é a senha: o número (6 a 8 dígitos, em até 3 grupos com espaço, ponto,
 #: vírgula, hífen ou sublinhado — "482 913", "482,913", "482  913"), com ou sem "senha"/
-#: "confirmo" na frente. Um IP (4 grupos) ou "24/10/2026" (barra) não são.
-SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})\s*[.!]?\s*$",
+#: "confirmo"/"pin" na frente, com ou sem pontuação ("Senha:482913", "senha/482913"). Um IP
+#: (4 grupos) ou "24/10/2026" (barra) não são.
+SENHA = re.compile(r"^\s*(?:confirmo|senha|pin)?\s*[:=,./\-]?\s*(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})\s*[.!]?\s*$",
                    re.IGNORECASE)
-COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
-#: Numa FRASE, o que pode ser a senha: um número solto de 6 a 8 dígitos — não pedaço de IP,
-#: data, hora ou valor com ponto ("10.1.130.2", "24/10/2026", "1.500.000" ficam como estão) —,
-#: ou os grupos logo depois de "senha"/"confirmo"/"pin" ("a senha é 482 913").
-CANDIDATO = re.compile(r"(?<![\d./:,])(\d{6,8})(?![\d./:,]\d|\d)")
-CANDIDATO_DEPOIS_DE_SENHA = re.compile(
-    r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}(\d{2,4}(?:[ .,_\-]{1,2}\d{2,4}){1,2})(?!\d)")
+COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha|pin)\b", re.IGNORECASE)
+#: Numa FRASE, o que pode ser a senha (cada um é CONFERIDO, e só a senha some — ver `analisar`):
+#: - todo número de 6 a 8 dígitos, colado ou não em pontuação ("Senha:482913", "(482913)");
+#: - depois de "senha"/"confirmo"/"pin", com qualquer pontuação no meio, os grupos que somam
+#:   6 a 8 dígitos ("senha, 482 913", "pin 48 29 13");
+#: - em qualquer lugar, 2 ou 3 grupos de 2 a 4 dígitos com os separadores da mensagem-senha
+#:   ("482 913", "4829-13", "482.913") — mas não pedaço de IP, de data com barra nem de
+#:   "1.500.000": o grupo colado em outro ponto/dígito fica de fora.
+SOLTO = re.compile(r"(?<!\d)\d{6,8}(?!\d)")
+DEPOIS_DA_PALAVRA = re.compile(
+    r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}?(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})(?!\d)")
+EM_GRUPOS = re.compile(r"(?<![\d.,/:])\d{2,4}(?:[ .,_\-]{1,2}\d{2,4}){1,2}(?!\d|[.,/:]\d)")
 #: O que a IA, o histórico, o log e o gateway veem no lugar da senha escrita numa frase.
 SENHA_OCULTA = "[senha oculta]"
 #: …e no lugar de todo candidato quando a pessoa passou do limite de conferências por hora.
@@ -51,6 +58,8 @@ OCULTO = "[número oculto]"
 #: resposta mudar. Passou disso, todo candidato é escondido, sem conferir.
 CONFERENCIAS_POR_HORA = 20
 #: Números conferidos por mensagem: cada conferência custa ~0,45 s (pbkdf2, 600 mil voltas).
+#: Os que passam disso são escondidos sem conferir ("[número oculto]") — o 4º número de uma
+#: frase podia ser a senha e ia em claro (avaliação 10).
 MAX_CONFERIDOS = 3
 #: "não", "cancela", "esquece"… com uma ação esperando: desarma, e o SISTEMA responde.
 CANCELA = re.compile(r"^\s*(?:n[ãa]o\b|cancel|desist|esquec|para\b|pare\b|deixa\b)", re.IGNORECASE)
@@ -71,6 +80,9 @@ ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para execut
                   "senha, sem outras palavras.)")
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
+#: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
+ANTES_DO_RESUMO = ("Essa senha foi mandada antes de o resumo da ação chegar, então não vale. Leia o resumo "
+                   "acima e, se for isso mesmo, mande a senha outra vez até as {limite}. Nada foi feito.")
 
 
 @dataclass
@@ -85,6 +97,9 @@ class Pendente:
     #: A parte do bot que a ação usa (`bot_helper`, `bot_meuplano`): conferida de novo na
     #: hora da senha — o gerente pode desligá-la no meio.
     parte: str = "bot_helper"
+    #: Quando o resumo (o bloco 🔒) saiu para a pessoa — relógio daqui e hora UTC. `None` =
+    #: ainda não saiu: senha nenhuma vale antes (`mostrada`).
+    mostrada_em: tuple[float, datetime] | None = None
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -144,8 +159,10 @@ async def analisar(user, texto: str) -> Analise:
     - A mensagem que é APENAS a senha é tentativa (conta erro e bloqueia).
     - Numa frase, cada número que pode ser a senha é conferido — até `CONFERENCIAS_POR_HORA`
       por pessoa —, e SÓ a senha é escondida ("[senha oculta]"): UC, protocolo, IP, data e CEP
-      seguem legíveis para a IA (avaliação 9). Frase nunca conta erro nem bloqueia. Passado o
-      limite, todo candidato é escondido sem conferir — o oráculo para ali."""
+      seguem legíveis para a IA (avaliação 9). Frase nunca conta erro nem bloqueia.
+    - Conferidos no máximo `MAX_CONFERIDOS` números distintos — primeiro os que vêm depois de
+      "senha"/"pin", depois na ordem do texto —; os demais são escondidos sem conferir. Passado o
+      limite por hora, todo candidato é escondido sem conferir — o oráculo para ali."""
     if user is None or not user.senha_atuacao_hash:
         return Analise()
     texto = texto or ""
@@ -155,23 +172,49 @@ async def analisar(user, texto: str) -> Analise:
             return Analise(pura=True, bloqueada=True)
         acertou = await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash)
         return Analise(pura=True, acertou=acertou)
-    candidatos = [(m.start(1), m.end(1), m.group(1)) for m in CANDIDATO.finditer(texto)]
-    candidatos += [(m.start(1), m.end(1), re.sub(r"\D", "", m.group(1)))
-                   for m in CANDIDATO_DEPOIS_DE_SENHA.finditer(texto)]
-    candidatos = [c for c in candidatos if 6 <= len(c[2]) <= 8]
-    trechos: list[tuple[int, int, str]] = []
-    for ini, fim, digitos in candidatos[:MAX_CONFERIDOS]:
-        if not _pode_conferir(user.id):
-            return Analise(trechos=[(i, f, OCULTO) for i, f, _ in candidatos])
-        if await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash):
-            trechos.append((ini, fim, SENHA_OCULTA))
-    return Analise(trechos=trechos)
+    candidatos = candidatos_a_senha(texto)
+    ordem = list(dict.fromkeys(d for _, _, d in candidatos))
+    senha: set[str] = set()
+    sem_conferir: set[str] = set()
+    for i, d in enumerate(ordem):
+        if i >= MAX_CONFERIDOS or not _pode_conferir(user.id):
+            sem_conferir.update(ordem[i:])
+            break
+        if await asyncio.to_thread(conferir_senha, d, user.senha_atuacao_hash):
+            senha.add(d)
+    return Analise(trechos=[(a, b, SENHA_OCULTA if d in senha else OCULTO)
+                            for a, b, d in candidatos if d in senha or d in sem_conferir])
+
+
+def candidatos_a_senha(texto: str) -> list[tuple[int, int, str]]:
+    """(início, fim, dígitos) de tudo que pode ser a senha numa frase, na ordem de conferência:
+    os que vêm logo depois de "senha"/"pin"/"confirmo" primeiro, depois na ordem do texto."""
+    achados: list[tuple[int, int, int, str]] = []
+    for m in DEPOIS_DA_PALAVRA.finditer(texto):
+        # "senha 482913, 123": os grupos podem ser da senha ou não — vale cada começo que soma 6 a 8.
+        juntos = ""
+        for g in re.finditer(r"\d+", m.group(1)):
+            juntos += g.group()
+            if 6 <= len(juntos) <= 8:
+                achados.append((0, m.start(1), m.start(1) + g.end(), juntos))
+    achados += [(1, m.start(), m.end(), m.group()) for m in SOLTO.finditer(texto)]
+    achados += [(1, m.start(), m.end(), re.sub(r"\D", "", m.group())) for m in EM_GRUPOS.finditer(texto)]
+    return [(a, b, d) for _, a, b, d in sorted(achados) if 6 <= len(d) <= 8]
 
 
 def mascarar(texto: str, analise: Analise) -> str:
-    """O texto com os trechos da análise escondidos (de trás para a frente, sem deslocar)."""
+    """O texto com os trechos da análise escondidos. Trechos que se sobrepõem viram um só
+    ("[senha oculta]" se algum deles é a senha)."""
     texto = texto or ""
-    for ini, fim, marcador in sorted(set(analise.trechos), reverse=True):
+    juntos: list[list] = []
+    for ini, fim, marcador in sorted(set(analise.trechos)):
+        if juntos and ini < juntos[-1][1]:
+            juntos[-1][1] = max(juntos[-1][1], fim)
+            if marcador == SENHA_OCULTA:
+                juntos[-1][2] = SENHA_OCULTA
+        else:
+            juntos.append([ini, fim, marcador])
+    for ini, fim, marcador in reversed(juntos):
         texto = texto[:ini] + marcador + texto[fim:]
     return texto
 
@@ -257,15 +300,35 @@ def bloco_da_proposta(p: Pendente) -> str:
     linhas = ["🔒 *Ação esperando a sua senha de atuação*", f"• {p.resumo}"]
     linhas += [f"  – {d}" for d in p.detalhes]
     linhas += [f"⚠️ {a}" for a in p.avisos]
-    # A hora-limite, e não "em até 2 min": o prazo corre desde a proposta, e a IA leva de 17 a
-    # 65 s para responder.
-    from datetime import datetime, timedelta
-
-    from app.core.datas import BRT
-
-    limite = datetime.now(BRT) + timedelta(seconds=max(0.0, p.expira - monotonic()))
-    linhas.append(f"Para executar, responda só com a senha até as {limite:%H:%M}. Qualquer outra mensagem cancela.")
+    linhas.append(f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
+
+
+def _limite(p: Pendente) -> str:
+    """A hora-limite, e não "em até 2 min": o prazo corre desde a proposta, e a IA leva de 17 a
+    65 s para responder."""
+    return f"{datetime.now(BRT) + timedelta(seconds=max(0.0, p.expira - monotonic())):%H:%M}"
+
+
+def mostrada(user_id: int) -> None:
+    """O resumo da ação saiu para a pessoa: a partir de AGORA a senha dela vale."""
+    p = PENDENTES.get(user_id)
+    if p is not None and p.mostrada_em is None:
+        p.mostrada_em = (monotonic(), datetime.now(UTC))
+
+
+def _antes_do_resumo(p: Pendente, chegou: float | None, mandada_em: datetime | None) -> bool:
+    """A senha saiu do celular antes de o resumo chegar — a pessoa não sabia o que confirmava.
+    Duas provas, porque cada relógio falha de um jeito:
+    - `chegou` (relógio daqui, ao entrar na fila do número) antes da saída do resumo: é o caso
+      comum — "desliga o 13" e a senha logo atrás, esperando a vez enquanto a IA pensa;
+    - `mandada_em` (a hora da Meta) antes da saída do resumo: pega a que chegou tarde (gateway
+      reenviando). ponytail: o relógio deste servidor está ~17 s atrás (NTP bloqueado na
+      KingHost) — essa folga a favor da senha a primeira prova cobre."""
+    if p.mostrada_em is None:
+        return True
+    saiu, saiu_utc = p.mostrada_em
+    return (chegou is not None and chegou < saiu) or (mandada_em is not None and mandada_em < saiu_utc)
 
 _catalogo: tuple[float, dict[str, Any]] | None = None
 
@@ -393,6 +456,15 @@ def _usinas_pedidas(rota: str, corpo: dict) -> set[str]:
     return {str(n).strip() for n in nomes if n not in (None, "")}
 
 
+def _tem_alvo(rota: str, corpo: dict) -> bool:
+    """O pedido aponta um equipamento pelo endereço (`ip`, `ips`, `host`). Sem a usina junto, o
+    helper confere o IP contra TODAS as usinas do token — mais do que o Gestão Solar liberou."""
+    from urllib.parse import parse_qs, urlsplit
+
+    consulta = parse_qs(urlsplit(rota).query)
+    return any(corpo.get(k) or consulta.get(k) for k in ("ip", "ips", "host"))
+
+
 async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     rota = (a.get("rota") or "").strip()
     if not rota.startswith("/api/"):
@@ -404,7 +476,11 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     # O recorte do Gestão Solar vale aqui também: o token do meuWatt pode enxergar mais usinas
     # do que o gerente (ou o dono) liberou para esta conta.
     liberadas = {p.mw_plant_slug for p in ger.usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug}
-    fora = _usinas_pedidas(rota, corpo) - liberadas
+    pedidas = _usinas_pedidas(rota, corpo)
+    if not pedidas and _tem_alvo(rota, corpo):
+        return {"erro": ("Equipamento pelo IP só com a usina junto: mande também o slug (ou plant_id) da usina — "
+                         "o bot só fala com equipamento de usina liberada para esta pessoa.")}
+    fora = pedidas - liberadas
     if fora:
         return {"erro": f"Usina não liberada para você no Gestão Solar: {', '.join(sorted(fora))}."}
     from app.services.vinculos import SemConexao
@@ -500,7 +576,8 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
 
 
 async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: Analise | None = None,
-                                 esperava: bool = False) -> str | None:
+                                 esperava: bool = False, chegou: float | None = None,
+                                 mandada_em: datetime | None = None) -> str | None:
     """A mensagem que é APENAS a senha de atuação → executa a ação esperando. `None` = segue
     para a conversa (com os candidatos já escondidos por quem chama).
 
@@ -509,7 +586,10 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     da ação promete, e "não faça! senha 482913" executava (avaliação de 24/10/2026).
 
     - Bloqueada: a tentativa recebe `BLOQUEADO`, certa ou errada.
-    - Certa: executa — se a parte do bot ainda estiver ligada —, ou `NADA_ESPERANDO`.
+    - Certa: executa — se a parte do bot ainda estiver ligada —, ou `NADA_ESPERANDO`. Certa mas
+      mandada ANTES de o resumo da ação chegar (`chegou`: quando entrou na fila do número;
+      `mandada_em`: a hora da Meta): não vale, e a ação continua esperando (avaliação 10 —
+      "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca leu).
     - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
       é a mesma da certa.
     - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
@@ -527,6 +607,8 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     if analise.acertou:
         if pendente is None:
             return NADA_ESPERANDO
+        if _antes_do_resumo(pendente, chegou, mandada_em):
+            return ANTES_DO_RESUMO.format(limite=_limite(pendente))
         PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
         _ERROS.pop(user.id, None)
         if pendente.parte not in user.bot_ativo:
@@ -557,6 +639,7 @@ FERRAMENTAS = {
                         "AJUSTE EM MASSA (mesmos parâmetros em vários relés): /api/massa/plano {slug, plant_id} lê; "
                         "com valores e selecionados devolve o plano (mostre-o); /api/massa/start com o MESMO corpo "
                         "vira UMA ação para o lote; /api/massa/state {job} dá o andamento. "
+                        "Pedido com IP/host de equipamento leva SEMPRE o slug da usina junto. "
                         "AÇÃO (ajustar, ligar, desligar, resetar, comandar, gravar) NÃO é executada: volta uma "
                         "proposta, e só roda com a SENHA DE ATUAÇÃO que a pessoa manda."),
         "parameters": {"type": "object", "properties": {

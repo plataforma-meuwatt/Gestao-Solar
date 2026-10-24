@@ -1344,7 +1344,6 @@ async def usuarios_detalhados(
     from app.services import cadastro
     empresa_id = svc.empresa_exigida(gerente)
     pessoas_mp = await cadastro.todas_as_pessoas(db, empresa_id)
-    await cadastro.sincronizar(db, empresa_id, pessoas_mp)
     contas = list(
         db.scalars(
             select(User)
@@ -1357,10 +1356,24 @@ async def usuarios_detalhados(
     )
     if not contas:
         return []
-    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
-    sugeridas = cadastro.sugestoes(db, empresa_id, pessoas_mp, [c for c in contas if c.empresa_id == empresa_id])
-
     ids = [c.id for c in contas]
+    por_id = {c.id: c for c in contas}
+    # Segura as empresas no mapa de identidade: sem a lista viva, o `db.get` de `sugestoes`
+    # voltava ao banco (~200 ms cada ida — a tela levava 3,6 s, avaliação 10).
+    empresas = db.scalars(select(Empresa)).all()
+    nomes = {e.id: e.nome for e in empresas}
+    # UMA ida para os vínculos: os das contas daqui (tokens, ligação) e TODOS os do meuPlano
+    # (quem lá já está ligado a alguém — a sugestão de ligar não oferece esses).
+    vinculos = db.scalars(select(VinculoProduto).where(
+        VinculoProduto.gs_user_id.in_(ids) | (VinculoProduto.produto == Produto.MEUPLANO.value))).all()
+    do_mp = [v for v in vinculos if v.produto == Produto.MEUPLANO.value]
+    # Base única: o que mudou no meuPlano chega às contas ANTES de a lista sair.
+    await cadastro.sincronizar(db, empresa_id, pessoas_mp, ligadas=[
+        (por_id[v.gs_user_id], v.usuario_remoto_id) for v in do_mp
+        if v.gs_user_id in por_id and por_id[v.gs_user_id].empresa_id == empresa_id])
+    sugeridas = cadastro.sugestoes(db, empresa_id, pessoas_mp, [c for c in contas if c.empresa_id == empresa_id],
+                                   ligadas=[(v.usuario_remoto_id, v.gs_user_id) for v in do_mp])
+
     # Só as usinas DESTA empresa (e as sem dono): a que o dono recebe de outra não é daqui.
     quantas = dict(
         db.execute(
@@ -1376,7 +1389,9 @@ async def usuarios_detalhados(
     conectados: dict[int, list[str]] = {}
     tokens_de: dict[int, dict[str, str]] = {}
     ligado_mp: dict[int, str] = {}
-    for v in db.scalars(select(VinculoProduto).where(VinculoProduto.gs_user_id.in_(ids))).all():
+    for v in vinculos:
+        if v.gs_user_id not in por_id:
+            continue
         if v.produto == Produto.MEUPLANO.value:
             ligado_mp[v.gs_user_id] = v.usuario_remoto_nome or v.usuario_remoto_email or v.usuario_remoto_id
         # Só TOKEN é conta própria: ligar o cadastro à pessoa do meuPlano não muda com que

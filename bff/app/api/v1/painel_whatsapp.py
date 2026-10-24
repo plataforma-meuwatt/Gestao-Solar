@@ -356,13 +356,19 @@ async def saude_do_canal(db: Session = Depends(get_db), _: User = Depends(EXIGE_
 
 async def saude_atual(db: Session) -> SaudeDoCanalOut:
     """A conta do canal inteiro (o número é UM, o da plataforma) — o oem-gs lê o `ouvindo`."""
-    saida = await _saude_do_canal(db)
+    import asyncio
+
     from app.services import assistente_helper
 
-    try:
-        saida.helper_alcancavel, saida.helper_resumo = await assistente_helper.alcancavel()
-    except Exception as exc:                               # noqa: BLE001 — o selo nunca derruba a tela
-        saida.helper_alcancavel, saida.helper_resumo = False, f"Não deu para conferir o helper: {exc}"
+    async def _helper() -> tuple[bool | None, str]:
+        try:
+            return await assistente_helper.alcancavel()
+        except Exception as exc:                           # noqa: BLE001 — o selo nunca derruba a tela
+            return False, f"Não deu para conferir o helper: {exc}"
+
+    # Gateway e helper ao mesmo tempo: um depois do outro, o selo levava 2,7 s (avaliação 10).
+    saida, helper = await asyncio.gather(_saude_do_canal(db), _helper())
+    saida.helper_alcancavel, saida.helper_resumo = helper
     return saida
 
 
