@@ -524,7 +524,7 @@ async def test_a_os_que_o_meuplano_propoe_e_criada_com_o_sim_da_pessoa_sem_senha
     assert "SENHA DE ATUAÇÃO" not in proposta["instrucao"]
     assert "sem_senha_de_atuacao" not in proposta and proposta["detalhes"] == ["Técnico: Michel"]
     bloco = h.bloco_da_proposta(ctx.proposta)
-    assert "responda *SIM*" in bloco and "senha" not in bloco
+    assert "toque em *Sim*" in bloco and "senha" not in bloco
     assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim") == h.ANTES_DO_RESUMO_SIM.format(
         limite=h._limite(ctx.proposta))                         # o resumo ainda não tinha saído
     h.mostrada(dono.id)
@@ -591,11 +591,15 @@ async def test_criar_a_os_e_concluir_a_outra_vira_dois_sim_em_sequencia(db, bot_
     monkeypatch.setattr(ger, "preparar", _nada)
     dono = _conta(db, "dono", "+5517997377626")                 # SEM senha de atuação
     await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa. A OS 1638 mova para concluída"))
-    assert "Abrir a OS" in bot_local.enviados[-1] and "*SIM*" in bot_local.enviados[-1]
-    await assistente.atender(_ev(dono, 2, "sim"))
+    # A fala da IA em texto, e o resumo numa mensagem só dele, com os botões Sim / Não.
+    assert bot_local.enviados[-2] == "Vou abrir a OS." and bot_local.tipos[-2] == ("text", [])
+    assert "Abrir a OS" in bot_local.enviados[-1] and bot_local.tipos[-1] == ("botoes", ["Sim", "Não"])
+    # O toque no botão chega como mensagem `interactive` com o título.
+    await assistente.atender({**_ev(dono, 2, "Sim"), "tipo": "interactive"})
     assert falso.aplicadas == ["criar_ordem_servico"]
     assert bot_local.enviados[-2].startswith("✅ Feito no meuPlano") and "(OS 1639" in bot_local.enviados[-2]
-    assert "Mover a OS 1638 para CONCLUÍDA" in bot_local.enviados[-1] and "*SIM*" in bot_local.enviados[-1]
+    assert "Mover a OS 1638 para CONCLUÍDA" in bot_local.enviados[-1]
+    assert bot_local.tipos[-1] == ("botoes", ["Sim", "Não"])
     assert "OS 1639" in falso.conversas[1][-1]["content"]      # o meuPlano sabe o que já foi feito
     await assistente.atender(_ev(dono, 3, "sim"))
     assert falso.aplicadas == ["criar_ordem_servico", "mudar_status_os"]
@@ -662,10 +666,11 @@ def bot_local(db, monkeypatch):
     """O turno inteiro (`atender`) contra o banco de teste, com o gateway e a IA de mentira."""
     import types
 
-    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[])
+    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[], tipos=[])
 
     async def _enviar(**k):
         estado.enviados.append(k.get("texto"))
+        estado.tipos.append((k.get("tipo"), [b["titulo"] for b in k.get("botoes") or []]))
         return {"ok": True}
 
     async def _ocultar(mid, texto=None):
@@ -1633,3 +1638,71 @@ async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
     # Leitura comum continua sem senha.
     r = await assistente.manutencao(ger.Contexto(db=db, user=dono, telefone=dono.telefone), {"pergunta": "OS abertas?"})
     assert r == {"texto": "PDF da OS 1639 assinado: https://x/pdf"} and len(pedidos) == 2
+
+
+async def test_o_botao_nao_cancela_a_acao_do_meuplano(db, bot_local, monkeypatch):
+    import json as _json
+
+    from app.services import assistente_helper as h
+    from app.services import vinculos
+
+    falso = _MeuPlanoEmPassos()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: falso)
+
+    async def _sem_espera(_):
+        return None
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Vou abrir a OS."}
+        return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+            "name": "manutencao", "arguments": _json.dumps({"pergunta": msgs[-1]["content"]})}}]}
+
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "Crie a OS"))
+    await assistente.atender({**_ev(dono, 2, "Não"), "tipo": "interactive"})
+    assert bot_local.enviados[-1] == h.CANCELADO and dono.id not in h.PENDENTES and falso.aplicadas == []
+
+
+async def test_gateway_que_recusa_botoes_manda_o_resumo_em_texto(db, bot_local, monkeypatch):
+    """Gateway antigo (sem o tipo `botoes`) responde 422: o resumo vai em texto, e a ação espera."""
+    import json as _json
+
+    from app.clients.whatsapp import GatewayIndisponivel
+    from app.services import assistente_helper as h
+    from app.services import vinculos
+
+    falso = _MeuPlanoEmPassos()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: falso)
+
+    async def _enviar(**k):
+        if k.get("tipo") == "botoes":
+            raise GatewayIndisponivel("422", status=422)
+        bot_local.enviados.append(k.get("texto"))
+        return {"ok": True}
+
+    async def _sem_espera(_):
+        return None
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Vou abrir a OS."}
+        return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+            "name": "manutencao", "arguments": _json.dumps({"pergunta": msgs[-1]["content"]})}}]}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "Crie a OS"))
+    assert "Abrir a OS" in bot_local.enviados[-1] and h.PENDENTES[dono.id].mostrada_em is not None

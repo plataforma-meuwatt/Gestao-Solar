@@ -185,15 +185,24 @@ async def enviar_template(corpo: TemplateIn, db: Session = Depends(get_db)) -> E
     return EnvioOut(id=r.id, ok=r.ok, wamid=r.wamid, status=r.status, erro=r.erro)
 
 
+class BotaoIn(BaseModel):
+    #: O que volta no toque (`interactive.button_reply.id`) — o título é o que a pessoa lê.
+    id: str = Field(min_length=1, max_length=256)
+    titulo: str = Field(min_length=1, max_length=20)
+
+
 class ConteudoIn(BaseModel):
-    """A RESPOSTA do assistente: texto, ou um arquivo (documento/imagem) em base64."""
+    """A RESPOSTA do assistente: texto, um arquivo (documento/imagem) em base64, ou um texto com
+    até 3 BOTÕES de resposta ("Sim"/"Não" para confirmar uma ação — o toque volta como mensagem
+    com o título do botão)."""
     telefone: str
-    tipo: str = Field(pattern="^(text|document|image)$")
+    tipo: str = Field(pattern="^(text|document|image|botoes)$")
     texto: str | None = Field(default=None, max_length=4096)
     arquivo_b64: str | None = None
     filename: str | None = None
     mime: str | None = None
     origem: str | None = None
+    botoes: list[BotaoIn] | None = Field(default=None, max_length=3)
 
 
 @router.post("/conteudo", response_model=EnvioOut, dependencies=[Depends(_porta)])
@@ -201,11 +210,20 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
     """Responde dentro da janela de 24 h. Arquivo sobe na Meta antes e vai pelo `media_id`."""
     import base64
     from gateway.meta import graph
+    tipo = corpo.tipo
     try:
         if corpo.tipo == "text":
             if not (corpo.texto or "").strip():
                 raise ValueError("Texto vazio.")
             conteudo = {"body": corpo.texto, "preview_url": False}
+        elif corpo.tipo == "botoes":
+            if not (corpo.texto or "").strip() or not corpo.botoes:
+                raise ValueError("Botões pedem o texto e pelo menos um botão.")
+            if len(corpo.texto) > 1024:
+                raise ValueError("O texto da mensagem com botões vai até 1024 caracteres.")
+            tipo = "interactive"
+            conteudo = {"type": "button", "body": {"text": corpo.texto}, "action": {"buttons": [
+                {"type": "reply", "reply": {"id": b.id, "title": b.titulo}} for b in corpo.botoes]}}
         else:
             if not corpo.arquivo_b64:
                 raise ValueError("Falta o arquivo.")
@@ -222,8 +240,8 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
             if corpo.texto:
                 conteudo["caption"] = corpo.texto[:1024]
         r = await svc_envio.enviar_conteudo(
-            db, telefone=corpo.telefone, tipo=corpo.tipo, conteudo=conteudo,
-            texto=corpo.texto if corpo.tipo == "text" else (corpo.filename or corpo.texto),
+            db, telefone=corpo.telefone, tipo=tipo, conteudo=conteudo,
+            texto=corpo.texto if corpo.tipo in ("text", "botoes") else (corpo.filename or corpo.texto),
             origem=corpo.origem)
     except svc_envio.EnvioIndisponivel as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc

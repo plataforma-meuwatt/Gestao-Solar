@@ -417,6 +417,27 @@ def para_whatsapp(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
+#: Os botões do resumo de ação do meuPlano (dono, 24/10/2026: "ao invés de digitar sim, tem como
+#: enviar botão, sim e não?"). O toque volta como mensagem com o título — "Sim" confirma, "Não"
+#: cancela, pelo mesmo caminho do que se digita.
+BOTOES_SIM_NAO = [{"id": "sim", "titulo": "Sim"}, {"id": "nao", "titulo": "Não"}]
+
+
+async def _botoes(telefone: str, corpo: str) -> bool:
+    """O resumo da ação com os botões Sim / Não. O corpo de uma mensagem com botões vai até 1024
+    caracteres: o resumo maior vai antes, em texto. Gateway que recusa botões: vai em texto."""
+    saiu = True
+    if len(corpo) > 1024:
+        saiu = await _texto(telefone, corpo)
+        corpo = "Confirma a ação acima?"
+    try:
+        r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="botoes", texto=corpo, botoes=BOTOES_SIM_NAO)
+    except whatsapp.GatewayIndisponivel:
+        log.warning("assistente: o gateway recusou os botões; o resumo vai em texto", exc_info=True)
+        return await _texto(telefone, corpo) and saiu
+    return bool((r or {}).get("ok")) and saiu
+
+
 async def _texto(telefone: str, texto: str) -> bool:
     """Manda em pedaços de 3.900. Devolve se TODOS saíram (o gateway responde `ok: false` quando a
     Meta recusa, sem erro HTTP)."""
@@ -662,6 +683,7 @@ async def _atender(evento: dict) -> None:
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
         executada = helper.PENDENTES.get(user.id)         # a ação que esta mensagem pode confirmar
+        texto_da_ia, bloco_sim = "", None
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava,
                                                        chegou=evento.get("_chegou"), mandada_em=enviada)
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
@@ -678,15 +700,24 @@ async def _atender(evento: dict) -> None:
                 resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa "
                              "mensagem só dela. Nada foi executado.)")
             if ctx.proposta is not None:
-                # O que a pessoa confirma com a senha é texto do SISTEMA, não da IA.
-                resposta += "\n\n" + helper.bloco_da_proposta(ctx.proposta)
+                # O que a pessoa confirma é texto do SISTEMA, não da IA — e a ação do meuPlano vai
+                # com os botões Sim / Não, numa mensagem só dela.
+                bloco = helper.bloco_da_proposta(ctx.proposta)
+                if ctx.proposta.confirmacao == "sim":
+                    texto_da_ia, bloco_sim = resposta, bloco
+                resposta += "\n\n" + bloco
         historico.append({"role": "assistant", "content": resposta})
         conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
         conv.gs_user_id = user.id
         db.commit()
         fim.set()
         await tarefa
-        _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(resposta)))
+        if bloco_sim is not None:
+            saiu = await _texto(telefone, para_whatsapp(texto_da_ia)) if texto_da_ia.strip() else True
+            saiu = await _botoes(telefone, bloco_sim) and saiu
+        else:
+            saiu = await _texto(telefone, para_whatsapp(resposta))
+        _resumo_saiu(db, user, saiu)
         if (executada is not None and executada.conversa is not None and resposta.startswith("✅")
                 and helper.PENDENTES.get(user.id) is not executada):
             # O próximo passo do MESMO pedido ("crie a OS e conclua a 1638"): lá é uma proposta por vez.
@@ -695,7 +726,11 @@ async def _atender(evento: dict) -> None:
                 historico.append({"role": "assistant", "content": seguinte})
                 conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
                 db.commit()
-                _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(seguinte)))
+                proxima = helper.PENDENTES.get(user.id)
+                if proxima is not None and proxima.mostrada_em is None and proxima.confirmacao == "sim":
+                    _resumo_saiu(db, user, await _botoes(telefone, seguinte))      # o próximo passo, com botões
+                else:
+                    _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(seguinte)))
                 resposta += "\n\n" + seguinte
         _registrar(db, telefone, user, "respondeu", pergunta=entrada["content"], resposta=resposta,
                    ferramentas=ctx.ferramentas if ctx else

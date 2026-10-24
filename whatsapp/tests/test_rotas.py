@@ -384,3 +384,35 @@ def test_o_audio_e_baixado_da_meta_so_quando_o_bot_pede(cliente, credencial, db,
     assert r.status_code == 200 and r.content == b"OGG" and r.headers["content-type"].startswith("audio/ogg")
     assert cliente.get(f"/interno/mensagens/{sem.id}/midia", headers=h).status_code == 404
     assert pedidos == ["m-1"]
+
+
+def test_resposta_com_botoes_sai_como_interativa_da_meta(cliente, credencial, monkeypatch, db):
+    """Dono (24/10/2026): "Ao invés de digitar sim tem como enviar botão, sim e não?" O toque volta
+    como mensagem `interactive` com o título do botão — e o bot o lê como texto."""
+    from gateway.meta import graph
+
+    enviados = []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid="wamid.B1")
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "botoes", "texto": "Criar a OS em Ibitinga?",
+        "botoes": [{"id": "sim", "titulo": "Sim"}, {"id": "nao", "titulo": "Não"}]})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert enviados[0]["tipo"] == "interactive"
+    assert enviados[0]["conteudo"] == {"type": "button", "body": {"text": "Criar a OS em Ibitinga?"}, "action": {
+        "buttons": [{"type": "reply", "reply": {"id": "sim", "title": "Sim"}},
+                    {"type": "reply", "reply": {"id": "nao", "title": "Não"}}]}}
+    linha = db.query(Mensagem).filter_by(wamid="wamid.B1").one()
+    assert (linha.tipo, linha.texto) == ("interactive", "Criar a OS em Ibitinga?")
+    # Mais de 3 botões, título longo ou texto acima de 1024: recusado antes de gastar a Meta.
+    for ruim in ({"botoes": [{"id": str(i), "titulo": "x"} for i in range(4)], "texto": "a"},
+                 {"botoes": [{"id": "s", "titulo": "Sim, pode criar a OS agora"}], "texto": "a"},
+                 {"botoes": [{"id": "s", "titulo": "Sim"}], "texto": "a" * 1025}):
+        assert cliente.post("/interno/conteudo", headers=h,
+                            json={"telefone": "+5517997377626", "tipo": "botoes", **ruim}).status_code in (400, 422)
+    assert len(enviados) == 1

@@ -192,12 +192,15 @@ async def enviar_template(
 async def enviar_conteudo(
     *, telefone: str, tipo: str, texto: str | None = None, arquivo: bytes | None = None,
     filename: str | None = None, mime: str | None = None, origem: str = "assistente",
+    botoes: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """`tipo`: text | document | image. Arquivo vai em base64 para o gateway subir na Meta."""
+    """`tipo`: text | document | image | botoes. Arquivo vai em base64 para o gateway subir na
+    Meta; `botoes` (até 3, `{id, titulo}`) vão com o `texto` numa mensagem interativa."""
     import base64
     return await _req("POST", "/interno/conteudo", json={
         "telefone": telefone, "tipo": tipo, "texto": texto, "filename": filename, "mime": mime,
         "arquivo_b64": base64.b64encode(arquivo).decode() if arquivo else None, "origem": origem,
+        **({"botoes": botoes} if botoes else {}),
     })
 
 

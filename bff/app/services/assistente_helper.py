@@ -378,7 +378,8 @@ def bloco_da_proposta(p: Pendente) -> str:
               f"• {p.resumo}"]
     linhas += [f"  – {d}" for d in p.detalhes]
     linhas += [f"⚠️ {a}" for a in p.avisos]
-    linhas.append(f"Para fazer, responda *SIM* até as {_limite(p)}. Qualquer outra mensagem cancela." if sim else
+    linhas.append(f"Para fazer, toque em *Sim* (ou responda SIM) até as {_limite(p)}. Qualquer outra mensagem "
+                  "cancela." if sim else
                   f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
 
