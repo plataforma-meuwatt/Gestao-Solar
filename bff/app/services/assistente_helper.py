@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -31,24 +32,61 @@ from app.core.datas import BRT
 from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
-#: A mensagem INTEIRA é a senha: o número (6 a 8 dígitos, em até 3 grupos com espaço, ponto,
-#: vírgula, hífen ou sublinhado — "482 913", "482,913", "482  913"), com ou sem "senha"/
-#: "confirmo"/"pin" na frente, com ou sem pontuação ("Senha:482913", "senha/482913"). Um IP
-#: (4 grupos) ou "24/10/2026" (barra) não são.
-SENHA = re.compile(r"^\s*(?:confirmo|senha|pin)?\s*[:=,./\-]?\s*(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})\s*[.!]?\s*$",
-                   re.IGNORECASE)
+#: Como a senha (6 a 8 dígitos) chega escrita — numa mensagem só dela ou no meio de uma frase:
+#: - em grupos separados por espaço(s), inclusive o não separável, ou por UMA pontuação colada:
+#:   "482 913", "482.913", "482/913", "4829-13", "48 29 13" ("vírgula + espaço" separa ITENS de
+#:   uma lista, "as UCs 1234, 5678", e não grupos de um número);
+#: - dígito a dígito, com qualquer separador curto — o ditado por voz: "4 8 2 9 1 3",
+#:   "4, 8, 2, 9, 1, 3";
+#: - por extenso: "quatro oito dois nove um três".
+#: Data (24/10/2026, 2026-10-24) e IP nunca são a senha e ficam como estão.
+_GRUPOS = r"\d+(?:(?:\s{1,2}|[.,_\-/])\d+)*"
+_SOLETRADO = r"\d(?:(?:\s|[.,_\-/]){1,3}\d(?!\d)){5,7}"
+_DIGITO_POR_EXTENSO = {"zero": "0", "um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "três": "3",
+                       "quatro": "4", "cinco": "5", "seis": "6", "meia": "6", "sete": "7", "oito": "8", "nove": "9"}
+_PALAVRA_DIGITO = r"\b(?:" + "|".join(sorted(_DIGITO_POR_EXTENSO, key=len, reverse=True)) + r")\b"
+_POR_EXTENSO = _PALAVRA_DIGITO + r"(?:[\s,.\-]+" + _PALAVRA_DIGITO + r"){5,7}"
+#: Um número, na ordem de preferência: soletrado, por extenso, em grupos.
+NUMERO = re.compile(rf"{_SOLETRADO}|{_POR_EXTENSO}|{_GRUPOS}", re.IGNORECASE)
+#: A mensagem INTEIRA é a senha: o número, com ou sem "senha"/"confirmo"/"pin" e pontuação na
+#: frente ("Senha:482913", "senha/482913", "*482913*", "482913?").
+PURA = re.compile(r"^\s*[*_~]*\s*(?:(?:confirmo|senha|pin)\s*)?[:=,./\-]?\s*(.+?)\s*[.!?*_~]*\s*$",
+                  re.IGNORECASE | re.DOTALL)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha|pin)\b", re.IGNORECASE)
-#: Numa FRASE, o que pode ser a senha (cada um é CONFERIDO, e só a senha some — ver `analisar`):
-#: - todo número de 6 a 8 dígitos, colado ou não em pontuação ("Senha:482913", "(482913)");
-#: - depois de "senha"/"confirmo"/"pin", com qualquer pontuação no meio, os grupos que somam
-#:   6 a 8 dígitos ("senha, 482 913", "pin 48 29 13");
-#: - em qualquer lugar, 2 ou 3 grupos de 2 a 4 dígitos com os separadores da mensagem-senha
-#:   ("482 913", "4829-13", "482.913") — mas não pedaço de IP, de data com barra nem de
-#:   "1.500.000": o grupo colado em outro ponto/dígito fica de fora.
-SOLTO = re.compile(r"(?<!\d)\d{6,8}(?!\d)")
-DEPOIS_DA_PALAVRA = re.compile(
-    r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}?(\d{2,8}(?:[ .,_\-]{1,2}\d{2,4}){0,2})(?!\d)")
-EM_GRUPOS = re.compile(r"(?<![\d.,/:])\d{2,4}(?:[ .,_\-]{1,2}\d{2,4}){1,2}(?!\d|[.,/:]\d)")
+#: "senha", "confirmo", "pin" e o que vem até o número (o número logo depois é conferido PRIMEIRO).
+PALAVRA = re.compile(r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}?(?=\d|" + _PALAVRA_DIGITO + ")")
+_DATA = re.compile(r"(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](?:\d{2}|\d{4}))?")
+_DATA_ISO = re.compile(r"\d{4}-\d{1,2}-\d{1,2}")
+_IP = re.compile(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})")
+
+
+def _so_digitos(trecho: str) -> str:
+    """Os dígitos de um número escrito de qualquer jeito (grupos, soletrado, por extenso)."""
+    if re.search(r"\d", trecho):
+        return re.sub(r"\D", "", trecho)
+    return "".join(_DIGITO_POR_EXTENSO[w.lower()] for w in re.findall(_PALAVRA_DIGITO, trecho, re.IGNORECASE))
+
+
+def _data_ou_ip(trecho: str) -> bool:
+    data = _DATA.fullmatch(trecho)
+    if data and 1 <= int(data[1]) <= 31 and 1 <= int(data[2]) <= 12:
+        return True
+    ip = _IP.fullmatch(trecho)
+    return bool(_DATA_ISO.fullmatch(trecho) or (ip and all(int(x) <= 255 for x in ip.groups())))
+
+
+def _nao_e_senha(trecho: str, digitos: str) -> bool:
+    """Data, IP, ou o que a senha não pode ser (`validar_senha_atuacao`: 6 a 8 números, sem
+    repetir nem seguir em sequência) — nem é conferido."""
+    if _data_ou_ip(trecho) or not 6 <= len(digitos) <= 8:
+        return True
+    return {int(b) - int(a) for a, b in zip(digitos, digitos[1:])} in ({0}, {1}, {-1})
+
+
+def _digitos_normais(texto: str) -> str:
+    """Dígitos de outra escrita (os de largura cheia, "４８２９１３") viram os comuns, um por um —
+    as posições não mudam, e o que se esconde no texto original é o mesmo trecho."""
+    return "".join(str(unicodedata.decimal(c)) if c.isdecimal() and not c.isascii() else c for c in texto or "")
 #: O que a IA, o histórico, o log e o gateway veem no lugar da senha escrita numa frase.
 SENHA_OCULTA = "[senha oculta]"
 #: …e no lugar de todo candidato quando a pessoa passou do limite de conferências por hora.
@@ -81,6 +119,9 @@ ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para execut
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
+#: A senha (certa ou errada — a mesma frase, sem oráculo) depois do prazo da ação.
+VENCEU = ("A ação esperava a senha até as {limite} e venceu, então não vale mais. Nada foi feito — se "
+          "ainda quiser, peça de novo.")
 ANTES_DO_RESUMO = ("Essa senha foi mandada antes de o resumo da ação chegar, então não vale. Leia o resumo "
                    "acima e, se for isso mesmo, mande a senha outra vez até as {limite}. Nada foi feito.")
 
@@ -134,12 +175,12 @@ _CONFERENCIAS: dict[int, list[float]] = {}
 
 
 def digitos_da_senha(texto: str) -> str | None:
-    """Os dígitos, se a mensagem INTEIRA é a senha; senão `None`."""
-    m = SENHA.match(texto or "")
-    if m is None:
+    """Os dígitos, se a mensagem INTEIRA é a senha (ver `NUMERO`); senão `None`."""
+    m = PURA.match(_digitos_normais(texto))
+    if m is None or not NUMERO.fullmatch(m.group(1)):
         return None
-    digitos = re.sub(r"\D", "", m.group(1))
-    return digitos if 6 <= len(digitos) <= 8 else None
+    digitos = _so_digitos(m.group(1))
+    return None if _nao_e_senha(m.group(1), digitos) else digitos
 
 
 def _pode_conferir(user_id: int) -> bool:
@@ -188,18 +229,24 @@ async def analisar(user, texto: str) -> Analise:
 
 def candidatos_a_senha(texto: str) -> list[tuple[int, int, str]]:
     """(início, fim, dígitos) de tudo que pode ser a senha numa frase, na ordem de conferência:
-    os que vêm logo depois de "senha"/"pin"/"confirmo" primeiro, depois na ordem do texto."""
+    o número logo depois de "senha"/"pin"/"confirmo" primeiro (cada começo dele que soma 6 a 8
+    dígitos: "senha 482913 12"), depois os outros na ordem do texto."""
+    texto = _digitos_normais(texto)
     achados: list[tuple[int, int, int, str]] = []
-    for m in DEPOIS_DA_PALAVRA.finditer(texto):
-        # "senha 482913, 123": os grupos podem ser da senha ou não — vale cada começo que soma 6 a 8.
-        juntos = ""
-        for g in re.finditer(r"\d+", m.group(1)):
-            juntos += g.group()
-            if 6 <= len(juntos) <= 8:
-                achados.append((0, m.start(1), m.start(1) + g.end(), juntos))
-    achados += [(1, m.start(), m.end(), m.group()) for m in SOLTO.finditer(texto)]
-    achados += [(1, m.start(), m.end(), re.sub(r"\D", "", m.group())) for m in EM_GRUPOS.finditer(texto)]
-    return [(a, b, d) for _, a, b, d in sorted(achados) if 6 <= len(d) <= 8]
+    for p in PALAVRA.finditer(texto):
+        m = NUMERO.match(texto, p.end())
+        if m is None or _data_ou_ip(m.group()):
+            continue
+        partes = [g for g in re.finditer(r"\d+|" + _PALAVRA_DIGITO, m.group(), re.IGNORECASE)]
+        for i in range(len(partes)):
+            trecho = m.group()[:partes[i].end()]
+            achados.append((0, m.start(), m.start() + partes[i].end(), _so_digitos(trecho)))
+    for m in NUMERO.finditer(texto):
+        achados.append((1, m.start(), m.end(), _so_digitos(m.group())))
+    # O número de 6 a 8 dígitos dentro de um grupo maior também ("UC 1234567, 2345678" é um
+    # número só para `NUMERO` quando a vírgula vem colada).
+    achados += [(1, m.start(), m.end(), m.group()) for m in re.finditer(r"(?<!\d)\d{6,8}(?!\d)", texto)]
+    return [(a, b, d) for _, a, b, d in sorted(achados) if not _nao_e_senha(texto[a:b], d)]
 
 
 def mascarar(texto: str, analise: Analise) -> str:
@@ -306,29 +353,31 @@ def bloco_da_proposta(p: Pendente) -> str:
 
 def _limite(p: Pendente) -> str:
     """A hora-limite, e não "em até 2 min": o prazo corre desde a proposta, e a IA leva de 17 a
-    65 s para responder."""
-    return f"{datetime.now(BRT) + timedelta(seconds=max(0.0, p.expira - monotonic())):%H:%M}"
+    65 s para responder. Da ação vencida, a hora em que venceu."""
+    return f"{datetime.now(BRT) + timedelta(seconds=p.expira - monotonic()):%H:%M}"
 
 
-def mostrada(user_id: int) -> None:
-    """O resumo da ação saiu para a pessoa: a partir de AGORA a senha dela vale."""
+def mostrada(user_id: int, agora: datetime | None = None) -> None:
+    """O resumo da ação saiu para a pessoa: a partir de AGORA a senha dela vale. `agora` é a hora
+    do BANCO (`assistente._agora_do_banco`): a deste servidor anda ~17 s atrasada, e é com a hora
+    da Meta — a certa — que a senha é comparada."""
     p = PENDENTES.get(user_id)
     if p is not None and p.mostrada_em is None:
-        p.mostrada_em = (monotonic(), datetime.now(UTC))
+        p.mostrada_em = (monotonic(), agora or datetime.now(UTC))
 
 
 def _antes_do_resumo(p: Pendente, chegou: float | None, mandada_em: datetime | None) -> bool:
     """A senha saiu do celular antes de o resumo chegar — a pessoa não sabia o que confirmava.
-    Duas provas, porque cada relógio falha de um jeito:
-    - `chegou` (relógio daqui, ao entrar na fila do número) antes da saída do resumo: é o caso
+    Duas provas, porque cada uma falha de um jeito:
+    - `chegou` (relógio daqui, ao entrar na fila do número) antes da saída do resumo: o caso
       comum — "desliga o 13" e a senha logo atrás, esperando a vez enquanto a IA pensa;
-    - `mandada_em` (a hora da Meta) antes da saída do resumo: pega a que chegou tarde (gateway
-      reenviando). ponytail: o relógio deste servidor está ~17 s atrás (NTP bloqueado na
-      KingHost) — essa folga a favor da senha a primeira prova cobre."""
+    - `mandada_em` (a hora da Meta) antes da saída do resumo, na hora do BANCO: pega a que
+      chegou tarde (o gateway reenviando pela varredura)."""
     if p.mostrada_em is None:
         return True
     saiu, saiu_utc = p.mostrada_em
     return (chegou is not None and chegou < saiu) or (mandada_em is not None and mandada_em < saiu_utc)
+
 
 _catalogo: tuple[float, dict[str, Any]] | None = None
 
@@ -596,17 +645,17 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     if digitos_da_senha(texto) is None:
         return CANCELADO if esperava and CANCELA.match(texto or "") else None
     analise = analise or await analisar(user, texto)
-    pendente = PENDENTES.get(user.id)
+    pendente, vencida = PENDENTES.get(user.id), None
     if pendente is not None and monotonic() > pendente.expira:
-        PENDENTES.pop(user.id, None)
-        pendente = None
+        vencida, pendente = PENDENTES.pop(user.id, None), None
+    sem_acao = VENCEU.format(limite=_limite(vencida)) if vencida else NADA_ESPERANDO
     if not user.senha_atuacao_hash:
         return SEM_SENHA if pendente is not None or COM_PALAVRA.match(texto or "") else None
     if analise.bloqueada:
         return BLOQUEADO
     if analise.acertou:
         if pendente is None:
-            return NADA_ESPERANDO
+            return sem_acao
         if _antes_do_resumo(pendente, chegou, mandada_em):
             return ANTES_DO_RESUMO.format(limite=_limite(pendente))
         PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
@@ -618,7 +667,7 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     if total >= TENTATIVAS:
         return (f"Senha errada {TENTATIVAS} vezes: " + ("o pedido foi descartado e " if pendente else "")
                 + f"as ações ficam bloqueadas por {BLOQUEIO_S // 60} min. Nada foi feito.")
-    return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else NADA_ESPERANDO
+    return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else sem_acao
 
 
 _ROTA = {"type": "string", "description": "Rota do helper, ex.: /api/registry/plants, /api/registry/devices, "

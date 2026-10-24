@@ -212,5 +212,18 @@ async def ocultar_texto(mensagem_id: int, texto: str | None = None) -> None:
     await _req("POST", f"/interno/mensagens/{mensagem_id}/ocultar", json={"texto": texto})
 
 
+async def baixar_midia(mensagem_id: int) -> tuple[bytes, str | None]:
+    """O arquivo de uma mensagem recebida (a nota de voz), que o gateway baixa da Meta na hora."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as cliente:
+            r = await cliente.get(f"{_base()}/interno/mensagens/{int(mensagem_id)}/midia",
+                                  headers={CABECALHO_CHAVE: get_settings().whatsapp_chave_interna})
+    except httpx.RequestError as exc:
+        raise GatewayIndisponivel(f"Não foi possível falar com o gateway de WhatsApp: {exc}") from None
+    if r.status_code >= 400:
+        raise GatewayIndisponivel(f"O gateway não entregou o arquivo ({r.status_code}).", status=r.status_code)
+    return r.content, r.headers.get("content-type")
+
+
 async def digitando(wamid: str) -> None:
     await _req("POST", "/interno/digitando", json={"wamid": wamid})

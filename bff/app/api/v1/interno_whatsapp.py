@@ -50,6 +50,8 @@ class EventoIn(BaseModel):
     tipo: str = "text"
     texto: str | None = None
     ocorrida_em: str | None = None
+    #: Áudio, documento, imagem: `{mime, nome, legenda}` (o arquivo, o bot pede ao gateway).
+    midia: dict | None = None
 
 
 @router.post("/evento", status_code=202, dependencies=[Depends(_porta)])

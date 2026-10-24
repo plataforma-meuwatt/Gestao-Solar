@@ -109,6 +109,7 @@ export function BotDaEmpresa() {
               aoAbrirTokens={() => setTokensDe(u)}
               aoAbrirCelular={() => setCelularDe(u)}
               aoAbrirSenha={() => setSenhaDe(u)}
+              helperFora={canal?.helper_alcancavel === false}
             />
           ))
         )}
@@ -143,14 +144,18 @@ export function BotDaEmpresa() {
   )
 }
 
-/** O que o bot faz de fato com esta pessoa, numa palavra e num tom. */
-function situacao(u: UsuarioDetalhado): { tom: Tom; rotulo: string } {
+/** O que o bot faz de fato com esta pessoa, numa palavra e num tom — inclusive o que não
+ *  depende do cadastro: o helper fora do ar e a falta de senha de atuação ("Respondendo" com
+ *  as duas coisas paradas enganava, avaliação 11). */
+function situacao(u: UsuarioDetalhado, helperFora: boolean): { tom: Tom; rotulo: string } {
   const liberadas = PARTES_DO_BOT.filter((p) => u[p.campo])
   if (!liberadas.length) return { tom: 'sem-dados', rotulo: 'Desligado' }
   if (!u.telefone) return { tom: 'alerta', rotulo: 'Parado: sem celular' }
   const respondendo = liberadas.filter((p) => u.produtos.includes(p.token))
   if (!respondendo.length) return { tom: 'alerta', rotulo: 'Parado: falta o token próprio' }
   if (respondendo.length < liberadas.length) return { tom: 'alerta', rotulo: 'Em parte: falta um token' }
+  if (u.bot_helper && helperFora) return { tom: 'alerta', rotulo: 'Em parte: helper fora do ar' }
+  if ((u.bot_helper || u.bot_meuplano) && !u.tem_senha_atuacao) return { tom: 'alerta', rotulo: 'Só lê: sem senha de atuação' }
   return { tom: 'ok', rotulo: 'Respondendo' }
 }
 
@@ -160,19 +165,21 @@ function LinhaDoBot({
   aoAbrirTokens,
   aoAbrirCelular,
   aoAbrirSenha,
+  helperFora,
 }: {
   usuario: UsuarioDetalhado
   primeiro: boolean
   aoAbrirTokens: () => void
   aoAbrirCelular: () => void
   aoAbrirSenha: () => void
+  helperFora: boolean
 }) {
   const qc = useQueryClient()
   const mudar = useMutation({
     mutationFn: (dados: Partial<Record<ProdutoDoBot, boolean>>) => editarContaDaEmpresa(u.id, dados),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['empresa'] }),
   })
-  const sit = situacao(u)
+  const sit = situacao(u, helperFora)
 
   return (
     <div className={`px-5 py-4 ${primeiro ? '' : 'border-t border-borda'}`}>

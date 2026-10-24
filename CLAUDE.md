@@ -795,28 +795,44 @@ senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dí
 antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem
 (o bloco promete "qualquer outra mensagem cancela", e "não faça! senha 482913" executava).
 Numa FRASE, o que pode ser a senha é conferido e SÓ a senha some ("[senha oculta]", com aviso à
-pessoa e à IA): UC, protocolo e IP seguem legíveis (avaliação 9). Candidato
-(`assistente_helper.candidatos_a_senha`, avaliação 10 — "Senha:482913", "senha,482913",
-"senha/482913" e o 4º número da frase iam em claro): todo número de 6 a 8 dígitos, colado ou não
-em pontuação; os grupos depois de "senha/confirmo/pin" com qualquer pontuação no meio; e 2 ou 3
-grupos de 2 a 4 dígitos ("482 913", "4829-13", "482.913") — pedaço de IP, data com barra e
-"1.500.000" ficam fora deste. Até 3 números distintos por mensagem (os de depois de "senha"
-primeiro) e 20 por pessoa por hora; o que passa disso vira "[número oculto]" sem conferir. Frase nunca conta erro nem bloqueia; passado o
+pessoa e à IA): UC, protocolo e IP seguem legíveis (avaliação 9). Um leitor
+só de números (`assistente_helper.NUMERO`, avaliações 10 e 11) acha a senha escrita de qualquer
+jeito: colada em pontuação ("Senha:482913", "senha/482913"), em grupos com espaço (inclusive o
+não separável) ou UMA pontuação ("482 913", "482/913", "482 9 13"), soletrada ("4 8 2 9 1 3",
+"4, 8, 2, 9, 1, 3" — o ditado por voz), por extenso ("quatro oito dois…") e em dígitos de
+largura cheia. Data, IP e o que a senha não pode ser (repetido, em sequência) nem são
+conferidos; "vírgula + espaço" separa itens de lista, não grupos. Sozinha, qualquer dessas
+formas é tentativa. Até 3 números distintos por mensagem (os de depois de "senha" primeiro) e
+20 por pessoa por hora; o que passa disso vira "[número oculto]" sem conferir. Frase nunca conta erro nem bloqueia; passado o
 teto da hora, todo candidato vira "[número oculto]" sem conferir (o oráculo para ali). O
 gateway guarda a frase SEM a senha (não a mensagem inteira). A tentativa (a mensagem que é só o
 número, com até 3 grupos separados por espaço, ponto, vírgula, hífen ou sublinhado) é conferida
 com `to_thread`; cada erro conta; 5 em 15 min bloqueiam. O número que ganha conta leva para ela
 as mensagens que mandou antes (`cadastro.adotar_mensagens`, quando o celular MUDA — dentro da
 gravação de quem chama; as que já estavam soltas passaram uma vez na migração `c6d8e0f2a4b6`). O log mascara "senha … é/:/= X",
-"senha … para X", "PIN 1234" e o NÚMERO inteiro depois de senha/pin/combinação, com qualquer
-pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "senha do cadeado 3262";
-"código" só de portão/porta/cadeado — "código de erro 2043" fica). Na hora da senha, a parte do bot da ação é conferida de novo. O
+"senha … para X", "PIN 1234" e o NÚMERO inteiro (3 dígitos ou mais) depois de senha/pin, com
+qualquer pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "senha do cadeado
+3262"; "código" e "combinação" só de portão/porta/cadeado/cofre — "código de erro 2043",
+"PIN 3 do conector" e "combinação de strings 12" ficam). Os marcadores do bot ("[senha oculta]")
+nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
 leu): `_atender` marca a saída do bloco (`assistente_helper.mostrada`, só se o gateway disse
-`ok`; se não saiu, a ação é desarmada), e a senha que entrou na fila do número antes disso —
-ou cuja hora da Meta é anterior — recebe "não vale, mande outra vez" e a ação continua
-esperando. Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
+`ok`; se não saiu, a ação é desarmada) na hora do BANCO (`_agora_do_banco` — o relógio da
+KingHost anda ~17 s atrás e a senha é comparada com a hora da Meta), e a senha que entrou na
+fila do número antes disso — ou cuja hora da Meta é anterior — recebe "não vale, mande outra
+vez" e a ação continua esperando. Senha depois do prazo recebe "venceu às HH:MM" (a mesma frase
+certa ou errada). **O gateway avisa o BFF na HORA** em que grava a mensagem (antes, só a
+varredura de 60 s avisava: até um minuto de espera); a varredura ficou como rede de segurança,
+com uma trava para os dois não avisarem a mesma mensagem, e o BFF ignora a entrega repetida
+(`assistente._ATENDIDAS`). Reação (👍 no resumo), figurinha e avisos do WhatsApp são ignorados:
+não respondem nem cancelam a ação. **Áudio:** a nota de voz é baixada pelo gateway
+(`GET /interno/mensagens/{id}/midia`, a coluna `wa_mensagens.midia` guarda o id da Meta) e
+transcrita pelo meuPlano (`/assistant/transcribe`, o Whisper do app de campo) com o token do
+meuPlano DA PESSOA; o bot devolve "🎙️ _o que entendeu_" e segue como texto — a senha dita em voz
+alta vale e nunca volta em claro. Arquivo e imagem ainda não são lidos (a resposta diz o nome).
+Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação com senha ANTES de sair
+(lá a ferramenta de PDF assina dentro de uma leitura, sem proposta). Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
 trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do token. O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
 nomeia a usina é filtrada por ele. Qualquer outra

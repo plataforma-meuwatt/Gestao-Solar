@@ -19,12 +19,13 @@ import asyncio
 import json
 import logging
 import re
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.clients import whatsapp
@@ -82,28 +83,62 @@ _MANUTENCAO = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 
+#: Documento ASSINADO com o certificado digital da pessoa é ação. No meuPlano, a ferramenta de
+#: PDF assina dentro de uma LEITURA (sem proposta, sem "Confirmar"), e o Gestão Solar não teria
+#: como pedir a senha depois: ela é pedida AQUI, antes de o pedido sair (avaliação 11).
+ASSINATURA = re.compile(r"(?i)\bassin(?:a|e|o|ad|ar|at|em|ou)|\bcertificado\s+digital")
+
+
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     from app.services.vinculos import SemConexao, cliente_meuplano
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao as e:
         return {"erro": f"Manutenção indisponível: {e}"}
-    pergunta = (a.get("pergunta") or "") + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
+    pedido = a.get("pergunta") or ""
+    pergunta = pedido + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
     mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
+    if ASSINATURA.search(pedido) or ASSINATURA.search(ctx.pedido):
+        return _assinatura_com_senha(ctx, pedido, mensagens)
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
+    r = await _perguntar_ao_meuplano(mp, mensagens)
+    return _proposta_do_meuplano(ctx, r) if r.get("type") == "proposal" else r
+
+
+async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
+    """Um turno do assistente do meuPlano: `{texto}`, `{erro}` ou a proposta crua de lá."""
     run_id = await mp.assistente_chat(None, mensagens)
     for _ in range(60):                                   # até ~2 min
         await asyncio.sleep(2)
         r = await mp.assistente_run(None, run_id)
         if r.get("status") == "DONE":
-            if r.get("type") == "proposal":
-                return _proposta_do_meuplano(ctx, r)
-            return {"texto": r.get("text") or ""}
+            return r if r.get("type") == "proposal" else {"texto": r.get("text") or ""}
         if r.get("status") == "ERROR":
             return {"erro": r.get("error") or "O meuPlano não conseguiu responder."}
     return {"erro": "O meuPlano demorou demais para responder."}
+
+
+def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict]) -> dict:
+    """O pedido com assinatura digital só vai ao meuPlano depois da SENHA DE ATUAÇÃO."""
+    from app.services.vinculos import SemConexao, cliente_meuplano
+
+    async def executar(db: Session, user: User, telefone: str) -> str:
+        try:
+            mp = cliente_meuplano(db, user.id, so_proprio=True)
+        except SemConexao as e:
+            return f"❌ Não executado: {e}"
+        db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
+        r = await _perguntar_ao_meuplano(mp, mensagens)
+        if r.get("erro"):
+            return f"❌ {r['erro']} Nada foi assinado."
+        if r.get("type") == "proposal":
+            return "O meuPlano pediu outra confirmação para isso: peça de novo, em partes. Nada foi assinado."
+        return r.get("texto") or "O meuPlano não respondeu nada."
+
+    resumo = f"Pedir ao meuPlano, com a sua ASSINATURA DIGITAL (certificado): «{pedido[:300]}»"
+    return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano")
 
 
 #: Quantas mensagens da conversa vão ao meuPlano junto com a pergunta.
@@ -184,22 +219,28 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 #: "senha: 1234", "a senha do cadeado é ab12", "PIN 4821": o valor sai do log (o adm e o gerente
 #: leem o log; a conversa com a pessoa continua inteira). Só com separador ou com dígito logo
 #: depois — "[senha de atuação]" e "a senha de vocês" ficam como estão, e "a senha de novo até
-#: as 14:32" também (o trecho até o ":" não tem número).
+#: as 14:32" também (o trecho até o ":" não tem número). O valor nunca começa em "[": os
+#: marcadores do bot ("Senha:[senha oculta]") ficam inteiros (avaliação 11).
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
-                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)([^\s,;]+?)(?=[.!?]*(?:\s|$|[,;]))")
-_SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
+                      r"((?:\s+d[eoa]s?\s+[^\n:=\d]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)(?!\[)([^\s,;]+?)"
+                      r"(?=[.!?]*(?:\s|$|[,;]))")
+#: "senha 1234", "PIN ab12": três caracteres ou mais — "PIN 3 do conector" e "senha 2 vezes" são
+#: dado técnico e prosa, não segredo.
+_SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)(?!\[)(?=[^\s,;]{3})([^\s,;]*?\d[^\s,;]*?)"
+                          r"(?=[.!?]*(?:\s|$|[,;]))")
 #: "Altere a senha do cadeado de pirapozinho para 3262" (estava em claro no log de produção,
 #: avaliação 9). Com "para/pra" o valor precisa ter dígito: "senha para o gerente" é prosa.
 _SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
                            r"((?:\s+d[eoa]s?\s+[^\n:=]{1,40}?)?\s+(?:para|pra)\s+)"
-                           r"([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
+                           r"(?!\[)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
 #: O NÚMERO inteiro, com qualquer pontuação antes e com os grupos ("senha,482913",
 #: "senha/482913", "pin 482 913", "senha do cadeado 3262", "o código do portão 4455" — em claro
-#: no log até a avaliação 10). "código" só quando é de porta/portão/cadeado: "código de erro
-#: 2043" é dado útil. Hora ("até as 14:32") não é segredo.
+#: no log até a avaliação 10), de 3 dígitos ou mais. "código" e "combinação" só de
+#: porta/portão/cadeado/cofre: "código de erro 2043" e "combinação de strings 12" são dado útil.
+#: Hora ("até as 14:32") não é segredo.
+_DE_ACESSO = r"(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acesso|cofre|guarita|cerca))"
 _SEGREDO_NUMERO = re.compile(
-    r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o"
-    r"|c[óo]digo(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acesso|cofre|guarita|cerca)))\b"
+    r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o" + _DE_ACESSO + r"|c[óo]digo" + _DE_ACESSO + r")\b"
     r"((?:[ \t]+d[eoa]s?[ \t]+(?:[^\W\d_][\w\-]*[ \t]+){0,3}?[^\W\d_][\w\-]*)?[ \t]*"
     r"(?:\b(?:é|eh|para|pra)\b)?[ \t:=,;/.\-]*)"
     r"(\d+(?:[ .\-]\d+)*)(?!\d|[:h]\d)")
@@ -207,7 +248,9 @@ _SEGREDO_NUMERO = re.compile(
 
 def _sem_segredos(texto: str) -> str:
     # O do número primeiro: os outros mascaram só o primeiro grupo ("pin •••• 913").
-    for padrao in (_SEGREDO_NUMERO, _SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
+    texto = _SEGREDO_NUMERO.sub(
+        lambda m: m.group(0) if len(re.sub(r"\D", "", m.group(3))) < 3 else m.group(1) + m.group(2) + "••••", texto)
+    for padrao in (_SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
     return texto
 
@@ -385,9 +428,26 @@ async def _texto(telefone: str, texto: str) -> bool:
 _TRAVAS: dict[str, asyncio.Lock] = {}
 
 
+#: O que não é mensagem para o bot: reação (👍 no resumo), figurinha e avisos do próprio
+#: WhatsApp. Não responde e NÃO cancela a ação que espera a senha — o 👍 no resumo cancelava, e
+#: a senha mandada em seguida recebia "não há ação esperando" (avaliação 11).
+IGNORADOS = {"reaction", "sticker", "system", "ephemeral", "request_welcome"}
+#: As mensagens já atendidas (id do gateway): o aviso imediato e a varredura de lá podem repetir
+#: uma entrega, e a mesma mensagem não pode ser respondida (nem confirmada) duas vezes.
+_ATENDIDAS: OrderedDict[Any, None] = OrderedDict()
+
+
 async def atender(evento: dict) -> None:
     """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202. As mensagens do
     mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
+    if evento.get("tipo") in IGNORADOS:
+        return
+    if evento.get("id") is not None:
+        if evento["id"] in _ATENDIDAS:
+            return
+        _ATENDIDAS[evento["id"]] = None
+        while len(_ATENDIDAS) > 2000:
+            _ATENDIDAS.popitem(last=False)
     chave = evento.get("wa_id") or evento.get("telefone") or ""
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     evento = {**evento, "_chegou": monotonic()}
@@ -408,6 +468,42 @@ def _empresa_fora(db: Session, user: User) -> str | None:
         return ("O acesso da sua empresa ao Gestão Solar está desligado, então o bot não atende. "
                 "Fale com a sua O&M.")
     return None
+
+
+def _agora_do_banco(db: Session) -> datetime:
+    """A hora do BANCO, não a deste servidor: a KingHost bloqueia o NTP e o relógio daqui anda
+    ~17 s atrasado — e a senha é comparada com a hora da Meta, que é a certa (avaliação 11: a
+    senha mandada até 17 s ANTES do resumo valia). No SQLite dos testes, a hora daqui."""
+    if db.get_bind().dialect.name == "postgresql":
+        try:
+            return db.scalar(text("SELECT now()"))
+        except Exception:                                  # noqa: BLE001 — o turno já respondeu
+            log.warning("assistente: sem a hora do banco; vale a daqui", exc_info=True)
+    return datetime.now(UTC)
+
+
+async def _ouvir(db: Session, user: User, evento: dict) -> tuple[str, str | None]:
+    """A nota de voz em texto, pelo meuPlano (o mesmo Whisper da entrada por voz do app de
+    campo), com o token DA PESSOA. Devolve (texto, por que não deu)."""
+    from app.services.vinculos import SemConexao, cliente_meuplano
+
+    try:
+        mp = cliente_meuplano(db, user.id, so_proprio=True)
+    except SemConexao:
+        return "", ("Para eu ouvir áudio, a sua conta precisa do token do meuPlano (o gerente cola em oem-gs → "
+                    "Bot do WhatsApp). Por enquanto, mande em texto.")
+    db.commit()                                            # solta a conexão enquanto baixa e transcreve
+    try:
+        await whatsapp.digitando(evento.get("wamid") or "")
+    except Exception:                                      # noqa: BLE001 — o "digitando" é enfeite
+        pass
+    try:
+        conteudo, tipo = await whatsapp.baixar_midia(int(evento["id"]))
+        texto = await mp.transcrever(conteudo, tipo)
+    except Exception:                                      # noqa: BLE001
+        log.warning("assistente: não transcreveu o áudio (mensagem %s)", evento.get("id"), exc_info=True)
+        return "", "Não consegui ouvir esse áudio agora — mande de novo ou em texto."
+    return (texto, None) if texto else ("", "Não entendi nada nesse áudio — mande de novo ou em texto.")
 
 
 async def _ocultar_no_gateway(mensagem_id: Any, texto: str) -> None:
@@ -467,13 +563,32 @@ async def _atender(evento: dict) -> None:
             await _texto(telefone, NAO_LIBERADO)
             _registrar(db, telefone, user, "nao_liberado", pergunta=pergunta, resposta=NAO_LIBERADO, em=enviada)
             return
+        if evento.get("tipo") in ("audio", "voice") and not texto:
+            # A nota de voz vira texto e segue como texto — inclusive a senha dita em voz alta,
+            # que nunca é repetida em claro (avaliação 11: o bot anterior no número ouvia áudio).
+            texto, falha = await _ouvir(db, user, evento)
+            if texto:
+                analise = await helper.analisar(user, texto)
+                seguro = helper.OCULTA if analise.pura else helper.mascarar(texto, analise)
+                await _texto(telefone, f"🎙️ _{seguro}_")
+                seguro = pergunta = f"🎙️ {seguro}"
+            else:
+                esperava = helper.desarmar(user.id)
+                await _texto(telefone, falha + (f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""))
+                _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
+                return
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha derruba a ação
         # que a esperava — antes de "limpar" e de áudio/imagem, que saem logo abaixo.
         esperava = False if helper.digitos_da_senha(texto) is not None else helper.desarmar(user.id)
         nota = f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""
         if not texto:
-            await _texto(telefone, "Por enquanto eu entendo só mensagem de texto." + nota)
-            _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", em=enviada)
+            nome = (evento.get("midia") or {}).get("nome")
+            aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
+                     "escreva ou mande em áudio." if nome else
+                     "Por enquanto eu entendo texto e áudio — imagem, vídeo e arquivo ainda não.")
+            await _texto(telefone, aviso + nota)
+            _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", resposta=aviso,
+                       em=enviada)
             return
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
@@ -502,7 +617,7 @@ async def _atender(evento: dict) -> None:
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
-            ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
+            ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1], pedido=seguro)
             await ger.preparar(ctx)
             if not get_settings().deepseek_api_key:
                 resposta = "O bot está desligado neste ambiente (falta a chave da IA)."
@@ -526,7 +641,7 @@ async def _atender(evento: dict) -> None:
             # A senha só passa a valer depois que o resumo SAIU; se não saiu, a pessoa não o
             # viu, e a ação não fica esperando.
             if saiu:
-                helper.mostrada(user.id)
+                helper.mostrada(user.id, _agora_do_banco(db))
             else:
                 helper.desarmar(user.id)
         _registrar(db, telefone, user, "respondeu", pergunta=historico[-2]["content"], resposta=resposta,

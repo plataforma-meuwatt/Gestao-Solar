@@ -701,6 +701,12 @@ class MeuPlanoClient:
         )
         return r.json()["run_id"]
 
+    async def transcrever(self, conteudo: bytes, tipo: str | None) -> str:
+        """A nota de voz em texto — o mesmo Whisper da entrada por voz do app de campo."""
+        r = await self._req("POST", "/api/v1/meuacesso/assistant/transcribe", timeout=120,
+                            files={"file": ("audio.ogg", conteudo, tipo or "audio/ogg")})
+        return (r.json().get("text") or "").strip()
+
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
 

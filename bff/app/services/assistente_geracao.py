@@ -59,6 +59,9 @@ class Contexto:
     mw_falha: str | None = None
     #: a AÇÃO que esta mensagem armou (helper ou meuPlano) — uma só; o texto dela vai pelo sistema
     proposta: Any = None
+    #: a mensagem desta vez, como a IA a vê (sem a senha) — o pedido de documento ASSINADO é
+    #: reconhecido nela também, não só na pergunta que a IA monta
+    pedido: str = ""
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

@@ -1338,3 +1338,231 @@ async def test_equipamento_pelo_ip_so_com_a_usina_liberada_junto(db, helper_com_
     assert "não liberada" in r["erro"] and helper_com_get.chamadas == []
     r = await h.usina_helper(ctx, {"rota": "/api/smartlogger/status", "corpo": {"ip": "10.1.130.2", "slug": "pirapozinho"}})
     assert "erro" not in r and helper_com_get.chamadas == [("POST", "/api/smartlogger/status")]
+
+
+# ── avaliação 11 (24/10/2026): relógio, prazo, reação, entrega repetida, áudio ───────────
+
+
+async def test_a_senha_e_comparada_com_a_hora_do_banco_e_nao_com_o_relogio_atrasado(
+        db, bot_local, helper_com_get, monkeypatch):
+    """O relógio da KingHost anda ~17 s atrás (NTP bloqueado lá). Com ele, a senha mandada 7 s
+    ANTES de o resumo chegar parecia 10 s depois — e executava. A saída do resumo é marcada na
+    hora do BANCO, a mesma régua da hora da Meta."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import assistente_helper as h
+
+    _ia_que_desliga(monkeypatch)
+    certa = datetime.now(UTC) + timedelta(seconds=17)       # a hora certa; a daqui está 17 s atrás
+    monkeypatch.setattr(assistente, "_agora_do_banco", lambda db_: certa)
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev(dono, 1, "desliga o inversor 13"))
+    await assistente.atender(_ev(dono, 2, "482913", (certa - timedelta(seconds=7)).isoformat()))
+    assert helper_com_get.confirmadas == [] and "antes de o resumo" in bot_local.enviados[-1]
+    assert dono.id in h.PENDENTES
+
+
+async def test_a_senha_depois_do_prazo_diz_que_venceu_certa_ou_errada(db, bot_local, helper_com_get, monkeypatch):
+    """A senha que chega depois do prazo recebia "Não há ação esperando senha", sem dizer que
+    venceu. Agora diz — com a MESMA frase para a certa e para a errada (sem oráculo)."""
+    from time import monotonic
+
+    from app.services import assistente_helper as h
+
+    _ia_que_desliga(monkeypatch)
+    dono = _dono_com_usina(db)
+    for n, senha in ((1, "482913"), (3, "111222")):
+        await assistente.atender(_ev(dono, n, "desliga o inversor 13"))
+        h.PENDENTES[dono.id].expira = monotonic() - 1
+        await assistente.atender(_ev(dono, n + 1, senha))
+        assert "venceu" in bot_local.enviados[-1] and dono.id not in h.PENDENTES
+    assert bot_local.enviados[-1] == bot_local.enviados[-3]
+    assert helper_com_get.confirmadas == []
+
+
+async def test_reacao_e_figurinha_nao_cancelam_a_acao_nem_ganham_resposta(db, bot_local, helper_com_get, monkeypatch):
+    """O 👍 no resumo cancelava a ação ("Por enquanto eu entendo só mensagem de texto") e a
+    senha mandada em seguida recebia "não há ação esperando" (avaliação 11)."""
+    from app.services import assistente_helper as h
+
+    _ia_que_desliga(monkeypatch)
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev(dono, 1, "desliga o inversor 13"))
+    enviadas = len(bot_local.enviados)
+    for n, tipo in ((2, "reaction"), (3, "sticker")):
+        await assistente.atender({"id": n, "telefone": dono.telefone, "wa_id": "1", "tipo": tipo, "texto": None})
+    assert len(bot_local.enviados) == enviadas and dono.id in h.PENDENTES
+    await assistente.atender(_ev(dono, 4, "482913"))
+    assert helper_com_get.confirmadas == [("P-1", "pin")]
+
+
+async def test_a_mesma_entrega_duas_vezes_e_atendida_uma_vez_so(db, bot_local, helper_com_get, monkeypatch):
+    """O gateway avisa na hora e, se o aviso falhar, a varredura repete: a mesma mensagem (a
+    senha, inclusive) não pode ser processada duas vezes."""
+    _ia_que_desliga(monkeypatch)
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev(dono, 1, "desliga o inversor 13"))
+    senha = _ev(dono, 2, "482913")
+    await assistente.atender(senha)
+    enviadas = len(bot_local.enviados)
+    await assistente.atender(senha)
+    assert len(bot_local.enviados) == enviadas and helper_com_get.confirmadas == [("P-1", "pin")]
+
+
+class _TranscricaoFalsa:
+    def __init__(self, texto):
+        self.texto, self.ouvidos = texto, []
+
+    async def transcrever(self, conteudo, tipo):
+        self.ouvidos.append((conteudo, tipo))
+        return self.texto
+
+
+def _audio(monkeypatch, texto, *, com_token=True):
+    from app.services import vinculos
+
+    falso = _TranscricaoFalsa(texto)
+
+    def _mp(db_, uid, so_proprio=False):
+        assert so_proprio, "o áudio é transcrito com o token DA PESSOA"
+        if not com_token:
+            raise vinculos.SemConexao("sem token do meuPlano")
+        return falso
+
+    async def _baixar(mensagem_id):
+        return b"OGG", "audio/ogg"
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", _mp)
+    monkeypatch.setattr(assistente.whatsapp, "baixar_midia", _baixar)
+    return falso
+
+
+def _ev_audio(dono, n):
+    return {"id": n, "telefone": dono.telefone, "wa_id": "1", "tipo": "audio", "texto": None,
+            "midia": {"mime": "audio/ogg"}}
+
+
+async def test_a_nota_de_voz_vira_texto_e_segue_como_texto(db, bot_local, helper_com_get, monkeypatch):
+    """O bot anterior no mesmo número transcrevia áudio; este respondia "só texto"."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
+    falso = _audio(monkeypatch, "quanto gerou pirapozinho hoje?")
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev_audio(dono, 1))
+    assert falso.ouvidos == [(b"OGG", "audio/ogg")]
+    assert bot_local.enviados[0] == "🎙️ _quanto gerou pirapozinho hoje?_"
+    assert bot_local.llm == ["🎙️ quanto gerou pirapozinho hoje?"] and bot_local.enviados[1] == "resposta da IA"
+    assert db.query(RegistroBot).one().pergunta == "🎙️ quanto gerou pirapozinho hoje?"
+
+
+async def test_a_senha_dita_no_audio_confirma_e_nunca_volta_em_claro(db, bot_local, helper_com_get, monkeypatch):
+    from app.models.conversa_whatsapp import RegistroBot
+
+    _ia_que_desliga(monkeypatch)
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev(dono, 1, "desliga o inversor 13"))
+    _audio(monkeypatch, "4 8 2 9 1 3")
+    await assistente.atender(_ev_audio(dono, 2))
+    assert helper_com_get.confirmadas == [("P-1", "pin")]
+    tudo = " ".join(bot_local.enviados) + " ".join(r.pergunta or "" for r in db.query(RegistroBot))
+    assert "482913" not in tudo.replace(" ", "") and "🎙️ _[senha de atuação]_" in bot_local.enviados
+
+
+async def test_audio_sem_token_do_meuplano_explica_e_cancela_a_acao(db, bot_local, helper_com_get, monkeypatch):
+    from app.services import assistente_helper as h
+
+    _ia_que_desliga(monkeypatch)
+    dono = _dono_com_usina(db)
+    await assistente.atender(_ev(dono, 1, "desliga o inversor 13"))
+    _audio(monkeypatch, "qualquer", com_token=False)
+    await assistente.atender(_ev_audio(dono, 2))
+    assert "token do meuPlano" in bot_local.enviados[-1] and "foi cancelada" in bot_local.enviados[-1]
+    assert dono.id not in h.PENDENTES and helper_com_get.confirmadas == []
+
+
+async def test_arquivo_recebido_diz_o_nome_e_que_ainda_nao_abre(db, bot_local, monkeypatch):
+    dono = _dono_com_usina(db)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "document", "texto": None,
+                              "midia": {"mime": "application/pdf", "nome": "projeto.pdf"}})
+    assert "«projeto.pdf»" in bot_local.enviados[0] and "ainda não abro arquivos" in bot_local.enviados[0]
+
+
+async def test_a_senha_soletrada_com_barra_ou_por_extenso_e_reconhecida(db, monkeypatch):
+    """"4 8 2 9 1 3" (o ditado por voz), "482/913", "482 9 13", espaço não separável, dígito de
+    largura cheia e por extenso passavam em claro — e, sozinhos, cancelavam a ação em vez de
+    contar como tentativa (avaliação 11). Data, IP, lista e o que não pode ser senha, não."""
+    import re
+
+    from app.services import assistente_helper as h
+
+    monkeypatch.setattr(h, "conferir_senha", lambda d, guardado: d == "482913")
+    dono = _dono_com_usina(db)
+    for so_ela in ["4 8 2 9 1 3", "4, 8, 2, 9, 1, 3", "senha 482/913", "senha: 482 9 13", "482 913",
+                   "*482913*", "482913?", "４８２９１３", "quatro oito dois nove um três"]:
+        assert h.digitos_da_senha(so_ela) == "482913", so_ela
+    for nao in ["24/10/2026", "2026-10-24", "10.1.130.2", "12, 13, 14", "123456", "111111", "2026"]:
+        assert h.digitos_da_senha(nao) is None, nao
+    for frase in ["a senha é quatro oito dois nove um três", "pode ir 4 8 2 9 1 3", "minha senha 482/913 ok",
+                  "vai 482 913 ok", "tenta ４８２９１３ aí"]:
+        h._CONFERENCIAS.clear()
+        visto = h.mascarar(frase, await h.analisar(dono, frase))
+        assert "482913" not in re.sub(r"\D", "", visto) and "quatro" not in visto, (frase, visto)
+
+
+def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
+    """"Senha:[senha oculta]" virava "Senha:•••• oculta]"; "PIN 3 do conector" e "strings 12"
+    viravam "••••" (avaliação 11)."""
+    from app.services.assistente import _sem_segredos
+
+    for texto in ["Senha:[senha oculta] pode executar", "a senha é [senha oculta], ok?", "pin=[número oculto] vai",
+                  "Combinação de strings 12 e 13 com corrente baixa", "PIN 3 do conector MC4",
+                  "senha 2 vezes errada", "código de erro 2043"]:
+        assert _sem_segredos(texto) == texto
+    assert _sem_segredos("a senha do wifi é Solar@2024") == "a senha do wifi é ••••"
+
+
+async def test_documento_assinado_no_meuplano_so_sai_com_a_senha(db, monkeypatch):
+    """No meuPlano a ferramenta de PDF assina com o certificado da pessoa dentro de uma LEITURA
+    — "me manda o PDF da OS assinado" passava sem senha de atuação (avaliação 11). O pedido de
+    assinatura só vai ao meuPlano depois da senha."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+    from app.services import vinculos
+
+    pedidos = []
+
+    class _MP:
+        async def assistente_chat(self, token, mensagens):
+            pedidos.append(mensagens[-1]["content"])
+            return 7
+
+        async def assistente_run(self, token, run_id):
+            return {"status": "DONE", "type": "message", "text": "PDF da OS 1639 assinado: https://x/pdf"}
+
+    async def _sem_espera(_):
+        return None
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: _MP())
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_meuplano, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
+    db.commit()
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await assistente.manutencao(ctx, {"pergunta": "me manda o PDF da OS 1639 assinado"})
+    assert "NADA foi executado" in r["instrucao"] and pedidos == []
+    assert "ASSINATURA DIGITAL" in h.PENDENTES[dono.id].resumo
+    # Sem a palavra na pergunta da IA, mas com ela no pedido da pessoa: também.
+    h.PENDENTES.clear()
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone, pedido="quero com meu certificado digital")
+    r = await assistente.manutencao(ctx, {"pergunta": "PDF da OS 1639"})
+    assert "NADA foi executado" in r["instrucao"] and pedidos == []
+    h.mostrada(dono.id)
+    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert feito.startswith("PDF da OS 1639 assinado") and pedidos == ["PDF da OS 1639\n\n(Resposta para WhatsApp: curta, sem tabela.)"]
+    # Leitura comum continua sem senha.
+    r = await assistente.manutencao(ger.Contexto(db=db, user=dono, telefone=dono.telefone), {"pergunta": "OS abertas?"})
+    assert r == {"texto": "PDF da OS 1639 assinado: https://x/pdf"} and len(pedidos) == 2
