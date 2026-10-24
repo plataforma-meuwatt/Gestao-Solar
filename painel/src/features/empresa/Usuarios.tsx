@@ -187,7 +187,7 @@ function Linha({
                 {usuario.perfil === 'cliente'
                   ? `${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
                   : usuario.perfil === 'tecnico'
-                    ? 'entra só para o WhatsApp dele'
+                    ? 'entra só para o próprio WhatsApp'
                     : 'vê todas as usinas da empresa'}
               </span>
               <span className="flex items-center gap-1.5">
@@ -679,7 +679,7 @@ export function Tokens({ usuario: inicial, aoFechar }: { usuario: UsuarioDetalha
         <Aviso>
           No aplicativo o token é <strong>opcional</strong>: sem ele, os dados desta pessoa são
           lidos com a conta da <strong>empresa</strong>, e o que ela vê continua sendo o que você
-          concedeu. O <strong>assistente do WhatsApp</strong> só responde com o token dela — sem o
+          concedeu. O <strong>bot do WhatsApp</strong> só responde com o token próprio da pessoa — sem o
           do meuWatt, nada de geração nem helper; sem o do meuPlano, nada de manutenção.
         </Aviso>
 
@@ -696,7 +696,7 @@ export function Tokens({ usuario: inicial, aoFechar }: { usuario: UsuarioDetalha
                   disabled={desconectar.isPending}
                   onClick={() =>
                     window.confirm(
-                      `Desconectar o token do ${NOME_DO_PRODUTO[p]} de ${usuario.nome}? O bot dela para de responder sobre ${p === 'meuwatt' ? 'geração e helper' : 'manutenção'} até colar outro.`,
+                      `Desconectar o token do ${NOME_DO_PRODUTO[p]} de ${usuario.nome}? O bot desta pessoa para de responder sobre ${p === 'meuwatt' ? 'geração e helper' : 'manutenção'} até colar outro.`,
                     ) && desconectar.mutate(p)
                   }
                 >
@@ -720,7 +720,7 @@ export function Tokens({ usuario: inicial, aoFechar }: { usuario: UsuarioDetalha
         </div>
 
         <div>
-          <p className="rotulo-campo">Token gerado na conta dela</p>
+          <p className="rotulo-campo">Token gerado na conta da própria pessoa</p>
           <input
             className="campo mt-1"
             type="password"

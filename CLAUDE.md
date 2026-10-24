@@ -777,7 +777,7 @@ e liberada sem token fica parada (`User.bot_ativo`). **O helper** (`assistente_h
 porta `/api/bot/*` do mw-modbus-helper pelo túnel `HELPER_BOT_URL`, chave `HELPER_BOT_CHAVE`):
 leitura volta na hora; AÇÃO vira proposta e só executa com a **SENHA DE ATUAÇÃO** da pessoa
 (pedido do dono, 24/10/2026: "o bot peça senha para qualquer ação que envolva atuação —
-desligar, ligar, gravar; ler não precisa"). `gs_users.senha_atuacao_hash`: 4 a 8 números,
+desligar, ligar, gravar; ler não precisa"). `gs_users.senha_atuacao_hash`: 6 a 8 números,
 definida pelo gerente em oem-gs → Bot do WhatsApp, nunca a de login. Conferida antes do modelo
 (`assistente_helper.confirmar_por_mensagem`: a IA não vê a senha nem tem ferramenta de
 confirmar), uma vez; 5 erros com ação esperando bloqueiam por 15 min, e sem ação esperando a
@@ -790,9 +790,15 @@ leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter ch
 `usina_helper` tem `metodo` (GET é leitura no helper: `/api/devices`, `/api/healthcheck/state?id=`
 — POST ali virava "escrita", pedia senha e dava 404) e respeita o recorte de usinas do GS
 (`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. Com ação esperando, a senha
-escrita numa frase ("a senha é 4821") também é tentativa e some do log. Selo "Helper alcançável"
-no adm (Log do bot) e no oem (Bot do WhatsApp), pelo `ferramentas` do helper, que só confere a
-chave do chamador. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
+escrita numa frase também é tentativa. **Desde a 6ª avaliação:** todo número de 4–8 dígitos
+de qualquer mensagem é conferido contra o hash (até 3 por mensagem; ~0,45 s cada) — sendo a
+senha, nunca vai à IA, ao log, ao histórico nem ao gateway, haja ação esperando ou não; sem
+ação esperando, a resposta é a mesma para senha certa e errada (sem oráculo). Qualquer outra
+mensagem DESARMA a ação ("não/cancela" respondem "Cancelado" pelo sistema). UMA ação por mensagem,
+e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
+mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
+`ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
+srvclaude com a idade do contato do wg0 — VPN parada há mais de 5 min deixa o selo vermelho. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
 lançar o dia, lembrete) espera a senha, e confirmada o BFF chama o `/assistant/apply` de lá com
 o token da pessoa (10 min); a conversa vai junto ao meuPlano, que é sem estado. **Empresa
 desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a

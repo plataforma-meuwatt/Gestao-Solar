@@ -57,7 +57,7 @@ export function BotDaEmpresa() {
   return (
     <Pagina
       titulo="Bot do WhatsApp"
-      apoio={`Quem da ${empresa ?? 'sua empresa'} fala com o assistente do WhatsApp, e sobre o quê. O bot reconhece a pessoa pelo celular e responde só com o token dela.`}
+      apoio={`Quem da ${empresa ?? 'sua empresa'} fala com o bot do WhatsApp, e sobre o quê. O bot reconhece a pessoa pelo celular e responde só com o token próprio de cada uma.`}
     >
       <div className="mb-4">
         <Aviso>
@@ -85,7 +85,7 @@ export function BotDaEmpresa() {
       ) : null}
       {log?.length ? (
         <p className="text-xs text-fraco mb-3">
-          Última resposta do bot a alguém da empresa:{' '}
+          Última mensagem respondida (enviada em):{' '}
           {quando(log.find((r) => r.resultado === 'respondeu')?.em ?? null)} · última mensagem recebida:{' '}
           {quando(log[0].em)}
         </p>
@@ -149,7 +149,7 @@ function situacao(u: UsuarioDetalhado): { tom: Tom; rotulo: string } {
   if (!liberadas.length) return { tom: 'sem-dados', rotulo: 'Desligado' }
   if (!u.telefone) return { tom: 'alerta', rotulo: 'Parado: sem celular' }
   const respondendo = liberadas.filter((p) => u.produtos.includes(p.token))
-  if (!respondendo.length) return { tom: 'alerta', rotulo: 'Parado: falta o token dela' }
+  if (!respondendo.length) return { tom: 'alerta', rotulo: 'Parado: falta o token próprio' }
   if (respondendo.length < liberadas.length) return { tom: 'alerta', rotulo: 'Em parte: falta um token' }
   return { tom: 'ok', rotulo: 'Respondendo' }
 }
@@ -211,7 +211,7 @@ function LinhaDoBot({
       <div className="mt-3 flex gap-x-5 gap-y-2 flex-wrap">
         {PARTES_DO_BOT.map((p) => {
           const ligado = u[p.campo]
-          const falta = !u.telefone ? 'o celular' : !u.produtos.includes(p.token) ? `o token do ${NOME_DO_PRODUTO[p.token]} dela` : null
+          const falta = !u.telefone ? 'o celular' : !u.produtos.includes(p.token) ? `o token próprio do ${NOME_DO_PRODUTO[p.token]}` : null
           const travado = !ligado && falta !== null
           return (
             <label
@@ -264,7 +264,7 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
       <div className="grid gap-4">
         <Aviso>
           O bot pede esta senha antes de <strong>ligar, desligar, gravar</strong> ou criar algo
-          (helper e meuPlano). Ler não pede. Só números, de 4 a 8 — nada de sequência nem número
+          (helper e meuPlano). Ler não pede. Só números, de 6 a 8 — nada de sequência nem número
           repetido. Entregue à pessoa como a senha provisória: ela não aparece de novo.
         </Aviso>
         <Campo
@@ -294,7 +294,7 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
           </button>
           <button
             className="btn-primario"
-            disabled={salvar.isPending || senha.length < 4 || senha !== repetida}
+            disabled={salvar.isPending || senha.length < 6 || senha !== repetida}
             onClick={() => salvar.mutate()}
           >
             {salvar.isPending ? 'Salvando…' : 'Salvar'}
@@ -328,8 +328,8 @@ function Celular({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: (
           onChange={(e) => setTelefone(e.target.value)}
           nota={
             usuario.meuplano
-              ? `Ligado a ${usuario.meuplano} no meuPlano: grava lá também. Vazio apaga e desliga o bot dela.`
-              : 'Vazio apaga o celular e desliga o bot dela.'
+              ? `Ligado a ${usuario.meuplano} no meuPlano: grava lá também. Vazio apaga e desliga o bot desta pessoa.`
+              : 'Vazio apaga o celular e desliga o bot desta pessoa.'
           }
           autoFocus
         />

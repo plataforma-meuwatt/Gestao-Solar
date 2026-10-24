@@ -154,6 +154,8 @@ class UsinaDoCliente(BaseModel):
     uf: str | None = None
     tem_meuwatt: bool
     tem_meuplano: bool
+    #: Monitorada só pelo portal do fabricante (MICRO do meuWatt) — não é "sem monitoramento".
+    tem_micro: bool = False
 
 
 class ClienteDetalhe(BaseModel):
@@ -209,6 +211,7 @@ def detalhe_cliente(
                 uf=u.uf,
                 tem_meuwatt=u.tem_meuwatt,
                 tem_meuplano=u.tem_meuplano,
+                tem_micro=u.mw_micro_plant_id is not None,
             )
             for u in usinas
         ],
@@ -305,6 +308,7 @@ async def diagnostico(
                 uf=u.uf,
                 tem_meuwatt=u.tem_meuwatt,
                 tem_meuplano=u.tem_meuplano,
+                tem_micro=u.mw_micro_plant_id is not None,
             )
             for u in usinas
         ],

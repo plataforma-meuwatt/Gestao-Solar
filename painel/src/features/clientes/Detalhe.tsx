@@ -27,6 +27,7 @@ import {
 } from '@/features/api'
 import { CartaoNotificacoes } from '@/features/clientes/Notificacoes'
 import { SenhaProvisoria } from '@/features/clientes/SenhaProvisoria'
+import { confirmaAtivacao } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 
 const ACESSO: Record<SituacaoAcesso, { tom: Tom; rotulo: string }> = {
@@ -143,11 +144,22 @@ export function DetalheCliente() {
           </dl>
 
           <div className="px-5 pb-5 flex gap-2 flex-wrap">
-            <button onClick={() => novaSenha.mutate()} className="btn-secundario" disabled={novaSenha.isPending}>
+            <button
+              onClick={() =>
+                window.confirm(
+                  `Gerar uma senha nova para ${cliente.nome}? A senha atual deixa de valer na hora; entregue a nova junto com o apelido.`,
+                ) && novaSenha.mutate()
+              }
+              className="btn-secundario"
+              disabled={novaSenha.isPending}
+            >
               <KeyRound size={15} />
               {novaSenha.isPending ? 'Gerando…' : 'Gerar nova senha'}
             </button>
-            <button onClick={() => alternarAtivo.mutate()} className="btn-fantasma h-11 px-4 text-sm">
+            <button
+              onClick={() => confirmaAtivacao(cliente.nome, cliente.ativo) && alternarAtivo.mutate()}
+              className="btn-fantasma h-11 px-4 text-sm"
+            >
               <Power size={14} />
               {cliente.ativo ? 'Desativar' : 'Reativar'}
             </button>
@@ -165,6 +177,7 @@ export function DetalheCliente() {
               produto={produto}
               vinculo={cliente.vinculos.find((v) => v.produto === produto) ?? null}
               primeiro={i === 0}
+              semEmpresa={!cliente.empresa}
             />
           ))}
         </Cartao>
@@ -177,7 +190,7 @@ export function DetalheCliente() {
               titulo="Nenhuma usina concedida"
               descricao={
                 cliente.empresa
-                  ? 'Ele entra no aplicativo, mas não vê usina nenhuma até o gerente da empresa dele conceder, no oem-gs.'
+                  ? 'A pessoa entra no aplicativo, mas não vê usina nenhuma até o gerente da empresa conceder, no oem-gs.'
                   : 'Esta conta não é de empresa nenhuma: nenhum gerente a enxerga, e ninguém pode conceder usina a ela. Ponha numa empresa em Usuários → Empresas.'
               }
             />
@@ -205,12 +218,10 @@ export function DetalheCliente() {
                     tem manutenção. */}
                 <div className="flex gap-1.5">
                   {u.tem_meuwatt ? <Selo tom="ok">monitorada</Selo> : null}
+                  {!u.tem_meuwatt && u.tem_micro ? <Selo tom="ok">portal do fabricante</Selo> : null}
                   {u.tem_meuplano ? <Selo tom="ok">com manutenção</Selo> : null}
-                  {!u.tem_meuwatt || !u.tem_meuplano ? (
-                    <Selo tom="alerta">
-                      {u.tem_meuwatt ? 'sem manutenção' : 'sem monitoramento'}
-                    </Selo>
-                  ) : null}
+                  {!u.tem_meuplano ? <Selo tom="alerta">sem manutenção</Selo> : null}
+                  {!u.tem_meuwatt && !u.tem_micro ? <Selo tom="alerta">sem monitoramento</Selo> : null}
                 </div>
               </div>
             ))
@@ -255,10 +266,12 @@ function ContaNoProduto({
   produto,
   vinculo,
   primeiro,
+  semEmpresa,
 }: {
   produto: Produto
   vinculo: Vinculo | null
   primeiro: boolean
+  semEmpresa: boolean
 }) {
   const { nome } = ROTULO_PRODUTO[produto]
   const temToken = Boolean(vinculo?.tem_token)
@@ -284,8 +297,10 @@ function ContaNoProduto({
       ) : null}
       <p className="text-xs text-fraco mt-1">
         {temToken
-          ? 'O aplicativo e o bot do WhatsApp leem com a conta dele.'
-          : 'O aplicativo lê com a conta da empresa; esta parte do bot fica parada.'}{' '}
+          ? 'O aplicativo e o bot do WhatsApp leem com a conta própria da pessoa.'
+          : semEmpresa
+            ? 'Sem empresa, o aplicativo não tem conta com que ler; esta parte do bot fica parada.'
+            : 'O aplicativo lê com a conta da empresa; esta parte do bot fica parada.'}{' '}
         Quem cola o token é o gerente da empresa, no oem-gs.
       </p>
     </div>

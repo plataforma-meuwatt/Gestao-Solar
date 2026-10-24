@@ -131,7 +131,7 @@ export function EmpresasDaConta({ conta, aoFechar }: { conta: Conta; aoFechar: (
             é {conta.perfil === 'cliente' ? 'dona de usina' : PAPEL[conta.perfil]?.toLowerCase()} e
             recebe só o que aquela empresa der.
             {conta.perfil === 'cliente'
-              ? ' No aplicativo, as usinas da outra empresa só trazem dado com o token próprio dele no meuWatt/meuPlano (sem ele, a leitura é com a conta da empresa de origem).'
+              ? ' No aplicativo, as usinas da outra empresa só trazem dado com o token próprio da pessoa no meuWatt/meuPlano (sem ele, a leitura é com a conta da empresa de origem).'
               : ''}
           </Aviso>
 
@@ -162,7 +162,7 @@ export function EmpresasDaConta({ conta, aoFechar }: { conta: Conta; aoFechar: (
             </ul>
           ) : (
             <p className="text-sm text-alerta">
-              Sem empresa: nenhum gerente enxerga esta conta, e o aplicativo dela vem vazio.
+              Sem empresa: nenhum gerente enxerga esta conta, e o aplicativo desta conta vem vazio.
             </p>
           )}
 

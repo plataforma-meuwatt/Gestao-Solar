@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
 
@@ -28,12 +28,16 @@ from app.core.config import get_settings
 from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
-#: Mensagem que é uma SENHA: só números (4 a 8), com ou sem "confirmo"/"senha" na frente.
+#: A mensagem INTEIRA é uma tentativa de senha: só o número, ou "senha 482913", "confirmo 482913".
 SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{4,8})\s*[.!]?\s*$", re.IGNORECASE)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
-#: Um número de 4 a 8 dígitos solto numa frase ("a senha é 4821", "sim, 4821").
+#: Um número de 4 a 8 dígitos em qualquer ponto da mensagem.
 NUMERO = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
 FRASE_CURTA = 80
+#: Números conferidos por mensagem: cada conferência custa ~0,45 s (pbkdf2, 600 mil voltas).
+MAX_CONFERIDOS = 3
+#: "não", "cancela", "esquece"… com uma ação esperando: desarma, e o SISTEMA responde.
+CANCELA = re.compile(r"^\s*(?:n[ãa]o\b|cancel|desist|esquec|para\b|pare\b|deixa\b)", re.IGNORECASE)
 #: O que fica no log, no histórico e no gateway no lugar da senha digitada.
 OCULTA = "[senha de atuação]"
 TENTATIVAS = 5
@@ -41,6 +45,12 @@ BLOQUEIO_S = 15 * 60
 TETO_RESPOSTA = 12000
 SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot só lê. Peça ao gerente da sua "
              "O&M para definir no oem-gs (Bot do WhatsApp). Nada foi feito.")
+#: A MESMA frase para a senha certa e para a errada, sem ação esperando: senão, mandar números
+#: até a frase mudar descobriria a senha.
+NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — se era "
+                  "outra coisa, escreva com palavras.")
+BLOQUEADO = "Ações bloqueadas por senha errada. Tente de novo mais tarde. Nada foi feito."
+CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 
 
 @dataclass
@@ -49,6 +59,9 @@ class Pendente:
     expira: float
     #: Executa a ação confirmada — (db, conta, telefone) → a frase que vai ao WhatsApp.
     executar: Callable[[Any, Any, str], Awaitable[str]]
+    prazo_s: int = 120
+    detalhes: list[str] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -62,16 +75,30 @@ _BLOQUEIO: dict[int, float] = {}
 
 
 def parece_senha(texto: str) -> bool:
-    """Mensagem que PODE ser a senha: nunca vai em claro ao log, nem se der erro no meio."""
+    """Mensagem que PODE ser a senha, para os caminhos em que a conta ainda não foi conferida
+    (número sem cadastro, erro no meio): nunca vai em claro ao log."""
     texto = texto or ""
     return SENHA.match(texto) is not None or (len(texto) <= FRASE_CURTA and len(NUMERO.findall(texto)) == 1)
 
 
+def contem_a_senha(user, texto: str) -> bool:
+    """Algum número de 4 a 8 dígitos da mensagem É a senha de atuação desta pessoa — em
+    qualquer frase, com ou sem ação esperando ("sim, pode fazer. senha 482913 ok", ou depois
+    que o pedido venceu). Uma mensagem assim nunca vai à IA, ao log, ao histórico nem ao
+    gateway (avaliação de 24/10/2026)."""
+    if not user.senha_atuacao_hash:
+        return False
+    numeros = list(dict.fromkeys(NUMERO.findall(texto or "")))[:MAX_CONFERIDOS]
+    return any(conferir_senha(n, user.senha_atuacao_hash) for n in numeros)
+
+
 def validar_senha_atuacao(senha: str) -> str:
-    """4 a 8 números, sem repetir nem seguir em sequência (1111, 1234, 4321). Devolve limpa."""
+    """6 a 8 números, sem repetir nem seguir em sequência (111111, 123456, 654321). Devolve
+    limpa. Seis no mínimo: a senha anda numa conversa de WhatsApp, e cada dígito a mais
+    multiplica por dez o trabalho de quem tentar adivinhar."""
     s = (senha or "").strip()
-    if not re.fullmatch(r"\d{4,8}", s):
-        raise ValueError("A senha de atuação tem de 4 a 8 números.")
+    if not re.fullmatch(r"\d{6,8}", s):
+        raise ValueError("A senha de atuação tem de 6 a 8 números.")
     passos = {int(b) - int(a) for a, b in zip(s, s[1:])}
     if passos in ({0}, {1}, {-1}):
         raise ValueError("Senha fácil demais (número repetido ou em sequência). Escolha outra.")
@@ -84,24 +111,42 @@ def nova_senha(user_id: int) -> None:
     _BLOQUEIO.pop(user_id, None)
 
 
-def propor(user, resumo: str, prazo_s: int, executar) -> dict:
-    """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou. Sem senha de
-    atuação cadastrada nem guarda: a ação não teria como ser confirmada."""
+def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=()) -> dict:
+    """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
+
+    - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
+    - UMA ação por mensagem: a segunda é recusada (antes, só a última ficava armada e a IA
+      descrevia as duas).
+    - O texto que a pessoa confirma é do SISTEMA, não da IA: `bloco_da_proposta` é acrescentado
+      ao pé da resposta, com o resumo exato, os avisos e o prazo (`assistente._atender`)."""
+    user = ctx.user
     if not user.senha_atuacao_hash:
         PENDENTES.pop(user.id, None)
         return {"proposta_pendente": resumo, "sem_senha_de_atuacao": True,
                 "instrucao": ("NADA foi executado, e não pode ser: esta pessoa ainda não tem SENHA DE ATUAÇÃO. "
                               "Mostre o resumo e diga que o gerente da O&M define a senha dela no oem-gs "
                               "(Bot do WhatsApp). Leitura continua liberada.")}
-    PENDENTES[user.id] = Pendente(resumo, monotonic() + prazo_s, executar)
+    if ctx.proposta is not None:
+        return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
+    p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a])
+    PENDENTES[user.id] = ctx.proposta = p
     return {
         "proposta_pendente": resumo,
         "vale_por_s": prazo_s,
-        "instrucao": ("NADA foi executado. Mostre o resumo e peça à pessoa que responda com a SENHA DE "
-                      f"ATUAÇÃO dela (só números) em até {prazo_s // 60 or 1} min. Quem confere é o sistema, "
-                      "não você: nunca peça a senha de login, nunca escreva nem invente senha, nunca diga "
-                      "que fez."),
+        "instrucao": ("NADA foi executado. O SISTEMA acrescenta ao fim da sua resposta o resumo exato da ação e "
+                      "o pedido da SENHA DE ATUAÇÃO: diga em uma linha o que será feito e não repita o resumo. "
+                      "Nunca peça a senha de login, nunca escreva nem invente senha, nunca diga que fez."),
     }
+
+
+def bloco_da_proposta(p: Pendente) -> str:
+    """O que a pessoa confirma com a senha — escrito pelo sistema, palavra por palavra."""
+    linhas = ["🔒 *Ação esperando a sua senha de atuação*", f"• {p.resumo}"]
+    linhas += [f"  – {d}" for d in p.detalhes]
+    linhas += [f"⚠️ {a}" for a in p.avisos]
+    linhas.append(f"Para executar, responda só com a senha em até {max(1, p.prazo_s // 60)} min. "
+                  "Qualquer outra mensagem cancela.")
+    return "\n".join(linhas)
 
 _catalogo: tuple[float, dict[str, Any]] | None = None
 
@@ -117,10 +162,27 @@ async def alcancavel() -> tuple[bool | None, str]:
     if not configurado():
         return None, "O helper não está configurado neste ambiente."
     s = get_settings()
-    d = await HelperBot(s.helper_bot_url, s.helper_bot_chamador, s.helper_bot_chave, "").ferramentas(espera_s=6)
-    if d.get("ok"):
-        return True, "Helper alcançável: o bot lê e comanda as usinas por ele."
-    return False, f"Helper fora do alcance do bot: {d.get('error') or d.get('reason') or 'sem resposta'}"
+    bot = HelperBot(s.helper_bot_url, s.helper_bot_chamador, s.helper_bot_chave, "")
+    d = await bot.ferramentas(espera_s=6)
+    if not d.get("ok"):
+        return False, f"Helper fora do alcance do bot: {d.get('error') or d.get('reason') or 'sem resposta'}"
+    # O túnel responder não prova que as USINAS respondem: o Modbus sai pela VPN do servidor do
+    # helper, e ela ficou 11 h sem contato em 24/10/2026 com este selo verde.
+    idade = (await bot.rede()).get("vpn_ultimo_contato_s")
+    if idade is None:
+        return True, "Helper responde; a rede até as usinas não pôde ser conferida."
+    if idade > VPN_PARADA_S:
+        return False, (f"Helper responde, mas a rede até as usinas (VPN) está sem contato há {_duracao(idade)}: "
+                       "leitura e comando de equipamento não chegam lá.")
+    return True, "Helper e rede das usinas no ar: o bot lê e comanda as usinas por ele."
+
+
+#: O wg0 renova o contato a cada 25 s (PersistentKeepalive); 5 min sem contato é rede parada.
+VPN_PARADA_S = 300
+
+
+def _duracao(segundos: int) -> str:
+    return f"{segundos // 3600} h" if segundos >= 3600 else f"{max(1, segundos // 60)} min"
 
 
 def _cliente(ctx_ou_db, user) -> HelperBot:
@@ -228,7 +290,7 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
             db.commit()                                   # o lote pode levar até ~150 s
             return _desfecho(resumo, await cliente.confirmar(proposta, "pin", f"whatsapp {telefone}"))
 
-        return propor(ctx.user, resumo, int(d.get("expira_em_s") or 120), executar)
+        return propor(ctx, resumo, int(d.get("expira_em_s") or 120), executar)
     return _corta({"status_http": d.get("status_http"), "resposta": d.get("resposta")})
 
 
@@ -295,48 +357,50 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
     return " · ".join(pares)
 
 
-async def confirmar_por_mensagem(db, user, telefone: str, texto: str) -> str | None:
-    """A SENHA DE ATUAÇÃO → executa a ação pendente desta pessoa. `None` = a mensagem não é
+async def confirmar_por_mensagem(db, user, telefone: str, texto: str, *,
+                                 tem_senha: bool | None = None) -> str | None:
+    """A SENHA DE ATUAÇÃO → executa a ação esperando desta pessoa. `None` = a mensagem não é
     senha e segue para a conversa. Quem chama tira do log, do histórico e do gateway toda
-    mensagem tratada aqui.
+    mensagem tratada aqui (`tem_senha` poupa conferir o hash duas vezes).
 
-    Sem ação esperando, a resposta é a mesma com a senha certa ou errada: senão, mandar
-    números até a frase mudar descobriria a senha. Com ação esperando, cada erro conta, e
-    `TENTATIVAS` erros bloqueiam as ações por `BLOQUEIO_S`."""
+    - Senha em qualquer frase, com ou sem ação esperando: nunca vai adiante.
+    - Sem ação esperando, senha certa e errada recebem a MESMA frase.
+    - Com ação esperando, só a mensagem que É uma tentativa ("482913", "senha 482913") conta
+      erro; `TENTATIVAS` erros descartam o pedido e bloqueiam as ações por `BLOQUEIO_S`.
+    - Qualquer outra mensagem DESARMA a ação esperando; "não"/"cancela" respondem aqui mesmo
+      (a IA dizia "cancelado" com a ação armada)."""
     texto = texto or ""
     pendente = PENDENTES.get(user.id)
     if pendente is not None and monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
         pendente = None
-    m = SENHA.match(texto)
-    if m is not None:
-        tentativa = m.group(1)
-    elif pendente is not None and user.senha_atuacao_hash and parece_senha(texto):
-        # Com ação esperando, a senha escrita numa frase ("a senha é 4821", "sim, 4821") é
-        # tentativa também — senão ela ia à IA e ao log em claro (avaliação de 24/10/2026).
-        tentativa = NUMERO.findall(texto)[0]
-    else:
-        return None
-    if not user.senha_atuacao_hash:
-        # Número solto de quem não tem senha é só um número: segue a conversa.
-        return SEM_SENHA if pendente is not None or COM_PALAVRA.match(texto) else None
-    if pendente is None:
-        return ("Recebi só um número. Se era a senha de atuação: não há ação esperando (o pedido vale "
-                "poucos minutos) e nada foi feito. Se era outra coisa, escreva com palavras.")
-    if monotonic() < _BLOQUEIO.get(user.id, 0):
-        return "Ações bloqueadas por senha errada. Tente de novo mais tarde. Nada foi feito."
-    if not conferir_senha(tentativa, user.senha_atuacao_hash):
-        erros = _ERROS[user.id] = _ERROS.get(user.id, 0) + 1
-        if erros < TENTATIVAS:
-            return f"Senha não confere ({erros} de {TENTATIVAS}). Nada foi feito."
+    if tem_senha is None:
+        tem_senha = contem_a_senha(user, texto)
+    tentativa = SENHA.match(texto) is not None
+    if tem_senha or (tentativa and user.senha_atuacao_hash):
+        if pendente is None:
+            return NADA_ESPERANDO
+        if monotonic() < _BLOQUEIO.get(user.id, 0):
+            return BLOQUEADO
+        if not tem_senha:
+            erros = _ERROS[user.id] = _ERROS.get(user.id, 0) + 1
+            if erros < TENTATIVAS:
+                return f"Senha não confere ({erros} de {TENTATIVAS}). Nada foi feito."
+            _ERROS.pop(user.id, None)
+            PENDENTES.pop(user.id, None)
+            _BLOQUEIO[user.id] = monotonic() + BLOQUEIO_S
+            return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
+                    f"{BLOQUEIO_S // 60} min. Nada foi feito.")
         _ERROS.pop(user.id, None)
-        PENDENTES.pop(user.id, None)
-        _BLOQUEIO[user.id] = monotonic() + BLOQUEIO_S
-        return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
-                f"{BLOQUEIO_S // 60} min. Nada foi feito.")
-    _ERROS.pop(user.id, None)
-    PENDENTES.pop(user.id, None)          # uma vez só, aconteça o que acontecer
-    return await pendente.executar(db, user, telefone)
+        PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
+        return await pendente.executar(db, user, telefone)
+    if tentativa and (pendente is not None or COM_PALAVRA.match(texto)):
+        return SEM_SENHA                  # tentativa de senha de quem ainda não tem
+    if pendente is not None:
+        PENDENTES.pop(user.id, None)      # outra mensagem: a ação esperando cai
+        if CANCELA.match(texto):
+            return CANCELADO
+    return None
 
 
 _ROTA = {"type": "string", "description": "Rota do helper, ex.: /api/registry/plants, /api/registry/devices, "

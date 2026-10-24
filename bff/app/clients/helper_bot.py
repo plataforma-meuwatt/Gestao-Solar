@@ -52,6 +52,11 @@ class HelperBot:
         """O catálogo — e a prova de vida: só pede a chave do chamador, não o token de ninguém."""
         return await self._post("ferramentas", {}, espera_s=espera_s)
 
+    async def rede(self) -> dict[str, Any]:
+        """Há quantos segundos a VPN por onde o Modbus sai até as usinas teve contato
+        (`vpn_ultimo_contato_s`). Respondida pelo filtro do túnel no srvclaude, sem token."""
+        return await self._post("rede", {}, espera_s=6)
+
     async def chamar(self, rota: str, corpo: dict[str, Any], origem: str, metodo: str = "POST") -> dict[str, Any]:
         return await self._post("chamar", {"rota": rota, "metodo": metodo, "corpo": corpo, "origem": origem})
 

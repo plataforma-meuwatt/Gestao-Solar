@@ -29,7 +29,7 @@ export function textoDoBot(liberado: ProdutoDoBot[], tokens: Produto[], temCelul
   const partes = PARTES_DO_BOT.filter((p) => liberado.includes(p.campo)).map((p) =>
     tokens.includes(p.token) ? p.rotulo : `${p.rotulo} (falta o token)`,
   )
-  return partes.join(' · ') || 'bloqueado'
+  return partes.join(' · ') || 'desligado'
 }
 
 /** Desativar tira a pessoa na hora (painel, aplicativo e bot): pergunta antes. Reativar, não. */

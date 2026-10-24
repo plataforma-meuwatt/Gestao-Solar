@@ -57,6 +57,8 @@ class Contexto:
     historico: list[dict] = field(default_factory=list)
     #: o meuWatt não respondeu nesta mensagem: só a GERAÇÃO fica de fora (a frase vai à IA)
     mw_falha: str | None = None
+    #: a AÇÃO que esta mensagem armou (helper ou meuPlano) — uma só; o texto dela vai pelo sistema
+    proposta: Any = None
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

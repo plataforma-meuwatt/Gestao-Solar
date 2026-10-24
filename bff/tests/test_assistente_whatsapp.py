@@ -403,12 +403,14 @@ async def test_senha_errada_bloqueia_e_sem_acao_a_resposta_nao_entrega_a_senha(d
     errada = await h.confirmar_por_mensagem(db, dono, dono.telefone, "111222")
     assert certa == errada
 
-    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
-    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    def turno():
+        return ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+
+    await h.usina_helper(turno(), {"rota": "/api/act", "corpo": {"acao": "off"}})
     for i in range(1, h.TENTATIVAS):
         assert f"({i} de {h.TENTATIVAS})" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
     assert "bloqueadas" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
-    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    await h.usina_helper(turno(), {"rota": "/api/act", "corpo": {"acao": "off"}})
     assert "bloqueadas" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
     assert helper_ligado.confirmadas == []
     h.nova_senha(dono.id)                                  # o gerente define outra: zera o bloqueio
@@ -418,7 +420,7 @@ async def test_senha_errada_bloqueia_e_sem_acao_a_resposta_nao_entrega_a_senha(d
 def test_a_senha_de_atuacao_nao_pode_ser_facil():
     from app.services.assistente_helper import validar_senha_atuacao
 
-    for ruim in ("123", "123456789", "12a4", "1111", "1234", "98765"):
+    for ruim in ("4821", "48213", "123456789", "12a456", "111111", "123456", "987654"):
         with pytest.raises(ValueError):
             validar_senha_atuacao(ruim)
     assert validar_senha_atuacao(" 482913 ") == "482913"
@@ -859,8 +861,109 @@ async def test_o_selo_do_helper_sem_token_de_ninguem(monkeypatch):
     monkeypatch.setattr(s, "helper_bot_chave", "chave")
     with respx.mock:
         rota = respx.post("http://helper.test/api/bot/ferramentas").mock(return_value=httpx.Response(200, json={"ok": True}))
+        rede = respx.post("http://helper.test/api/bot/rede").mock(
+            return_value=httpx.Response(200, json={"ok": True, "vpn_ultimo_contato_s": 20}))
         assert (await h.alcancavel())[0] is True
         enviados = rota.calls.last.request.headers
         assert "authorization" not in enviados and enviados["x-mw-bot-chave"] == "chave"
+        # O túnel responde, mas a VPN até as usinas está parada há 11 h: o selo NÃO fica verde.
+        rede.mock(return_value=httpx.Response(200, json={"ok": True, "vpn_ultimo_contato_s": 42000}))
+        alcancavel, frase = await h.alcancavel()
+        assert alcancavel is False and "VPN" in frase and "11 h" in frase
         rota.mock(side_effect=httpx.ConnectError("fora"))
         assert (await h.alcancavel())[0] is False
+
+
+# ── avaliação de 24/10/2026 (6ª): a senha em qualquer frase, "cancela", o texto do sistema ──
+
+
+async def _armar(db, dono, rota="/api/act"):
+    from app.services import assistente_helper as h
+
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    await h.usina_helper(ctx, {"rota": rota, "corpo": {"plant_id": "pirapozinho", "acao": "off"}})
+    return ctx
+
+
+async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local, helper_com_get):
+    """S1: frase com a senha e SEM ação esperando; S4: frase de 100 caracteres com a senha e
+    COM ação esperando — as duas iam em claro à IA, ao log, ao histórico e ao gateway."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+
+    dono = _dono_com_usina(db)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
+                              "texto": "sim, pode fazer. senha 482913 ok"})
+    await _armar(db, dono)
+    longa = "olha, pode desligar sim o inversor que eu pedi agora há pouco, confirmo tudo, a senha é 482913 obrigado"
+    assert len(longa) > 80
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": longa})
+
+    assert bot_local.llm == [] and helper_com_get.confirmadas == [("P-1", "pin")]
+    assert bot_local.ocultadas == [1, 2]
+    assert all("482913" not in (r.pergunta or "") for r in db.query(RegistroBot))
+    assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
+
+
+async def test_cancela_desarma_e_a_senha_depois_nao_executa(db, bot_local, helper_com_get):
+    """S6: depois de "não, cancela isso" a ação continuava armada — e a senha a executava."""
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "não, cancela isso"})
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "482913"})
+    assert bot_local.enviados[0] == h.CANCELADO and bot_local.enviados[1] == h.NADA_ESPERANDO
+    assert helper_com_get.confirmadas == [] and bot_local.llm == []
+
+
+async def test_outra_pergunta_desarma_sem_contar_erro_de_senha(db, bot_local, helper_com_get):
+    """S3: "troca para o inversor 1001" virava "Senha não confere (1 de 5)" e sumia da IA."""
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
+                              "texto": "espera, troca para o inversor 1001"})
+    assert bot_local.llm == ["espera, troca para o inversor 1001"]
+    assert "foi cancelada" in bot_local.enviados[0] and dono.id not in h.PENDENTES and dono.id not in h._ERROS
+
+
+async def test_o_texto_que_se_confirma_e_do_sistema_e_e_uma_acao_por_vez(db, bot_local, helper_com_get, monkeypatch):
+    """N3: a pessoa confirmava o texto escrito pela IA. N7: duas propostas na mesma mensagem."""
+    import json as _json
+
+    from app.services import assistente_helper as h
+
+    chamadas = iter([
+        {"content": "", "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "usina_helper", "arguments": _json.dumps(
+                {"rota": "/api/act", "corpo": {"plant_id": "pirapozinho"}})}},
+            {"id": "b", "type": "function", "function": {"name": "usina_helper", "arguments": _json.dumps(
+                {"rota": "/api/act", "corpo": {"plant_id": "pirapozinho"}})}}]},
+        {"content": "Vou desligar tudo, inclusive o que você não pediu."},
+    ])
+
+    vistos = []
+
+    async def _llm(msgs, ferramentas=None):
+        vistos.extend(m["content"] for m in msgs if m.get("role") == "tool")
+        return next(chamadas)
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _dono_com_usina(db)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "desliga o inversor 3"})
+    assert sum("Uma ação por vez" in v for v in vistos) == 1     # a segunda proposta foi recusada
+    final = bot_local.enviados[0]
+    assert "Ação esperando a sua senha de atuação" in final and "• Desligar o inversor 3" in final
+    assert final.count("•") == 1 and h.PENDENTES[dono.id].resumo == "Desligar o inversor 3"
+
+
+def test_o_log_nao_guarda_o_segredo_que_o_meuplano_revelou():
+    from app.services.assistente import _sem_segredos
+
+    assert _sem_segredos("A senha do cadeado é ab12, e o PIN 4821.") == "A senha do cadeado é ••••, e o PIN ••••."
+    assert _sem_segredos("[senha de atuação]") == "[senha de atuação]"

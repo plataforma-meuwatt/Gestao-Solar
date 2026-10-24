@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
@@ -149,9 +150,9 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
                     "Confira no meuPlano antes de pedir de novo.")
         return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"))
 
-    proposta = helper.propor(ctx.user, resumo, PRAZO_PROPOSTA_MP_S, executar)
-    proposta["detalhes"] = [ln.get("text") for ln in previa.get("lines") or []][:15]
-    proposta["avisos"] = previa.get("warnings") or []
+    detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
+    proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [])
+    proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
 
@@ -179,6 +180,19 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 
 
 # --------------------------------------------------------------------------- log
+#: "senha: 1234", "a senha do cadeado é ab12", "PIN 4821": o valor sai do log (o adm e o gerente
+#: leem o log; a conversa com a pessoa continua inteira). Só com separador ou com dígito logo
+#: depois — "[senha de atuação]" e "a senha de vocês" ficam como estão.
+_SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
+                      r"((?:\s+d[eoa]s?\s+[^\n:=]{1,30}?)?\s*(?:\bé\b|\beh\b|:|=)\s*)([^\s,;]+?)(?=[.!?]*(?:\s|$|[,;]))")
+_SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
+
+
+def _sem_segredos(texto: str) -> str:
+    texto = _SEGREDO.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
+    return _SEGREDO_NUM.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
+
+
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
                pergunta: str | None = None, resposta: str | None = None,
                ferramentas: list[str] | None = None, inicio: float | None = None,
@@ -192,8 +206,8 @@ def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
             telefone=telefone[:20], gs_user_id=user.id if user else None,
             empresa_id=user.empresa_id if user else None, resultado=resultado,
             ferramentas=",".join(dict.fromkeys(ferramentas or [])) or None,
-            pergunta=(pergunta or None) and pergunta[:4000],
-            resposta=(resposta or None) and resposta[:8000],
+            pergunta=(pergunta or None) and _sem_segredos(pergunta)[:4000],
+            resposta=(resposta or None) and _sem_segredos(resposta)[:8000],
             duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
             erro=(erro or None) and erro[:1000],
             **({"em": em} if em else {}),
@@ -391,6 +405,11 @@ async def _atender(evento: dict) -> None:
     ctx: ger.Contexto | None = None
     try:
         user = conta_do_telefone(db, telefone)
+        # A senha conferida UMA vez (pbkdf2 custa ~0,45 s por número): em qualquer frase, com ou
+        # sem ação esperando, ela não vai à IA, ao log, ao histórico nem ao gateway.
+        tem_senha = helper.contem_a_senha(user, texto) if user is not None else False
+        if tem_senha:
+            pergunta = helper.OCULTA
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
@@ -439,17 +458,23 @@ async def _atender(evento: dict) -> None:
         # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
-        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto)
-        if resposta is not None:
+        esperava = helper.PENDENTES.get(user.id) is not None
+        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, tem_senha=tem_senha)
+        if resposta is not None and (tem_senha or helper.SENHA.match(texto)):
             historico[-1]["content"] = helper.OCULTA
             await _ocultar_no_gateway(evento.get("id"))
-        else:
+        elif resposta is None:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
             await ger.preparar(ctx)
             if not get_settings().deepseek_api_key:
                 resposta = "O assistente está desligado neste ambiente (falta a chave da IA)."
             else:
                 resposta = await responder(ctx, historico)
+            if esperava:
+                resposta += "\n\n(A ação que esperava a sua senha foi cancelada.)"
+            if ctx.proposta is not None:
+                # O que a pessoa confirma com a senha é texto do SISTEMA, não da IA.
+                resposta += "\n\n" + helper.bloco_da_proposta(ctx.proposta)
         historico.append({"role": "assistant", "content": resposta})
         conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
         conv.gs_user_id = user.id

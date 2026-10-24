@@ -52,7 +52,7 @@ export function LogDoBot() {
   return (
     <Pagina
       titulo="Log do bot"
-      apoio="Cada mensagem que chegou ao assistente do WhatsApp: de quem e de qual empresa, o que perguntou, o que ele respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece — é quem tentou falar com o bot sem conta no Gestão Solar."
+      apoio="Cada mensagem que chegou ao bot do WhatsApp: de quem e de qual empresa, o que perguntou, o que o bot respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece — é quem tentou falar com o bot sem conta no Gestão Solar."
     >
       <SaudeDoCanalCartao />
 
@@ -141,7 +141,7 @@ function SaudeDoCanalCartao() {
         </div>
       ) : null}
       <p className="text-xs text-fraco mt-2">
-        última mensagem recebida: {quando(data.ultima_recebida_em)} · última resposta do bot:{' '}
+        última mensagem recebida: {quando(data.ultima_recebida_em)} · última mensagem respondida (enviada em):{' '}
         {quando(data.ultima_resposta_em)} · última entrega confirmada pela Meta: {quando(data.ultima_entregue_em)}
       </p>
     </Cartao>

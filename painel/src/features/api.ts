@@ -55,6 +55,8 @@ export type UsinaDoCliente = {
   cidade: string | null
   uf: string | null
   tem_meuwatt: boolean
+  /** Só no portal do fabricante (MICRO do meuWatt): não é "sem monitoramento". */
+  tem_micro?: boolean
   tem_meuplano: boolean
 }
 

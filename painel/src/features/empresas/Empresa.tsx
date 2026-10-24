@@ -214,7 +214,7 @@ function LinhaDoUsuario({
               Também é de {usuario.cuidada_por}, que cuida da conta (senha, celular, tokens e bot).
               Aqui ela recebe só o que esta empresa der
               {usuario.perfil === 'cliente'
-                ? ' — e, no aplicativo, as usinas daqui só trazem dado com o token próprio dela.'
+                ? ' — e, no aplicativo, as usinas daqui só trazem dado com o token próprio da pessoa.'
                 : '.'}
             </p>
           ) : usuario.outras_empresas.length ? (
