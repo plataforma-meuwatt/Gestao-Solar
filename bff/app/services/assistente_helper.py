@@ -23,7 +23,7 @@ import re
 import secrets
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -356,7 +356,7 @@ def nova_senha(user_id: int) -> None:
 _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confirmado", "confirmada", "correto",
            "certo", "isso", "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado",
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
-           "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
+           "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "fechou",
            "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
            "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
@@ -367,7 +367,10 @@ _EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: ne
                              r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza)|"
                              r"n[ãa]o tem (?:problemas?|erro)(?: nenhum)?|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
                              r"nada (?:a|pra|para) acrescentar|vamos (?:l[áa]|nessa)|por mim (?:pode|tudo bem|ok)|manda brasa|"
-                             r"vamos(?=\s*[!.]*\s*$))\b")
+                             r"vamos(?=\s*[!.]*\s*$)|(?:t[áa]|est[áa]|tudo|muito) (?:bom|bem))\b")
+#: Hesitação sozinha ("Bem...", "Bom...", "Hmm") não é SIM: o sistema pergunta de novo (avaliação 19:
+#: confirmava). Acompanhada ("tá bom", "tudo bem"), é a expressão acima.
+_HESITACAO = {"bem", "bom", "hum", "hmm", "hmmm", "ah", "eh", "uhm", "pois", "então", "entao"}
 #: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
 #: "Opa, pode", "Valeu, pode fazer").
 _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
@@ -429,7 +432,9 @@ _CIENCIA = {"valeu", "vlw", "obrigado", "obrigada", "obg", "brigado", "brigada",
             "show", "certo", "perfeito", "ótimo", "otimo", "aguardo", "aguardando", "entendi", "entendido",
             "combinado", "joia", "jóia", "tá", "ta", "bom", "muito", "fico", "no", "e"}
 #: Só o gesto — com o tom de pele que muita gente deixa como padrão (👍🏽 cancelava, avaliação 14).
-_SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
+_SO_OK = re.compile(r"^[\s👍✅👌✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
+#: As mãos juntas são "por favor" ou "obrigado" tanto quanto "sim": pergunta de novo (avaliação 19).
+_SO_MAOS = re.compile(r"^[\s🙏\U0001F3FB-\U0001F3FF]+$")
 
 
 def _palavras(texto: str) -> list[str]:
@@ -445,7 +450,16 @@ def _tem(lista, palavra: str) -> bool:
     return palavra in lista or re.sub(r"([a-zà-ú])\1+", r"\1", palavra) in lista
 
 
-def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
+def _pessoas_do_resumo(acao: str) -> list[set[str]]:
+    """As pessoas que o resumo lista depois de "por"/"com" ("por Michel Renan…, Diogo Dardani"), cada
+    uma como o conjunto das palavras do nome — só quando são duas ou mais."""
+    grupos = []
+    for m in re.finditer(r"\b(?:por|com)\s+([^.;:()]+)", acao):
+        grupos += [set(_palavras(n)) for n in re.split(r",\s*|\s+e\s+", m.group(1)) if n.strip()[:1].isupper()]
+    return grupos if len(grupos) >= 2 else []
+
+
+def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -> str:
     """Como a mensagem responde ao resumo que espera o SIM (`acao`: o texto dele):
     - "sim": o 👍/✅, ou uma afirmativa e depois só palavra neutra ou do resumo ("Sim, pode criar a OS
       de Ibitinga") — e número, só o que está nele ("Pode fechar a 1640" não confirma "Fechar a OS
@@ -456,13 +470,22 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
       não é um SIM limpo ("Sim, pode deixar", "Ok, vou ver") — não confirma nem derruba: o sistema
       pergunta de novo (avaliação 16). Com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
       longa, é outro pedido: derruba e vai à IA, que fica sabendo do cancelamento — perguntar de novo
-      engoliria o pedido (avaliação 17)."""
+      engoliria o pedido (avaliação 17).
+    `itens`: as linhas da ação (um item por linha). Com dois ou mais, a resposta que cita o que só está
+    em parte delas ("Apaga o INV-13" para "APAGAR 3 item(ns)…") é dúvida, nunca SIM: confirmava os três
+    (avaliação 19)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return "sim"
+    if t and _SO_MAOS.match(t):
+        return "duvida"
     if t.endswith("?"):
         return "outra"
-    palavras, da_acao = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower())), set(_palavras(acao))
+    dos_itens = set(_palavras(" ".join(itens)))
+    so_dos_itens = dos_itens - set(_palavras(acao)) if len(itens) >= 2 else set()
+    palavras, da_acao = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower())), set(_palavras(acao)) | dos_itens
+    if palavras and all(p in _HESITACAO for p in palavras):
+        return "duvida"
     verbo_da_acao = _verbo(_palavras(acao)[0]) if _palavras(acao) else None
 
     def mesmo_verbo(p: str) -> bool:
@@ -482,28 +505,29 @@ def _resposta_ao_resumo(texto: str, acao: str = "") -> str:
         return "outra"
     if (not outro_verbo and len(palavras) <= 8
             and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or mesmo_verbo(p) for p in palavras[1:])):
-        return "sim"
+        # Citar só parte dos itens, ou só uma das pessoas listadas ("Sim, o Michel" para "…por Michel…,
+        # Diogo…"), é precisão ou correção, não SIM (avaliação 19)
+        pessoas = _pessoas_do_resumo(acao)
+        citadas = [g for g in pessoas if g & set(palavras)]
+        parcial = any(p in so_dos_itens for p in palavras) or 0 < len(citadas) < len(pessoas)
+        return "duvida" if parcial else "sim"
     if len(palavras) <= 4 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or _tem(_SEM_ASSUNTO, p)
                                   or _verbo(p) is not None for p in palavras[1:]):
         return "duvida"
     return "outra"
 
 
-def e_sim(texto: str, acao: str = "") -> bool:
+def e_sim(texto: str, acao: str = "", itens: Sequence[str] = ()) -> bool:
     """A mensagem confirma a ação que espera SIM: o botão "Sim", uma afirmativa ou só o 👍/✅
     (`_resposta_ao_resumo`)."""
-    return _resposta_ao_resumo(texto, acao) == "sim"
-
-
-def _texto_da_acao(p: Pendente) -> str:
-    return " ".join([p.resumo, *p.detalhes])
+    return _resposta_ao_resumo(texto, acao, itens) == "sim"
 
 
 def responde_sim(user_id: int, texto: str) -> bool:
     """A mensagem é o SIM da ação do meuPlano esperando (vencida ou não: o "sim" tardio ouve que
     venceu), conferida contra o que o resumo dela diz (`e_sim`)."""
     p = PENDENTES.get(user_id)
-    return p is not None and p.confirmacao == "sim" and e_sim(texto, _texto_da_acao(p))
+    return p is not None and p.confirmacao == "sim" and e_sim(texto, p.resumo, p.detalhes)
 
 
 #: A afirmativa que não é um SIM limpo, com a ação do meuPlano esperando: nem confirma nem cancela.
@@ -516,7 +540,7 @@ def pergunta_de_novo(user_id: int, texto: str) -> str | None:
     continua armada e o SISTEMA pergunta de novo, sem ir à IA — antes, ela era derrubada, o
     contrário do que a pessoa disse (avaliação 16). Vencida, diz que venceu. `None` = não é o caso."""
     p = PENDENTES.get(user_id)
-    if p is None or p.confirmacao != "sim" or _resposta_ao_resumo(texto, _texto_da_acao(p)) != "duvida":
+    if p is None or p.confirmacao != "sim" or _resposta_ao_resumo(texto, p.resumo, p.detalhes) != "duvida":
         return None
     if monotonic() > p.expira:
         PENDENTES.pop(user_id, None)

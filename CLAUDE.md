@@ -895,7 +895,10 @@ PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí", "Confirmo o fechamento"
 com sinônimos e substantivos, lista fechada (`_FAMILIAS` → `_VERBOS`; "abrir a OS" é criá-la), casados
 só com o PRIMEIRO verbo do resumo. Verbo de OUTRA ação NUNCA confirma — nem é palavra neutra: "Pode
 criar" confirmava "APAGAR 3 itens" e "Pode abrir a OS" fechava a 1638 (avaliação 18); agora o sistema
-pergunta de novo, e um teste falha se um verbo de ação entrar nas listas neutras. A CURTA (até 4 palavras) que começa como
+pergunta de novo, e um teste falha se um verbo de ação entrar nas listas neutras. Citar só PARTE dos
+itens de uma ação de vários ("Apaga o INV-13" para "APAGAR 3 item(ns)…", as linhas da prévia vão em
+`itens`) ou só uma das pessoas listadas ("Sim, o Michel" para "…por Michel…, Diogo…") é dúvida, nunca
+SIM; "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
 "Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
 sem ir à IA (`pergunta_de_novo`); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
@@ -907,7 +910,10 @@ cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com 
 a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
-passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+passo do mesmo pedido — se o meuPlano responder esse passo em TEXTO ("aqui está a proposta… confirmando
+os dois, eu fecho a 1638"), o bot pede de novo, uma vez, a ação pela ferramenta; vindo texto de novo,
+diz que o passo não ficou pronto, que nada espera o Sim e o que já foi feito, e o log marca erro (uso
+real de 24/10/2026, avaliação 19: o texto era repassado e a 1638 ficou sem fechar) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
 avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
 não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o

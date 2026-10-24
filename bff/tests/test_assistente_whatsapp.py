@@ -1941,6 +1941,29 @@ class _MeuPlanoDoisPassos:
                 else {"os_id": 1638, "status": "FECHADA"}}
 
 
+class _MeuPlanoQueEscreve(_MeuPlanoDoisPassos):
+    """O próximo passo em TEXTO (uso real de 24/10/2026: "Faltam 2 passos… aqui está a proposta…
+    Confirmando os dois, eu fecho a 1638"). `depois`: o que o meuPlano responde a cada pedido seguinte
+    — um texto, ou "proposta" (fechar a 1638)."""
+
+    def __init__(self, *depois):
+        super().__init__()
+        self.depois = list(depois)
+
+    async def assistente_run(self, token, run_id):
+        if run_id == 1:
+            return await super().assistente_run(token, run_id)
+        r = self.depois.pop(0)
+        if r == "proposta":
+            return {"status": "DONE", "type": "proposal", "action": "fechar_os", "args": {"os_id": 1638},
+                    "preview": {"summary": "Fechar a OS 1638", "lines": [], "warnings": []}}
+        return {"status": "DONE", "type": "message", "text": r}
+
+
+TEXTO_DO_MEUPLANO = ("Faltam 2 passos do que você pediu — aqui está a proposta: **1) Fechar a OS 1638** (roçagem "
+                     "09/2026). Confirmando os dois, eu fecho a 1638 e registro a 1843.")
+
+
 def _toque(dono, n, sim=True):
     """O toque no botão do resumo que está esperando: o id leva o código dele."""
     from app.services import assistente_helper as h
@@ -1969,6 +1992,35 @@ async def test_falha_num_passo_seguinte_diz_o_pedido_da_pessoa_e_o_que_ja_foi_fe
         assert (f"Do seu pedido «{PEDIDO_DOIS_PASSOS}», antes disso já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) "
                 "(OS 1843, PROGRAMADA). O resto não foi feito") in falha
         assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
+
+
+async def test_proximo_passo_em_texto_pede_a_acao_de_novo_e_nunca_repassa_a_promessa(db, bot_local, monkeypatch):
+    """Uso real de 24/10/2026 (avaliação 19): depois do Sim, o próximo passo veio em TEXTO ("confirmando os
+    dois, eu fecho a 1638") e o bot o repassou — sem botões, nada a confirmar, a 1638 não foi fechada, e o
+    log ficou verde. Agora pede de novo, uma vez, pela ferramenta; se vier texto de novo, diz claramente
+    que o passo não ficou pronto e o que já foi feito, e o log marca erro."""
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "proposta")
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    await assistente.atender(_toque(dono, 2))
+    assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1638"                    # pronto para o botão
+    assert "Confirmando os dois" not in bot_local.enviados[-1] and "Não descreva em texto" in falso.conversas[-1][-1]["content"]
+
+    h.PENDENTES.clear()
+    falso = _MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, TEXTO_DO_MEUPLANO)
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono2 = _conta(db, "dono2", "+5517997370000")
+    await assistente.atender(_ev(dono2, 3, PEDIDO_DOIS_PASSOS))
+    await assistente.atender(_toque(dono2, 4))
+    aviso = bot_local.enviados[-1]
+    assert aviso.startswith("⚠️ O meuPlano respondeu o próximo passo só em texto") and dono2.id not in h.PENDENTES
+    assert "nada está esperando o seu Sim" in aviso and "Criar OS em UFV Ibitinga" in aviso
+    assert len(falso.conversas) == 3                                          # pediu de novo uma vez só
+    assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
 
 
 async def test_o_resto_do_pedido_que_nao_vem_e_dito(db, bot_local, monkeypatch):
@@ -2629,6 +2681,32 @@ def test_verbo_de_outra_acao_nunca_confirma():
     assert not set(h._VERBOS) & (h._NEUTRAS | h._AFIRMA | h._CIENCIA | h._SEM_ASSUNTO)
 
 
+def test_citar_parte_dos_itens_ou_das_pessoas_e_hesitar_nao_confirma():
+    """Avaliação 19: com "APAGAR 3 item(ns) — 41 nó(s)" esperando, "Apaga o INV-13" e "Sim, o inversor 13"
+    confirmavam os TRÊS; "Sim, o Michel" confirmava a conclusão "por Michel…, Diogo…"; "Bem...", "Bom..."
+    e 🙏 confirmavam. Agora é dúvida: o sistema pergunta de novo."""
+    from app.services import assistente_helper as h
+
+    r = h._resposta_ao_resumo
+    apagar = ("APAGAR 3 item(ns) — 41 nó(s) no total (cascata).",
+              ("Inversor 13 (INV-13)", "Inversor 14 (INV-14)", "Inversor 15 (INV-15)"))
+    acessos = ("Apagar 3 acesso(s)", ("SmartLogger 1 · rede/admin", "SmartLogger 2 · rede/admin", "Relé 52 · rede/admin"))
+    concluir = ("Concluir Roçagem na OS 1638 — 23/10 a 24/10/2026, por Michel Renan Soares Ferreira, Diogo Dardani.",
+                ("OS 1638 · tarefa 8873 Roçagem", "Feito em 23/10 a 24/10/2026 (2 dia(s))"))
+    fechar = ("Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas.", ("#8873 Roçagem — realizada",))
+    for t, (resumo, itens) in (("Apaga o INV-13", apagar), ("Sim, o inversor 13", apagar), ("Ok, o INV-14", apagar),
+                               ("Pode apagar o 13 e o 14", apagar), ("Apaga o do relé 52", acessos),
+                               ("Sim, o Michel", concluir), ("Bem...", fechar), ("Bom...", fechar), ("Hmm", fechar),
+                               ("🙏", fechar), ("🙏🏽", fechar)):
+        assert r(t, resumo, itens) == "duvida", t
+    for t, (resumo, itens) in (("Pode apagar", apagar), ("Pode apagar os 3", apagar), ("Apaga", acessos),
+                               ("Sim, o Michel e o Diogo", concluir), ("Pode concluir", concluir), ("Tá bom", fechar),
+                               ("Tudo bem", fechar), ("Muito bem, pode fechar", fechar), ("Sim, a 8873", fechar),
+                               ("Sim, com o Michel", ("Criar OS em UFV Ibitinga, programada com Michel Renan.", ()))):
+        assert r(t, resumo, itens) == "sim", t
+    assert h._pessoas_do_resumo("Criar OS em UFV Ibitinga com 1 tarefa(s), programada com Michel Renan.") == []
+
+
 async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):
     """"Sim, pode deixar" — começa como sim, mas não é um SIM limpo — DERRUBAVA a ação: o contrário do que a
     pessoa disse. Agora ela continua esperando, e o SISTEMA (não a IA) diz como confirmar, com os botões."""
@@ -2647,8 +2725,8 @@ async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, b
     assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]               # os do MESMO resumo
     # só a resposta CURTA é dúvida; a longa é outro assunto (derruba e vai à IA) — perguntar de novo
     # engoliria o pedido
-    resumo = h._texto_da_acao(h.PENDENTES[dono.id])
-    assert [h._resposta_ao_resumo(t, resumo) for t in ("Sim, pode deixar", "Ok, pode deixar comigo",
+    acao = h.PENDENTES[dono.id]
+    assert [h._resposta_ao_resumo(t, acao.resumo, acao.detalhes) for t in ("Sim, pode deixar", "Ok, pode deixar comigo",
             "Pode me mandar o relatório da Porto Ferreira", "Ok, e a geração de hoje")] == [
         "duvida", "duvida", "outra", "outra"]
     await assistente.atender(_toque(dono, 3))

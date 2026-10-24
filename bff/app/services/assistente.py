@@ -589,25 +589,39 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
                 {"role": "user", "content": f"{feito}.{pedido} Se o meu pedido tinha mais passos, proponha o "
                                             "próximo agora; se não tinha, responda só: Pronto."}]
-    db.commit()                                           # solta a conexão: o meuPlano leva até 2 min
-    try:
-        r = await _perguntar_ao_meuplano(mp, conversa)
-    except Exception:                                      # noqa: BLE001 — o feito já foi dito
-        log.warning("assistente: não seguiu para o próximo passo no meuPlano", exc_info=True)
-        return nao_seguiu("ele não respondeu")
-    if r.get("erro"):
-        return nao_seguiu(str(r["erro"]).rstrip(". "))
-    if r.get("type") == "proposal":
-        if p.acao is not None and (r.get("action") or "", r.get("args") or {}) == p.acao:
-            # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos argumentos):
-            # oferecer seria pedir à pessoa para fazê-lo duas vezes. É o fim do pedido (avaliação 16).
-            log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
+    feitos = (*p.feitos, feito.removeprefix("✅ Feito no meuPlano: "))
+    for tentativa in range(2):
+        db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
+        try:
+            r = await _perguntar_ao_meuplano(mp, conversa)
+        except Exception:                                  # noqa: BLE001 — o feito já foi dito
+            log.warning("assistente: não seguiu para o próximo passo no meuPlano", exc_info=True)
+            return nao_seguiu("ele não respondeu")
+        if r.get("erro"):
+            return nao_seguiu(str(r["erro"]).rstrip(". "))
+        if r.get("type") == "proposal":
+            if p.acao is not None and (r.get("action") or "", r.get("args") or {}) == p.acao:
+                # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos
+                # argumentos): oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16).
+                log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
+                return ""
+            ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
+            _proposta_do_meuplano(ctx, r, conversa, feitos=feitos)
+            return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
+        texto = (r.get("texto") or "").strip()
+        if not texto or (texto.lower().startswith("pronto") and len(texto) < 40):
             return ""
-        ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
-        _proposta_do_meuplano(ctx, r, conversa, feitos=(*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
-        return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
-    texto = (r.get("texto") or "").strip()
-    return "" if not texto or (texto.lower().startswith("pronto") and len(texto) < 40) else texto
+        # O próximo passo veio em TEXTO ("aqui está a proposta… confirmando os dois, eu fecho a 1638"):
+        # não há o que confirmar, e repassar a promessa deixou o pedido do dono parado no meio — a 1638
+        # não foi fechada (uso real de 24/10/2026, avaliação 19). Pede de novo, uma vez, pela ferramenta.
+        conversa = [*conversa, {"role": "assistant", "content": texto},
+                    {"role": "user", "content": "Não descreva em texto: chame AGORA a ferramenta do próximo passo "
+                                                "(um só), para eu confirmar com o botão. Se não há próximo passo, "
+                                                "responda só: Pronto."}]
+    de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
+    return (f"⚠️ O meuPlano respondeu o próximo passo só em texto, sem deixá-lo pronto para você confirmar — então "
+            f"nada está esperando o seu Sim e ele não foi feito. {de}, já foi feito: {'; '.join(feitos)}. Peça de "
+            f"novo o que faltar (o meuPlano disse: «{texto[:160]}»).")
 
 
 def _guardar(db: Session) -> None:
