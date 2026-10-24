@@ -2077,3 +2077,95 @@ def test_a_migracao_poe_em_erro_a_confirmacao_que_falhou(db):
     assert [(r.resultado, r.erro) for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
         ("erro", "❌ O meuPlano recusou: Erro ao aplicar a ação. Nada foi feito."),
         ("respondeu", None), ("respondeu", None)]
+
+
+# ── avaliação 14 (24/10/2026): "para" é parar, o "valeu" de antes do resumo, o toque depois do deploy ──
+
+
+class _MeuPlanoQueDemora(_MeuPlanoDoisPassos):
+    """O 2º passo só volta quando `segura` for liberado (o modelo de lá leva de 20 a 65 s)."""
+
+    def __init__(self, segura):
+        super().__init__()
+        self.segura = segura
+
+    async def assistente_run(self, token, run_id):
+        if run_id > 1:
+            await self.segura.wait()
+        return await super().assistente_run(token, run_id)
+
+
+async def test_mensagem_mandada_antes_do_resumo_nao_derruba_o_proximo_passo(db, bot_local, monkeypatch):
+    """O dono toca Sim, recebe o ✅ e, enquanto o bot busca o próximo passo, manda "valeu": o resumo
+    do passo 2 saía e o "valeu" — mandado ANTES dele existir — o derrubava logo em seguida."""
+    import asyncio
+
+    from app.services import assistente_helper as h
+
+    ceder = asyncio.sleep                                 # o de verdade: cede a vez ao turno da fila
+    segura = asyncio.Event()
+    falso = _MeuPlanoQueDemora(segura)
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    monkeypatch.setattr(assistente.asyncio, "sleep", lambda s: ceder(0))
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    sim = asyncio.create_task(assistente.atender(_toque(dono, 2)))
+    for _ in range(50):                                   # o ✅ saiu; o bot espera o meuPlano
+        await ceder(0)
+        if any((m or "").startswith("✅") for m in bot_local.enviados):
+            break
+    valeu = asyncio.create_task(assistente.atender(_ev(dono, 3, "valeu")))   # mandado agora
+    for _ in range(5):
+        await ceder(0)
+    segura.set()
+    await sim
+    await valeu
+    assert dono.id in h.PENDENTES and h.PENDENTES[dono.id].resumo == "Fechar a OS 1638"
+    assert not any("foi cancelada" in (m or "") for m in bot_local.enviados)
+    await assistente.atender(_toque(dono, 4))
+    assert falso.aplicadas == ["criar_ordem_servico", "fechar_os"]
+
+
+async def test_para_e_parar_e_os_sins_comuns_confirmam(db, bot_local, monkeypatch):
+    """"Ok, para tudo!" EXECUTAVA (o "para" tinha virado palavra neutra); "Tá bom", "Tudo certo",
+    "Pode mandar", "Exatamente", "Joia" e o 👍🏽 derrubavam a ação."""
+    from app.services import assistente_helper as h
+
+    for sim in ("Tá bom", "ta bom", "Tudo certo", "Tudo bem", "Pode mandar", "Vai lá", "Fechou", "Uhum",
+                "Sim sim", "Sim, é isso", "Exatamente", "Joia", "Com certeza", "👍🏽", "👍🏻"):
+        assert h.e_sim(sim), sim
+    for nao in ("Ok, para tudo!", "Beleza, para por aí", "Isso, para", "Pode fazer para mim", "Sim, mas espera",
+                "Ok, não"):
+        assert not h.e_sim(nao), nao
+    # A lista de neutras é fechada: palavra de PARAR nunca entra nela (foi assim que "para" entrou).
+    for parar in ("para", "pare", "parar", "não", "nao", "mas", "espera", "espere", "cancela", "calma", "pera"):
+        assert parar not in h._NEUTRAS, parar
+    for i, frase in enumerate(("Ok, para tudo!", "Tá bom"), start=1):
+        h.PENDENTES.clear()
+        falso = _MeuPlanoDoisPassos()
+        _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        dono = _conta(db, f"dono{i}", f"+5517997370{i:03d}")
+        await assistente.atender(_ev(dono, 10 * i, PEDIDO_DOIS_PASSOS))
+        await assistente.atender(_ev(dono, 10 * i + 1, frase))
+        assert falso.aplicadas == ([] if "para" in frase else ["criar_ordem_servico"]), frase
+
+
+async def test_o_toque_depois_do_deploy_e_o_nao_vencido_dizem_o_que_houve(db, bot_local, monkeypatch):
+    """Depois de um deploy (a ação esperando vive em memória), o Sim do ÚLTIMO resumo respondia
+    "Esse botão é de um resumo antigo"; e o Não de um resumo vencido ia à IA (o Sim dizia que venceu)."""
+    from time import monotonic
+
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
+    toque = _toque(dono, 2)
+    h.PENDENTES.clear()                                  # o deploy
+    await assistente.atender(toque)
+    assert bot_local.enviados[-1] == h.BOTAO_SEM_ACAO and falso.aplicadas == []
+    await assistente.atender(_ev(dono, 3, PEDIDO_DOIS_PASSOS))
+    h.PENDENTES[dono.id].expira = monotonic() - 1        # venceu
+    await assistente.atender(_toque(dono, 4, sim=False))
+    assert bot_local.enviados[-1].startswith("A ação esperava a sua resposta até as") and dono.id not in h.PENDENTES

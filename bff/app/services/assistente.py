@@ -705,17 +705,22 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
-        if evento.get("tipo") == "interactive" and helper.botao_antigo(user.id, evento.get("botao")):
-            # O Sim/Não de um resumo que não é o da ação de agora (o WhatsApp mantém os botões das
-            # mensagens antigas): não confirma, não cancela e não vai à IA (avaliação 13).
-            await _texto(telefone, helper.BOTAO_ANTIGO)
-            _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=helper.BOTAO_ANTIGO,
+        aviso_do_botao = (helper.resposta_ao_botao(user.id, evento.get("botao"))
+                          if evento.get("tipo") == "interactive" else None)
+        if aviso_do_botao is not None:
+            # O Sim/Não que não é do resumo de agora (antigo, vencido, ou a ação se perdeu num
+            # deploy): não confirma, não cancela e não vai à IA (avaliações 13 e 14).
+            await _texto(telefone, aviso_do_botao)
+            _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=aviso_do_botao,
                        ferramentas=["confirmacao"], inicio=inicio, em=enviada)
             return
         # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
         # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
+        # …a não ser que ela tenha saído do celular ANTES de o resumo chegar: o "valeu" mandado
+        # enquanto o bot buscava o próximo passo não é resposta a ele (avaliação 14).
         confirma = helper.e_sim(texto) and helper.espera_sim(user.id)
-        desarmada = None if tentativa or confirma else helper.desarmar(user.id)
+        antes = helper.mandada_antes_do_resumo(user.id, evento.get("_chegou"), enviada)
+        desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id)
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
         if not texto:

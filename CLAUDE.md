@@ -857,10 +857,14 @@ espera o SIM da pessoa (`Pendente.confirmacao = "sim"`, conferido pelo sistema, 
 depois de o resumo sair). O resumo vai com os botões **Sim / Não** (`botoes_sim_nao`; gateway
 sem botões → texto), cada um com o CÓDIGO do resumo no id ("sim:<código>", `Pendente.codigo`): o
 toque num resumo antigo — o WhatsApp mantém os botões — recebe "Esse botão é de um resumo antigo
-— nada foi feito" e não mexe na ação de agora (`helper.botao_antigo`; o gateway guarda o id em
-`wa_mensagens.botao`, migração `e2b4d6f8a0c1`). Confirma o toque, "sim" ou uma afirmativa curta
-("Sim, pode criar", "Pode sim", "De acordo", "tá certo", "👍") — pergunta nunca confirma, e "Sim,
-mas troque o técnico" é correção (`e_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
+— nada foi feito" e não mexe na ação de agora; sem ação esperando (venceu, ou o deploy apagou a
+memória), "Essa confirmação não vale mais…"; e o Não de um resumo vencido ouve que venceu, como o
+Sim (`helper.resposta_ao_botao`; o gateway guarda o id em `wa_mensagens.botao`, migração
+`e2b4d6f8a0c1`). Mensagem que saiu do celular ANTES de o resumo chegar (o "valeu" mandado enquanto
+o bot buscava o próximo passo) não derruba a ação (`helper.mandada_antes_do_resumo`). Confirma o toque, "sim" ou uma afirmativa curta
+("Sim, pode criar", "Pode sim", "De acordo", "tá certo", "Tudo certo", "👍", "👍🏽") — pergunta
+nunca confirma, "Sim, mas troque o técnico" é correção, e palavra de PARAR nunca entra na lista
+fechada de neutras ("Ok, para tudo!" executava — avaliação 14) (`e_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
 UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decidida antes de a ação
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —
 a senha não confirma ação do meuPlano. E confirmada o BFF chama o
@@ -874,7 +878,11 @@ ao meuPlano —, e próximo passo que não vem (erro ou demora de lá) vira "⚠
 meuPlano o resto do seu pedido…", com o log em erro (avaliação 13). O
 assistente de lá diz se as tarefas da OS estão feitas e a FECHA quando estão (`situacao_os`,
 `fechar_os`, meuPlano 93a19ea1; com tarefa pendente, a ficha se conclui por
-`registrar_execucao_tarefa` antes). **O meuPlano sabe QUEM pergunta pelo token** (meuPlano
+`registrar_execucao_tarefa` antes). **Lá, toda ferramenta do assistente confere o escopo de quem
+pede** (meuPlano 689768da, avaliação 14: uma pessoa de escopo restrito criava OS e relato numa
+usina de outra empresa): `escopo.assert_args_no_escopo` antes de toda ferramenta do chat e no
+apply, que também re-roda a prévia (a recusa sai em frase de gente); listar OS e pessoas não
+atravessam empresas. **O meuPlano sabe QUEM pergunta pelo token** (meuPlano
 0e06a465): o assistente de lá resolvia o solicitante só por JWT, o `mp_pat_` virava anônimo e
 anônimo enxerga TODAS as usinas de todas as empresas; agora valem o escopo, o nível e a
 audiência da pessoa, como na web (inclusive revelar senha de equipamento a quem tem nível para

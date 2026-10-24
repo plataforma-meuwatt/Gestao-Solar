@@ -346,17 +346,21 @@ def nova_senha(user_id: int) -> None:
 _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confirmado", "confirmada", "correto",
            "certo", "isso", "ok", "okay", "beleza", "blz", "positivo", "claro", "perfeito", "exato", "fechado",
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
-           "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo"}
-#: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "então pode").
-_ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e"}
+           "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "bom", "bem", "fechou",
+           "uhum", "aham", "exatamente", "joia", "jóia", "certeza"}
+#: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode").
+_ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com"}
+#: O resto da frase só pode ter palavra NEUTRA — lista fechada. Nunca "para" (preposição e o
+#: imperativo de PARAR: "Ok, para tudo!" executava — avaliação 14), "não", "mas", "espera".
 _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
                       "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "criar", "crie", "cria", "fechar",
                       "feche", "fecha", "concluir", "conclua", "seguir", "prosseguir", "ir", "ai", "aí", "agora",
                       "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo", "lançar",
                       "lancar", "lance", "lança", "lanca", "abrir", "abra", "abre", "registrar", "registre",
                       "registra", "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue",
-                      "pra", "para", "assim"}
-_SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗]+$")
+                      "pra", "assim", "mandar", "mande", "lá", "la", "é"}
+#: Só o gesto — com o tom de pele que muita gente deixa como padrão (👍🏽 cancelava, avaliação 14).
+_SO_OK = re.compile(r"^[\s👍✅👌🙏✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
 
 
 def e_sim(texto: str) -> bool:
@@ -408,14 +412,34 @@ def e_tentativa(user, texto: str) -> bool:
 
 #: O toque num botão de um resumo que não é o da ação esperando agora.
 BOTAO_ANTIGO = "Esse botão é de um resumo antigo — nada foi feito."
+#: O toque quando não há ação esperando nenhuma: venceu e saiu, ou o bot foi atualizado (a ação
+#: esperando vive em memória e se perde no deploy — avaliação 14: dizia "resumo antigo").
+BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot foi atualizado. Nada foi feito — "
+                  "se ainda quiser, peça de novo.")
 
 
-def botao_antigo(user_id: int, botao: str | None) -> bool:
-    """O botão tocado não é do resumo da ação esperando agora ("sim:<código>"/"nao:<código>"): o
-    WhatsApp mantém os botões das mensagens antigas. Sem o código (botão de antes desta versão)
-    também — não há como saber de qual resumo veio, e o resumo antigo não confirma o de agora."""
+def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
+    """O que o sistema responde ao toque no Sim/Não que NÃO confirma nem cancela a ação de agora;
+    `None` = é o botão do resumo esperando, e ele segue. O WhatsApp mantém os botões das mensagens
+    antigas, e o id leva o código do resumo ("sim:<código>"); sem o código (botão de antes desta
+    versão), não há como saber de qual resumo veio. O Não de um resumo vencido ouve que venceu,
+    como o Sim (ia à IA)."""
     p = PENDENTES.get(user_id)
-    return p is None or botao not in (f"sim:{p.codigo}", f"nao:{p.codigo}")
+    if p is None:
+        return BOTAO_SEM_ACAO
+    if botao not in (f"sim:{p.codigo}", f"nao:{p.codigo}"):
+        return BOTAO_ANTIGO
+    if monotonic() > p.expira:
+        PENDENTES.pop(user_id, None)
+        return VENCEU.format(limite=_limite(p))
+    return None
+
+
+def mandada_antes_do_resumo(user_id: int, chegou: float | None, mandada_em: datetime | None) -> bool:
+    """A mensagem saiu do celular antes de o resumo da ação de agora chegar ("valeu" mandado
+    enquanto o bot buscava o próximo passo): não é resposta a ele, e não o derruba (avaliação 14)."""
+    p = PENDENTES.get(user_id)
+    return p is not None and p.mostrada_em is not None and _antes_do_resumo(p, chegou, mandada_em)
 
 
 def espera_sim(user_id: int) -> bool:
