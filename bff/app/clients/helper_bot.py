@@ -20,11 +20,11 @@ import httpx
 class HelperBot:
     def __init__(self, base_url: str, chamador: str, chave: str, token: str) -> None:
         self.base_url = base_url.rstrip("/")
-        self._cabecalhos = {
-            "X-MW-Bot-Chamador": chamador,
-            "X-MW-Bot-Chave": chave,
-            "Authorization": f"Bearer {token}",
-        }
+        self._cabecalhos = {"X-MW-Bot-Chamador": chamador, "X-MW-Bot-Chave": chave}
+        if token:
+            # Sem token (a prova de vida do `ferramentas`), o cabeçalho não vai: "Bearer " vazio é
+            # cabeçalho inválido, e o httpx recusava a requisição inteira (500 na tela, 24/10/2026).
+            self._cabecalhos["Authorization"] = f"Bearer {token}"
 
     async def _post(self, caminho: str, corpo: dict[str, Any], espera_s: float = 120) -> dict[str, Any]:
         """Devolve o JSON do helper, inclusive nos erros (`{"ok": false, "reason", "error"}`):
@@ -40,6 +40,8 @@ class HelperBot:
         except httpx.TimeoutException:
             return {"ok": False, "incerto": True, "reason": "sem_resposta",
                     "error": f"O helper não respondeu em {int(espera_s)} s."}
+        except httpx.HTTPError as exc:                   # protocolo, rede no meio: nunca um 500 na tela
+            return {"ok": False, "incerto": True, "reason": "erro_de_rede", "error": f"Falha ao falar com o helper: {exc}"}
         try:
             dados = r.json()
         except ValueError:

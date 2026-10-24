@@ -359,7 +359,10 @@ async def saude_atual(db: Session) -> SaudeDoCanalOut:
     saida = await _saude_do_canal(db)
     from app.services import assistente_helper
 
-    saida.helper_alcancavel, saida.helper_resumo = await assistente_helper.alcancavel()
+    try:
+        saida.helper_alcancavel, saida.helper_resumo = await assistente_helper.alcancavel()
+    except Exception as exc:                               # noqa: BLE001 — o selo nunca derruba a tela
+        saida.helper_alcancavel, saida.helper_resumo = False, f"Não deu para conferir o helper: {exc}"
     return saida
 
 

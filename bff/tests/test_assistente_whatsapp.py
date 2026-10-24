@@ -847,17 +847,20 @@ async def test_ferramenta_nao_liberada_nao_roda_mesmo_que_a_ia_peca(db):
 
 
 async def test_o_selo_do_helper_sem_token_de_ninguem(monkeypatch):
+    """Com o cliente de verdade: "Authorization: Bearer " vazio derrubava a requisição (500)."""
+    import httpx
+    import respx
+
+    from app.core.config import get_settings
     from app.services import assistente_helper as h
 
-    monkeypatch.setattr(h, "configurado", lambda: True)
-    pedidos = []
-
-    class _Falso:
-        def __init__(self, url, chamador, chave, token):
-            pedidos.append(token)
-
-        async def ferramentas(self, espera_s=120):
-            return {"ok": True}
-
-    monkeypatch.setattr(h, "HelperBot", _Falso)
-    assert (await h.alcancavel())[0] is True and pedidos == [""]
+    s = get_settings()
+    monkeypatch.setattr(s, "helper_bot_url", "http://helper.test")
+    monkeypatch.setattr(s, "helper_bot_chave", "chave")
+    with respx.mock:
+        rota = respx.post("http://helper.test/api/bot/ferramentas").mock(return_value=httpx.Response(200, json={"ok": True}))
+        assert (await h.alcancavel())[0] is True
+        enviados = rota.calls.last.request.headers
+        assert "authorization" not in enviados and enviados["x-mw-bot-chave"] == "chave"
+        rota.mock(side_effect=httpx.ConnectError("fora"))
+        assert (await h.alcancavel())[0] is False
