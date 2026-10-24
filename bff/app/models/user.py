@@ -113,7 +113,7 @@ class User(Base):
     bot_meuwatt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_helper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     #: A senha que o bot pede antes de qualquer AÇÃO (ligar, desligar, gravar; criar OS) — só
-    #: números, 4 a 8, e nunca a de login. Sem ela, o bot só lê (`assistente_helper.propor`).
+    #: números, 6 a 8, e nunca a de login. Sem ela, o bot só lê (`assistente_helper.propor`).
     senha_atuacao_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def tem_token(self, produto: str) -> bool:

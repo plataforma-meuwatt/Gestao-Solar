@@ -392,7 +392,8 @@ async def test_sem_senha_de_atuacao_o_bot_so_le(db, helper_ligado):
 
 async def test_senha_errada_bloqueia_e_sem_acao_a_resposta_nao_entrega_a_senha(db, helper_ligado):
     """Sem ação esperando, senha certa e errada recebem a MESMA frase (senão mandar números até
-    a frase mudar descobriria a senha). Com ação esperando, 5 erros descartam e bloqueiam."""
+    a frase mudar descobriria a senha). TODA conferência que falha conta — a de antes da ação
+    também —, e 5 falhas descartam e bloqueiam."""
     from app.core.security import gerar_hash_senha
     from app.services import assistente_helper as h
 
@@ -407,7 +408,7 @@ async def test_senha_errada_bloqueia_e_sem_acao_a_resposta_nao_entrega_a_senha(d
         return ger.Contexto(db=db, user=dono, telefone=dono.telefone)
 
     await h.usina_helper(turno(), {"rota": "/api/act", "corpo": {"acao": "off"}})
-    for i in range(1, h.TENTATIVAS):
+    for i in range(2, h.TENTATIVAS):                    # a errada de cima já contou 1
         assert f"({i} de {h.TENTATIVAS})" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
     assert "bloqueadas" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "000111")
     await h.usina_helper(turno(), {"rota": "/api/act", "corpo": {"acao": "off"}})
@@ -967,3 +968,143 @@ def test_o_log_nao_guarda_o_segredo_que_o_meuplano_revelou():
 
     assert _sem_segredos("A senha do cadeado é ab12, e o PIN 4821.") == "A senha do cadeado é ••••, e o PIN ••••."
     assert _sem_segredos("[senha de atuação]") == "[senha de atuação]"
+
+
+# ── avaliação de 24/10/2026 (7ª): técnico, adivinhar a senha, bordas ──────────────────
+
+
+async def test_o_tecnico_usa_o_helper_nas_usinas_da_empresa(db, helper_com_get):
+    """O técnico não recebe usina no aplicativo; pelo bot, o recorte dele é a carteira da
+    empresa — senão geração e helper nunca respondiam, com a tela dizendo "Respondendo"."""
+    from app.models.plant import PlantLink
+    from app.models.user import Perfil
+    from app.services import assistente_helper as h
+
+    tec = _conta(db, "tec", "+5517997370001")
+    tec.perfil, tec.bot_helper = Perfil.TECNICO, True
+    db.add(PlantLink(nome="Pirapozinho", mw_plant_slug="pirapozinho", empresa_id=tec.empresa_id))
+    db.commit()
+    assert [p.mw_plant_slug for p in ger.usinas_do_bot(db, tec)] == ["pirapozinho"]
+    ctx = ger.Contexto(db=db, user=tec, telefone=tec.telefone)
+    r = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {"plant_id": "pirapozinho"}})
+    assert "erro" not in r
+
+
+async def test_palpites_em_frases_contam_e_bloqueiam(db, helper_com_get):
+    """36 palpites em 12 mensagens não contavam nenhum erro, e a senha certa executava depois."""
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    palpites = iter(range(100000, 100036))
+    respostas = [await h.confirmar_por_mensagem(db, dono, dono.telefone,
+                                                f"tenta {next(palpites)} {next(palpites)} {next(palpites)}")
+                 for _ in range(12)]
+    assert any("bloqueadas" in (r or "") for r in respostas)
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913") == h.BLOQUEADO
+    assert helper_com_get.confirmadas == []
+
+
+async def test_sem_acao_esperando_certa_e_errada_numa_frase_nao_vazam(db, bot_local, helper_com_get, monkeypatch):
+    """ "a 482913" recebia a frase fixa e "a 482914" ia à IA — a diferença entregava o acerto
+    sem contar erro, e o número errado (um dígito de diferença) ia à IA e ao histórico."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp
+    from app.services import assistente_helper as h
+
+    async def _nada(*a, **k):
+        return None
+
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _dono_com_usina(db)
+    await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482913"})
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482914"})
+    assert bot_local.enviados[0] == h.NADA_ESPERANDO
+    assert bot_local.llm == [f"a {h.OCULTO}"] and bot_local.ocultadas == [1, 2]
+    conversa = db.query(ConversaWhatsapp).one().mensagens
+    assert "48291" not in conversa and h._ERROS[dono.id][0] == 1
+
+
+async def test_a_conferencia_da_senha_sai_do_laco_da_api(db, monkeypatch):
+    """O pbkdf2 leva ~0,45 s: dentro do laço assíncrono, travava a API inteira."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    em_thread = []
+    original = h.asyncio.to_thread
+
+    async def _to_thread(fn, *a):
+        em_thread.append(fn.__name__)
+        return await original(fn, *a)
+
+    monkeypatch.setattr(h.asyncio, "to_thread", _to_thread)
+    assert (await h.analisar(dono, "senha 482913")).acertou and em_thread == ["conferir_senha"]
+
+
+async def test_a_senha_some_do_gateway_ate_nos_caminhos_que_saem_cedo(db, bot_local):
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.security import gerar_hash_senha
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    velha = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    await assistente.atender({"id": 5, "telefone": dono.telefone, "wa_id": "1", "tipo": "text",
+                              "texto": "pode ligar, senha 482913", "ocorrida_em": velha})
+    assert bot_local.ocultadas == [5] and bot_local.enviados == []
+    linha = db.query(RegistroBot).one()
+    assert linha.resultado == "atrasada" and "482913" not in linha.pergunta and h.OCULTO in linha.pergunta
+
+
+async def test_parte_desligada_no_meio_nao_executa(db, helper_com_get):
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    await _armar(db, dono)
+    dono.bot_helper = False                                # o gerente desligou o helper dela
+    db.commit()
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913") == h.PARTE_DESLIGADA
+    assert helper_com_get.confirmadas == []
+
+
+async def test_o_bloco_diz_a_hora_limite(db, helper_com_get):
+    from app.services import assistente_helper as h
+
+    dono = _dono_com_usina(db)
+    ctx = await _armar(db, dono)
+    bloco = h.bloco_da_proposta(ctx.proposta)
+    assert "responda só com a senha até as" in bloco and "em até" not in bloco
+
+
+async def test_o_selo_fica_vermelho_sem_contato_com_a_vpn(monkeypatch):
+    from app.services import assistente_helper as h
+
+    monkeypatch.setattr(h, "configurado", lambda: True)
+    respostas = iter([{"ok": True, "vpn_ultimo_contato_s": None}, {"ok": False}])
+
+    class _Falso:
+        def __init__(self, *a):
+            pass
+
+        async def ferramentas(self, espera_s=120):
+            return {"ok": True}
+
+        async def rede(self):
+            return next(respostas)
+
+    monkeypatch.setattr(h, "HelperBot", _Falso)
+    assert (await h.alcancavel()) == (False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato.")
+    assert (await h.alcancavel())[0] is False
+
+
+def test_leitura_sem_usina_nomeada_vem_so_com_as_liberadas():
+    from app.services.assistente_helper import _so_liberadas
+
+    feed = {"ok": True, "alarmes": [{"plant_id": "pirapozinho", "msg": "trip"}, {"plant_id": "de-outro", "msg": "x"},
+                                    {"msg": "sem usina"}]}
+    assert _so_liberadas(feed, {"pirapozinho"})["alarmes"] == [{"plant_id": "pirapozinho", "msg": "trip"},
+                                                               {"msg": "sem usina"}]

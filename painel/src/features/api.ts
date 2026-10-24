@@ -446,6 +446,8 @@ export type UsinaDaPlataforma = {
   kwp: number | null
   tem_meuwatt: boolean
   tem_meuplano: boolean
+  /** Só no portal do fabricante (MICRO do meuWatt). */
+  tem_micro?: boolean
   dono_id: number | null
   dono_nome: string | null
   empresa_id: number | null

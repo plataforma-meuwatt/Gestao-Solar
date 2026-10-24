@@ -790,10 +790,16 @@ leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter ch
 `usina_helper` tem `metodo` (GET é leitura no helper: `/api/devices`, `/api/healthcheck/state?id=`
 — POST ali virava "escrita", pedia senha e dava 404) e respeita o recorte de usinas do GS
 (`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. Com ação esperando, a senha
-escrita numa frase também é tentativa. **Desde a 6ª avaliação:** todo número de 4–8 dígitos
-de qualquer mensagem é conferido contra o hash (até 3 por mensagem; ~0,45 s cada) — sendo a
-senha, nunca vai à IA, ao log, ao histórico nem ao gateway, haja ação esperando ou não; sem
-ação esperando, a resposta é a mesma para senha certa e errada (sem oráculo). Qualquer outra
+escrita numa frase também é tentativa. **Desde a 7ª avaliação:** todo número de 6 a 8 dígitos
+de quem tem senha é CANDIDATO (`assistente_helper.analisar`, conferido fora do laço da API com
+`to_thread`, até 3 por mensagem): certo ou errado, vira "[número oculto]" para a IA, o
+histórico e o log, e a mensagem some do gateway — em todos os caminhos, inclusive os que saem
+cedo. TODA conferência que falha conta (número sozinho ou em frase, com ou sem ação esperando);
+5 falhas em 15 min bloqueiam, e durante o bloqueio nenhuma mensagem com candidato é processada
+(nem conferida: sem oráculo). Na hora da senha, a parte do bot da ação é conferida de novo. O
+bloco diz a hora-limite ("até as 14:32"). O recorte de usinas do bot é `usinas_do_bot`: o do
+aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
+nomeia a usina é filtrada por ele. Qualquer outra
 mensagem DESARMA a ação ("não/cancela" respondem "Cancelado" pelo sistema). UMA ação por mensagem,
 e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:

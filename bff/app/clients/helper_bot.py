@@ -34,7 +34,7 @@ class HelperBot:
         (`incerto`): numa confirmação, dizer "falhou" convidaria a mandar de novo."""
         try:
             async with httpx.AsyncClient(timeout=espera_s) as c:
-                r = await c.post(f"{self.base_url}/api/bot/{caminho}", headers=self._cabecalhos, json=corpo)
+                r = await c.post(f"{self.base_url}{caminho}", headers=self._cabecalhos, json=corpo)
         except httpx.ConnectError:
             return {"ok": False, "reason": "helper_fora", "error": "O helper não respondeu (túnel ou serviço fora do ar)."}
         except httpx.TimeoutException:
@@ -50,20 +50,20 @@ class HelperBot:
 
     async def ferramentas(self, espera_s: float = 120) -> dict[str, Any]:
         """O catálogo — e a prova de vida: só pede a chave do chamador, não o token de ninguém."""
-        return await self._post("ferramentas", {}, espera_s=espera_s)
+        return await self._post("/api/bot/ferramentas", {}, espera_s=espera_s)
 
     async def rede(self) -> dict[str, Any]:
         """Há quantos segundos a VPN por onde o Modbus sai até as usinas teve contato
         (`vpn_ultimo_contato_s`). Respondida pelo filtro do túnel no srvclaude, sem token."""
-        return await self._post("rede", {}, espera_s=6)
+        return await self._post("/api/bot/rede", {}, espera_s=6)
 
     async def chamar(self, rota: str, corpo: dict[str, Any], origem: str, metodo: str = "POST") -> dict[str, Any]:
-        return await self._post("chamar", {"rota": rota, "metodo": metodo, "corpo": corpo, "origem": origem})
+        return await self._post("/api/bot/chamar", {"rota": rota, "metodo": metodo, "corpo": corpo, "origem": origem})
 
     async def confirmar(self, proposta: str, confirmado_por: str, origem: str) -> dict[str, Any]:
         """O ajuste em massa (2.26.0) espera o lote inteiro até ~150 s, e o filtro do túnel corta
         em 200 s: espera 190 s."""
         return await self._post(
-            "confirmar", {"proposta": proposta, "confirmado_por": confirmado_por, "origem": origem},
+            "/api/bot/confirmar", {"proposta": proposta, "confirmado_por": confirmado_por, "origem": origem},
             espera_s=190,
         )

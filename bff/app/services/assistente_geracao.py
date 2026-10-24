@@ -68,15 +68,35 @@ _USINAS_MW: dict[int, tuple[float, list[dict]]] = {}
 USINAS_MW_TTL_S = 300
 
 
+def usinas_do_bot(db: Session, user) -> list:
+    """O recorte de usinas do BOT: o do aplicativo (gerente: a carteira da empresa; dono: o
+    concedido) e, para o TÉCNICO — que não recebe usina no aplicativo —, a carteira da empresa
+    dele. É ele quem vai a campo, e o helper é a ferramenta dele: sem isso, geração e helper
+    nunca respondiam a técnico, com a tela dizendo "Respondendo" (avaliação de 24/10/2026). O
+    token do meuWatt DELE continua limitando o que ele enxerga lá."""
+    from sqlalchemy import select
+
+    from app.api.v1.plants import usinas_do_usuario
+    from app.models.plant import PlantLink
+    from app.models.user import Perfil
+    from app.services import empresas
+
+    if user.perfil is Perfil.TECNICO:
+        minhas = empresas.empresas_da_conta(db, user)
+        return list(db.scalars(
+            select(PlantLink).where(PlantLink.empresa_id.in_(minhas), PlantLink.ativo).order_by(PlantLink.nome)
+        ).all()) if minhas else []
+    return usinas_do_usuario(db, user)
+
+
 async def preparar(ctx: Contexto) -> None:
     """Liga o contexto ao meuWatt: o token PRÓPRIO da pessoa e o recorte de usinas do GS
     (gerente: a carteira da empresa; cliente: o concedido) — vale o que os dois deixam ver.
     O administrador da plataforma não usa o bot: não tem token (decisão do dono, 23/10/2026)."""
-    from app.api.v1.plants import usinas_do_usuario
     from app.services.vinculos import SemConexao, cliente_meuwatt
     if "bot_meuwatt" not in ctx.user.bot_ativo:
         return
-    concedidas = {p.mw_plant_slug: p for p in usinas_do_usuario(ctx.db, ctx.user) if p.mw_plant_slug}
+    concedidas = {p.mw_plant_slug: p for p in usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug}
     if not concedidas:
         return
     try:

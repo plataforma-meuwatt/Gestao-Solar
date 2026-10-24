@@ -116,7 +116,7 @@ function CaixasDoBot({
   ]
   return (
     <div>
-      <p className="rotulo-campo">O assistente do WhatsApp responde a esta pessoa sobre</p>
+      <p className="rotulo-campo">O bot do WhatsApp responde a esta pessoa sobre</p>
       <div className="flex gap-4 flex-wrap mt-1.5">
         {PARTES_DO_BOT.map((b) => (
           <label key={b.campo} className="flex items-center gap-1.5 text-sm text-corpo">
@@ -133,7 +133,7 @@ function CaixasDoBot({
       {!temCelular ? <p className="text-xs text-fraco mt-1">Cadastre o celular para liberar.</p> : null}
       {faltam.length ? (
         <p className="text-xs text-fraco mt-1">
-          O assistente só responde com o token da própria pessoa. Falta o do{' '}
+          O bot só responde com o token da própria pessoa. Falta o do{' '}
           {faltam.map((p) => NOME_DO_PRODUTO[p]).join(' e do ')} (botão Token).
         </p>
       ) : null}
@@ -193,7 +193,7 @@ function Linha({
               <span className="flex items-center gap-1.5">
                 <MessageCircle size={14} />
                 {usuario.telefone
-                  ? `${usuario.telefone} · assistente: ${textoDoBot(
+                  ? `${usuario.telefone} · bot: ${textoDoBot(
                       PARTES_DO_BOT.filter((p) => usuario[p.campo]).map((p) => p.campo),
                       usuario.produtos,
                       true,
@@ -435,7 +435,15 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
               <p className="text-sm text-corpo">
                 Ligado a <b>{ligadoA}</b> no meuPlano — nome, e-mail e celular valem nos dois.
               </p>
-              <button className="btn-fantasma" disabled={desligar.isPending} onClick={() => desligar.mutate()}>
+              <button
+                className="btn-fantasma"
+                disabled={desligar.isPending}
+                onClick={() =>
+                  window.confirm(
+                    `Desligar o cadastro de ${usuario.nome} do meuPlano? Nome, e-mail e celular deixam de valer nos dois — cada lado fica com o seu. Dá para ligar de novo.`,
+                  ) && desligar.mutate()
+                }
+              >
                 Desligar
               </button>
             </div>
@@ -463,7 +471,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
           <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} />
           <Campo rotulo="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Campo
-            rotulo="Celular (o assistente reconhece a pessoa por ele)"
+            rotulo="Celular (o bot reconhece a pessoa por ele)"
             type="tel"
             placeholder="(16) 99999-8888"
             value={telefone}
@@ -891,7 +899,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <input className="campo mt-1" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
-          <p className="rotulo-campo">Celular (opcional — o assistente do WhatsApp reconhece por ele)</p>
+          <p className="rotulo-campo">Celular (opcional — o bot do WhatsApp reconhece por ele)</p>
           <input
             className="campo mt-1"
             type="tel"

@@ -108,7 +108,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
 
 #: Quantas mensagens da conversa vão ao meuPlano junto com a pergunta.
 HISTORICO_MEUPLANO = 8
-#: Quanto vale a proposta do meuPlano esperando o CONFIRMO (é para ler o resumo com calma).
+#: Quanto vale a proposta do meuPlano esperando a senha de atuação (é para ler o resumo com calma).
 PRAZO_PROPOSTA_MP_S = 600
 
 
@@ -126,7 +126,7 @@ def _o_que_nasceu(dados: Any) -> str:
 
 def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
     """Ação do assistente do meuPlano (criar OS, lançar o dia, lembrete…) volta como PROPOSTA:
-    nada foi gravado lá. Vira o mesmo CONFIRMO <código> do helper; confirmada pela pessoa, o
+    nada foi gravado lá. Espera a mesma SENHA DE ATUAÇÃO do helper; confirmada pela pessoa, o
     Gestão Solar chama o `/assistant/apply` de lá com o token DELA — é o "Confirmar" da web,
     e o meuPlano revalida os argumentos e a permissão."""
     from app.services.integracoes import detalhe_do_upstream
@@ -151,7 +151,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
         return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"))
 
     detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
-    proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [])
+    proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
+                             parte="bot_meuplano")
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
@@ -405,11 +406,15 @@ async def _atender(evento: dict) -> None:
     ctx: ger.Contexto | None = None
     try:
         user = conta_do_telefone(db, telefone)
-        # A senha conferida UMA vez (pbkdf2 custa ~0,45 s por número): em qualquer frase, com ou
-        # sem ação esperando, ela não vai à IA, ao log, ao histórico nem ao gateway.
-        tem_senha = helper.contem_a_senha(user, texto) if user is not None else False
-        if tem_senha:
-            pergunta = helper.OCULTA
+        # A senha, conferida UMA vez e fora do laço da API: todo número de 6 a 8 dígitos de
+        # quem tem senha de atuação é candidato — certo ou errado, não vai à IA, ao log, ao
+        # histórico nem ao gateway, em nenhum caminho (nem nos que saem logo abaixo).
+        analise = await helper.analisar(user, texto)
+        seguro = texto
+        if analise.candidatos:
+            seguro = helper.mascarar(texto)
+            pergunta = seguro
+            await _ocultar_no_gateway(evento.get("id"))
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
@@ -454,15 +459,14 @@ async def _atender(evento: dict) -> None:
             _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio, em=enviada)
             return
         historico = json.loads(conv.mensagens or "[]")
-        historico.append({"role": "user", "content": texto})
+        historico.append({"role": "user", "content": seguro})
         # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
         esperava = helper.PENDENTES.get(user.id) is not None
-        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, tem_senha=tem_senha)
-        if resposta is not None and (tem_senha or helper.SENHA.match(texto)):
+        resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise)
+        if resposta is not None and (analise.candidatos or helper.SENHA.match(texto)):
             historico[-1]["content"] = helper.OCULTA
-            await _ocultar_no_gateway(evento.get("id"))
         elif resposta is None:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=historico[:-1])
             await ger.preparar(ctx)

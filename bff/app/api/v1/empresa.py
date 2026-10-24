@@ -1485,7 +1485,7 @@ class ContaPatch(BaseModel):
     bot_meuplano: bool | None = None
     bot_meuwatt: bool | None = None
     bot_helper: bool | None = None
-    #: A SENHA DE ATUAÇÃO (4 a 8 números) que o bot pede antes de ligar, desligar, gravar ou
+    #: A SENHA DE ATUAÇÃO (6 a 8 números) que o bot pede antes de ligar, desligar, gravar ou
     #: criar. O gerente define e entrega à pessoa, como a senha provisória.
     senha_atuacao: str | None = None
 

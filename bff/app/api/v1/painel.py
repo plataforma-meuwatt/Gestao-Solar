@@ -266,6 +266,8 @@ class UsinaOut(BaseModel):
     kwp: float | None = None
     tem_meuwatt: bool
     tem_meuplano: bool
+    #: Monitorada só pelo portal do fabricante (MICRO do meuWatt).
+    tem_micro: bool = False
     dono_id: int | None = None
     dono_nome: str | None = None
     #: A empresa de O&M dona da usina — nula é usina de antes do multiempresa, de ninguém.
@@ -307,6 +309,7 @@ def listar_usinas(
                 kwp=link.kwp,
                 tem_meuwatt=link.tem_meuwatt,
                 tem_meuplano=link.tem_meuplano,
+                tem_micro=link.mw_micro_plant_id is not None,
                 dono_id=dono[0] if dono else None,
                 dono_nome=dono[1] if dono else None,
                 empresa_id=link.empresa_id,

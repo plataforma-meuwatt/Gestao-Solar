@@ -17,6 +17,7 @@ O mesmo `propor` serve à proposta do assistente do meuPlano (criar OS, lançar 
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -29,9 +30,15 @@ from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
 #: A mensagem INTEIRA é uma tentativa de senha: só o número, ou "senha 482913", "confirmo 482913".
-SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{4,8})\s*[.!]?\s*$", re.IGNORECASE)
+SENHA = re.compile(r"^\s*(?:confirmo|senha)?\s*[:\-]?\s*(\d{6,8})\s*[.!]?\s*$", re.IGNORECASE)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha)\b", re.IGNORECASE)
-#: Um número de 4 a 8 dígitos em qualquer ponto da mensagem.
+#: CANDIDATO a senha: número de 6 a 8 dígitos solto em qualquer ponto da mensagem (a senha tem
+#: 6 a 8). "OS 1639" e "2025" não são candidatos e seguem para a conversa como sempre.
+CANDIDATO = re.compile(r"(?<!\d)(\d{6,8})(?!\d)")
+#: O que a IA, o histórico e o log veem no lugar de um candidato (certo OU errado: um dígito
+#: errado entregaria os outros cinco).
+OCULTO = "[número oculto]"
+#: Para a pessoa SEM cadastro (a conta não foi conferida): mensagem que pode ser senha.
 NUMERO = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
 FRASE_CURTA = 80
 #: Números conferidos por mensagem: cada conferência custa ~0,45 s (pbkdf2, 600 mil voltas).
@@ -49,7 +56,9 @@ SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot só lê.
 #: até a frase mudar descobriria a senha.
 NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — se era "
                   "outra coisa, escreva com palavras.")
-BLOQUEADO = "Ações bloqueadas por senha errada. Tente de novo mais tarde. Nada foi feito."
+BLOQUEADO = ("Ações bloqueadas por senha errada: por 15 minutos, mensagem com número de 6 a 8 dígitos não "
+             "é processada. Nada foi feito.")
+PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 
 
@@ -62,16 +71,66 @@ class Pendente:
     prazo_s: int = 120
     detalhes: list[str] = field(default_factory=list)
     avisos: list[str] = field(default_factory=list)
+    #: A parte do bot que a ação usa (`bot_helper`, `bot_meuplano`): conferida de novo na
+    #: hora da senha — o gerente pode desligá-la no meio.
+    parte: str = "bot_helper"
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
 #: ponytail: em memória, um processo só (o uvicorn da API roda com um worker); com mais de
 #: um, isto vai para o banco. A proposta vale minutos: perder no deploy é aceitável.
 PENDENTES: dict[int, Pendente] = {}
-#: Senha errada seguida por conta, e até quando as ações estão bloqueadas. Em memória: um
-#: reinício zera — e ainda é preciso o celular da pessoa para cada tentativa.
-_ERROS: dict[int, int] = {}
+#: Conferências que falharam por conta (quantas, desde quando), e até quando as ações estão
+#: bloqueadas. Em memória: um reinício zera — e cada tentativa ainda exige o celular da pessoa.
+_ERROS: dict[int, tuple[int, float]] = {}
 _BLOQUEIO: dict[int, float] = {}
+
+
+@dataclass
+class Analise:
+    """O que a mensagem tem de senha, conferido UMA vez por mensagem."""
+
+    candidatos: list[str] = field(default_factory=list)
+    acertou: bool = False
+    falhas: int = 0
+    bloqueada: bool = False
+
+
+async def analisar(user, texto: str) -> Analise:
+    """Confere os candidatos da mensagem contra a senha desta pessoa — fora do laço da API
+    (`to_thread`: o pbkdf2 leva ~0,45 s e travava o processo inteiro). Durante o bloqueio,
+    nem confere: a resposta é a mesma para qualquer candidato (sem oráculo)."""
+    if user is None or not user.senha_atuacao_hash:
+        return Analise()
+    candidatos = list(dict.fromkeys(CANDIDATO.findall(texto or "")))
+    if not candidatos:
+        return Analise()
+    if monotonic() < _BLOQUEIO.get(user.id, 0):
+        return Analise(candidatos, bloqueada=True)
+    for n in candidatos[:MAX_CONFERIDOS]:
+        if await asyncio.to_thread(conferir_senha, n, user.senha_atuacao_hash):
+            return Analise(candidatos, acertou=True)
+    return Analise(candidatos, falhas=len(candidatos[:MAX_CONFERIDOS]))
+
+
+def mascarar(texto: str) -> str:
+    return CANDIDATO.sub(OCULTO, texto or "")
+
+
+def _contar_falhas(user_id: int, falhas: int) -> int:
+    """Toda conferência que falha conta — número sozinho ou numa frase, com ou sem ação
+    esperando. Zera depois de `BLOQUEIO_S` sem erro. Devolve o total; no limite, bloqueia."""
+    total, desde = _ERROS.get(user_id, (0, monotonic()))
+    if monotonic() - desde > BLOQUEIO_S:
+        total, desde = 0, monotonic()
+    total += falhas
+    if total >= TENTATIVAS:
+        _ERROS.pop(user_id, None)
+        PENDENTES.pop(user_id, None)
+        _BLOQUEIO[user_id] = monotonic() + BLOQUEIO_S
+    else:
+        _ERROS[user_id] = (total, desde)
+    return total
 
 
 def parece_senha(texto: str) -> bool:
@@ -79,17 +138,6 @@ def parece_senha(texto: str) -> bool:
     (número sem cadastro, erro no meio): nunca vai em claro ao log."""
     texto = texto or ""
     return SENHA.match(texto) is not None or (len(texto) <= FRASE_CURTA and len(NUMERO.findall(texto)) == 1)
-
-
-def contem_a_senha(user, texto: str) -> bool:
-    """Algum número de 4 a 8 dígitos da mensagem É a senha de atuação desta pessoa — em
-    qualquer frase, com ou sem ação esperando ("sim, pode fazer. senha 482913 ok", ou depois
-    que o pedido venceu). Uma mensagem assim nunca vai à IA, ao log, ao histórico nem ao
-    gateway (avaliação de 24/10/2026)."""
-    if not user.senha_atuacao_hash:
-        return False
-    numeros = list(dict.fromkeys(NUMERO.findall(texto or "")))[:MAX_CONFERIDOS]
-    return any(conferir_senha(n, user.senha_atuacao_hash) for n in numeros)
 
 
 def validar_senha_atuacao(senha: str) -> str:
@@ -111,7 +159,7 @@ def nova_senha(user_id: int) -> None:
     _BLOQUEIO.pop(user_id, None)
 
 
-def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=()) -> dict:
+def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper") -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
 
     - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
@@ -128,7 +176,8 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=()) -> 
                               "(Bot do WhatsApp). Leitura continua liberada.")}
     if ctx.proposta is not None:
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
-    p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a])
+    p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
+                 parte)
     PENDENTES[user.id] = ctx.proposta = p
     return {
         "proposta_pendente": resumo,
@@ -144,8 +193,14 @@ def bloco_da_proposta(p: Pendente) -> str:
     linhas = ["🔒 *Ação esperando a sua senha de atuação*", f"• {p.resumo}"]
     linhas += [f"  – {d}" for d in p.detalhes]
     linhas += [f"⚠️ {a}" for a in p.avisos]
-    linhas.append(f"Para executar, responda só com a senha em até {max(1, p.prazo_s // 60)} min. "
-                  "Qualquer outra mensagem cancela.")
+    # A hora-limite, e não "em até 2 min": o prazo corre desde a proposta, e a IA leva de 17 a
+    # 65 s para responder.
+    from datetime import datetime, timedelta
+
+    from app.core.datas import BRT
+
+    limite = datetime.now(BRT) + timedelta(seconds=max(0.0, p.expira - monotonic()))
+    linhas.append(f"Para executar, responda só com a senha até as {limite:%H:%M}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
 
 _catalogo: tuple[float, dict[str, Any]] | None = None
@@ -168,9 +223,12 @@ async def alcancavel() -> tuple[bool | None, str]:
         return False, f"Helper fora do alcance do bot: {d.get('error') or d.get('reason') or 'sem resposta'}"
     # O túnel responder não prova que as USINAS respondem: o Modbus sai pela VPN do servidor do
     # helper, e ela ficou 11 h sem contato em 24/10/2026 com este selo verde.
-    idade = (await bot.rede()).get("vpn_ultimo_contato_s")
+    rede = await bot.rede()
+    idade = rede.get("vpn_ultimo_contato_s")
+    if not rede.get("ok"):
+        return False, "Helper responde, mas não deu para conferir a rede até as usinas (VPN)."
     if idade is None:
-        return True, "Helper responde; a rede até as usinas não pôde ser conferida."
+        return False, "Helper responde, mas a rede até as usinas (VPN) nunca fez contato."
     if idade > VPN_PARADA_S:
         return False, (f"Helper responde, mas a rede até as usinas (VPN) está sem contato há {_duracao(idade)}: "
                        "leitura e comando de equipamento não chegam lá.")
@@ -238,6 +296,28 @@ async def usina_helper_catalogo(ctx: ger.Contexto, a: dict) -> dict:
     return _catalogo[1]
 
 
+#: Campos que trazem o SLUG da usina num item de resposta do helper (o `plant_id` dele é o
+#: slug). Nome de exibição não entra: "Pirapozinho" não é "pirapozinho" e o item sumiria.
+_CAMPOS_DE_USINA = ("api_slug", "slug", "plant_id")
+
+
+def _so_liberadas(dados: Any, liberadas: set[str]) -> Any:
+    """Tira das listas os itens de usina fora do recorte (o item que diz a usina num campo de
+    texto que não está em `liberadas`). O resto da resposta fica como veio."""
+    if isinstance(dados, dict):
+        return {k: _so_liberadas(v, liberadas) for k, v in dados.items()}
+    if isinstance(dados, list):
+        saida = []
+        for item in dados:
+            if isinstance(item, dict) and any(
+                isinstance(item.get(c), str) and item[c] and item[c] not in liberadas for c in _CAMPOS_DE_USINA
+            ):
+                continue
+            saida.append(_so_liberadas(item, liberadas))
+        return saida
+    return dados
+
+
 def _usinas_pedidas(rota: str, corpo: dict) -> set[str]:
     """As usinas que o pedido toca (`slug`, `plant_id`, `slugs`, e o mesmo na query do GET)."""
     from urllib.parse import parse_qs, urlsplit
@@ -259,9 +339,7 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     metodo = "GET" if str(a.get("metodo") or "").upper() == "GET" else "POST"
     # O recorte do Gestão Solar vale aqui também: o token do meuWatt pode enxergar mais usinas
     # do que o gerente (ou o dono) liberou para esta conta.
-    from app.api.v1.plants import usinas_do_usuario
-
-    liberadas = {p.mw_plant_slug for p in usinas_do_usuario(ctx.db, ctx.user) if p.mw_plant_slug}
+    liberadas = {p.mw_plant_slug for p in ger.usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug}
     fora = _usinas_pedidas(rota, corpo) - liberadas
     if fora:
         return {"erro": f"Usina não liberada para você no Gestão Solar: {', '.join(sorted(fora))}."}
@@ -275,10 +353,10 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):
         return {"erro": d.get("error") or d.get("reason") or "O helper recusou.", "motivo": d.get("reason")}
-    if d.get("tipo") == "leitura" and rota.split("?")[0] == "/api/registry/plants":
-        resposta = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
-        resposta["plants"] = [p for p in resposta.get("plants") or []
-                              if isinstance(p, dict) and p.get("api_slug") in liberadas]
+    if d.get("tipo") == "leitura":
+        # Leitura que não nomeia a usina (`/api/alarms/feed`, a lista de usinas…) volta com o
+        # que o TOKEN enxerga: os itens de usina fora do recorte do Gestão Solar saem aqui.
+        d["resposta"] = _so_liberadas(d.get("resposta"), liberadas)
     if d.get("tipo") == "proposta":
         proposta, resumo = d["proposta"], d.get("resumo") or rota
 
@@ -357,44 +435,41 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
     return " · ".join(pares)
 
 
-async def confirmar_por_mensagem(db, user, telefone: str, texto: str, *,
-                                 tem_senha: bool | None = None) -> str | None:
+async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: Analise | None = None) -> str | None:
     """A SENHA DE ATUAÇÃO → executa a ação esperando desta pessoa. `None` = a mensagem não é
-    senha e segue para a conversa. Quem chama tira do log, do histórico e do gateway toda
-    mensagem tratada aqui (`tem_senha` poupa conferir o hash duas vezes).
+    senha e segue para a conversa (com os candidatos já mascarados por quem chama).
 
-    - Senha em qualquer frase, com ou sem ação esperando: nunca vai adiante.
-    - Sem ação esperando, senha certa e errada recebem a MESMA frase.
-    - Com ação esperando, só a mensagem que É uma tentativa ("482913", "senha 482913") conta
-      erro; `TENTATIVAS` erros descartam o pedido e bloqueiam as ações por `BLOQUEIO_S`.
-    - Qualquer outra mensagem DESARMA a ação esperando; "não"/"cancela" respondem aqui mesmo
-      (a IA dizia "cancelado" com a ação armada)."""
+    - Bloqueada: qualquer mensagem com candidato recebe `BLOQUEADO`, certo ou errado.
+    - Senha certa (em qualquer frase): executa a ação esperando — se a parte do bot ainda
+      estiver ligada —, ou `NADA_ESPERANDO`.
+    - Toda conferência que falha conta; `TENTATIVAS` falhas bloqueiam por `BLOQUEIO_S`.
+      Mensagem que é só o número recebe a mesma frase sem ação esperando, certa ou errada.
+    - Qualquer outra mensagem DESARMA a ação esperando; "não"/"cancela" respondem aqui."""
     texto = texto or ""
+    analise = analise or await analisar(user, texto)
     pendente = PENDENTES.get(user.id)
     if pendente is not None and monotonic() > pendente.expira:
         PENDENTES.pop(user.id, None)
         pendente = None
-    if tem_senha is None:
-        tem_senha = contem_a_senha(user, texto)
-    tentativa = SENHA.match(texto) is not None
-    if tem_senha or (tentativa and user.senha_atuacao_hash):
+    pura = SENHA.match(texto) is not None
+    if analise.bloqueada:
+        return BLOQUEADO
+    if analise.acertou:
         if pendente is None:
             return NADA_ESPERANDO
-        if monotonic() < _BLOQUEIO.get(user.id, 0):
-            return BLOQUEADO
-        if not tem_senha:
-            erros = _ERROS[user.id] = _ERROS.get(user.id, 0) + 1
-            if erros < TENTATIVAS:
-                return f"Senha não confere ({erros} de {TENTATIVAS}). Nada foi feito."
-            _ERROS.pop(user.id, None)
-            PENDENTES.pop(user.id, None)
-            _BLOQUEIO[user.id] = monotonic() + BLOQUEIO_S
+        PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
+        _ERROS.pop(user.id, None)
+        if pendente.parte not in user.bot_ativo:
+            return PARTE_DESLIGADA
+        return await pendente.executar(db, user, telefone)
+    if analise.falhas:
+        total = _contar_falhas(user.id, analise.falhas)
+        if total >= TENTATIVAS:
             return (f"Senha errada {TENTATIVAS} vezes: o pedido foi descartado e as ações ficam bloqueadas por "
                     f"{BLOQUEIO_S // 60} min. Nada foi feito.")
-        _ERROS.pop(user.id, None)
-        PENDENTES.pop(user.id, None)      # uma vez só, aconteça o que acontecer
-        return await pendente.executar(db, user, telefone)
-    if tentativa and (pendente is not None or COM_PALAVRA.match(texto)):
+        if pura:
+            return f"Senha não confere ({total} de {TENTATIVAS}). Nada foi feito." if pendente else NADA_ESPERANDO
+    elif pura and (pendente is not None or COM_PALAVRA.match(texto)):
         return SEM_SENHA                  # tentativa de senha de quem ainda não tem
     if pendente is not None:
         PENDENTES.pop(user.id, None)      # outra mensagem: a ação esperando cai

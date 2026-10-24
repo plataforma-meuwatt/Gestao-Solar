@@ -368,8 +368,8 @@ function CartaoPermissoes({ clienteId, nome }: { clienteId: number; nome: string
       ) : (
         <>
           <p className="px-5 pt-4 text-sm text-rotulo">
-            O que {nome} recebe no aplicativo. Sem marcar, ele não recebe nada — e o
-            aparelho dele ainda precisa autorizar os avisos no Android.
+            O que {nome} recebe no aplicativo. Sem marcar, nada chega — e o aparelho
+            ainda precisa autorizar os avisos no Android.
           </p>
 
           {(itens ?? []).map((i, idx) => {

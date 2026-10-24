@@ -508,7 +508,7 @@ MEUPLANO: list[Rota] = [
          sonda=False,
          nao_sondada_porque="Abre uma conversa e consome cota do modelo lá."),
     Rota("mp.assistente_aplicar", "POST", "/api/v1/meuacesso/assistant/apply",
-         "A ação proposta pelo assistente, confirmada pela pessoa (CONFIRMO no WhatsApp)",
+         "A ação proposta pelo assistente, confirmada pela pessoa com a senha de atuação (WhatsApp)",
          essencial=False, sonda=False,
          nao_sondada_porque="Grava no meuPlano (cria OS, lança dia…) — só roda com a confirmação da pessoa."),
     Rota("mp.assistente_run", "GET", "/api/v1/meuacesso/assistant/runs/{run_id}",
@@ -528,6 +528,22 @@ CATALOGO: dict[Produto, list[Rota]] = {
     Produto.MEUWATT: MEUWATT,
     Produto.MEUPLANO: MEUPLANO,
 }
+
+#: A porta do bot do HELPER (`clients/helper_bot.py`, contrato em `docs/bot.md` do
+#: mw-modbus-helper). Declarada e não sondada: toda chamada exige o token do meuWatt da PESSOA,
+#: e a plataforma não tem token. A saúde dela é o selo "Helper alcançável" do Log do bot (adm)
+#: e do Bot do WhatsApp (oem): `ferramentas` (só a chave do chamador) + `rede` (a VPN).
+_SEM_TOKEN = "Exige o token da pessoa; a saúde é o selo 'Helper alcançável' do Log do bot."
+HELPER: list[Rota] = [
+    Rota("hb.ferramentas", "POST", "/api/bot/ferramentas", "O catálogo do helper e a prova de vida do selo",
+         essencial=False, sonda=False, nao_sondada_porque="Vira o selo 'Helper alcançável' (adm e oem)."),
+    Rota("hb.rede", "POST", "/api/bot/rede", "A idade do contato da VPN até as usinas (respondida pelo filtro)",
+         essencial=False, sonda=False, nao_sondada_porque="Vira o selo 'Helper alcançável' (adm e oem)."),
+    Rota("hb.chamar", "POST", "/api/bot/chamar", "Ler o equipamento ou pedir uma ação (vira proposta)",
+         essencial=False, sonda=False, nao_sondada_porque=_SEM_TOKEN),
+    Rota("hb.confirmar", "POST", "/api/bot/confirmar", "Executar a ação que a pessoa confirmou com a senha",
+         essencial=False, sonda=False, nao_sondada_porque="Grava no equipamento — só com a senha de atuação."),
+]
 
 
 @dataclass

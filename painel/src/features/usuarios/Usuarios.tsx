@@ -750,7 +750,8 @@ function MesmaPessoa({ aoFechar }: { aoFechar: () => void }) {
                           className="btn-fantasma"
                           onClick={(e) => {
                             e.preventDefault()
-                            desagrupar.mutate(c.apelido)
+                            if (window.confirm(`Tirar ${c.apelido} do grupo de ${c.pessoa_nome}? A troca de papel sem sair e entrar deixa de valer para essa conta.`))
+                              desagrupar.mutate(c.apelido)
                           }}
                         >
                           tirar

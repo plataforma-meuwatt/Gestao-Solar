@@ -495,7 +495,7 @@ function UsinasDaEmpresa({ empresa }: { empresa: Empresa }) {
                 </p>
               </div>
               <span className="text-xs text-rotulo">
-                {[u.tem_meuwatt ? 'monitorada' : null, u.tem_meuplano ? 'com manutenção' : null]
+                {[u.tem_meuwatt ? 'monitorada' : u.tem_micro ? 'portal do fabricante' : null, u.tem_meuplano ? 'com manutenção' : null]
                   .filter(Boolean)
                   .join(' · ')}
               </span>

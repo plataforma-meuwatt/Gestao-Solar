@@ -325,11 +325,12 @@ def test_o_catalogo_cobre_o_que_os_clientes_chamam():
     sem a sonda dizer nada. Este teste é o alarme quando alguém adiciona uma e esquece."""
     import inspect
 
-    from app.clients import meuplano, meuwatt
+    from app.clients import helper_bot, meuplano, meuwatt
 
     for modulo, catalogo in (
         (meuwatt, sonda.MEUWATT),
         (meuplano, sonda.MEUPLANO),
+        (helper_bot, sonda.HELPER),
     ):
         fonte = inspect.getsource(modulo)
         # Só os caminhos fixos: os montados com f-string variável não dão para casar por
