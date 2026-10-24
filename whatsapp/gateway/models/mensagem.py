@@ -69,7 +69,8 @@ class Mensagem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     #: Id da Meta. Nulo só enquanto `pendente`; UNIQUE porque reentrega não pode duplicar.
-    wamid: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    #: 255 e não 80: em 10/2026 a Meta passou a mandar 82 caracteres, e o INSERT estourava.
+    wamid: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     #: `entrada` (o cliente escreveu) ou `saida` (a empresa mandou).
     direcao: Mapped[str] = mapped_column(String(10), index=True)
 

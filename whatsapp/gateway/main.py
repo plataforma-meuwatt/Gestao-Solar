@@ -33,16 +33,37 @@ settings.validar_producao()
 INTERVALO_DA_VARREDURA_S = 60
 
 
+async def uma_volta(db) -> tuple[int, int]:
+    """Uma volta da varredura. Cada passo no SEU try: em 10/2026 um evento que estourava no
+    `varrer` impedia o aviso ao BFF de rodar, e nenhuma mensagem chegava mais ao bot — nem
+    as que já estavam gravadas."""
+    retomados = avisados = 0
+    try:
+        retomados = recebimento.varrer(db)
+    except Exception:  # noqa: BLE001 — o aviso das já gravadas não depende disto
+        db.rollback()
+        log.exception("varredura: reprocessar eventos falhou")
+    try:
+        avisados += await notificacao_bff.avisar_pendentes(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("varredura: avisar o BFF das mensagens falhou")
+    try:
+        # A trilha de entrega do que NÓS mandamos: é o que faz o log do BFF dizer
+        # "entregue" e "lida" em vez de parar em "mandei".
+        avisados += await notificacao_bff.avisar_status_pendentes(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("varredura: avisar o BFF dos status falhou")
+    return retomados, avisados
+
+
 async def _varredura() -> None:
     while True:
         await asyncio.sleep(INTERVALO_DA_VARREDURA_S)
         db = SessionLocal()
         try:
-            retomados = recebimento.varrer(db)
-            avisados = await notificacao_bff.avisar_pendentes(db)
-            # A trilha de entrega do que NÓS mandamos: é o que faz o log do BFF dizer
-            # "entregue" e "lida" em vez de parar em "mandei".
-            avisados += await notificacao_bff.avisar_status_pendentes(db)
+            retomados, avisados = await uma_volta(db)
             if retomados or avisados:
                 log.info("varredura: %s evento(s) retomado(s), %s aviso(s)", retomados, avisados)
         except Exception:  # noqa: BLE001 — uma volta ruim não pode matar o laço

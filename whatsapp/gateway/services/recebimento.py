@@ -153,15 +153,21 @@ def processar(db: Session, evento: WebhookEvento) -> dict[str, int]:
 
         evento.processado_em = datetime.now(UTC)
         evento.erro = None
+        evento.tentativas = (evento.tentativas or 0) + 1
+        # O commit DENTRO do try: é nele que o INSERT acontece, e um erro de banco aqui
+        # (a coluna curta para o `wamid` de 82 caracteres, 10/2026) escapava, deixava o
+        # evento com `tentativas=0` e derrubava a volta inteira da varredura.
+        db.commit()
     except Exception as exc:  # noqa: BLE001 — a varredura tenta de novo
         db.rollback()
         evento.tentativas = (evento.tentativas or 0) + 1
         evento.erro = f"{type(exc).__name__}: {exc}"[:500]
         log.exception("webhook: falha ao processar evento %s", evento.id)
-    else:
-        evento.tentativas = (evento.tentativas or 0) + 1
-    db.commit()
+        db.commit()
     return contagem
+
+
+MAX_TENTATIVAS = 10
 
 
 def varrer(db: Session, limite: int = LOTE_DA_VARREDURA) -> int:
@@ -173,7 +179,9 @@ def varrer(db: Session, limite: int = LOTE_DA_VARREDURA) -> int:
     pendentes = list(
         db.scalars(
             select(WebhookEvento)
-            .where(WebhookEvento.processado_em.is_(None))
+            # Um evento que falha sempre não pode ocupar o lote para sempre: depois de
+            # MAX_TENTATIVAS ele fica de lado (com o erro gravado) e os outros andam.
+            .where(WebhookEvento.processado_em.is_(None), WebhookEvento.tentativas < MAX_TENTATIVAS)
             .order_by(WebhookEvento.id)
             .limit(limite)
         ).all()
