@@ -228,7 +228,7 @@ function LinhaDaConta({
           <p className="font-semibold text-forte">
             {conta.nome}
             <span className="mono text-xs text-fraco font-normal ml-2">{conta.apelido}</span>
-            {conta.email ? <span className="text-xs text-fraco font-normal ml-2">{conta.email}</span> : null}
+            {conta.email ? <span className="text-xs text-fraco font-normal ml-2 break-all">{conta.email}</span> : null}
           </p>
           <div className="text-sm text-rotulo mt-1">
             <TextoDasEmpresas conta={conta} />
@@ -292,7 +292,7 @@ function LinhaDaEquipe({
           <p className="font-semibold text-forte">
             {conta.nome}
             <span className="mono text-xs text-fraco font-normal ml-2">{conta.apelido}</span>
-            {conta.email ? <span className="text-xs text-fraco font-normal ml-2">{conta.email}</span> : null}
+            {conta.email ? <span className="text-xs text-fraco font-normal ml-2 break-all">{conta.email}</span> : null}
           </p>
           <div className="text-sm text-rotulo mt-1 flex items-center gap-4 flex-wrap">
             <TextoDasEmpresas conta={conta} />

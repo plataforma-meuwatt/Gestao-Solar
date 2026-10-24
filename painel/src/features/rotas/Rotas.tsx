@@ -197,7 +197,7 @@ function Linha({ rota, primeira }: { rota: RotaSondada; primeira: boolean }) {
       <div className="flex items-baseline gap-2.5 flex-wrap">
         <Icone size={14} className={`${cor} shrink-0 self-center`} />
 
-        <code className="mono text-xs text-forte">
+        <code className="mono text-xs text-forte break-all">
           <span className="text-fraco">{rota.metodo}</span> {rota.caminho}
         </code>
 
