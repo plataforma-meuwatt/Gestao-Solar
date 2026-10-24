@@ -782,7 +782,11 @@ caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_b
 (quem, empresa, resultado, pergunta, resposta, ferramentas, duração, erro — inclusive número
 sem cadastro): adm-gs → Log do bot, e o recorte da empresa no oem-gs → Bot do WhatsApp. A
 conversa é da CONTA: se o número muda de conta, o histórico anterior não entra. Responde, manda PDF e gráfico
-pelo gateway (`/interno/conteudo`, `/interno/digitando`). O `ENCAMINHAR_URLS` do gateway (cópia
+pelo gateway (`/interno/conteudo`, `/interno/digitando`) — **pela rede interna do Docker**
+(`WHATSAPP_GATEWAY_URL=http://gestaosolar-whatsapp:8120`; e o gateway chama a API em
+`BFF_URL=http://gestaosolar-api:8100`), por apelido fixo de rede no Coolify
+(`custom_network_aliases`). Antes ia pelo DNS público do sslip.io, que falhou em 24/10 e
+calou o bot por minutos; o envio também tenta de novo quando a conexão nem abre. O `ENCAMINHAR_URLS` do gateway (cópia
 crua da entrega para outro sistema) existe, mas está VAZIO: dois bots no mesmo número
 responderiam em dobro.
 
