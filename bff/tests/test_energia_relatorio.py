@@ -596,8 +596,8 @@ def test_so_o_agrupamento_persistido_do_meuwatt_junta_linhas(cenario):
     """⛔ O defeito guardado: inventar um segundo detector de paradas.
 
     O agrupamento por escopo (usina / skid / inversor) do meuWatt mora no front dele e nos
-    endpoints `/shadow-breakdowns`, que respondem 403 ao nosso token de serviço. Replicá-lo
-    aqui criaria um segundo detector, que divergiria do primeiro na primeira mudança de
+    endpoints `/shadow-breakdowns` (a fila, sem os grupos, é a fonte da tela de Paradas).
+    Replicá-lo aqui criaria um segundo detector, que divergiria do primeiro na primeira mudança de
     regra — e o cliente veria duas contagens de paradas para o mesmo mês.
 
     O único agrupamento que atravessa é o `manual_group_id`: a equipe juntou as linhas à
@@ -753,7 +753,7 @@ def test_paradas_que_nao_vieram_nao_viram_zero_paradas(cenario):
     um mês limpo por causa de um 500 alheio.
     """
     http, caixa, usina = cenario
-    caixa["cliente"].alertas_resposta = RuntimeError("breakdowns/range respondeu 500")
+    caixa["cliente"].alertas_resposta = RuntimeError("alerts respondeu 500")
 
     c = _fechamento(http, usina)
 

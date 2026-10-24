@@ -1,25 +1,22 @@
-"""As paradas do portal: uma fonte que responde 500 e uma reserva que diz a verdade.
+"""As paradas do portal, lidas do detector NOVO do meuWatt (`/shadow-breakdowns/queue`).
 
-O que se protege aqui é a HONESTIDADE do número, não a bonita da tela:
+O que se protege aqui é a HONESTIDADE do número, não a beleza da tela:
 
-1. Quando a fonte primária (`breakdowns/range`) responde, a resposta vem dela e diz isso.
-2. Quando ela cai (5xx/timeout), a reserva (`alerts?status=all`) assume com o MESMO
-   contrato — e a primária não é tentada de novo por uma hora, porque cada tentativa
-   custaria uma chamada falha por página aberta.
-3. A reserva vem paginada e sem período: 503 alertas em duas páginas são lidos inteiros,
-   e só os do período ficam.
-4. Soma só o que existe: uma linha sem perda deixa o total de perda nulo, não menor.
-5. As duas fontes fora → `total=None` + aviso, com 200. "Sem dados" ≠ "nenhuma parada".
+1. A resposta vem do detector, pelo id NUMÉRICO da usina, e diz isso (`fonte`).
+2. Só a linha `material` é parada: blip, imaterial e "sem dados" não entram na conta.
+3. Perda sem conta feita (`no_peers`, que grava 0,0) é nula, não zero; e o total também.
+4. O recorte é pelo dia BRT do início — o detector devolve por sobreposição.
+5. "Não analisado" não é "não parou": sem rodada, ou com o período antes dela, o total é
+   nulo; período que começa antes dela encolhe com aviso; detector parado ganha aviso.
+6. Detector fora do ar ou em forma estranha → `total=None` + aviso, com 200.
 
-Nada de rede: o cliente do meuWatt é uma subclasse que responde da memória — mas herda o
-`alertas_todos` REAL, porque a paginação é o que se quer exercitar.
+Nada de rede: o cliente do meuWatt é uma subclasse que responde da memória.
 """
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.v1 import paradas as modulo
 from app.clients.meuwatt import MeuWattClient
 from app.core.db import get_db
 from app.core.security import criar_token, gerar_hash_senha
@@ -30,52 +27,39 @@ from app.models.user import Perfil, User, UserPlantAccess
 #: Agosto de 2026 — passado em relação a qualquer dia em que este teste rode.
 REFERENCIA = "2026-08-15"
 
+#: Uma rodada do detector como a de produção em 24/10/2026: de 01/02/2026 (meia-noite BRT)
+#: até agora.
+RODADA = {"run_id": 89, "plant_id": 9378, "plant_slug": "porto-ferreira",
+          "window_start": "2026-02-01T03:00:00Z", "window_end": "2026-10-24T14:16:46Z"}
 
-def _erro_http(status: int) -> httpx.HTTPStatusError:
-    pedido = httpx.Request("GET", "https://api.meuwatt.test/plants/x/breakdowns/range")
-    resposta = httpx.Response(status, json={"detail": "Internal Server Error"}, request=pedido)
+
+def _erro_http(status: int, detalhe: str = "Internal Server Error") -> httpx.HTTPStatusError:
+    pedido = httpx.Request("GET", "https://api.meuwatt.test/shadow-breakdowns/queue")
+    resposta = httpx.Response(status, json={"detail": detalhe}, request=pedido)
     return httpx.HTTPStatusError("erro", request=pedido, response=resposta)
 
 
 class ClienteFalso(MeuWattClient):
-    """Responde `paradas` e `alertas` da memória; `alertas_todos` é o de verdade."""
+    """Responde `usina` e `paradas_detector` da memória, e anota o que foi pedido."""
 
-    def __init__(self, breakdowns=None, alertas=None, erro_paradas=None, erro_alertas=None):
+    def __init__(self, linhas=None, rodada=RODADA, erro=None):
         super().__init__(base_url="https://api.meuwatt.test", token="mw_pat_teste")
-        self.breakdowns = breakdowns
-        self.lista_alertas = alertas or []
-        self.erro_paradas = erro_paradas
-        self.erro_alertas = erro_alertas
-        self.chamadas_paradas = 0
-        self.paginas_pedidas: list[int] = []
+        self.linhas = linhas or []
+        self.rodada = rodada
+        self.erro = erro
+        self.pedidos: list[tuple] = []
+        self.usinas_pedidas: list[str] = []
 
-    async def paradas(self, slug, inicio, fim, timeout=None):
-        self.chamadas_paradas += 1
-        if self.erro_paradas:
-            raise self.erro_paradas
-        return {
-            "plant": slug,
-            "start": inicio.isoformat(),
-            "end": fim.isoformat(),
-            "total": len(self.breakdowns),
-            "breakdowns": self.breakdowns,
-        }
+    async def usina(self, slug):
+        self.usinas_pedidas.append(slug)
+        return {"id": 9378, "slug": slug, "name": "Porto Ferreira"}
 
-    async def alertas(self, slug, status="active", limit=500, offset=0):
-        self.paginas_pedidas.append(offset)
-        if self.erro_alertas:
-            raise self.erro_alertas
-        pagina = self.lista_alertas[offset : offset + limit]
-        return {"plant": slug, "total": len(self.lista_alertas), "alerts": pagina}
-
-
-@pytest.fixture(autouse=True)
-def _primaria_lembrada_de_nada():
-    """A memória "primária fora por 1 h" é do processo — e o processo é o mesmo entre os
-    testes. Cada um começa sem lembrança."""
-    modulo.esquecer_indisponibilidade()
-    yield
-    modulo.esquecer_indisponibilidade()
+    async def paradas_detector(self, plant_id, inicio, fim):
+        self.pedidos.append((plant_id, inicio, fim))
+        if self.erro:
+            raise self.erro
+        return {"run": self.rodada, "rows": self.linhas, "groups": [],
+                "fleet_by_transformer": {}}
 
 
 @pytest.fixture
@@ -122,41 +106,40 @@ def _usar(monkeypatch, cliente: ClienteFalso) -> ClienteFalso:
     return cliente
 
 
-def _breakdown(id_, inicio, fim=None, off=120.0, loss=50.0, solved=True, **extra):
+def _linha(id_, inicio, fim=None, off=120, perda=50.0, metodo="peer",
+           materialidade="material", **extra):
+    """Uma linha com a forma REAL do detector (Porto Ferreira, 23/10/2026)."""
     linha = {
-        "id": id_, "sn": f"SN{id_}", "slot_label": f"INV-{id_}", "type": "inverter",
-        "stopped_at": inicio, "resolved_at": fim, "off_time_minutes": off,
-        "solved": solved,
+        "id": id_, "plant_id": 9378, "slot_id": 100 + id_, "slot_label": f"Inv {id_}",
+        "transformer_name": "SKID-01", "serial_number": f"SN{id_}", "transformer_id": 1,
+        "stopped_at": inicio, "resolved_at": fim,
+        "resolution_reason": "still_open" if fim is None else "production_resumed",
+        "cause": "zero_active_power", "read_status_basis": "zero_while_reachable",
+        "materiality": materialidade, "off_minutes": off, "shadow_loss_kwh": perda,
+        "loss_method": metodo, "group_id": None, "evidence": {}, "detector_version": "v12",
     }
-    if loss is not None:
-        linha["loss_kwh"] = loss
     linha.update(extra)
     return linha
 
 
-def _alerta(id_, inicio, fim=None, ativo=False, dur=60.0, loss=10.0, kind="stop"):
-    return {
-        "id": id_, "inverter_id": 1, "sn": f"SN{id_}", "model": None,
-        "transformer_name": None, "kind": kind, "status": 0, "notification": None,
-        "message": None, "started_at": inicio, "resolved_at": fim, "is_active": ativo,
-        "duration_minutes": dur, "estimated_loss_kwh": loss,
-    }
+def _ler(http, cabecalho, usina, consulta=f"referencia={REFERENCIA}"):
+    r = http.get(f"/api/v1/plants/{usina.id}/paradas?{consulta}", headers=cabecalho)
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
-# ── fonte primária ──────────────────────────────────────────────────────────
+# ── a leitura ───────────────────────────────────────────────────────────────
 
 
-def test_primaria_responde_e_a_resposta_diz_de_onde_veio(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(breakdowns=[
-        _breakdown(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z", off=120, loss=50),
-        _breakdown(2, "2026-08-20T09:00:00Z", "2026-08-20T09:30:00Z", off=30, loss=12.5),
+def test_detector_responde_e_a_resposta_diz_de_onde_veio(http, cabecalho, minha, monkeypatch):
+    cliente = _usar(monkeypatch, ClienteFalso([
+        _linha(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z", off=120, perda=50),
+        _linha(2, "2026-08-20T09:00:00Z", "2026-08-20T09:30:00Z", off=30, perda=12.5),
     ]))
 
-    r = http.get(f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho)
+    corpo = _ler(http, cabecalho, minha)
 
-    assert r.status_code == 200, r.text
-    corpo = r.json()
-    assert corpo["fonte"] == "paradas"
+    assert corpo["fonte"] == "detector"
     assert corpo["total"] == 2
     assert corpo["tempo_parado_min"] == 150
     assert corpo["perda_kwh"] == 62.5
@@ -166,162 +149,207 @@ def test_primaria_responde_e_a_resposta_diz_de_onde_veio(http, cabecalho, minha,
     assert [p["id"] for p in corpo["paradas"]] == [2, 1]
     assert corpo["paradas"][0]["tipo"] == "parada"
     assert corpo["paradas"][0]["tom"] == "ok"
+    assert corpo["paradas"][1]["inicio"] == "2026-08-03T09:00:00-03:00"
     assert corpo["inicio"] == "2026-08-01" and corpo["fim"] == "2026-08-31"
+    # O detector pede o id NUMÉRICO, e a janela em instantes BRT com o fim exclusivo.
+    assert cliente.pedidos == [
+        (9378, "2026-08-01T00:00:00-03:00", "2026-09-01T00:00:00-03:00")
+    ]
 
 
-def test_perda_fica_nula_quando_uma_linha_veio_sem_perda(http, cabecalho, minha, monkeypatch):
-    """Somar só as que têm faria a perda parecer menor do que foi. Nulo é honesto."""
-    _usar(monkeypatch, ClienteFalso(breakdowns=[
-        _breakdown(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z", loss=50),
-        _breakdown(2, "2026-08-04T12:00:00Z", "2026-08-04T14:00:00Z", loss=None),
+def test_so_a_linha_material_e_parada(http, cabecalho, minha, monkeypatch):
+    """Blip e imaterial são piscadas sem perda; `data_gap` é a usina produzindo sem leitura
+    (inclusive a linha "Usina inteira — sem dados", sem slot). Nenhuma é parada na tela de
+    Paradas do meuWatt — e nenhuma pode virar parada na do dono."""
+    _usar(monkeypatch, ClienteFalso([
+        _linha(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z"),
+        _linha(2, "2026-08-04T12:00:00Z", "2026-08-04T12:03:00Z", off=3, perda=0.0,
+               materialidade="blip"),
+        _linha(3, "2026-08-05T12:00:00Z", "2026-08-05T12:04:00Z", off=4, perda=0.1,
+               materialidade="immaterial"),
+        _linha(4, "2026-08-06T12:00:00Z", "2026-08-06T13:00:00Z", off=60, perda=0.0,
+               metodo=None, materialidade="data_gap", cause="no_data", slot_id=None,
+               slot_label=None),
     ]))
 
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
-    ).json()
+    corpo = _ler(http, cabecalho, minha)
+
+    assert [p["id"] for p in corpo["paradas"]] == [1]
+    assert corpo["total"] == 1 and corpo["tempo_parado_min"] == 120
+
+
+def test_perda_sem_conta_feita_e_nula_e_nao_zero(http, cabecalho, minha, monkeypatch):
+    """`no_peers`: nem par saudável nem irradiância — o detector grava 0,0 sem conta
+    nenhuma. Zero ali diria "não perdeu nada"; nulo diz "não sabemos". E o total, que
+    somaria só as outras, também fica nulo."""
+    _usar(monkeypatch, ClienteFalso([
+        _linha(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z", perda=50),
+        _linha(2, "2026-08-04T12:00:00Z", "2026-08-04T14:00:00Z", perda=0.0, metodo="no_peers"),
+    ]))
+
+    corpo = _ler(http, cabecalho, minha)
 
     assert corpo["total"] == 2
-    assert corpo["perda_kwh"] is None
     assert corpo["paradas"][0]["perda_kwh"] is None
     assert corpo["paradas"][1]["perda_kwh"] == 50
+    assert corpo["perda_kwh"] is None
+
+
+def test_parada_em_aberto_nao_tem_fim_e_conta_como_aberta(http, cabecalho, minha, monkeypatch):
+    _usar(monkeypatch, ClienteFalso([
+        _linha(1, "2026-08-25T15:00:00Z", None, off=95, perda=3.0),
+    ]))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    aberta = corpo["paradas"][0]
+    assert aberta["em_aberto"] is True and aberta["fim"] is None and aberta["tom"] == "parado"
+    assert corpo["em_aberto"] == 1
 
 
 def test_sem_nenhuma_parada_o_total_e_zero_e_nao_nulo(http, cabecalho, minha, monkeypatch):
-    """Zero paradas é medição: a fonte respondeu e não havia nada. Nulo é outra coisa."""
-    _usar(monkeypatch, ClienteFalso(breakdowns=[]))
+    """Zero paradas é medição: o detector analisou e não havia nada. Nulo é outra coisa."""
+    _usar(monkeypatch, ClienteFalso([]))
 
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
-    ).json()
+    corpo = _ler(http, cabecalho, minha)
 
-    assert corpo["fonte"] == "paradas"
+    assert corpo["fonte"] == "detector"
     assert corpo["total"] == 0
     assert corpo["tempo_parado_min"] == 0
     assert corpo["perda_kwh"] == 0
 
 
-# ── a troca de fonte ────────────────────────────────────────────────────────
+def test_recorte_pelo_dia_de_inicio_na_usina(http, cabecalho, minha, monkeypatch):
+    """O detector devolve tudo o que SOBREPÕE a janela. Fica no mês a parada que COMEÇOU
+    nele, no fuso da usina: 01/09 01:00 UTC ainda é 31/08 na usina (entra); 01/08 00:30 UTC
+    ainda é 31/07 (sai); a que veio de julho e terminou em agosto é de julho (sai)."""
+    _usar(monkeypatch, ClienteFalso([
+        _linha(1, "2026-09-01T01:00:00Z", "2026-09-01T02:00:00Z"),
+        _linha(2, "2026-08-01T00:30:00Z", "2026-08-01T01:00:00Z"),
+        _linha(3, "2026-07-30T12:00:00Z", "2026-08-02T12:00:00Z"),
+        _linha(4, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z"),
+    ]))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert [p["id"] for p in corpo["paradas"]] == [1, 4]
 
 
-def test_primaria_com_500_cai_na_reserva_e_nao_e_tentada_de_novo(http, cabecalho, minha, monkeypatch):
-    cliente = _usar(monkeypatch, ClienteFalso(
-        erro_paradas=_erro_http(500),
-        alertas=[_alerta(7, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z")],
-    ))
-    url = f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}"
-
-    primeira = http.get(url, headers=cabecalho).json()
-    assert primeira["fonte"] == "alertas"
-    assert primeira["total"] == 1
-    assert primeira["aviso"] and "estimada" in primeira["aviso"]
-    assert cliente.chamadas_paradas == 1
-
-    segunda = http.get(url, headers=cabecalho).json()
-    assert segunda["fonte"] == "alertas"
-    # A primária falhou há segundos — não se gasta outra chamada nela.
-    assert cliente.chamadas_paradas == 1
+# ── o que o detector analisou ───────────────────────────────────────────────
 
 
-def test_tempo_esgotado_na_primaria_tambem_e_fonte_fora(http, cabecalho, minha, monkeypatch):
-    cliente = _usar(monkeypatch, ClienteFalso(
-        erro_paradas=httpx.ReadTimeout("demorou"),
-        alertas=[_alerta(7, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z")],
-    ))
-    url = f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}"
+def test_sem_rodada_do_detector_e_nulo_e_nao_zero(http, cabecalho, minha, monkeypatch):
+    """`run: null` = nenhuma rodada cobre a janela. A lista vazia que vem junto NÃO é
+    "nenhuma parada" — ninguém olhou."""
+    _usar(monkeypatch, ClienteFalso([], rodada=None))
 
-    assert http.get(url, headers=cabecalho).json()["fonte"] == "alertas"
-    http.get(url, headers=cabecalho)
-    assert cliente.chamadas_paradas == 1
+    corpo = _ler(http, cabecalho, minha)
 
-
-def test_4xx_da_primaria_nao_a_tira_do_ar_por_uma_hora(http, cabecalho, minha, monkeypatch):
-    """Um 404 é a fonte recusando ESTE pedido, não a fonte caída: na próxima chamada ela é
-    tentada de novo (a reserva assume só desta vez)."""
-    cliente = _usar(monkeypatch, ClienteFalso(
-        erro_paradas=_erro_http(404),
-        alertas=[_alerta(7, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z")],
-    ))
-    url = f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}"
-
-    assert http.get(url, headers=cabecalho).json()["fonte"] == "alertas"
-    http.get(url, headers=cabecalho)
-    assert cliente.chamadas_paradas == 2
+    assert corpo["total"] is None and corpo["fonte"] is None
+    assert "não analisou" in corpo["aviso"]
 
 
-def test_reserva_le_todas_as_paginas_e_recorta_pelo_periodo(http, cabecalho, minha, monkeypatch):
-    """503 alertas em duas páginas (500 + 3). Só 3 são de agosto; um deles ainda está aberto."""
-    fora = [_alerta(i, "2026-05-01T12:00:00Z", "2026-05-01T13:00:00Z") for i in range(1, 501)]
-    dentro = [
-        _alerta(9001, "2026-08-02T12:00:00Z", "2026-08-02T13:00:00Z"),
-        _alerta(9002, "2026-08-25T15:00:00Z", None, ativo=True, dur=None, loss=3.0),
-        # 01/09 01:00 UTC ainda é 31/08 22:00 na usina — entra em agosto, como no mw-api.
-        _alerta(9003, "2026-09-01T01:00:00Z", "2026-09-01T02:00:00Z"),
-    ]
-    cliente = _usar(monkeypatch, ClienteFalso(erro_paradas=_erro_http(500), alertas=fora + dentro))
+def test_periodo_inteiro_antes_da_rodada_e_nulo(http, cabecalho, minha, monkeypatch):
+    """Janeiro, com o detector começando em 01/02: a rodada é escolhida (ela encosta na
+    borda), mas não analisou um dia sequer do mês."""
+    _usar(monkeypatch, ClienteFalso([]))
 
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
-    ).json()
+    corpo = _ler(http, cabecalho, minha, "referencia=2026-01-15")
 
-    assert cliente.paginas_pedidas == [0, 500]
-    assert corpo["fonte"] == "alertas"
-    assert corpo["total"] == 3
-    assert [p["id"] for p in corpo["paradas"]] == [9003, 9002, 9001]
-    aberta = corpo["paradas"][1]
-    assert aberta["em_aberto"] is True and aberta["fim"] is None and aberta["tom"] == "parado"
-    assert corpo["em_aberto"] == 1
-    # A aberta não tem duração: o total de tempo parado fica nulo, a perda soma.
-    assert corpo["tempo_parado_min"] is None
-    assert corpo["perda_kwh"] == 23.0
-
-
-def test_degradacao_vem_com_o_tipo_certo(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(
-        erro_paradas=_erro_http(500),
-        alertas=[_alerta(1, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z", kind="degradation")],
-    ))
-
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
-    ).json()
-
-    assert corpo["paradas"][0]["tipo"] == "degradacao"
-
-
-def test_alerta_de_outro_tipo_nao_vira_parada(http, cabecalho, minha, monkeypatch):
-    """`kind` é texto livre no schema do mw-api. Um tipo que este lado não conhece não pode
-    cair em "parada" por padrão — só `stop` e `degradation` (e o ausente, que o schema
-    trata como `stop`) entram na conta do dono."""
-    _usar(monkeypatch, ClienteFalso(
-        erro_paradas=_erro_http(500),
-        alertas=[
-            _alerta(1, "2026-08-10T12:00:00Z", "2026-08-10T13:00:00Z", kind="communication"),
-            _alerta(2, "2026-08-11T12:00:00Z", "2026-08-11T13:00:00Z", kind="stop"),
-            {**_alerta(3, "2026-08-12T12:00:00Z", "2026-08-12T13:00:00Z"), "kind": None},
-        ],
-    ))
-
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
-    ).json()
-
-    assert [p["id"] for p in corpo["paradas"]] == [3, 2]
-    assert corpo["total"] == 2
-
-
-def test_as_duas_fontes_fora_da_total_nulo_com_aviso_e_200(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(
-        erro_paradas=_erro_http(500), erro_alertas=httpx.ReadTimeout("demorou")
-    ))
-
-    r = http.get(f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho)
-
-    assert r.status_code == 200
-    corpo = r.json()
     assert corpo["total"] is None
-    assert corpo["fonte"] is None
-    assert corpo["paradas"] == []
-    assert corpo["aviso"] and "não respondeu" in corpo["aviso"]
+    assert "não analisou" in corpo["aviso"]
+
+
+def test_periodo_que_comeca_antes_da_rodada_encolhe_e_avisa(http, cabecalho, minha, monkeypatch):
+    """O ano de 2026 com o detector desde 01/02: janeiro não foi analisado. A janela diz
+    até onde ele foi, em vez de o ano parecer inteiro."""
+    _usar(monkeypatch, ClienteFalso([_linha(1, "2026-03-03T12:00:00Z", "2026-03-03T14:00:00Z")]))
+
+    corpo = _ler(http, cabecalho, minha, f"recorte=ano&referencia={REFERENCIA}")
+
+    assert corpo["inicio"] == "2026-02-01" and corpo["fim"] == "2026-12-31"
+    assert corpo["total"] == 1
+    assert "a partir de 01/02/2026" in corpo["aviso"]
+
+
+def test_detector_parado_ha_mais_de_20h_avisa_ate_quando_analisou(
+    http, cabecalho, minha, monkeypatch
+):
+    _usar(monkeypatch, ClienteFalso(
+        [], rodada={**RODADA, "window_end": "2026-08-20T12:00:00Z"}
+    ))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] == 0
+    assert "analisou até 20/08/2026 às 09:00" in corpo["aviso"]
+
+
+def test_rodada_que_cobre_o_periodo_nao_avisa(http, cabecalho, minha, monkeypatch):
+    """Parar no pôr do sol é normal (a noite de inverno tem ~12 h): até 20 h, sem aviso."""
+    _usar(monkeypatch, ClienteFalso(
+        [], rodada={**RODADA, "window_end": "2026-08-31T09:00:00Z"}
+    ))
+
+    assert _ler(http, cabecalho, minha)["aviso"] is None
+
+
+# ── falhas ──────────────────────────────────────────────────────────────────
+
+
+def test_detector_fora_do_ar_da_total_nulo_com_aviso_e_200(http, cabecalho, minha, monkeypatch):
+    _usar(monkeypatch, ClienteFalso(erro=httpx.ReadTimeout("demorou")))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] is None and corpo["fonte"] is None and corpo["paradas"] == []
+    assert "detector de paradas" in corpo["aviso"] and "ReadTimeout" in corpo["aviso"]
+
+
+def test_recusa_do_detector_traz_a_frase_do_produto(http, cabecalho, minha, monkeypatch):
+    _usar(monkeypatch, ClienteFalso(erro=_erro_http(403, "Sem acesso ao Dashboard de Paradas")))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] is None
+    assert "403 — Sem acesso ao Dashboard de Paradas" in corpo["aviso"]
+
+
+def test_erro_http_sem_frase_nao_leva_a_url_do_upstream(http, cabecalho, minha, monkeypatch):
+    """O texto do `HTTPStatusError` traz a URL do upstream — com o nome do produto, que o
+    cliente não lê (`test_vocabulario_do_cliente`). Sem frase do produto, só o status."""
+    pedido = httpx.Request("GET", "https://api.meuwatt.test/shadow-breakdowns/queue")
+    erro = httpx.HTTPStatusError(
+        "Server error '502 Bad Gateway' for url 'https://api.meuwatt.test/shadow-breakdowns/queue'",
+        request=pedido, response=httpx.Response(502, text="<html>gateway</html>", request=pedido),
+    )
+    _usar(monkeypatch, ClienteFalso(erro=erro))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] is None
+    assert "respondeu 502" in corpo["aviso"] and "meuwatt" not in corpo["aviso"].lower()
+
+
+def test_linha_em_forma_estranha_e_falha_e_nao_parada_a_menos(http, cabecalho, minha, monkeypatch):
+    """Um `materiality` renomeado não pode virar "nenhuma parada": a linha que não se
+    classifica derruba a leitura para "sem dados"."""
+    sem_classe = _linha(1, "2026-08-03T12:00:00Z", "2026-08-03T14:00:00Z")
+    del sem_classe["materiality"]
+    _usar(monkeypatch, ClienteFalso([sem_classe]))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] is None
+    assert "ValueError" in corpo["aviso"]
+
+
+def test_rodada_em_forma_estranha_e_aviso_e_nao_500(http, cabecalho, minha, monkeypatch):
+    _usar(monkeypatch, ClienteFalso([], rodada=["não", "é", "objeto"]))
+
+    corpo = _ler(http, cabecalho, minha)
+
+    assert corpo["total"] is None and "detector de paradas" in corpo["aviso"]
 
 
 def test_ponte_nao_configurada_e_aviso_e_nao_500(http, cabecalho, minha, monkeypatch):
@@ -330,32 +358,41 @@ def test_ponte_nao_configurada_e_aviso_e_nao_500(http, cabecalho, minha, monkeyp
 
     monkeypatch.setattr("app.api.v1.paradas.vinculos.cliente_meuwatt", _sem_ponte)
 
-    r = http.get(f"/api/v1/plants/{minha.id}/paradas?referencia={REFERENCIA}", headers=cabecalho)
+    corpo = _ler(http, cabecalho, minha)
 
-    assert r.status_code == 200
-    assert r.json()["total"] is None
-    assert "meuWatt" in r.json()["aviso"]
+    assert corpo["total"] is None
+    assert "meuWatt" in corpo["aviso"]
+
+
+def test_o_id_da_usina_e_perguntado_uma_vez_so(http, cabecalho, minha, monkeypatch):
+    """O id de uma usina não muda: a segunda tela não paga de novo o `/plants/{slug}`."""
+    cliente = _usar(monkeypatch, ClienteFalso([]))
+
+    _ler(http, cabecalho, minha)
+    _ler(http, cabecalho, minha, "referencia=2026-07-15")
+
+    assert cliente.usinas_pedidas == ["porto-ferreira"]
+    assert [p[0] for p in cliente.pedidos] == [9378, 9378]
 
 
 # ── recorte e período ───────────────────────────────────────────────────────
 
 
-def test_recorte_ano_cobre_o_ano_inteiro(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(breakdowns=[
-        _breakdown(1, "2026-02-03T12:00:00Z", "2026-02-03T14:00:00Z"),
-    ]))
+def test_recorte_ano_pede_o_ano_inteiro(http, cabecalho, minha, monkeypatch):
+    cliente = _usar(monkeypatch, ClienteFalso(
+        [_linha(1, "2026-02-03T12:00:00Z", "2026-02-03T14:00:00Z")],
+        rodada={**RODADA, "window_start": "2025-11-01T03:00:00Z"},
+    ))
 
-    corpo = http.get(
-        f"/api/v1/plants/{minha.id}/paradas?recorte=ano&referencia={REFERENCIA}",
-        headers=cabecalho,
-    ).json()
+    corpo = _ler(http, cabecalho, minha, f"recorte=ano&referencia={REFERENCIA}")
 
     assert corpo["inicio"] == "2026-01-01" and corpo["fim"] == "2026-12-31"
-    assert corpo["total"] == 1
+    assert corpo["total"] == 1 and corpo["aviso"] is None
+    assert cliente.pedidos[0][1:] == ("2026-01-01T00:00:00-03:00", "2027-01-01T00:00:00-03:00")
 
 
 def test_periodo_futuro_e_400(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(breakdowns=[]))
+    _usar(monkeypatch, ClienteFalso([]))
 
     r = http.get(f"/api/v1/plants/{minha.id}/paradas?referencia=2099-01-01", headers=cabecalho)
 
@@ -363,7 +400,7 @@ def test_periodo_futuro_e_400(http, cabecalho, minha, monkeypatch):
 
 
 def test_recorte_desconhecido_e_400(http, cabecalho, minha, monkeypatch):
-    _usar(monkeypatch, ClienteFalso(breakdowns=[]))
+    _usar(monkeypatch, ClienteFalso([]))
 
     r = http.get(f"/api/v1/plants/{minha.id}/paradas?recorte=dia", headers=cabecalho)
 
@@ -379,7 +416,7 @@ def test_usina_sem_monitoramento_e_404(http, cabecalho, db, dono, monkeypatch):
     db.commit()
     db.add(UserPlantAccess(user_id=dono.id, plant_link_id=so_meuplano.id))
     db.commit()
-    _usar(monkeypatch, ClienteFalso(breakdowns=[]))
+    _usar(monkeypatch, ClienteFalso([]))
 
     r = http.get(
         f"/api/v1/plants/{so_meuplano.id}/paradas?referencia={REFERENCIA}", headers=cabecalho
@@ -390,7 +427,7 @@ def test_usina_sem_monitoramento_e_404(http, cabecalho, db, dono, monkeypatch):
 
 def test_usina_de_outro_dono_e_404(http, cabecalho, minha, usinas, monkeypatch):
     _, alheia = usinas
-    _usar(monkeypatch, ClienteFalso(breakdowns=[]))
+    _usar(monkeypatch, ClienteFalso([]))
 
     r = http.get(f"/api/v1/plants/{alheia.id}/paradas?referencia={REFERENCIA}", headers=cabecalho)
 
@@ -401,60 +438,10 @@ def test_sem_sessao_e_401(http, minha):
     assert http.get(f"/api/v1/plants/{minha.id}/paradas").status_code == 401
 
 
-# ── o custo da descoberta ───────────────────────────────────────────────────
-#
-# A Visão geral pede paradas de sete usinas no mesmo instante. Enquanto cada uma tentava
-# a primária por conta própria, as sete pagavam a MESMA descoberta — e como o
-# `breakdowns/range` leva de 16 a 23 s para admitir o 500 sob carga, a primeira tela do
-# portal estourava o teto do navegador (30 s) sem que houvesse erro nenhum no servidor.
+def test_o_coletor_antigo_saiu_do_cliente_e_da_sonda():
+    """Regra da casa: nunca o coletor antigo. Sem método nem linha no catálogo, chamá-lo de
+    novo reprova o inverso da sonda (todo caminho do cliente tem de estar no catálogo)."""
+    from app.services import sonda
 
-
-@pytest.mark.asyncio
-async def test_a_primaria_e_tentada_uma_vez_so_quando_varias_usinas_perguntam_juntas(
-    db, dono, usinas, monkeypatch
-):
-    """Sete pedidos simultâneos, uma tentativa: quem chega junto espera a decisão do
-    primeiro e lê o circuito já aberto, em vez de repetir a espera."""
-    import asyncio
-
-    a, _ = usinas
-    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=a.id))
-    db.commit()
-    cliente = _usar(monkeypatch, ClienteFalso(erro_paradas=_erro_http(500), alertas=[]))
-
-    saidas = await asyncio.gather(
-        *(
-            modulo.paradas_da_usina(a.id, referencia=REFERENCIA, db=db, usuario=dono)
-            for _ in range(7)
-        )
-    )
-
-    assert cliente.chamadas_paradas == 1
-    # E todas responderam pela reserva — ninguém ficou sem dado por causa do portão.
-    assert {s.fonte for s in saidas} == {"alertas"}
-
-
-@pytest.mark.asyncio
-async def test_a_espera_da_primaria_tem_teto_proprio(db, dono, usinas, monkeypatch):
-    """A primária tem substituta, então ela ganha um teto curto — e não os 30 s do
-    cliente. O teto é passado à chamada; sem isso, o portal esperava pela fonte quebrada
-    quatro vezes mais do que pela boa."""
-    a, _ = usinas
-    db.add(UserPlantAccess(user_id=dono.id, plant_link_id=a.id))
-    db.commit()
-
-    class EspiaOTeto(ClienteFalso):
-        def __init__(self):
-            super().__init__(erro_paradas=_erro_http(500), alertas=[])
-            self.teto = None
-
-        async def paradas(self, slug, inicio, fim, timeout=None):
-            self.teto = timeout
-            return await super().paradas(slug, inicio, fim, timeout=timeout)
-
-    cliente = _usar(monkeypatch, EspiaOTeto())
-
-    await modulo.paradas_da_usina(a.id, referencia=REFERENCIA, db=db, usuario=dono)
-
-    assert cliente.teto == modulo.ESPERA_DA_PRIMARIA_SEG
-    assert modulo.ESPERA_DA_PRIMARIA_SEG < 30.0
+    assert not hasattr(MeuWattClient, "paradas")
+    assert not [r for r in sonda.MEUWATT if "breakdowns/range" in r.caminho]

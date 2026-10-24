@@ -711,8 +711,9 @@ lista quatro que existem (`(tabs)/manutencao`, `cronograma/[usinaId]`, `document
 ## 7. O que NÃO existe (não invente)
 
 - Não há gateway de pagamento. As mensalidades são cadastradas à mão no BFF.
-- Não há endpoint `/equipment/{id}/history` no mw-api. A visão de histórico do equipamento
-  é montada pelo BFF cruzando `slots` + `breakdowns`.
+- Não há endpoint `/equipment/{id}/history` no mw-api. O histórico de paradas do
+  equipamento, quando for montado, sai do detector novo (`/shadow-breakdowns/queue`, linhas
+  pelo `slot_id`) — nunca do coletor antigo (`breakdowns/range`).
 - Não há vínculo automático entre a usina do meuWatt e a do meuPlano. O vínculo é a tabela
   `gs_plant_links`, preenchida à mão.
 - O motor de PDF vetorial **não roda em React Native** — depende de DOM. Roda no Chromium
@@ -729,15 +730,17 @@ Trabalho que precisa acontecer no meuWatt e no meuPlano:
 | `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | pendente — bloqueia o PDF sob demanda |
 | `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito e no ar** (13/08/2026) |
 | `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito e no ar** (13/08/2026) |
-| `mw-api` | `GET /plants/{slug}/breakdowns/range` responde **500** em qualquer intervalo | pendente — achado pela sonda em 13/08/2026 |
 | `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | pendente — bloqueia L2 no assistente |
 
 As duas pontes estão conectadas e testadas contra produção: `api.meuwatt.com.br` e
 `meuplano.up.railway.app`.
 
-**O 500 do `breakdowns/range`** é do lado do mw-api — reproduz com qualquer par de datas,
-inclusive um único dia. Bloqueia a tela de Paradas e o histórico do equipamento, que é
-montado cruzando `slots` + `breakdowns`. É a única rota vermelha na sonda.
+**Paradas vêm do detector NOVO do meuWatt** (`GET /shadow-breakdowns/queue?plantId=`, o da
+tela de Paradas de lá), desde 24/10/2026 — `bff/app/api/v1/paradas.py`. O coletor antigo
+(`/plants/{slug}/breakdowns/range`, que respondia 500 em todas as usinas) saiu do cliente e
+da sonda; regra da casa: não volta. O detector pede o id NUMÉRICO da usina (vem de
+`GET /plants/{slug}`); só a linha `material` é parada; e a `run` da resposta diz que período
+ele analisou — "não analisado" sai nulo, nunca "nenhuma parada".
 
 ---
 

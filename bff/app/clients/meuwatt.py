@@ -261,11 +261,11 @@ class MeuWattClient:
     ) -> list[dict[str, Any]]:
         """Todos os alertas da usina, página a página, até a última vir incompleta.
 
-        É a fonte ALTERNATIVA de paradas enquanto `breakdowns/range` responde 500 (ver
-        `api/v1/paradas.py`): o mesmo evento aparece nos dois lugares, só que aqui sem
-        filtro de período — o corte por data fica com quem chama. O teto de páginas é
-        proteção contra um upstream que devolvesse sempre uma página cheia; 20 páginas
-        são dez mil eventos, mais do que qualquer usina acumulou.
+        É de onde saem as paradas CLASSIFICADAS do fechamento do mês
+        (`paradas_classificadas`), sem filtro de período — o corte por data fica com quem
+        chama. As paradas da tela de Paradas vêm do detector novo (`paradas_detector`).
+        O teto de páginas é proteção contra um upstream que devolvesse sempre uma página
+        cheia; 20 páginas são dez mil eventos, mais do que qualquer usina acumulou.
         """
         todos: list[dict[str, Any]] = []
         offset = 0
@@ -315,23 +315,6 @@ class MeuWattClient:
         """
         dados = await self._get("/micro/alerts", active="true")
         return [a for a in dados if isinstance(a, dict)] if isinstance(dados, list) else []
-
-    async def paradas(
-        self, slug: str, inicio: date, fim: date, timeout: float | None = None
-    ) -> dict[str, Any]:
-        """`BreakdownRangeResponse{plant, start, end, total, total_loss_kwh,
-        total_off_time_minutes, breakdowns[]}` — as paradas cujo INÍCIO cai no período.
-
-        Responde 500 em produção (ver `api/v1/paradas.py`, que tem a fonte reserva) — e
-        demora entre 16 e 23 s para dizê-lo, medido nas 7 usinas do escopo de homologação.
-        Daí o `timeout`: quem chama passa um teto curto, porque o plano B responde em 2 s.
-        """
-        return await self._get(
-            f"/plants/{slug}/breakdowns/range",
-            timeout=timeout,
-            start=inicio.isoformat(),
-            end=fim.isoformat(),
-        )
 
     async def slots(self, slug: str) -> list[dict[str, Any]]:
         """Inversor é endereçado por SLOT (posição física permanente), não por serial — o
@@ -437,8 +420,8 @@ class MeuWattClient:
     async def paradas_classificadas(self, slug: str) -> list[dict[str, Any]]:
         """As paradas da usina com a CLASSIFICAÇÃO do operador, recortadas.
 
-        Vem de `alerts?status=all` (paginado por `alertas_todos`) e não de
-        `breakdowns/range`: a linha do `range` não traz `motivo` nem
+        Vem de `alerts?status=all` (paginado por `alertas_todos`) e não do detector novo
+        (`paradas_detector`): a linha do detector não traz `motivo` nem
         `is_external_cause` — que são justamente o motivo desta leitura existir. Sem
         filtro de período, como a fonte; o corte por data fica com quem chama, pela
         mesma régua de `api/v1/paradas.py` (o dia BRT de `started_at`).
@@ -491,8 +474,10 @@ class MeuWattClient:
                                start=inicio.isoformat(), end=fim.isoformat(), step=passo)
 
     async def paradas_detector(self, plant_id: int, inicio: str, fim: str) -> dict[str, Any]:
-        """O detector NOVO de paradas (o da tela de Paradas): `{rows[], groups[]}`. Pede o id
-        NUMÉRICO da usina, não o slug. O coletor antigo (`breakdowns/range`) não serve."""
+        """O detector NOVO de paradas (o da tela de Paradas do meuWatt): `{run, rows[], groups[]}`,
+        as linhas que SOBREPÕEM a janela, e `run` com a janela que ele analisou. Pede o id
+        NUMÉRICO da usina, não o slug. É a fonte da tela de Paradas do portal
+        (`api/v1/paradas.py`) e do bot; o coletor antigo (`breakdowns/range`) não serve."""
         return await self._get("/shadow-breakdowns/queue", plantId=plant_id, start=inicio, end=fim)
 
     async def relatorio_existente(self, slug: str, periodo: str, de: date) -> dict[str, Any] | None:

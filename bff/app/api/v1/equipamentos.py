@@ -423,9 +423,10 @@ async def detalhe_do_equipamento(
     a posição continua a mesma e o histórico da tela não se parte ao meio.
 
     Fica de fora, por não existir no upstream: PR por inversor (é por usina, precisa da
-    irradiância da estação), potência nominal AC (o que existe é capacidade CC instalada) e
-    histórico de paradas do equipamento — este último depende de `breakdowns/range`, que
-    responde 500 em produção.
+    irradiância da estação) e potência nominal AC (o que existe é capacidade CC instalada).
+    O histórico de paradas do equipamento também fica de fora, mas por não estar montado:
+    a fonte é o detector novo (`/shadow-breakdowns/queue`, linhas pelo `slot_id`), como na
+    tela de Paradas — nunca o coletor antigo (`breakdowns/range`).
     """
     link = _usina_no_escopo(db, usuario, plant_link_id)
 

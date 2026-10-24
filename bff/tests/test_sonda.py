@@ -94,6 +94,22 @@ OPCOES_COMO_HOJE = {
 }
 
 
+#: `/shadow-breakdowns/queue` como o meuWatt respondeu em 24/10/2026 (Porto Ferreira,
+#: 21–23/10), recortado a uma linha.
+FILA_COMO_HOJE = {
+    "run": {"run_id": 89, "plant_id": 9378, "plant_slug": "porto-ferreira",
+            "window_start": "2026-02-01T03:00:00Z", "window_end": "2026-10-24T14:16:46Z",
+            "detector_version": "v12", "status": "ok"},
+    "rows": [{"id": 127275, "plant_id": 9378, "slot_id": 170, "slot_label": "Inv 23",
+              "stopped_at": "2026-10-23T11:30:00Z", "resolved_at": "2026-10-23T11:36:00Z",
+              "resolution_reason": "production_resumed", "cause": "zero_active_power",
+              "materiality": "material", "off_minutes": 6, "shadow_loss_kwh": 1.2,
+              "loss_method": "peer", "group_id": 7}],
+    "groups": [],
+    "fleet_by_transformer": {},
+}
+
+
 def _tudo_responde(mock):
     """O caminho feliz: as duas rotas de descoberta e o resto em cima do slug achado."""
     mock.get(f"{BASE}/auth/me").respond(
@@ -111,6 +127,10 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/plants/porto-ferreira/exports/raw/options").respond(
         200, json=OPCOES_COMO_HOJE
     )
+    # E o cabeçalho da usina, que declara o `id` (o detector de paradas pede o id numérico).
+    mock.get(f"{BASE}/plants/porto-ferreira").respond(
+        200, json={"id": 9378, "slug": "porto-ferreira", "name": "Porto Ferreira"}
+    )
     mock.route(url__startswith=f"{BASE}/plants/porto-ferreira").respond(
         200, json={"total_generation_kwh": 120.5}
     )
@@ -124,9 +144,10 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/admin/users").respond(200, json=[{"id": 1, "email": "a@b.com"}])
     mock.get(f"{BASE}/admin/user-plants").respond(200, json=[{"user_id": 1, "plant_id": 1}])
     mock.get(f"{BASE}/reports/portal").respond(200, json=PORTAL_COMO_HOJE)
-    # O assistente do WhatsApp: irradiação diária e a fila do detector de paradas.
+    # O assistente do WhatsApp: irradiação diária.
     mock.get(f"{BASE}/grandezas/series").respond(200, json={"timestamps": [], "series": []})
-    mock.get(f"{BASE}/shadow-breakdowns/queue").respond(200, json={"rows": [], "groups": []})
+    # A fila do detector de paradas — a forma medida em Porto Ferreira em 24/10/2026.
+    mock.get(f"{BASE}/shadow-breakdowns/queue").respond(200, json=FILA_COMO_HOJE)
     # MICRO: a forma medida em 28/09/2026 — envelope `{plants, errors}` no catálogo e lista
     # na raiz nos alertas (vazia é o normal: nenhuma micro usina parada).
     mock.get(f"{BASE}/micro/plants").respond(
@@ -235,6 +256,48 @@ async def test_a_fronteira_esta_no_catalogo_e_e_exercitada_com_o_ano(db, conecta
     assert alvo.situacao == "ok" and not alvo.essencial
     # O ano vem do contexto da varredura, como as datas das outras rotas.
     assert fronteira.calls.last.request.url.params["year"] == str(date.today().year)
+
+
+@respx.mock
+async def test_a_fila_de_paradas_vigia_o_que_a_tela_de_paradas_le(db, conectado):
+    """Um `materiality` renomeado não dá erro nenhum na tela: ela passaria a dizer "nenhuma
+    parada". A sonda é que tem de ficar vermelha, com o nome do campo."""
+    sem_classe = {**FILA_COMO_HOJE, "rows": [
+        {k: v for k, v in FILA_COMO_HOJE["rows"][0].items() if k != "materiality"}
+    ]}
+    _tudo_responde(respx.mock)
+    # Depois de `_tudo_responde`: o respx substitui a rota de mesmo padrão no lugar.
+    respx.mock.get(f"{BASE}/shadow-breakdowns/queue").respond(200, json=sem_classe)
+
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
+
+    fila = next(r for r in v.rotas if r.chave == "mw.shadow_queue")
+    assert fila.situacao == "falhou" and "rows[].materiality" in fila.detalhe
+    assert fila.essencial and not v.ok
+
+
+@respx.mock
+async def test_semana_sem_parada_nao_sai_verde_na_fila(db, conectado):
+    """Semana sem parada é normal — mas a rodada não conferiu a forma de linha nenhuma."""
+    _tudo_responde(respx.mock)
+    respx.mock.get(f"{BASE}/shadow-breakdowns/queue").respond(
+        200, json={**FILA_COMO_HOJE, "rows": []}
+    )
+
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
+
+    assert next(r for r in v.rotas if r.chave == "mw.shadow_queue").situacao == "parcial"
+
+
+@respx.mock
+async def test_o_id_da_usina_que_o_detector_pede_e_vigiado(db, conectado):
+    _tudo_responde(respx.mock)
+    respx.mock.get(f"{BASE}/plants/porto-ferreira").respond(200, json={"slug": "porto-ferreira"})
+
+    v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
+
+    usina = next(r for r in v.rotas if r.chave == "mw.plant")
+    assert usina.situacao == "falhou" and "id" in usina.detalhe
 
 
 @respx.mock

@@ -2978,7 +2978,8 @@ class EventoDeParada(BaseModel):
 
     **A contagem é por parada, não por evento agrupado por escopo.** O agrupamento
     "usina / skid / inversor" do meuWatt mora no front dele e nos endpoints
-    `/shadow-breakdowns`, que respondem 403 ao nosso token de serviço — replicá-lo daqui
+    `/shadow-breakdowns` (403 ao antigo token de serviço; com o token da empresa a fila
+    responde, e é dela que sai a tela de Paradas, `api/v1/paradas.py`) — replicá-lo daqui
     seria inventar um segundo detector, que divergiria do primeiro na primeira mudança.
     """
 

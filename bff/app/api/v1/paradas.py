@@ -1,39 +1,36 @@
 """As paradas da usina — quanto tempo e quanta energia o dono perdeu no período.
 
-É a primeira tela do portal que não tem espelho no aplicativo, e o motivo é um defeito
-alheio: `GET /plants/{slug}/breakdowns/range` do meuWatt responde **500 em produção**. O
-detalhe do inversor (`equipamentos.py`) já avisa que o histórico de paradas ficou de fora
-por isso, e a sonda marca `mw.breakdowns` em vermelho desde então.
+A fonte é o **detector NOVO** de paradas do meuWatt, `GET /shadow-breakdowns/queue` — o mesmo
+que a tela de Paradas de lá lê. O coletor antigo (`/plants/{slug}/breakdowns/range`, com a
+reserva `alerts?status=all`) saiu em 24/10/2026: respondia 500 em todas as usinas, e a regra
+da casa é nunca usá-lo. O detector pede o id NUMÉRICO da usina; o vínculo guarda o slug, e o
+id vem de `GET /plants/{slug}` (o mesmo `plants.id` que o `/monitoring/all` devolve).
 
-Causa provável, lida no código do mw-api e **não verificada em execução**: o router recebe
-`start`/`end` como `date` e os converte com `.isoformat()` antes de chamar
-`list_breakdowns_range(start: str, end: str)`, que os usa em
-`text("… pb.stopped_at::date BETWEEN :start AND :end")`. Sob asyncpg, um parâmetro
-comparado a `date` precisa chegar como `datetime.date` — a string cai num erro de tipo que
-o servidor devolve como 500. O conserto é lá (tipar `date` e não converter); aqui a
-resposta é não depender dele:
+O que este módulo decide, e por quê:
 
-- **Fonte primária** é o `breakdowns/range`, que já vem recortado por período e com o
-  tempo parado calculado pelo produto de origem.
-- **Fonte reserva** é `alerts?status=all`, que lista os MESMOS eventos (a tabela é uma só,
-  `plant_breakdowns`) sem filtro de período e paginado — o corte por data e a paginação
-  ficam com o BFF.
+- **Parada é a linha `material`.** O detector devolve também `blip`/`immaterial` (piscadas
+  curtas, sem perda) e `data_gap` (buraco de coleta: a usina produzia e faltou leitura). A
+  tela de Paradas do meuWatt não mostra nenhuma das três como parada, e a tabela ao vivo
+  dele (`plant_breakdowns`, a fonte de antes) nunca as recebeu. Uma linha por inversor, como
+  antes: o agrupamento por usina/skid (`groups`) é desenho da tela de lá.
+- **Perda só com conta feita.** `shadow_loss_kwh` vale quando `loss_method` diz como foi
+  calculada; `no_peers` (nem par saudável nem irradiância no dia) grava 0,0 sem conta
+  nenhuma — e aqui vira nulo, não zero.
+- **Recorte pelo dia BRT do início.** O detector devolve por SOBREPOSIÇÃO (a parada que
+  cruza a borda vem inteira); contar pelo início põe cada parada num mês só — o mesmo
+  critério do fechamento do mês (`energia.py`).
+- **A rodada diz o que foi analisado.** `run.window_start`/`window_end` são as bordas de
+  DADOS que o detector julgou. Sem rodada, ou com o período inteiro antes dela, a resposta é
+  nula ("não analisado" não é "não parou"); período que começa antes dela encolhe até onde
+  ela começa, com aviso; rodada parada há mais de 20 h ganha aviso.
+- **Forma estranha é falha, não zero.** Linha sem id, início ou classificação derruba a
+  leitura para "sem dados": descartá-la calada faria um mês com paradas sair limpo.
 
-O contrato que sai daqui é **o mesmo nas duas fontes**. Quando o mw-api voltar a responder,
-a fonte troca sozinha, e a tela não muda nem precisa saber. O campo `fonte` diz de onde veio
-para o gestor conseguir conferir; o `aviso` diz ao cliente que a energia perdida pode vir
-de estimativa.
-
-Uma falha da primária é lembrada por uma hora, em memória: sem isso, cada página aberta
-gastaria uma chamada que se sabe que vai falhar — e esperaria o timeout dela — antes de ir
-à reserva. É o mesmo raciocínio do cache de autorização da ficha (`manutencao.py`):
-memória do processo, não do sistema; num deploy com duas instâncias cada uma aprende por
-conta própria, e isso é aceitável para um defeito que dura semanas.
+Limite conhecido: a parada que o operador DESCLASSIFICOU no meuWatt continua aparecendo — a
+desclassificação só vem no `/shadow-breakdowns/compare`, que esta tela não lê.
 """
 
-import asyncio
-import time
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import httpx
@@ -52,7 +49,7 @@ from app.core.db import get_db
 from app.core.security import usuario_atual
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.services import vinculos
+from app.services import integracoes, vinculos
 
 router = APIRouter(prefix="/api/v1", tags=["app · paradas"])
 
@@ -66,12 +63,13 @@ class ParadaOut(BaseModel):
     inicio: str
     #: `None` = ainda em aberto.
     fim: str | None = None
-    #: Minutos parados. `None` quando o produto de origem não soube calcular (o alerta
-    #: sem janela solar, por exemplo) — não é zero.
+    #: Minutos parados com sol (`off_minutes` do detector; na aberta, até a última leitura
+    #: dele). `None` = o detector não trouxe o número — não é zero.
     duracao_min: float | None = None
-    #: Energia perdida em kWh. `None` = o upstream não trouxe o número.
+    #: Energia perdida em kWh. `None` = o detector não fez a conta (`no_peers`) ou não trouxe.
     perda_kwh: float | None = None
-    #: `parada` (inversor sem produzir) ou `degradacao` (produzindo abaixo dos pares).
+    #: `parada`. O detector só publica parada; degradação (inversor produzindo abaixo dos
+    #: pares) não é parada, e a tela de Paradas do meuWatt também a deixa de fora.
     tipo: str
     #: Contexto para o gestor; a tela do cliente não o mostra — análise de equipamento é
     #: trabalho da equipe, não do dono.
@@ -82,9 +80,10 @@ class ParadaOut(BaseModel):
 
 class ParadasOut(BaseModel):
     recorte: str
+    #: A janela que o detector de fato analisou: encolhe quando ele começa depois do período.
     inicio: str
     fim: str
-    #: `None` = nenhuma das duas fontes respondeu. Zero é "não parou".
+    #: `None` = o detector não respondeu ou não analisou o período. Zero é "não parou".
     total: int | None = None
     #: Soma dos minutos parados. `None` se alguma linha veio sem duração — somar só as
     #: que têm faria a conta parecer menor do que foi.
@@ -93,61 +92,47 @@ class ParadasOut(BaseModel):
     perda_kwh: float | None = None
     em_aberto: int = 0
     paradas: list[ParadaOut] = []
-    #: `paradas` (breakdowns/range) | `alertas` (alerts?status=all) | `None` (nada respondeu).
+    #: `detector` (shadow-breakdowns/queue do meuWatt) | `None` (sem leitura).
     fonte: str | None = None
     aviso: str | None = None
 
 
-# ── a memória da fonte primária ─────────────────────────────────────────────
+# ── a leitura ───────────────────────────────────────────────────────────────
 
-#: Segundos durante os quais a primária não é tentada de novo depois de falhar.
-INDISPONIVEL_POR_SEG = 3600.0
+#: Quanto o detector pode ficar sem avançar antes de a leitura deixar de valer "até agora".
+#: É a régua do próprio meuWatt (`SIGNAL_STALE_AFTER_HOURS`): à noite ele congela no pôr do
+#: sol (~12 h no inverno), e passar de 20 h é detector parado.
+ATRASO_TOLERADO = timedelta(hours=20)
 
-#: Teto de espera da fonte primária. Ela TEM substituta, então esperar os 30 s do cliente
-#: não compra nada: o `breakdowns/range` leva de 16 a 23 s para admitir o 500 (medido nas
-#: 7 usinas do escopo), e a Visão geral pede paradas das sete de uma vez.
-ESPERA_DA_PRIMARIA_SEG = 6.0
+#: `loss_method` de quem gravou 0,0 sem ter feito conta.
+SEM_CONTA = (None, "", "no_peers")
 
-#: Instante (`time.monotonic`) até o qual a primária é considerada fora. Um valor só, e
-#: não um por usina: o defeito está na consulta do mw-api, não no dado de uma usina.
-_primaria_fora_ate: float | None = None
-
-#: Enquanto a primária não provar que responde, só UMA tentativa por vez. Sem isto as sete
-#: usinas da Visão geral saem juntas e as sete pagam a mesma descoberta; com isto a
-#: primeira paga (no máximo `ESPERA_DA_PRIMARIA_SEG`) e as demais já leem o circuito
-#: aberto. Depois do primeiro sucesso o portão sai do caminho — serializar uma fonte
-#: saudável seria trocar um defeito por outro.
-_portao_primaria = asyncio.Lock()
-_primaria_confirmada = False
+#: O id NUMÉRICO da usina no meuWatt, por slug — o detector pede o id, o vínculo guarda o slug.
+#: ponytail: em memória, por processo e sem validade: o id de uma usina não muda, e um slug
+#: renomeado lá já quebra todas as telas dela (o vínculo aponta para o velho).
+_ID_NO_MEUWATT: dict[str, int] = {}
 
 
-def _primaria_disponivel() -> bool:
-    return _primaria_fora_ate is None or time.monotonic() >= _primaria_fora_ate
+async def _id_no_meuwatt(cliente, slug: str) -> int:
+    if slug not in _ID_NO_MEUWATT:
+        _ID_NO_MEUWATT[slug] = int((await cliente.usina(slug))["id"])
+    return _ID_NO_MEUWATT[slug]
 
 
-def _marcar_primaria_fora() -> None:
-    global _primaria_fora_ate
-    _primaria_fora_ate = time.monotonic() + INDISPONIVEL_POR_SEG
+def _meia_noite(dia: date) -> str:
+    """O instante que abre o dia na usina — `start`/`end` do detector são instantes."""
+    return datetime.combine(dia, time(), BRT).isoformat()
 
 
-def _marcar_primaria_boa() -> None:
-    global _primaria_confirmada
-    _primaria_confirmada = True
-
-
-def esquecer_indisponibilidade() -> None:
-    """Volta a tentar a primária na próxima chamada. Para testes e para quem operar."""
-    global _primaria_fora_ate, _primaria_confirmada
-    _primaria_fora_ate = None
-    _primaria_confirmada = False
-
-
-def _e_falha_da_fonte(exc: BaseException) -> bool:
-    """5xx e tempo esgotado são a fonte fora; um 4xx é um pedido que ela recusou (usina
-    inexistente, período inválido) e não justifica parar de perguntar por uma hora."""
+def _motivo(exc: Exception) -> str:
+    """A frase do produto quando ele escreveu uma ("Sem acesso ao Dashboard de Paradas"),
+    senão o status ou o tipo e a mensagem. Nunca o texto do `HTTPStatusError`: ele traz a URL
+    do upstream, e o cliente não lê o nome do produto (`test_vocabulario_do_cliente`)."""
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
+        codigo = exc.response.status_code
+        dito = integracoes.detalhe_do_upstream(exc.response)
+        return f"{codigo} — {dito}" if dito else f"respondeu {codigo}"
+    return f"{type(exc).__name__}: {exc}"[:200]
 
 
 # ── tradução ────────────────────────────────────────────────────────────────
@@ -161,7 +146,7 @@ def _numero(valor: Any) -> float | None:
 
 def _instante(valor: Any) -> datetime | None:
     """ISO 8601 → datetime no fuso da usina. Sem fuso no texto, assume UTC — é como o
-    mw-api grava `stopped_at` (timestamptz) e serializa sem o sufixo."""
+    mw-api grava `stopped_at` (timestamptz)."""
     if not isinstance(valor, str) or not valor:
         return None
     try:
@@ -177,76 +162,37 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
-#: Os `kind` de `AlertDetail` que são parada de verdade (`mw-api/src/alerts/schemas.py`:
-#: `kind: str = "stop"`, e o detector só grava `stop` ou `degradation`). O campo é texto
-#: livre no schema: se um dia o meuWatt passar a listar outro tipo de evento no mesmo
-#: endpoint (comunicação, estação), ele NÃO pode virar "parada" na tela do dono — por
-#: isso a lista é fechada aqui e o desconhecido fica de fora, em vez de cair num padrão.
-KINDS_DE_PARADA = {"stop": "parada", "degradation": "degradacao"}
+def _de_linha(linha: dict[str, Any]) -> ParadaOut | None:
+    """Linha do detector → `ParadaOut`; `None` = não é parada (blip, imaterial, sem dados).
 
-
-def _tipo(valor: Any) -> str | None:
-    """`stop`/`degradation` → tipo do portal; ausente conta como `stop` (é o padrão do
-    schema); qualquer outro valor é "não é parada" e a linha é descartada."""
-    if valor in (None, ""):
-        return "parada"
-    return KINDS_DE_PARADA.get(str(valor))
-
-
-def _de_breakdown(linha: dict[str, Any]) -> ParadaOut | None:
-    """`BreakdownRangeRow` → `ParadaOut`.
-
-    A linha desta rota NÃO traz `kind` (só `type`, que é inversor/planta — outro eixo).
-    Tudo o que sai de `/breakdowns` é parada por definição da tabela; `degradation` só
-    aparece se o produto de origem passar a publicar o `kind` também aqui.
+    Linha sem id, início ou classificação é forma que o produto não promete: levanta, e a
+    tela diz "sem dados" em vez de contar uma parada a menos.
     """
     inicio = _instante(linha.get("stopped_at"))
-    if inicio is None or not isinstance(linha.get("id"), int):
+    if not isinstance(linha.get("id"), int) or inicio is None or "materiality" not in linha:
+        raise ValueError("linha do detector sem id, início ou classificação")
+    if linha["materiality"] != "material":
         return None
     fim = _instante(linha.get("resolved_at"))
-    em_aberto = linha.get("solved") is False or (fim is None and linha.get("solved") is None)
+    em_aberto = fim is None
     return ParadaOut(
         id=linha["id"],
         inicio=inicio.isoformat(),
         fim=_iso(fim),
-        duracao_min=_numero(linha.get("off_time_minutes")),
-        perda_kwh=_numero(linha.get("loss_kwh")),
-        tipo=_tipo(linha.get("kind")) or "parada",
-        equipamento=linha.get("slot_label") or linha.get("sn"),
-        em_aberto=em_aberto,
-        tom="parado" if em_aberto else "ok",
-    )
-
-
-def _de_alerta(alerta: dict[str, Any]) -> ParadaOut | None:
-    """`AlertDetail` → `ParadaOut`. `duration_minutes` vem nulo quando o mw-api não tem
-    janela solar para calcular — fica nulo aqui também. Alerta de `kind` fora de
-    `KINDS_DE_PARADA` não vira linha: a reserva lista TODOS os alertas da usina, e só
-    parada e degradação são paradas."""
-    inicio = _instante(alerta.get("started_at"))
-    if inicio is None or not isinstance(alerta.get("id"), int):
-        return None
-    tipo = _tipo(alerta.get("kind"))
-    if tipo is None:
-        return None
-    fim = _instante(alerta.get("resolved_at"))
-    em_aberto = bool(alerta.get("is_active")) if "is_active" in alerta else fim is None
-    return ParadaOut(
-        id=alerta["id"],
-        inicio=inicio.isoformat(),
-        fim=_iso(fim),
-        duracao_min=_numero(alerta.get("duration_minutes")),
-        perda_kwh=_numero(alerta.get("estimated_loss_kwh")),
-        tipo=tipo,
-        equipamento=alerta.get("slot_label") or alerta.get("sn"),
+        duracao_min=_numero(linha.get("off_minutes")),
+        perda_kwh=(
+            None if linha.get("loss_method") in SEM_CONTA
+            else _numero(linha.get("shadow_loss_kwh"))
+        ),
+        tipo="parada",
+        equipamento=linha.get("slot_label") or linha.get("serial_number"),
         em_aberto=em_aberto,
         tom="parado" if em_aberto else "ok",
     )
 
 
 def _no_periodo(parada: ParadaOut, inicio: date, fim: date) -> bool:
-    """Pelo DIA de início, no fuso da usina — o mesmo critério do `breakdowns/range`
-    (`stopped_at::date BETWEEN`), para as duas fontes recortarem igual."""
+    """Pelo DIA de início, no fuso da usina."""
     dia = datetime.fromisoformat(parada.inicio).date()
     return inicio <= dia <= fim
 
@@ -268,29 +214,6 @@ def _consolidar(saida: ParadasOut, paradas: list[ParadaOut], fonte: str) -> Para
     return saida
 
 
-# ── as fontes ───────────────────────────────────────────────────────────────
-
-
-async def _pela_primaria(cliente, slug: str, inicio: date, fim: date) -> list[ParadaOut]:
-    resposta = await cliente.paradas(slug, inicio, fim, timeout=ESPERA_DA_PRIMARIA_SEG)
-    linhas = resposta.get("breakdowns") if isinstance(resposta, dict) else resposta
-    if not isinstance(linhas, list):
-        raise ValueError("breakdowns/range respondeu sem a lista de paradas")
-    # O upstream JÁ recortou por `stopped_at::date` — e no fuso do banco dele, que não
-    # se sabe se é o da usina. Recortar de novo aqui, pelo dia em BRT, deixaria cair a
-    # parada da virada do mês (01/09 01:00 UTC = 31/08 22:00 na usina) nos DOIS meses:
-    # o de agosto não a recebe do upstream e o de setembro a descartaria. O que a fonte
-    # primária diz que é do período, é do período.
-    return [p for p in (_de_breakdown(l) for l in linhas if isinstance(l, dict)) if p]
-
-
-async def _pela_reserva(cliente, slug: str, inicio: date, fim: date) -> list[ParadaOut]:
-    alertas = await cliente.alertas_todos(slug, status="all")
-    # `_de_alerta` já descarta o que não é `stop`/`degradation`; aqui só o período.
-    paradas = [p for p in (_de_alerta(a) for a in alertas if isinstance(a, dict)) if p]
-    return [p for p in paradas if _no_periodo(p, inicio, fim)]
-
-
 # ── rota ────────────────────────────────────────────────────────────────────
 
 
@@ -304,9 +227,9 @@ async def paradas_da_usina(
 ) -> ParadasOut:
     """Paradas cujo início cai no mês ou no ano de `referencia` (qualquer dia do período).
 
-    Nunca é 5xx por causa do upstream: as duas fontes fora do ar dão `total=None` com o
-    aviso, e a tela mostra "sem dados" — não "nenhuma parada", que seria mentir para o
-    lado bom.
+    Nunca é 5xx por causa do upstream: detector fora do ar, sem rodada ou em forma estranha
+    dá `total=None` com o aviso, e a tela mostra "sem dados" — não "nenhuma parada", que
+    seria mentir para o lado bom.
     """
     if recorte not in ("mes", "ano"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "recorte deve ser 'mes' ou 'ano'.")
@@ -326,43 +249,37 @@ async def paradas_da_usina(
         saida.aviso = f"Monitoramento indisponível: {exc}"
         return saida
 
-    slug = link.mw_plant_slug
-    motivo_primaria: str | None = None
-
-    if _primaria_disponivel():
-        # O portão só existe enquanto a primária não se provou. Quem chega junto espera a
-        # decisão de quem entrou (segundos, não a espera cheia) e depois relê o circuito:
-        # se o primeiro descobriu o 500, este nem tenta.
-        portao = _portao_primaria if not _primaria_confirmada else None
-        if portao is not None:
-            await portao.acquire()
-        try:
-            if _primaria_disponivel():
-                paradas = await _pela_primaria(cliente, slug, inicio, fim)
-                _marcar_primaria_boa()
-                return _consolidar(saida, paradas, "paradas")
-        except Exception as exc:  # noqa: BLE001
-            if _e_falha_da_fonte(exc):
-                _marcar_primaria_fora()
-            motivo_primaria = f"{type(exc).__name__}: {exc}"[:200]
-        finally:
-            if portao is not None:
-                portao.release()
-
     try:
-        _consolidar(saida, await _pela_reserva(cliente, slug, inicio, fim), "alertas")
+        plant_id = await _id_no_meuwatt(cliente, link.mw_plant_slug)
+        resposta = await cliente.paradas_detector(
+            plant_id, _meia_noite(inicio), _meia_noite(fim + timedelta(days=1))
+        )
+        paradas = [p for p in map(_de_linha, resposta["rows"]) if p]
+        run = resposta.get("run") or {}
+        desde, ate = _instante(run.get("window_start")), _instante(run.get("window_end"))
     except Exception as exc:  # noqa: BLE001
-        partes = ["O monitoramento não respondeu as paradas deste período."]
-        if motivo_primaria:
-            partes.append(f"paradas: {motivo_primaria}")
-        partes.append(f"alertas: {type(exc).__name__}: {exc}"[:200])
-        saida.aviso = " · ".join(partes)
+        saida.aviso = f"Falha ao ler o detector de paradas do monitoramento: {_motivo(exc)}."
         return saida
 
-    # A reserva lista os eventos, mas a perda é ESTIMADA pelo produto de origem (pares
-    # saudáveis ou POA × PR) e a duração depende da janela solar. Dizer isso é o que
-    # separa "número do relatório" de "número de acompanhamento".
-    saida.aviso = (
-        "Lido do histórico de alertas: a energia perdida é estimada pelo monitoramento."
-    )
+    if desde is None or ate is None or desde.date() > fim:
+        saida.aviso = "O detector de paradas do monitoramento não analisou este período."
+        return saida
+
+    avisos: list[str] = []
+    if desde.date() > inicio:
+        inicio = desde.date()
+        saida.inicio = inicio.isoformat()
+        avisos.append(
+            f"O detector de paradas do monitoramento analisa a partir de {inicio:%d/%m/%Y}; "
+            "antes disso não há leitura."
+        )
+    borda = min(datetime.combine(fim + timedelta(days=1), time(), BRT), datetime.now(BRT))
+    if borda - ate > ATRASO_TOLERADO:
+        avisos.append(
+            f"O detector de paradas do monitoramento analisou até {ate:%d/%m/%Y às %H:%M}; "
+            "o que aconteceu depois ainda não entrou."
+        )
+
+    _consolidar(saida, [p for p in paradas if _no_periodo(p, inicio, fim)], "detector")
+    saida.aviso = " ".join(avisos) or None
     return saida

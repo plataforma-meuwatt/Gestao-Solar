@@ -16,9 +16,9 @@
  * **Uma parada em aberto não tem fim.** A coluna mostra "—" (nunca a hora de agora, que
  * pareceria resolvida) e a linha carrega o selo vermelho que o próprio servidor mandou.
  *
- * **O aviso da fonte é discreto, não alarmante.** Quando o BFF cai na fonte reserva, a energia
- * perdida passa a ser estimada pelo monitoramento — o dono precisa saber disso para não levar
- * o número a uma reunião como se fosse medição, mas isso é uma nota de rodapé, não um erro.
+ * **O aviso da fonte é discreto, não alarmante.** Quando o detector de paradas não cobre o
+ * período inteiro (começou depois, ou parou de analisar), o dono precisa saber disso para não
+ * levar o número a uma reunião como se fosse o período todo — mas é nota de rodapé, não erro.
  */
 
 import { useState } from 'react'
@@ -207,8 +207,8 @@ function Conteudo({
   offlineDesde?: string
   rotulo: string
 }) {
-  // Nenhuma das duas fontes respondeu: não há número nenhum para mostrar, e "nenhuma parada"
-  // seria mentira para o lado bom. A frase é a do servidor, que sabe qual fonte falhou.
+  // O detector não respondeu ou não analisou o período: não há número nenhum para mostrar, e
+  // "nenhuma parada" seria mentira para o lado bom. A frase é a do servidor, que sabe por quê.
   if (dados.total === null) {
     return (
       <Vazio

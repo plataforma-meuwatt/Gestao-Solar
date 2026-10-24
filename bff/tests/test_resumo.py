@@ -16,7 +16,6 @@ from datetime import date
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1 import paradas as modulo_paradas
 from app.api.v1.resumo import _contar_cronograma, _no_mes, resumo
 from app.api.v1.manutencao import CelulaOut, CronogramaOut, LinhaCronogramaOut
 from app.core.security import criar_token, gerar_hash_senha
@@ -24,15 +23,6 @@ from app.models.user import Perfil, User, UserPlantAccess
 
 #: Um dia de agosto: o mês fechado que o cliente olha em setembro.
 REFERENCIA = date(2026, 8, 14)
-
-
-@pytest.fixture(autouse=True)
-def _primaria_de_pe():
-    """A memória de "fonte primária fora" é global ao processo; um teste não pode herdar
-    a indisponibilidade que outro provocou."""
-    modulo_paradas.esquecer_indisponibilidade()
-    yield
-    modulo_paradas.esquecer_indisponibilidade()
 
 
 @pytest.fixture
@@ -84,19 +74,27 @@ class MeuWattFalso:
     async def pvsyst_manual(self, slug, ano):
         return {"year": ano, "rows": []}
 
-    async def paradas(self, slug, inicio, fim, timeout=None):
-        if slug != "porto-ferreira":
-            return {"plant": slug, "total": 0, "breakdowns": []}
+    async def usina(self, slug):
+        return {"id": {"porto-ferreira": 9378}.get(slug, 9380), "slug": slug}
+
+    async def paradas_detector(self, plant_id, inicio, fim):
+        """O detector novo de paradas (`/shadow-breakdowns/queue`), com a rodada cobrindo
+        agosto inteiro."""
+        rodada = {"window_start": "2026-02-01T03:00:00Z", "window_end": "2026-10-24T14:00:00Z"}
+        if plant_id != 9378:
+            return {"run": rodada, "rows": [], "groups": []}
         return {
-            "plant": slug, "total": 2,
-            "breakdowns": [
-                {"id": 1, "stopped_at": "2026-08-05T10:00:00-03:00",
-                 "resolved_at": "2026-08-05T12:00:00-03:00", "off_time_minutes": 120,
-                 "loss_kwh": 50.0, "solved": True, "type": "inverter"},
+            "run": rodada,
+            "rows": [
+                {"id": 1, "stopped_at": "2026-08-05T13:00:00Z",
+                 "resolved_at": "2026-08-05T15:00:00Z", "off_minutes": 120,
+                 "shadow_loss_kwh": 50.0, "loss_method": "peer", "materiality": "material"},
                 # Em aberto e sem duração: é o que deixa `tempo_parado_min` nulo.
-                {"id": 2, "stopped_at": "2026-08-20T09:00:00-03:00", "resolved_at": None,
-                 "off_time_minutes": None, "loss_kwh": None, "solved": False, "type": "inverter"},
+                {"id": 2, "stopped_at": "2026-08-20T12:00:00Z", "resolved_at": None,
+                 "off_minutes": None, "shadow_loss_kwh": None, "loss_method": None,
+                 "materiality": "material"},
             ],
+            "groups": [],
         }
 
 

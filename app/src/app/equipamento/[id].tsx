@@ -8,8 +8,8 @@
  * Três blocos que existiam e **saíram por não terem fonte**, e não vão voltar como número
  * plausível: *PR do inversor* (performance ratio é por usina, depende da irradiância da
  * estação solarimétrica), *potência nominal AC* (o que o upstream tem é capacidade CC
- * instalada, que é outra coisa) e *histórico de paradas* (depende de `breakdowns/range`,
- * que responde 500 em produção).
+ * instalada, que é outra coisa) e *histórico de paradas* (ainda não montado no BFF; a fonte
+ * é o detector novo de paradas do meuWatt, nunca o coletor antigo `breakdowns/range`).
  */
 
 import { useLocalSearchParams } from 'expo-router'

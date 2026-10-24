@@ -29,7 +29,6 @@ from datetime import date
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1 import paradas as modulo_paradas
 from app.api.v1.carteira import _contar_cronograma, comparativo
 from app.api.v1.manutencao import CelulaOut, CronogramaOut, LinhaCronogramaOut
 from app.api.v1.resumo import resumo
@@ -44,15 +43,6 @@ from app.models.user import Perfil, User, UserPlantAccess
 DE = "2026-08-01"
 ATE = "2026-08-31"
 REFERENCIA = date(2026, 8, 14)
-
-
-@pytest.fixture(autouse=True)
-def _primaria_de_pe():
-    """A memória de "fonte primária fora" é global ao processo (usada por `paradas`, que o
-    `/resumo` deste arquivo exercita); um teste não herda a queda que outro provocou."""
-    modulo_paradas.esquecer_indisponibilidade()
-    yield
-    modulo_paradas.esquecer_indisponibilidade()
 
 
 @pytest.fixture
@@ -168,8 +158,12 @@ class MeuWattFalso:
     async def pvsyst_manual(self, slug, ano):
         return {"year": ano, "rows": []}
 
-    async def paradas(self, slug, inicio, fim, timeout=None):
-        return {"plant": slug, "total": 0, "breakdowns": []}
+    async def usina(self, slug):
+        return {"id": 9378 if slug == "porto-ferreira" else 9380, "slug": slug}
+
+    async def paradas_detector(self, plant_id, inicio, fim):
+        return {"run": {"window_start": "2026-02-01T03:00:00Z",
+                        "window_end": "2026-10-24T14:00:00Z"}, "rows": [], "groups": []}
 
 
 class MeuPlanoFalso:

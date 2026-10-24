@@ -17,7 +17,7 @@ Duas cautelas que o cache exige:
   reinicia o seu num reload; um `AsyncClient` criado num loop e usado noutro estoura em
   tempo de execução. A chave inclui o loop, então cada um tem o seu.
 - **O `timeout` não entra na chave.** Ele é por requisição (`client.request(timeout=…)`),
-  e é assim que a fonte de paradas consegue um teto curto sem abrir sessão própria.
+  e é assim que a leitura ao vivo do MICRO consegue um teto curto sem abrir sessão própria.
 """
 
 import asyncio

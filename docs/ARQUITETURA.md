@@ -188,7 +188,7 @@ correspondente); ter nenhum, não.
 | Potência agora, estação, relés | `GET /plants/{slug}/monitoring/current` |
 | Curvas intradiárias | `GET /plants/{slug}/charts/intraday/{strings,temperature}` · `/charts/hourly` |
 | UCs (= transformadores) | `GET /plants/{slug}/utility-bills` + agregação do `range` |
-| Paradas / tempo parado | `GET /plants/{slug}/alerts` · `GET /plants/{slug}/breakdowns/range` |
+| Paradas / tempo parado | `GET /shadow-breakdowns/queue?plantId=` (detector novo; o id vem de `GET /plants/{slug}`) · `GET /plants/{slug}/alerts` (alertas ativos e as paradas classificadas do fechamento) |
 | Equipamento e histórico | `GET /plants/{slug}/slots` · `/slots/{slot_id}` (assignments) |
 | Trip de relé de proteção | `GET /plants/{slug}/relays/{relay_id}/trip-events` |
 | PR e perdas | `GET /plants/{slug}/losses?start=&end=` |
@@ -196,8 +196,8 @@ correspondente); ter nenhum, não.
 
 > "UC" no meuWatt é o **transformador** — `src/utility_bills/router.py` é explícito sobre
 > isso. Não existe endpoint `/equipment/{id}/history` genérico: o tempo parado por
-> equipamento sai de `plant_breakdowns` (`stopped_at`, `resolved_at`, `off_time_minutes`),
-> e o BFF monta a visão do equipamento cruzando `slots` + `breakdowns`.
+> equipamento sai do detector novo (`/shadow-breakdowns/queue`: `slot_id`, `stopped_at`,
+> `resolved_at`, `off_minutes`) — nunca do coletor antigo `breakdowns/range`.
 
 ### meuPlano — manutenção
 
@@ -279,7 +279,6 @@ Toda revelação continua auditada em `AccessRevealLog`.
 | `mw-api` | Token pessoal para o BFF (`/auth/tokens`, migration 131) | **feito e no ar** (13/08/2026) |
 | `meuPlano` | Token pessoal equivalente (migration `jt00pat11ok0`) | **feito e no ar** (13/08/2026) |
 | `mw-fe` | Rota de impressão headless + `window.__gsCapturePdf()` | pendente — bloqueia o PDF sob demanda |
-| `mw-api` | `GET /plants/{slug}/breakdowns/range` responde **500** em qualquer intervalo | pendente — bloqueia Paradas e o histórico do equipamento |
 | `meuPlano` | `_TETO_NIVEL_CLIENTE` respeitar `nivel_acesso` (teto 2) | pendente — bloqueia L2 no assistente |
 | `meuPlano` | Cadastrar os proprietários com `nivel_acesso = 2` | pendente — bloqueia L2 no assistente |
 

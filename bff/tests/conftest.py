@@ -47,6 +47,16 @@ def _memoria_do_bot_limpa():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _id_das_usinas_esquecido():
+    """`api/v1/paradas` guarda o id do meuWatt por slug, em memória. Cada teste tem os seus
+    upstreams de mentira: o id que um deixou não vale para o seguinte."""
+    from app.api.v1 import paradas
+
+    paradas._ID_NO_MEUWATT.clear()
+    yield
+
+
 @pytest.fixture
 def db():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})

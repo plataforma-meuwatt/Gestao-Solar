@@ -3,17 +3,17 @@
  *
  * Três coisas desta resposta mudam o desenho da tela e por isso estão anotadas campo a campo:
  *
- * **`total = null` não é zero.** Zero é "a usina não parou" — notícia boa. `null` é "nenhuma
- * das duas fontes do monitoramento respondeu". Mostrar as duas do mesmo jeito diria ao dono
- * que o mês foi tranquilo quando na verdade ninguém sabe.
+ * **`total = null` não é zero.** Zero é "a usina não parou" — notícia boa. `null` é "o
+ * detector de paradas do monitoramento não respondeu, ou não analisou este período". Mostrar
+ * as duas do mesmo jeito diria ao dono que o mês foi tranquilo quando na verdade ninguém sabe.
  *
  * **`tempo_parado_min` e `perda_kwh` só vêm somados quando TODA linha tem o número.** O BFF
  * recusa somar pela metade (`_soma_se_todas`), porque um total menor do que foi é pior que
  * total nenhum: vira número de reunião. Nulo aqui vira "—" com a explicação ao lado.
  *
- * **`fonte` diz de onde veio.** A fonte preferida do monitoramento está fora do ar há semanas
- * e o BFF cai sozinho na reserva, que ESTIMA a energia perdida — e escreve isso em `aviso`. A
- * tela repete a frase do servidor; não é ela que decide o que é estimativa.
+ * **`aviso` é a ressalva do servidor** — o detector começou depois do início do período (e
+ * `inicio` encolhe até onde ele começou), ou parou de analisar há mais de 20 h. A tela repete
+ * a frase; não é ela que decide o que vale ressalva.
  *
  * O campo que nomeia o inversor de cada linha existe na resposta e NÃO é lido aqui, de
  * propósito: análise de aparelho é trabalho da equipe da Splendor, não do cliente corporativo

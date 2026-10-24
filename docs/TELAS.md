@@ -77,11 +77,11 @@ preferimos a lacuna anotada a uma tabela que parece conferida e não foi.
 | 3.6 | UCs | idem | `GET /api/v1/plants/{id}/ucs?start=&end=` | `generation/range` + `utility-bills` |
 | 3.7 | Mapa da planta | `usina/[id]/mapa` | `GET /api/v1/plants/{id}/map` | `monitoring/current` + `slots` |
 | 3.8 | Equipamentos | `usina/[id]/equipamentos` | `GET /api/v1/plants/{id}/equipment` | `slots` + `monitoring/current` |
-| 3.9 | Inversor | `equipamento/[id]` | `GET /api/v1/equipment/{id}` | `slots/{id}` + `breakdowns/range` + `charts/intraday` |
+| 3.9 | Inversor | `equipamento/[id]` | `GET /api/v1/equipment/{id}` | `slots/{id}` + `shadow-breakdowns/queue` (detector novo) + `charts/intraday` |
 | 3.10 | Estação solarimétrica | `equipamento/[id]` | idem | `monitoring/current` + `charts/intraday/temperature` |
 | 3.11 | Relé de proteção | `equipamento/[id]` | idem | `relays/{id}/trip-events` |
 | 3.12 | Relé de temperatura | `equipamento/[id]` | idem | `monitoring/current` |
-| 3.13 | Histórico de paradas | `paradas/[usinaId]` | `GET /api/v1/plants/{id}/breakdowns?start=&end=` | mw-api `breakdowns/range` |
+| 3.13 | Histórico de paradas | `paradas/[usinaId]` | `GET /api/v1/plants/{id}/breakdowns?start=&end=` | mw-api `shadow-breakdowns/queue` (detector novo) |
 | 3.14 | Cronograma | `usina/[id]/manutencao` | `GET /api/v1/plants/{id}/schedule` | meuPlano `usinas/{id}/cronograma` |
 | 3.15 | Item do cronograma | sheet | `GET /api/v1/plants/{id}/schedule/{itemId}` | `Task` por `contract_month` + `cronograma_id` |
 | 3.16 | Lista de OS | `usina/[id]/manutencao` | `GET /api/v1/plants/{id}/service-orders` | meuPlano `service-orders` |
@@ -181,7 +181,7 @@ aparece ora com o prefixo, ora sem.
 | P.0 | Entrar | `/entrar` | `POST /api/v1/auth/login` · `/auth/eu` · `/auth/renovar` | `gs_users` |
 | P.1 | Visão geral | `/` | `resumo?referencia=&blocos=energia` · `…&blocos=manutencao` · `plants` | agrega os dois upstreams |
 | P.2 | Usina | `/usinas/:id` | `plants/{id}` · `plants/{id}/geracao` · `plants/{id}/curva?dia=` · `plants/{id}/historico?meses=` | mw-api `generation/*` e `charts/*` |
-| P.3 | Paradas | `/usinas/:id/paradas` | `plants/{id}/paradas?recorte=` | mw-api `breakdowns/range` |
+| P.3 | Paradas | `/usinas/:id/paradas` | `plants/{id}/paradas?recorte=` | mw-api `shadow-breakdowns/queue` (detector novo) |
 | P.4 | Cronograma | `/usinas/:id/cronograma` | `manutencao/contratos` · `manutencao/cronograma` · tarefas do mês · `…/cronograma/pdf` | meuPlano `usinas/{id}/cronograma` |
 | P.5 | Ordens | `/usinas/:id/ordens` | `manutencao/ordens?usina_id=` | meuPlano `service-orders` |
 | P.6 | Ordem | `/usinas/:id/ordens/:osId` | `manutencao/ordem-{id}` · `…/pdf` · `…/tarefas/{id}/pdf` | meuPlano `service-orders/{id}` |

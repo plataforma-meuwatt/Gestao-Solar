@@ -102,7 +102,10 @@ MEUWATT: list[Rota] = [
          captura={"email": "email"}),
     Rota("mw.plants", "GET", "/plants", "A lista de usinas do app",
          captura={"slug": "slug", "mw_plant_id": "id"}),
-    Rota("mw.plant", "GET", "/plants/{slug}", "Cabeçalho da tela da usina"),
+    # O `id` é o que o detector de paradas pede (o vínculo guarda o slug).
+    Rota("mw.plant", "GET", "/plants/{slug}",
+         "Cabeçalho da tela da usina, e o id numérico que a tela de Paradas pede",
+         campos_exigidos=("id",)),
     Rota("mw.enterprises", "GET", "/enterprises",
          "As empresas de O&M de lá, para casar com as daqui"),
     Rota("mw.monitoring", "GET", "/plants/{slug}/monitoring/current",
@@ -128,11 +131,29 @@ MEUWATT: list[Rota] = [
     Rota("mw.alerts", "GET", "/plants/{slug}/alerts", "Alertas ativos da usina",
          params={"status": "active"}),
     Rota("mw.alerts_historico", "GET", "/plants/{slug}/alerts",
-         "Paradas do portal (fonte reserva enquanto breakdowns/range responde 500)",
+         "As paradas classificadas (motivo, causa externa) do fechamento do mês, na aba "
+         "Relatório do painel de energia",
          essencial=False, params={"status": "all", "limit": "50", "offset": "0"}),
-    Rota("mw.breakdowns", "GET", "/plants/{slug}/breakdowns/range",
-         "Paradas do portal — fonte primária; se falhar, o BFF troca sozinho para alerts",
-         params={"start": "{semana_passada}", "end": "{hoje}"}),
+    # O detector NOVO de paradas — o da tela de Paradas do meuWatt. O coletor antigo
+    # (`/plants/{slug}/breakdowns/range`) saiu do catálogo em 24/10/2026: respondia 500 em
+    # todas as usinas, e a regra da casa é nunca usá-lo. A forma exigida é o que
+    # `api/v1/paradas.py` lê: um `materiality` renomeado não daria erro nenhum — a tela
+    # passaria a dizer "nenhuma parada".
+    Rota("mw.shadow_queue", "GET", "/shadow-breakdowns/queue",
+         "As paradas da usina: tela de Paradas do portal, Visão geral e o bot do WhatsApp",
+         params={"plantId": "{mw_plant_id}", "start": "{semana_passada}", "end": "{hoje}"},
+         campos_exigidos=(
+             "run.window_start",
+             "run.window_end",
+             "rows[].id",
+             "rows[].stopped_at",
+             "rows[].resolved_at",
+             "rows[].materiality",
+             "rows[].off_minutes",
+             "rows[].shadow_loss_kwh",
+             "rows[].loss_method",
+         ),
+         exige_itens=True),
     # As duas seções do fechamento do mês (`/energia/usinas/{id}/relatorio-mes`): as
     # considerações escritas pela operação e a timeline curada das paradas. Mês sem
     # curadoria responde 200 com `show_in_report=false` — estado normal, não erro: a seção
@@ -236,9 +257,6 @@ MEUWATT: list[Rota] = [
          "Irradiação diária (estação e satélite) no bot do WhatsApp", essencial=False,
          params={"plants": "{slug}", "grandezas": "irradiacao_ghi_sat_dia", "start": "{semana_passada}",
                  "end": "{hoje}", "step": "1d"}),
-    Rota("mw.shadow_queue", "GET", "/shadow-breakdowns/queue",
-         "Paradas (detector novo) no bot do WhatsApp", essencial=False,
-         params={"plantId": "{mw_plant_id}", "start": "{semana_passada}", "end": "{hoje}"}),
     Rota("mw.report_existing", "GET", "/reports/existing",
          "O PDF do relatório mensal que o bot do WhatsApp manda", essencial=False,
          sonda=False, nao_sondada_porque="Precisa de um mês com relatório emitido; um mês qualquer "
