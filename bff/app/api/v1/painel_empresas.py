@@ -372,21 +372,25 @@ class UsuarioDaEmpresaOut(BaseModel):
 
 
 def resumo_das_contas(
-    db: Session, contas: list[User], gestor: User, empresa_id: int | None = None
+    db: Session, contas: list[User], gestor: User, empresa_id: int | None = None,
+    nomes: dict[int, str] | None = None, membro: dict[int, list[int]] | None = None,
 ) -> list[UsuarioDaEmpresaOut]:
     """A linha de cada conta, montada num lugar só para a lista da empresa e a lista de
-    todos os usuários não divergirem. Com `empresa_id`, as usinas contadas são as dela."""
+    todos os usuários não divergirem. Com `empresa_id`, as usinas contadas são as dela.
+    `nomes` e `membro` já lidos por quem chama poupam duas idas ao banco (~200 ms cada)."""
     if not contas:
         return []
     ids = [c.id for c in contas]
-    nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
-    membro: dict[int, list[int]] = {}
-    for uid, eid in db.execute(
-        select(MembroDaEmpresa.user_id, MembroDaEmpresa.empresa_id)
-        .where(MembroDaEmpresa.user_id.in_(ids))
-        .order_by(MembroDaEmpresa.id)
-    ).all():
-        membro.setdefault(uid, []).append(eid)
+    if nomes is None:
+        nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
+    if membro is None:
+        membro = {}
+        for uid, eid in db.execute(
+            select(MembroDaEmpresa.user_id, MembroDaEmpresa.empresa_id)
+            .where(MembroDaEmpresa.user_id.in_(ids))
+            .order_by(MembroDaEmpresa.id)
+        ).all():
+            membro.setdefault(uid, []).append(eid)
     consulta = (
         select(UserPlantAccess.user_id, func.count())
         .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)

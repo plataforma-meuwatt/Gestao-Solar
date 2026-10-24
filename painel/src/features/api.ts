@@ -796,6 +796,10 @@ export const saudeDoCanal = () => api.get<SaudeDoCanal>('/whatsapp/saude').then(
 export const logDoBotDaEmpresa = () =>
   apiEmpresa.get<RegistroBot[]>('/bot/registros').then((r) => r.data)
 
+/** Se o bot está recebendo as mensagens (o canal é da plataforma; o detalhe fica no adm-gs). */
+export const botOuvindo = () =>
+  apiEmpresa.get<{ ouvindo: boolean; resumo: string }>('/bot/saude').then((r) => r.data)
+
 /* ------------------------------------------------ um usuário em mais de uma empresa */
 
 export type EmpresaDaSessao = { id: number; nome: string; ativa: boolean; origem: boolean; atual: boolean }

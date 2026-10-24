@@ -77,11 +77,29 @@ def _cliente(ctx_ou_db, user) -> HelperBot:
     )
 
 
+def _enxuga(v: Any) -> Any:
+    """Item de lista fica só com os campos simples (id, nome, slug…)."""
+    if isinstance(v, dict):
+        return {k: _enxuga(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [{k: x for k, x in i.items() if not isinstance(x, (dict, list))} if isinstance(i, dict) else i
+                for i in v]
+    return v
+
+
 def _corta(dados: Any) -> Any:
+    """Cabe no modelo. O `/api/registry/plants` tem ~18 mil caracteres por 6 usinas (gateways,
+    alvos): cortado no meio, o bot perdia as últimas usinas e o status. Grande, as listas
+    perdem o aninhado — o detalhe de UM item se pede na rota dele."""
     import json
 
-    texto = json.dumps(dados, ensure_ascii=False, default=str)
-    return dados if len(texto) <= TETO_RESPOSTA else {"resposta_cortada": texto[:TETO_RESPOSTA]}
+    if len(json.dumps(dados, ensure_ascii=False, default=str)) <= TETO_RESPOSTA:
+        return dados
+    enxuto = _enxuga(dados)
+    texto = json.dumps(enxuto, ensure_ascii=False, default=str)
+    if len(texto) <= TETO_RESPOSTA:
+        return {**enxuto, "aviso": "Resposta grande: campos aninhados omitidos; peça o detalhe pela rota do item."}
+    return {"status_http": dados.get("status_http"), "resposta_cortada": texto[:TETO_RESPOSTA]}
 
 
 async def usina_helper_catalogo(ctx: ger.Contexto, a: dict) -> dict:

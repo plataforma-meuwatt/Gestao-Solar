@@ -109,7 +109,7 @@ def motivo_de_nao_receber(cliente: User) -> str | None:
     if not cliente.telefone:
         return "Falta o celular do dono de usina."
     if cliente.whatsapp_aceite_em is None:
-        return "Falta registrar o aceite do cliente (cláusula do contrato)."
+        return "Falta registrar o aceite do dono de usina (cláusula do contrato)."
     return None
 
 
@@ -183,7 +183,7 @@ def definir(
             usina = db.get(PlantLink, plant_link_id)
             nome = f"“{usina.nome}”" if usina else f"id {plant_link_id}"
             raise RegraDeNegocio(
-                f"A usina {nome} não é deste cliente — conceda a usina antes de marcar o aviso."
+                f"A usina {nome} não é deste dono de usina — o gerente da O&M concede a usina antes de marcar o aviso."
             )
         desejados.add((tipo, plant_link_id))
 

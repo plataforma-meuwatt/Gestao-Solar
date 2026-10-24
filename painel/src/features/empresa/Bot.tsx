@@ -21,6 +21,7 @@ import { useState } from 'react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio, type Tom } from '@/components/base'
 import {
+  botOuvindo,
   editarContaDaEmpresa,
   logDoBotDaEmpresa,
   usuariosDetalhados,
@@ -43,6 +44,7 @@ export function BotDaEmpresa() {
     queryKey: ['empresa', 'log-do-bot'],
     queryFn: logDoBotDaEmpresa,
   })
+  const { data: canal } = useQuery({ queryKey: ['empresa', 'bot-ouvindo'], queryFn: botOuvindo, refetchInterval: 60_000 })
   const [tokensDe, setTokensDe] = useState<UsuarioDetalhado | null>(null)
   const [celularDe, setCelularDe] = useState<UsuarioDetalhado | null>(null)
 
@@ -62,6 +64,12 @@ export function BotDaEmpresa() {
         </Aviso>
       </div>
 
+      {canal ? (
+        <div className="flex items-center gap-3 flex-wrap mb-2">
+          <Selo tom={canal.ouvindo ? 'ok' : 'parado'}>{canal.ouvindo ? 'Bot ouvindo' : 'Bot NÃO está ouvindo'}</Selo>
+          <span className={`text-sm ${canal.ouvindo ? 'text-rotulo' : 'text-parado'}`}>{canal.resumo}</span>
+        </div>
+      ) : null}
       {log?.length ? (
         <p className="text-xs text-fraco mb-3">
           Última resposta do bot a alguém da empresa:{' '}

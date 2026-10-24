@@ -135,6 +135,7 @@ export function DetalheCliente() {
                   ? new Date(cliente.ultimo_login).toLocaleString('pt-BR', {
                       dateStyle: 'short',
                       timeStyle: 'short',
+                      timeZone: 'America/Sao_Paulo',
                     })
                   : 'nunca'}
               </dd>

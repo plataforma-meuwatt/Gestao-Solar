@@ -156,6 +156,7 @@ function BlocoProduto({
                 {new Date(varrido.executada_em).toLocaleString('pt-BR', {
                   dateStyle: 'short',
                   timeStyle: 'short',
+                  timeZone: 'America/Sao_Paulo',
                 })}
               </>
             ) : null}

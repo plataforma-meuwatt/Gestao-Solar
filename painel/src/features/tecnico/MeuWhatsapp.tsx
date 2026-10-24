@@ -159,7 +159,7 @@ function abrirJanela(cfg: Config): Promise<ConexaoWhatsappIn> {
 
 function quando(iso: string | null | undefined) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })
 }
 
 export function MeuWhatsapp() {

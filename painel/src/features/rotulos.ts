@@ -34,5 +34,5 @@ export function textoDoBot(liberado: ProdutoDoBot[], tokens: Produto[], temCelul
 
 export function quando(iso: string | null): string {
   if (!iso) return 'nunca'
-  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })
 }

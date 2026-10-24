@@ -24,11 +24,13 @@ import {
   ScrollText,
   ShieldCheck,
   LogOut,
+  Menu,
   MessageCircle,
   Route,
   Stethoscope,
   Sun,
   UsersRound,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
@@ -468,7 +470,7 @@ function FaixaDePapel({
   const daEmpresa = escopo !== 'painel'
   return (
     <div
-      className={`sticky top-0 z-10 flex items-center gap-2.5 px-8 py-2.5 border-b backdrop-blur ${
+      className={`sticky top-0 z-10 flex flex-wrap items-center gap-2.5 px-4 md:px-8 py-2.5 border-b backdrop-blur ${
         daEmpresa
           ? 'bg-ok/10 border-ok/30 text-ok'
           : 'bg-ambar/10 border-ambar/30 text-ambar-texto'
@@ -536,7 +538,10 @@ export function Layout() {
   const { token, nome, perfil, empresa, escopo, sair, ehAdministrador, ehEmpresa, pode, atualizar } =
     useAuth()
   const [trocandoSenha, setTrocandoSenha] = React.useState(false)
+  // No celular o menu é uma gaveta: fixo, ele deixava ~166 px para a tela a 390 px.
+  const [menuAberto, setMenuAberto] = React.useState(false)
   const local = useLocation()
+  React.useEffect(() => setMenuAberto(false), [local.pathname])
 
   // A verdade do acesso é do servidor, e ela muda no meio da sessão. Falha de rede aqui
   // não derruba nada: o menu segue com a foto do login até a próxima resposta.
@@ -575,8 +580,22 @@ export function Layout() {
 
   return (
     <div className="flex h-full">
-      <nav className="w-56 shrink-0 border-r border-borda flex flex-col">
-        <div className="px-5 py-5">
+      {menuAberto ? (
+        <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setMenuAberto(false)} />
+      ) : null}
+      <nav
+        className={`w-56 shrink-0 border-r border-borda flex-col bg-fundo overflow-y-auto fixed inset-y-0 left-0 z-40 md:static md:flex ${
+          menuAberto ? 'flex' : 'hidden'
+        }`}
+      >
+        <div className="px-5 py-5 relative">
+          <button
+            className="md:hidden absolute right-3 top-4 text-rotulo"
+            onClick={() => setMenuAberto(false)}
+            aria-label="Fechar o menu"
+          >
+            <X size={18} />
+          </button>
           <p className="text-lg font-bold text-forte leading-none">
             Gestão <span className="text-ambar">Solar</span>
           </p>
@@ -632,9 +651,17 @@ export function Layout() {
 
       {trocandoSenha ? <TrocarSenha aoFechar={() => setTrocandoSenha(false)} /> : null}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-borda">
+          <button className="text-forte" onClick={() => setMenuAberto(true)} aria-label="Abrir o menu">
+            <Menu size={20} />
+          </button>
+          <p className="font-bold text-forte">
+            Gestão <span className="text-ambar">Solar</span>
+          </p>
+        </div>
         <FaixaDePapel escopo={escopo} empresa={empresa} perfil={perfil} />
-        <div className="px-8 py-7">
+        <div className="px-4 md:px-8 py-5 md:py-7">
           <LimiteDeErro chaveDeReset={local.pathname}>
             <Outlet />
           </LimiteDeErro>

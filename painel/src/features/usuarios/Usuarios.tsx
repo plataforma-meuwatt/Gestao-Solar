@@ -299,7 +299,7 @@ function LinhaDaEquipe({
             <span>{PAPEL[conta.perfil]}</span>
             <span>
               {conta.ultimo_login
-                ? `entrou ${new Date(conta.ultimo_login).toLocaleDateString('pt-BR')}`
+                ? `entrou ${new Date(conta.ultimo_login).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
                 : 'nunca entrou'}
             </span>
           </div>

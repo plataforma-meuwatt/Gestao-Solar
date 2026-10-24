@@ -775,13 +775,22 @@ e liberada sem token fica parada (`User.bot_ativo`). **O helper** (`assistente_h
 porta `/api/bot/*` do mw-modbus-helper pelo túnel `HELPER_BOT_URL`, chave `HELPER_BOT_CHAVE`):
 leitura volta na hora; AÇÃO vira proposta com um código de 4 dígitos, e só executa quando a
 PESSOA responde `CONFIRMO <código>` — conferido por código, antes do modelo (a IA não tem
-ferramenta de confirmar), uma vez, em até 2 min. **O token é da pessoa:** a mesma pessoa de
+ferramenta de confirmar), uma vez, em até 2 min. **A ação do meuPlano usa o mesmo CONFIRMO:**
+a proposta do assistente de lá (criar OS, lançar o dia, lembrete) ganha o código, e confirmada
+o BFF chama o `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao
+meuPlano, que é sem estado. **O token é da pessoa:** a mesma pessoa de
 lá não serve a duas contas, e o token de outra pessoa não troca a ligação em silêncio
 (`vinculos.conectar`); a tela mostra de quem é cada token. O aplicativo continua
 caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_bot_registros`**
 (quem, empresa, resultado, pergunta, resposta, ferramentas, duração, erro — inclusive número
 sem cadastro): adm-gs → Log do bot, e o recorte da empresa no oem-gs → Bot do WhatsApp. A
-conversa é da CONTA: se o número muda de conta, o histórico anterior não entra. Responde, manda PDF e gráfico
+conversa é da CONTA: se o número muda de conta, o histórico anterior não entra. **"Bot ouvindo"**
+(`GET /interno/saude` do gateway → `/api/painel/whatsapp/saude` e `/api/empresa/bot/saude`):
+entregas da Meta paradas há mais de 2 min e mensagens que o BFF não recebeu — em 10/2026 a
+configuração estava toda verde e o bot surdo havia um dia. Mensagem com mais de 2 h fica no log
+como `atrasada`, sem resposta. ⛔ **A suíte do BFF não pode abrir o `.env`:** ele aponta para a
+produção, e o `conftest.py` troca o `DATABASE_URL` antes de importar o app (um teste deixava
+um "oi" falso no Log do bot a cada rodada). Responde, manda PDF e gráfico
 pelo gateway (`/interno/conteudo`, `/interno/digitando`) — **pela rede interna do Docker**
 (`WHATSAPP_GATEWAY_URL=http://gestaosolar-whatsapp:8120`; e o gateway chama a API em
 `BFF_URL=http://gestaosolar-api:8100`), por apelido fixo de rede no Coolify

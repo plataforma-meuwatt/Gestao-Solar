@@ -251,3 +251,13 @@ def test_a_saude_do_canal_diz_quando_o_bot_esta_surdo(cliente_http, administrado
     d = cliente_http.get("/api/painel/whatsapp/saude", headers=_sessao(administrador)).json()
     assert d["ouvindo"] is False and "não respondeu" in d["resumo"]
     assert cliente_http.get("/api/painel/whatsapp/saude").status_code == 401
+
+
+@respx.mock
+async def test_o_gerente_ve_se_o_bot_esta_ouvindo_sem_o_detalhe_tecnico(db, configurado):
+    from app.api.v1.empresa import bot_ouvindo
+
+    respx.get(f"{GW}/interno/saude").mock(return_value=httpx.Response(200, json={
+        "eventos_parados": 2, "eventos_com_erro": 2, "mensagens_sem_aviso": 0, "ultimo_erro": "StringDataRightTruncation"}))
+    r = await bot_ouvindo(db=db, _gerente=None)
+    assert r.ouvindo is False and "não o cadastro" in r.resumo and "StringData" not in r.resumo

@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot
+from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot, saude_atual
 from app.core.db import get_db
 from app.core.security import gerar_hash_senha, gestor_empresa_atual
 from app.core.telefone import exibir as exibir_telefone
@@ -462,7 +462,7 @@ class VinculoOut(BaseModel):
 
 
 @router.put("/vinculos", response_model=VinculoOut)
-def salvar_vinculos(
+async def salvar_vinculos(
     body: VinculoIn,
     db: Session = Depends(get_db),
     gerente: User = Depends(gestor_empresa_atual),
@@ -495,9 +495,32 @@ def salvar_vinculos(
         setattr(empresa, campo, valor)
 
     db.commit()
+    if not empresa.documento:
+        await documento_do_produto(db, empresa)
     return VinculoOut(
         mw_enterprise_id=empresa.mw_enterprise_id, mp_tenant_id=empresa.mp_tenant_id
     )
+
+
+async def documento_do_produto(db: Session, empresa: Empresa) -> None:
+    """Base única: o CNPJ vem da empresa casada lá (meuPlano primeiro, depois meuWatt). Só
+    preenche o vazio — o que alguém digitou aqui não é sobrescrito. Produto fora do ar não
+    impede o vínculo: o CNPJ entra no próximo."""
+    for ler, id_, chave in (
+        (integracoes.cliente_meuplano, empresa.mp_tenant_id, "document"),
+        (integracoes.cliente_meuwatt, empresa.mw_enterprise_id, "cnpj"),
+    ):
+        if id_ is None:
+            continue
+        try:
+            orgs = await (await ler(db, empresa.id)).empresas_om()
+        except Exception:  # noqa: BLE001
+            continue
+        doc = next((o.get(chave) for o in orgs if o.get("id") == id_), None)
+        if doc:
+            empresa.documento = str(doc).strip()[:20]
+            db.commit()
+            return
 
 
 # ------------------------------------------------- trazer as usinas da empresa
@@ -1622,6 +1645,28 @@ def usinas_do_usuario(
 
 
 # ------------------------------------------------------------- o bot da empresa
+
+
+class BotOuvindoOut(BaseModel):
+    ouvindo: bool
+    resumo: str
+
+
+@router.get("/bot/saude", response_model=BotOuvindoOut)
+async def bot_ouvindo(
+    db: Session = Depends(get_db), _gerente: User = Depends(gestor_empresa_atual)
+) -> BotOuvindoOut:
+    """Se o bot está recebendo as mensagens. O número é da plataforma, e o conserto também:
+    ao gerente basta saber que a falta de resposta NÃO é o cadastro dele (o detalhe técnico
+    fica no Log do bot do adm-gs)."""
+    s = await saude_atual(db)
+    if s.ouvindo:
+        return BotOuvindoOut(ouvindo=True, resumo="O bot está recebendo as mensagens.")
+    return BotOuvindoOut(
+        ouvindo=False,
+        resumo=("O bot não está recebendo as mensagens agora. É o canal da plataforma, não o "
+                "cadastro de vocês — a administração do Gestão Solar vê o mesmo aviso."),
+    )
 
 
 @router.get("/bot/registros", response_model=list[RegistroBotOut])

@@ -453,3 +453,16 @@ async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_o_codigo_da_pessoa(db,
     assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")).startswith("✅ Feito no meuPlano")
     assert falso.aplicadas == [("criar_ordem_servico", {"usina_id": 37, "nome": "Roçagem de 5 ruas"})]
     assert "Não há ação" in await h.confirmar_por_mensagem(db, dono, dono.telefone, f"CONFIRMO {codigo}")
+
+
+def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
+    """O `/api/registry/plants` real: ~18 mil caracteres por 6 usinas. Cortado no meio, o bot
+    via 4 usinas e nenhum status."""
+    from app.services.assistente_helper import _corta
+
+    usinas = [{"id": i, "label": f"Usina {i}", "api_slug": f"u{i}", "gateways": [{"ip": "10.0.0.1"} for _ in range(300)]}
+              for i in range(6)]
+    r = _corta({"status_http": 200, "resposta": {"ok": True, "plants": usinas}})
+    assert r["status_http"] == 200 and [u["api_slug"] for u in r["resposta"]["plants"]] == [f"u{i}" for i in range(6)]
+    assert "gateways" not in r["resposta"]["plants"][0] and "aviso" in r
+    assert _corta({"status_http": 200, "resposta": {"x": 1}}) == {"status_http": 200, "resposta": {"x": 1}}

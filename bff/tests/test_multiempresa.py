@@ -337,7 +337,7 @@ def test_a_tela_da_plataforma_recusa_criar_gerente_sem_empresa(db, administrador
 # ------------------------------------------------- o vínculo com os produtos
 
 
-def test_o_vinculo_e_do_gerente_e_sai_da_sessao(db, carteiras):
+async def test_o_vinculo_e_do_gerente_e_sai_da_sessao(db, carteiras):
     """Correção de rumo do dono, 28/09/2026: **quem casa a empresa é quem tem o token**, e
     isso é o gerente — a plataforma cadastra a empresa e o usuário dela, e não tem
     credencial no meuWatt nem no meuPlano. Usar a credencial de serviço para montar a lista
@@ -349,17 +349,17 @@ def test_o_vinculo_e_do_gerente_e_sai_da_sessao(db, carteiras):
     from app.api.v1.empresa import VinculoIn, salvar_vinculos
 
     _a, _b, gerente = carteiras
-    depois = salvar_vinculos(VinculoIn(mw_enterprise_id=1, mp_tenant_id=7), db=db, gerente=gerente)
+    depois = await salvar_vinculos(VinculoIn(mw_enterprise_id=1, mp_tenant_id=7), db=db, gerente=gerente)
     assert depois.mw_enterprise_id == 1 and depois.mp_tenant_id == 7
 
     # Campo ausente mantém; `null` explícito descasa — a régua de `mw_micro_plant_id`.
-    depois = salvar_vinculos(VinculoIn(mp_tenant_id=9), db=db, gerente=gerente)
+    depois = await salvar_vinculos(VinculoIn(mp_tenant_id=9), db=db, gerente=gerente)
     assert depois.mw_enterprise_id == 1 and depois.mp_tenant_id == 9
-    depois = salvar_vinculos(VinculoIn(mw_enterprise_id=None, mp_tenant_id=9), db=db, gerente=gerente)
+    depois = await salvar_vinculos(VinculoIn(mw_enterprise_id=None, mp_tenant_id=9), db=db, gerente=gerente)
     assert depois.mw_enterprise_id is None
 
 
-def test_a_mesma_empresa_do_produto_nao_vincula_em_duas(db, carteiras, duas_empresas):
+async def test_a_mesma_empresa_do_produto_nao_vincula_em_duas(db, carteiras, duas_empresas):
     """Duas linhas apontando para a mesma empresa de um produto seriam dois inquilinos
     lendo a mesma carteira. E a recusa NÃO diz de quem é o vínculo: o gerente de um
     inquilino não deve descobrir os nomes dos outros por tentativa."""
@@ -370,7 +370,7 @@ def test_a_mesma_empresa_do_produto_nao_vincula_em_duas(db, carteiras, duas_empr
     db.commit()
 
     with pytest.raises(HTTPException) as erro:
-        salvar_vinculos(VinculoIn(mw_enterprise_id=42), db=db, gerente=gerente)
+        await salvar_vinculos(VinculoIn(mw_enterprise_id=42), db=db, gerente=gerente)
     assert erro.value.status_code == 409
     assert b.nome not in erro.value.detail, "o nome da outra empresa vazou na mensagem"
 
@@ -1361,3 +1361,27 @@ async def test_catalogo_do_meuplano_so_traz_a_organizacao_da_empresa(db, duas_em
     catalogo = await api.catalogo_de_usinas(db=db, gerente=gerente)
     ids = {l.mp_usina_id for l in catalogo.linhas if l.mp_usina_id}
     assert ids == {1, 2}
+
+
+async def test_o_cnpj_vem_da_organizacao_casada_no_meuplano(db, carteiras, monkeypatch):
+    """Base única: casar com a organização do meuPlano traz o CNPJ de lá (a Splendor ficava
+    "sem CNPJ cadastrado"). O que já foi digitado aqui não é sobrescrito."""
+    from app.api.v1.empresa import VinculoIn, salvar_vinculos
+    from app.services import integracoes
+
+    a, _b, gerente = carteiras
+
+    class _Org:
+        async def empresas_om(self):
+            return [{"id": 3, "name": "Splendor O&M", "document": "60.096.696/0001-23"}]
+
+    async def _mp(db_, empresa_id):
+        return _Org()
+
+    monkeypatch.setattr(integracoes, "cliente_meuplano", _mp)
+    await salvar_vinculos(VinculoIn(mp_tenant_id=3), db=db, gerente=gerente)
+    assert a.documento == "60.096.696/0001-23"
+    a.documento = "digitado"
+    db.commit()
+    await salvar_vinculos(VinculoIn(mp_tenant_id=3), db=db, gerente=gerente)
+    assert a.documento == "digitado"

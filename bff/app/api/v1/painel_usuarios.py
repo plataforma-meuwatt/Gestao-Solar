@@ -119,7 +119,7 @@ def criar(
 ) -> MembroOut:
     if body.perfil is Perfil.CLIENTE:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Use a tela de clientes para criar um cliente."
+            status.HTTP_400_BAD_REQUEST, "Dono de usina se cadastra na página da empresa que cuida dele (Empresas → a empresa → Novo usuário)."
         )
     if body.perfil is Perfil.GESTOR_EMPRESA:
         # Esta tela é do staff da PLATAFORMA, e um gerente sem empresa não entra em lugar
@@ -372,13 +372,13 @@ def todas_as_contas(
     # Poucas idas ao banco no total, e não algumas por conta: o banco fica nos EUA, e cada
     # ida custa ~150 ms (a lista levava 4,6 s — auditoria de 24/10/2026).
     contas = list(db.scalars(select(User).order_by(User.nome)).all())
-    resumo = {r.id: r for r in resumo_das_contas(db, contas, admin)}
     nomes = {e.id: e.nome for e in db.scalars(select(Empresa)).all()}
     membro: dict[int, list[int]] = {}
     for uid, eid in db.execute(
         select(MembroDaEmpresa.user_id, MembroDaEmpresa.empresa_id).order_by(MembroDaEmpresa.id)
     ).all():
         membro.setdefault(uid, []).append(eid)
+    resumo = {r.id: r for r in resumo_das_contas(db, contas, admin, nomes=nomes, membro=membro)}
     areas: dict[int, set[str]] = {}
     for uid, area in db.execute(select(AcessoPainel.user_id, AcessoPainel.area)).all():
         areas.setdefault(uid, set()).add(area)

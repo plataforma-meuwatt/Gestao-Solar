@@ -33,7 +33,7 @@ const par = (tipo: string, plantLinkId: number) => `${tipo}|${plantLinkId}`
 
 function quando(iso: string | null) {
   if (!iso) return null
-  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })
 }
 
 export function CartaoNotificacoes({ clienteId, nome }: { clienteId: number; nome: string }) {

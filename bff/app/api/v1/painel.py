@@ -94,7 +94,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Esta conta é de dono de usina: ela entra pelo aplicativo ou pelo portal do "
-            "cliente, não por aqui. A senha está certa.",
+            "dono de usina, não por aqui. A senha está certa.",
         )
 
     # AUTENTICAR é uma coisa só; AUTORIZAR é que tem três portões. Por isso a porta de

@@ -338,6 +338,11 @@ class SaudeDoCanalOut(BaseModel):
 
 @router.get("/saude", response_model=SaudeDoCanalOut)
 async def saude_do_canal(db: Session = Depends(get_db), _: User = Depends(EXIGE_BOT)) -> SaudeDoCanalOut:
+    return await saude_atual(db)
+
+
+async def saude_atual(db: Session) -> SaudeDoCanalOut:
+    """A conta do canal inteiro (o número é UM, o da plataforma) — o oem-gs lê o `ouvindo`."""
     ultima_resposta = db.scalar(
         select(func.max(RegistroBot.em)).where(RegistroBot.resultado == "respondeu")
     )
