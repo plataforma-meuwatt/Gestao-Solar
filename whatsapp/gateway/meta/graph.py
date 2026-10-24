@@ -95,6 +95,33 @@ async def enviar_conteudo(*, token: str, phone_number_id: str, telefone: str, ti
         "messaging_product": "whatsapp", "to": para_envio(telefone), "type": tipo, tipo: conteudo})
 
 
+#: O maior arquivo que o gateway baixa para alguém (nota de voz tem poucos KB).
+TETO_DO_ARQUIVO = 16 * 1024 * 1024
+
+
+async def baixar_midia(*, token: str, media_id: str) -> tuple[bytes | None, str | None, str | None]:
+    """Baixa um arquivo RECEBIDO: a Meta devolve um endereço temporário, que pede o mesmo token.
+    Devolve `(conteúdo, tipo, erro)` — recusa e rede fora são resultado, não exceção."""
+    s = get_settings()
+    cabecalho = {"Authorization": f"Bearer {token}"}
+    try:
+        async with httpx.AsyncClient(timeout=60) as cliente:
+            r = await cliente.get(f"{s.graph_url}/{media_id}", headers=cabecalho)
+            dados = r.json()
+            if r.status_code >= 400 or not isinstance(dados, dict) or not dados.get("url"):
+                return None, None, _ler_erro(dados)[1] or f"A Meta respondeu {r.status_code}."
+            if int(dados.get("file_size") or 0) > TETO_DO_ARQUIVO:
+                return None, None, "Arquivo grande demais."
+            arquivo = await cliente.get(dados["url"], headers=cabecalho)
+    except (httpx.HTTPError, ValueError) as exc:
+        return None, None, f"Não deu para baixar o arquivo da Meta: {exc}"
+    if arquivo.status_code >= 400:
+        return None, None, f"A Meta respondeu {arquivo.status_code} ao entregar o arquivo."
+    if len(arquivo.content) > TETO_DO_ARQUIVO:
+        return None, None, "Arquivo grande demais."
+    return arquivo.content, dados.get("mime_type"), None
+
+
 async def subir_midia(*, token: str, phone_number_id: str, raw: bytes, mime: str,
                       filename: str) -> tuple[str | None, str | None]:
     """Sobe o arquivo na Meta e devolve `(media_id, erro)` — o envio referencia o id."""

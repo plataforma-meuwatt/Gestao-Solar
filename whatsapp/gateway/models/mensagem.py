@@ -90,6 +90,8 @@ class Mensagem(Base):
     template: Mapped[str | None] = mapped_column(String(80), nullable=True)
     #: O texto em si. Nulo em tipo não suportado — e a tela mostra "Áudio", não vazio.
     texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Áudio, documento, imagem: `{id, mime, nome, legenda}` (o id é o da Meta, para baixar).
+    midia: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     #: Hora do evento SEGUNDO A META, não a do servidor. É ela que a janela de 24 h conta.
     ocorrida_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

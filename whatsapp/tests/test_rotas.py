@@ -296,3 +296,91 @@ def test_a_senha_digitada_sai_da_mensagem_e_da_entrega_crua(cliente, db):
     assert r.status_code == 204
     db.expire_all()
     assert db.get(Mensagem, m2.id).texto == "pode ligar, senha [senha oculta]"
+
+
+# ── avaliação 11: o bot é avisado NA HORA, uma vez só; o áudio é baixado sob pedido ───────
+
+
+def _bff_falso(monkeypatch, demora=0.0):
+    """O BFF de mentira: guarda o corpo de cada aviso."""
+    import asyncio
+
+    from gateway.core.config import get_settings
+    from gateway.services import notificacao_bff
+
+    avisos = []
+
+    class _Cliente:
+        def __init__(self, **_): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): ...
+        async def post(self, url, json, headers):
+            await asyncio.sleep(demora)
+            avisos.append(json)
+
+            class _R:
+                def raise_for_status(self): ...
+            return _R()
+
+    monkeypatch.setattr(notificacao_bff.httpx, "AsyncClient", _Cliente)
+    monkeypatch.setattr(get_settings(), "bff_url", "http://bff")
+    monkeypatch.setattr(get_settings(), "whatsapp_chave_interna", CHAVE)
+    return avisos
+
+
+def test_a_mensagem_chega_ao_bot_na_hora_sem_esperar_a_varredura(cliente, credencial, db, monkeypatch):
+    """Só a varredura de 60 s avisava o BFF: a pessoa esperava até um minuto, e a senha
+    mandada antes do resumo chegava ao bot depois dele (avaliação 11)."""
+    avisos = _bff_falso(monkeypatch)
+    monkeypatch.setattr(webhook, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    corpo = _corpo()
+    r = cliente.post("/webhook", content=corpo, headers={CABECALHO_ASSINATURA: assinatura_da_meta(APP_SECRET, corpo)})
+    assert r.status_code == 200
+    assert [a["texto"] for a in avisos] == ["oi"]
+    assert db.query(Mensagem).one().notificada_bff_em is not None
+
+
+async def test_aviso_imediato_e_varredura_juntos_avisam_uma_vez_so(db, monkeypatch):
+    """O webhook e a varredura podem rodar ao mesmo tempo: sem a trava, os dois pegariam a
+    mesma mensagem, e o bot responderia em dobro."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import sessionmaker
+
+    from gateway.services import notificacao_bff
+
+    avisos = _bff_falso(monkeypatch, demora=0.05)
+    db.add_all([Mensagem(wamid=f"wamid.{i}", direcao="entrada", wa_id="5516", telefone="+5516", tipo="text",
+                         texto=f"m{i}", ocorrida_em=datetime.now(UTC), status="recebida") for i in range(3)])
+    db.commit()
+    outra = sessionmaker(bind=db.get_bind())()
+    await asyncio.gather(notificacao_bff.avisar_pendentes(db), notificacao_bff.avisar_pendentes(outra))
+    assert sorted(a["texto"] for a in avisos) == ["m0", "m1", "m2"]
+
+
+def test_o_audio_e_baixado_da_meta_so_quando_o_bot_pede(cliente, credencial, db, monkeypatch):
+    from datetime import UTC, datetime
+
+    from gateway.meta import graph
+
+    pedidos = []
+
+    async def _baixar(*, token, media_id):
+        pedidos.append(media_id)
+        return b"OGG", "audio/ogg", None
+
+    monkeypatch.setattr(graph, "baixar_midia", _baixar)
+    com = Mensagem(wamid="wamid.A", direcao="entrada", wa_id="5516", telefone="+5516", tipo="audio",
+                   midia={"id": "m-1", "mime": "audio/ogg"}, ocorrida_em=datetime.now(UTC), status="recebida")
+    sem = Mensagem(wamid="wamid.T", direcao="entrada", wa_id="5516", telefone="+5516", tipo="text", texto="oi",
+                   ocorrida_em=datetime.now(UTC), status="recebida")
+    db.add_all([com, sem])
+    db.commit()
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    assert cliente.get(f"/interno/mensagens/{com.id}/midia").status_code == 401
+    r = cliente.get(f"/interno/mensagens/{com.id}/midia", headers=h)
+    assert r.status_code == 200 and r.content == b"OGG" and r.headers["content-type"].startswith("audio/ogg")
+    assert cliente.get(f"/interno/mensagens/{sem.id}/midia", headers=h).status_code == 404
+    assert pedidos == ["m-1"]

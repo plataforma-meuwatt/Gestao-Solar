@@ -73,6 +73,7 @@ def _aplicar_mensagem(db: Session, m: parser.MensagemRecebida) -> bool:
             nome_perfil=m.nome_perfil,
             tipo=m.tipo,
             texto=m.texto,
+            midia=m.midia,
             ocorrida_em=m.ocorrida_em,
             # Mensagem recebida não tem status de entrega: ela chegou. `lida` seria mentira
             # (ninguém do lado de cá leu ainda) e `pendente` faria a tela cobrar um envio.

@@ -14,6 +14,7 @@ acumularia uma tentativa de rede a cada volta, para sempre.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -43,11 +44,24 @@ def _corpo(m: Mensagem) -> dict:
         "tipo": m.tipo,
         "texto": m.texto,
         "ocorrida_em": m.ocorrida_em.isoformat() if m.ocorrida_em else None,
+        # Só o que diz o que é o arquivo; o id da Meta fica aqui (o BFF pede o arquivo por
+        # `/interno/mensagens/{id}/midia`).
+        "midia": {k: v for k, v in m.midia.items() if k != "id"} if m.midia else None,
     }
+
+
+#: Um aviso por vez: o webhook avisa na hora e a varredura avisa o que sobrou — sem a trava,
+#: os dois pegariam a mesma mensagem e o bot responderia em dobro.
+_AVISANDO = asyncio.Lock()
 
 
 async def avisar_pendentes(db: Session, limite: int = LOTE) -> int:
     """Manda ao BFF o que ele ainda não viu. Devolve quantas mensagens foram avisadas."""
+    async with _AVISANDO:
+        return await _avisar_pendentes(db, limite)
+
+
+async def _avisar_pendentes(db: Session, limite: int) -> int:
     s = get_settings()
     pendentes = list(
         db.scalars(

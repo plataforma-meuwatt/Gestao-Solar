@@ -29,6 +29,9 @@ class MensagemRecebida:
     nome_perfil: str | None = None
     #: Por qual dos nossos números ela passou (`value.metadata.phone_number_id`).
     phone_number_id: str | None = None
+    #: Áudio, documento, imagem, vídeo: `{id, mime, nome, legenda}`. O id é o da Meta, para
+    #: baixar o arquivo quando alguém precisar (o bot transcreve o áudio).
+    midia: dict[str, Any] | None = None
 
 
 @dataclass
@@ -124,6 +127,18 @@ def _texto_da_mensagem(m: dict[str, Any], tipo: str) -> str | None:
     return None
 
 
+#: Os tipos que trazem um arquivo na Meta (o conteúdo não vem no corpo, só o id).
+TIPOS_COM_ARQUIVO = ("audio", "voice", "document", "image", "video")
+
+
+def _midia(m: dict[str, Any], tipo: str) -> dict[str, Any] | None:
+    corpo = m.get(tipo) if tipo in TIPOS_COM_ARQUIVO else None
+    if not isinstance(corpo, dict) or not corpo.get("id"):
+        return None
+    return {"id": str(corpo["id"]), "mime": corpo.get("mime_type"), "nome": corpo.get("filename"),
+            "legenda": corpo.get("caption")}
+
+
 def _erro(s: dict[str, Any]) -> tuple[str | None, str | None]:
     erros = _lista(s.get("errors"))
     if not erros:
@@ -202,6 +217,7 @@ def ler(corpo: dict[str, Any]) -> Leitura:
                         texto=_texto_da_mensagem(m, tipo),
                         nome_perfil=perfis.get(wa_id),
                         phone_number_id=nosso or None,
+                        midia=_midia(m, tipo),
                     )
                 )
 

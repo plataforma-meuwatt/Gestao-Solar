@@ -95,6 +95,20 @@ def test_tipo_sem_texto_entra_com_o_tipo_preenchido():
     )
     m = payload.ler(corpo).mensagens[0]
     assert m.tipo == "audio" and m.texto is None
+    # O id do arquivo fica guardado: é com ele que o bot baixa a nota de voz para transcrever.
+    assert m.midia == {"id": "midia-123", "mime": None, "nome": None, "legenda": None}
+
+
+def test_documento_guarda_nome_e_legenda_e_reacao_nao_tem_arquivo():
+    corpo = _entrega({"messages": [
+        {"from": "5516999998888", "id": "wamid.DOC", "timestamp": "1789000000", "type": "document",
+         "document": {"id": "m-9", "mime_type": "application/pdf", "filename": "projeto.pdf", "caption": "o novo"}},
+        {"from": "5516999998888", "id": "wamid.REA", "timestamp": "1789000001", "type": "reaction",
+         "reaction": {"message_id": "wamid.X", "emoji": "👍"}},
+    ]})
+    doc, reacao = payload.ler(corpo).mensagens
+    assert doc.midia == {"id": "m-9", "mime": "application/pdf", "nome": "projeto.pdf", "legenda": "o novo"}
+    assert reacao.tipo == "reaction" and reacao.midia is None
 
 
 def test_resposta_de_botao_vira_texto():

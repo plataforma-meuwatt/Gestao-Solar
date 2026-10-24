@@ -28,7 +28,7 @@ from gateway.core.config import get_settings
 from gateway.core.db import SessionLocal, get_db
 from gateway.core.seguranca import CABECALHO_ASSINATURA, assinatura_confere
 from gateway.models.mensagem import WebhookEvento
-from gateway.services import credenciais, recebimento
+from gateway.services import credenciais, notificacao_bff, recebimento
 
 router = APIRouter(tags=["webhook"])
 log = logging.getLogger(__name__)
@@ -81,6 +81,20 @@ def _processar_depois(evento_id: int) -> None:
         db.close()
 
 
+async def _avisar_o_bff() -> None:
+    """Avisa o BFF NA HORA da mensagem que acabou de ser gravada. Só a varredura de 60 s
+    avisava: a pessoa esperava até um minuto, e a senha mandada antes do resumo podia chegar
+    ao bot depois dele (avaliação 11). A varredura continua, para o que falhar aqui."""
+    db = SessionLocal()
+    try:
+        await notificacao_bff.avisar_pendentes(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("webhook: aviso imediato ao BFF falhou (a varredura tenta de novo)")
+    finally:
+        db.close()
+
+
 @router.post("/webhook")
 async def receber(
     request: Request,
@@ -107,5 +121,6 @@ async def receber(
 
     evento = recebimento.guardar(db, dados)
     tarefas.add_task(_processar_depois, evento.id)
+    tarefas.add_task(_avisar_o_bff)
     tarefas.add_task(_encaminhar, corpo, assinatura)
     return {"ok": True}

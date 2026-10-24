@@ -12,7 +12,7 @@ rotas — o que sai é o prefixo, o estado e a data do último teste.
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -423,6 +423,25 @@ class SaudeOut(BaseModel):
     ultima_enviada_em: datetime | None = None
     #: A última que a Meta disse ter entregado.
     ultima_entregue_em: datetime | None = None
+
+
+@router.get("/mensagens/{mensagem_id}/midia", dependencies=[Depends(_porta)])
+async def midia_da_mensagem(mensagem_id: int, db: Session = Depends(get_db)) -> Response:
+    """O arquivo de uma mensagem RECEBIDA (a nota de voz que o bot transcreve), baixado da Meta
+    na hora. Nada fica guardado aqui: só o id do arquivo, que é da Meta."""
+    from gateway.meta import graph
+
+    m = db.get(Mensagem, mensagem_id)
+    if m is None or m.direcao != "entrada" or not (m.midia or {}).get("id"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mensagem sem arquivo.")
+    try:
+        cred = svc_envio.credencial_de_envio(db)
+    except svc_envio.EnvioIndisponivel as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    conteudo, tipo, erro = await graph.baixar_midia(token=cred.token or "", media_id=m.midia["id"])
+    if conteudo is None:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, erro or "A Meta não entregou o arquivo.")
+    return Response(content=conteudo, media_type=tipo or (m.midia.get("mime") or "application/octet-stream"))
 
 
 @router.get("/saude", response_model=SaudeOut, dependencies=[Depends(_porta)])
