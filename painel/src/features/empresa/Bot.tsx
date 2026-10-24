@@ -29,7 +29,7 @@ import {
 } from '@/features/api'
 import { LinhaDoLog } from '@/features/bot/LogDoBot'
 import { Tokens } from '@/features/empresa/Usuarios'
-import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT } from '@/features/rotulos'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, quando } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -61,6 +61,14 @@ export function BotDaEmpresa() {
           celular, o bot não sabe quem está escrevendo.
         </Aviso>
       </div>
+
+      {log?.length ? (
+        <p className="text-xs text-fraco mb-3">
+          Última resposta do bot a alguém da empresa:{' '}
+          {quando(log.find((r) => r.resultado === 'respondeu')?.em ?? null)} · última mensagem recebida:{' '}
+          {quando(log[0].em)}
+        </p>
+      ) : null}
 
       <Cartao titulo="Pessoas da empresa">
         {isLoading ? (

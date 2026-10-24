@@ -201,5 +201,10 @@ async def enviar_conteudo(
     })
 
 
+async def saude() -> dict[str, Any]:
+    """Se o canal está OUVINDO: entregas paradas, mensagens sem aviso ao BFF, últimas datas."""
+    return await _req("GET", "/interno/saude")
+
+
 async def digitando(wamid: str) -> None:
     await _req("POST", "/interno/digitando", json={"wamid": wamid})

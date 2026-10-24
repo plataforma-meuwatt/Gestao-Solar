@@ -223,3 +223,23 @@ async def test_tempo_esgotado_no_meio_nao_repete(configurado):
     with pytest.raises(whatsapp.GatewayIndisponivel):
         await whatsapp.enviar_conteudo(telefone="+5517997377626", tipo="text", texto="oi")
     assert rota.call_count == 1
+
+
+@respx.mock
+def test_a_saude_do_canal_diz_quando_o_bot_esta_surdo(cliente_http, administrador, configurado):
+    """O bot de 10/2026: configuração toda verde e 40 mensagens presas no gateway."""
+    rota = respx.get(f"{GW}/interno/saude")
+    rota.mock(return_value=httpx.Response(200, json={
+        "eventos_parados": 3, "eventos_com_erro": 3, "mensagens_sem_aviso": 0,
+        "ultimo_erro": "StringDataRightTruncation: value too long",
+    }))
+    d = cliente_http.get("/api/painel/whatsapp/saude", headers=_sessao(administrador)).json()
+    assert d["ouvindo"] is False and "3 entrega" in d["resumo"] and "StringDataRightTruncation" in d["resumo"]
+
+    rota.mock(return_value=httpx.Response(200, json={"eventos_parados": 0, "eventos_com_erro": 0, "mensagens_sem_aviso": 0}))
+    assert cliente_http.get("/api/painel/whatsapp/saude", headers=_sessao(administrador)).json()["ouvindo"] is True
+
+    rota.mock(side_effect=httpx.ConnectError("sem rota"))
+    d = cliente_http.get("/api/painel/whatsapp/saude", headers=_sessao(administrador)).json()
+    assert d["ouvindo"] is False and "não respondeu" in d["resumo"]
+    assert cliente_http.get("/api/painel/whatsapp/saude").status_code == 401

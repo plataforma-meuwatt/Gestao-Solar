@@ -225,3 +225,26 @@ def test_resposta_em_texto_e_documento_sai_pela_graph_e_fica_registrada(cliente,
                         ("document", {"id": "MEDIA1", "filename": "a.pdf", "caption": "Relatório"})]
     assert db.get(Mensagem, r2.json()["id"]).status == "enviada"
     assert cliente.post("/interno/conteudo", json={"telefone": "+55", "tipo": "text", "texto": "x"}).status_code == 401
+
+
+def test_a_saude_do_canal_conta_o_que_esta_parado(cliente, db):
+    """O que teria mostrado o bot surdo de 10/2026: entregas paradas e o erro delas."""
+    from gateway.models.mensagem import WebhookEvento
+
+    from datetime import UTC, datetime, timedelta
+
+    agora = datetime.now(UTC)
+    db.add_all([
+        WebhookEvento(corpo={}, erro="StringDataRightTruncation", tentativas=1, recebido_em=agora - timedelta(minutes=10)),
+        # A que acabou de chegar ainda está sendo processada, e a de dois dias atrás já desistiu:
+        # nenhuma das duas diz que o canal está surdo AGORA.
+        WebhookEvento(corpo={}, recebido_em=agora),
+        WebhookEvento(corpo={}, erro="antigo", tentativas=10, recebido_em=agora - timedelta(days=2)),
+    ])
+    db.commit()
+    sem_chave = cliente.get("/interno/saude")
+    assert sem_chave.status_code == 401
+    r = cliente.get("/interno/saude", headers={"X-Chave-Interna": "chave-interna-de-teste"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["eventos_parados"] == 1 and d["eventos_com_erro"] == 1 and "Truncation" in d["ultimo_erro"]

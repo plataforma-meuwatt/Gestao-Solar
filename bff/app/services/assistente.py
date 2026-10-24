@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.clients import whatsapp
 from app.core.config import get_settings
+from app.core.datas import hora_brt
 from app.core.db import SessionLocal
 from app.core.telefone import normalizar
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
@@ -285,7 +286,8 @@ async def atender(evento: dict) -> None:
         if _atrasada(evento.get("ocorrida_em")):
             # Mensagem que ficou presa (gateway fora, fila travada) e chegou horas depois:
             # responder agora seria conversar com o passado. Fica no log, sem resposta.
-            _registrar(db, telefone, user, "atrasada", pergunta=texto or f"[{evento.get('tipo') or 'mídia'}]")
+            _registrar(db, telefone, user, "atrasada", pergunta=texto or f"[{evento.get('tipo') or 'mídia'}]",
+                       erro=f"Enviada às {hora_brt(evento.get('ocorrida_em'))} e chegou ao bot só agora — não respondida.")
             return
         if user is None:
             if evento.get("tipo") in ("text", "audio", "button", "interactive"):

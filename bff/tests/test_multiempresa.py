@@ -1328,3 +1328,36 @@ def test_o_gerente_nunca_mais_ouve_que_a_usina_nao_e_da_empresa(db, carteiras):
     assert erro.value.status_code == 400
     assert "já vê todas as usinas" in erro.value.detail
     assert "não é da sua empresa" not in erro.value.detail
+
+
+async def test_catalogo_do_meuplano_so_traz_a_organizacao_da_empresa(db, duas_empresas, monkeypatch):
+    """O token de admin do sistema no meuPlano enxerga TODAS as usinas; casada a organização
+    da empresa, o gerente só vê aquelas em que ela é prestadora ou gestora."""
+    from app.api.v1 import empresa as api
+    from app.services import integracoes
+
+    a, _b = duas_empresas
+    a.mp_tenant_id = 3
+    gerente = User(apelido="ger.cat", nome="Ger", perfil=Perfil.GESTOR_EMPRESA, empresa_id=a.id)
+    db.add(gerente)
+    db.commit()
+
+    class _Falso:
+        async def usinas(self):
+            return [
+                {"id": 1, "nome": "Da Splendor", "prestadora_owner_id": 3},
+                {"id": 2, "nome": "Gerida por ela", "gestora_owner_id": 3},
+                {"id": 3, "nome": "De outra O&M", "prestadora_owner_id": 9},
+            ]
+
+    async def _cliente(db_, empresa_id):
+        return _Falso()
+
+    async def _sem_mw(db_, empresa_id):
+        raise RuntimeError("sem meuWatt")
+
+    monkeypatch.setattr(integracoes, "cliente_meuplano", _cliente)
+    monkeypatch.setattr(integracoes, "cliente_meuwatt", _sem_mw)
+    catalogo = await api.catalogo_de_usinas(db=db, gerente=gerente)
+    ids = {l.mp_usina_id for l in catalogo.linhas if l.mp_usina_id}
+    assert ids == {1, 2}

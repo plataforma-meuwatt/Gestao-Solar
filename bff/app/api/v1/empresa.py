@@ -582,6 +582,15 @@ async def catalogo_de_usinas(
         usinas_mp = await (await integracoes.cliente_meuplano(db, empresa_id)).usinas()
     except Exception as exc:  # noqa: BLE001
         avisos.append(_aviso(Produto.MEUPLANO, exc))
+    # Casada a organização da empresa no meuPlano (Vínculos), só as usinas em que ELA é a
+    # prestadora ou a gestora: o token de quem é admin do sistema lá enxerga todas, e o
+    # gerente só deve ver as dele ("respectivamente somente as usinas dele").
+    organizacao = svc.por_id(db, empresa_id).mp_tenant_id
+    if organizacao is not None:
+        usinas_mp = [
+            u for u in usinas_mp
+            if organizacao in (u.get("prestadora_owner_id"), u.get("gestora_owner_id"))
+        ]
 
     links = list(
         db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all()

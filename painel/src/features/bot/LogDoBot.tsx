@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio, type Tom } from '@/components/base'
-import { listarEmpresas, logDoBot, type RegistroBot } from '@/features/api'
+import { listarEmpresas, logDoBot, saudeDoCanal, type RegistroBot } from '@/features/api'
 import { quando } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -54,6 +54,8 @@ export function LogDoBot() {
       titulo="Log do bot"
       apoio="Cada mensagem que chegou ao assistente do WhatsApp: de quem e de qual empresa, o que perguntou, o que ele respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece — é quem tentou falar com o bot sem conta no Gestão Solar."
     >
+      <SaudeDoCanalCartao />
+
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <select
           className="campo"
@@ -107,6 +109,34 @@ export function LogDoBot() {
         )}
       </Cartao>
     </Pagina>
+  )
+}
+
+/**
+ * Se o bot está OUVINDO. Não é o "webhook pronto" da tela do WhatsApp (isso é configuração):
+ * é o que de fato chega e sai. Em 10/2026 o bot ficou mais de um dia surdo — 40 mensagens
+ * presas no gateway por um erro de banco — com a tela de configuração toda verde.
+ */
+function SaudeDoCanalCartao() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['saude-do-canal'],
+    queryFn: saudeDoCanal,
+    refetchInterval: 60_000,
+  })
+  if (isLoading) return null
+  if (error) return <Erro className="mb-4">{mensagemDeErro(error)}</Erro>
+  if (!data) return null
+  return (
+    <Cartao className="mb-4 px-5 py-4">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Selo tom={data.ouvindo ? 'ok' : 'parado'}>{data.ouvindo ? 'Bot ouvindo' : 'Bot NÃO está ouvindo'}</Selo>
+        <span className={`text-sm ${data.ouvindo ? 'text-rotulo' : 'text-parado'}`}>{data.resumo}</span>
+      </div>
+      <p className="text-xs text-fraco mt-2">
+        última mensagem recebida: {quando(data.ultima_recebida_em)} · última resposta do bot:{' '}
+        {quando(data.ultima_resposta_em)} · última entrega confirmada pela Meta: {quando(data.ultima_entregue_em)}
+      </p>
+    </Cartao>
   )
 }
 

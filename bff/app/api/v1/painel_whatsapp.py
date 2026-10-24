@@ -21,7 +21,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.clients import whatsapp as gateway
@@ -316,4 +316,54 @@ def log_do_bot(
     empresa, pessoa ou resultado. Inclui os números sem cadastro que tentaram falar."""
     return registros_do_bot(
         db, empresa_id=empresa_id, usuario_id=usuario_id, resultado=resultado, limite=limite
+    )
+
+
+class SaudeDoCanalOut(BaseModel):
+    """Se o bot está OUVINDO — e não só configurado. Em 10/2026 a tela dizia "webhook pronto"
+    enquanto 40 mensagens ficaram presas no gateway por um erro de banco, por mais de um dia."""
+
+    ouvindo: bool
+    #: A frase que resume (ex.: "3 entregas paradas no gateway — StringDataRightTruncation").
+    resumo: str
+    eventos_parados: int | None = None
+    eventos_com_erro: int | None = None
+    ultimo_erro: str | None = None
+    mensagens_sem_aviso: int | None = None
+    ultima_recebida_em: datetime | None = None
+    ultima_entregue_em: datetime | None = None
+    #: A última vez que o BOT respondeu alguém (o log daqui).
+    ultima_resposta_em: datetime | None = None
+
+
+@router.get("/saude", response_model=SaudeDoCanalOut)
+async def saude_do_canal(db: Session = Depends(get_db), _: User = Depends(EXIGE_BOT)) -> SaudeDoCanalOut:
+    ultima_resposta = db.scalar(
+        select(func.max(RegistroBot.em)).where(RegistroBot.resultado == "respondeu")
+    )
+    try:
+        g = await gateway.saude()
+    except gateway.GatewayIndisponivel as exc:
+        return SaudeDoCanalOut(ouvindo=False, resumo=f"O gateway não respondeu: {exc}",
+                               ultima_resposta_em=ultima_resposta)
+    parados, sem_aviso = g.get("eventos_parados") or 0, g.get("mensagens_sem_aviso") or 0
+    if parados or sem_aviso:
+        partes = []
+        if parados:
+            partes.append(f"{parados} entrega(s) da Meta parada(s) no gateway")
+        if sem_aviso:
+            partes.append(f"{sem_aviso} mensagem(ns) que o bot ainda não recebeu")
+        resumo = " · ".join(partes) + (f" — último erro: {g['ultimo_erro']}" if g.get("ultimo_erro") else "")
+    else:
+        resumo = "Ouvindo: nada parado no gateway."
+    return SaudeDoCanalOut(
+        ouvindo=not (parados or sem_aviso),
+        resumo=resumo,
+        eventos_parados=parados,
+        eventos_com_erro=g.get("eventos_com_erro"),
+        ultimo_erro=g.get("ultimo_erro"),
+        mensagens_sem_aviso=sem_aviso,
+        ultima_recebida_em=g.get("ultima_recebida_em"),
+        ultima_entregue_em=g.get("ultima_entregue_em"),
+        ultima_resposta_em=ultima_resposta,
     )

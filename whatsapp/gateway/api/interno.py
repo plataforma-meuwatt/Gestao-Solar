@@ -10,16 +10,17 @@ painel fala com o BFF, o BFF fala com o gateway. O token nunca volta por nenhuma
 rotas — o que sai é o prefixo, o estado e a data do último teste.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gateway.core.config import get_settings
 from gateway.core.db import get_db
 from gateway.core.seguranca import CABECALHO_CHAVE_INTERNA, chave_interna_confere
-from gateway.models.mensagem import Mensagem
+from gateway.models.mensagem import Mensagem, WebhookEvento
 from gateway.services import contas as svc_contas
 from gateway.services import credenciais as svc
 from gateway.services import envio as svc_envio
@@ -354,3 +355,55 @@ async def desconectar_conta(
         db, phone_number_id=phone_number_id, gs_user_id=gs_user_id, ator=ator
     ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Número não encontrado nesta conta.")
+
+
+# ── saúde do canal ──────────────────────────────────────────────────────────
+
+
+class SaudeOut(BaseModel):
+    """O que diz se o bot está OUVINDO — não só se está configurado. Em 10/2026 a tela dizia
+    "webhook pronto" enquanto 40 mensagens estavam presas aqui por um erro de banco."""
+
+    #: Entregas da Meta não aplicadas há mais de 2 min, nas últimas 24 h (a varredura passa a
+    #: cada 60 s; a que desistiu depois de 10 tentativas sai da conta em 24 h, senão o alarme
+    #: ficaria vermelho para sempre por uma entrega antiga).
+    eventos_parados: int
+    #: Dessas, as que já falharam (com o último erro).
+    eventos_com_erro: int
+    ultimo_erro: str | None = None
+    #: Mensagens recebidas que o BFF ainda não recebeu de nós.
+    mensagens_sem_aviso: int
+    ultima_recebida_em: datetime | None = None
+    ultima_enviada_em: datetime | None = None
+    #: A última que a Meta disse ter entregado.
+    ultima_entregue_em: datetime | None = None
+
+
+@router.get("/saude", response_model=SaudeOut, dependencies=[Depends(_porta)])
+def saude(db: Session = Depends(get_db)) -> SaudeOut:
+    agora = datetime.now(UTC)
+    janela = (agora - timedelta(hours=24), agora - timedelta(minutes=2))
+    parados = WebhookEvento.processado_em.is_(None) & WebhookEvento.recebido_em.between(*janela)
+    ultimo_erro = db.scalar(
+        select(WebhookEvento.erro).where(parados, WebhookEvento.erro.is_not(None)).order_by(WebhookEvento.id.desc()).limit(1)
+    )
+    return SaudeOut(
+        eventos_parados=db.scalar(select(func.count()).select_from(WebhookEvento).where(parados)) or 0,
+        eventos_com_erro=db.scalar(
+            select(func.count()).select_from(WebhookEvento).where(parados, WebhookEvento.erro.is_not(None))
+        ) or 0,
+        ultimo_erro=ultimo_erro,
+        mensagens_sem_aviso=db.scalar(
+            select(func.count()).select_from(Mensagem).where(
+                Mensagem.direcao == "entrada", Mensagem.notificada_bff_em.is_(None),
+                Mensagem.criada_em.between(*janela),
+            )
+        ) or 0,
+        ultima_recebida_em=db.scalar(select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "entrada")),
+        ultima_enviada_em=db.scalar(select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "saida")),
+        ultima_entregue_em=db.scalar(
+            select(func.max(Mensagem.status_em)).where(
+                Mensagem.direcao == "saida", Mensagem.status.in_(["entregue", "lida"])
+            )
+        ),
+    )

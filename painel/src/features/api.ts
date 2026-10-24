@@ -776,6 +776,22 @@ export type RegistroBot = {
 export const logDoBot = (filtro: { empresa_id?: number; usuario_id?: number; resultado?: string } = {}) =>
   api.get<RegistroBot[]>('/whatsapp/bot/registros', { params: filtro }).then((r) => r.data)
 
+/** Se o bot está OUVINDO (e não só configurado): entregas paradas no gateway, mensagens que
+ *  o bot ainda não recebeu, e as últimas datas. */
+export type SaudeDoCanal = {
+  ouvindo: boolean
+  resumo: string
+  eventos_parados: number | null
+  eventos_com_erro: number | null
+  ultimo_erro: string | null
+  mensagens_sem_aviso: number | null
+  ultima_recebida_em: string | null
+  ultima_entregue_em: string | null
+  ultima_resposta_em: string | null
+}
+
+export const saudeDoCanal = () => api.get<SaudeDoCanal>('/whatsapp/saude').then((r) => r.data)
+
 /** O mesmo log, no oem-gs: só as pessoas que a empresa da sessão cuida. */
 export const logDoBotDaEmpresa = () =>
   apiEmpresa.get<RegistroBot[]>('/bot/registros').then((r) => r.data)
