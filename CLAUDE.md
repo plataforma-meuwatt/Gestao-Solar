@@ -831,7 +831,7 @@ não respondem nem cancelam a ação. **Áudio:** a nota de voz é baixada pelo 
 transcrita pelo meuPlano (`/assistant/transcribe`, o Whisper do app de campo) com o token do
 meuPlano DA PESSOA; o bot devolve "🎙️ _o que entendeu_" e segue como texto — a senha dita em voz
 alta vale e nunca volta em claro. Arquivo e imagem ainda não são lidos (a resposta diz o nome).
-Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação com senha ANTES de sair
+Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação (SIM) ANTES de sair
 (lá a ferramenta de PDF assina dentro de uma leitura, sem proposta). Pedido ao helper com IP/host de equipamento (SmartLogger, ABS, datalogger) tem de
 trazer a usina junto: sem ela, o helper confere o IP contra TODAS as usinas do token. O recorte de usinas do bot é `usinas_do_bot`: o do
 aplicativo e, para o TÉCNICO, a carteira da empresa (é ele quem vai a campo); leitura que não
@@ -841,9 +841,14 @@ e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da re
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
 srvclaude com a idade do contato do wg0 (exige a mesma chave de chamador) — VPN parada há mais
-de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo. **A ação do meuPlano usa a mesma senha:** a proposta do assistente de lá (criar OS,
-lançar o dia, lembrete) espera a senha, e confirmada o BFF chama o `/assistant/apply` de lá com
-o token da pessoa (10 min); a conversa vai junto ao meuPlano, que é sem estado. **Empresa
+de 5 min deixa o selo vermelho. Gateway e helper são conferidos ao mesmo tempo. **A ação do meuPlano confirma com SIM, não com a senha** (dono, 24/10/2026:
+o bot cobrava a senha de atuação para concluir uma OS — senha é para EQUIPAMENTO, "desligar,
+ligar, gravar"): a proposta do assistente de lá (criar/concluir OS, lançar o dia, lembrete)
+espera o SIM da pessoa (`Pendente.confirmacao = "sim"`, conferido pelo sistema, valendo só
+depois de o resumo sair; a senha certa também confirma), e confirmada o BFF chama o
+`/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
+é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
+passo do mesmo pedido (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM). **Empresa
 desligada (ou conta sem empresa) cala o bot**, como os outros portões; **meuWatt fora só tira a
 geração** (a lista de usinas dele fica 5 min em memória). **O token é da pessoa:** a mesma pessoa de
 lá não serve a duas contas, e o token de outra pessoa não troca a ligação em silêncio

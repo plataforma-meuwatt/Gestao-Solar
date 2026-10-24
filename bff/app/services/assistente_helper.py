@@ -119,8 +119,14 @@ ACAO_CANCELADA = ("(A ação que esperava a sua senha foi cancelada. Para execut
 PARTE_DESLIGADA = "Essa parte do bot foi desligada pelo gerente da O&M enquanto a ação esperava. Nada foi feito."
 CANCELADO = "Cancelado: a ação não será executada. Nada foi feito."
 #: A senha certa que a pessoa mandou ANTES de o resumo chegar: ela não sabia o que confirmava.
+#: O "sim" que confirma a ação do meuPlano: a mensagem INTEIRA, conferida pelo sistema (a IA não
+#: confirma nada).
+SIM = re.compile(r"^\s*(?:sim|confirm[oa]|pode(?:\s+(?:fazer|criar|concluir|seguir|mandar|ir))?|fa[zç]a?|isso|ok|"
+                 r"beleza|manda(?:\s+ver)?|positivo)\s*[!.]*\s*[👍✅]*\s*$", re.IGNORECASE)
+ANTES_DO_RESUMO_SIM = ("Esse \"sim\" foi mandado antes de o resumo da ação chegar, então não vale. Leia o resumo "
+                       "acima e, se for isso mesmo, responda SIM de novo até as {limite}. Nada foi feito.")
 #: A senha (certa ou errada — a mesma frase, sem oráculo) depois do prazo da ação.
-VENCEU = ("A ação esperava a senha até as {limite} e venceu, então não vale mais. Nada foi feito — se "
+VENCEU = ("A ação esperava a sua resposta até as {limite} e venceu, então não vale mais. Nada foi feito — se "
           "ainda quiser, peça de novo.")
 ANTES_DO_RESUMO = ("Essa senha foi mandada antes de o resumo da ação chegar, então não vale. Leia o resumo "
                    "acima e, se for isso mesmo, mande a senha outra vez até as {limite}. Nada foi feito.")
@@ -141,6 +147,13 @@ class Pendente:
     #: Quando o resumo (o bloco 🔒) saiu para a pessoa — relógio daqui e hora UTC. `None` =
     #: ainda não saiu: senha nenhuma vale antes (`mostrada`).
     mostrada_em: tuple[float, datetime] | None = None
+    #: Como a pessoa confirma: `senha` (a de atuação — equipamento, pelo helper) ou `sim`
+    #: (registro no meuPlano: criar/concluir OS, lançar o dia). Pedido do dono (24/10/2026):
+    #: senha é para ATUAÇÃO — "desligar, ligar, gravar"; concluir uma OS não é.
+    confirmacao: str = "senha"
+    #: A conversa com o meuPlano até esta proposta: depois de feita, o bot segue para o próximo
+    #: passo do MESMO pedido (lá é uma proposta por vez — "crie a OS e conclua a 1638").
+    conversa: list[dict] | None = None
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -313,7 +326,15 @@ def nova_senha(user_id: int) -> None:
     _BLOQUEIO.pop(user_id, None)
 
 
-def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper") -> dict:
+def espera_sim(user_id: int) -> bool:
+    """Há uma ação do meuPlano esperando o SIM desta pessoa (vencida ou não: o "sim" tardio
+    ouve que venceu, não vai à IA)."""
+    p = PENDENTES.get(user_id)
+    return p is not None and p.confirmacao == "sim"
+
+
+def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper",
+           confirmacao: str = "senha", conversa: list[dict] | None = None) -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
 
     - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
@@ -322,7 +343,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
     - O texto que a pessoa confirma é do SISTEMA, não da IA: `bloco_da_proposta` é acrescentado
       ao pé da resposta, com o resumo exato, os avisos e o prazo (`assistente._atender`)."""
     user = ctx.user
-    if not user.senha_atuacao_hash:
+    if confirmacao == "senha" and not user.senha_atuacao_hash:
         PENDENTES.pop(user.id, None)
         return {"proposta_pendente": resumo, "sem_senha_de_atuacao": True,
                 "instrucao": ("NADA foi executado, e não pode ser: esta pessoa ainda não tem SENHA DE ATUAÇÃO. "
@@ -331,8 +352,16 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
     if ctx.proposta is not None:
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
     p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
-                 parte)
+                 parte, confirmacao=confirmacao, conversa=conversa)
     PENDENTES[user.id] = ctx.proposta = p
+    if confirmacao == "sim":
+        return {
+            "proposta_pendente": resumo,
+            "vale_por_s": prazo_s,
+            "instrucao": ("NADA foi executado. O SISTEMA acrescenta ao fim da sua resposta o resumo exato da ação e "
+                          "pede que a pessoa responda SIM: diga em uma linha o que será feito e não repita o resumo. "
+                          "Não fale de senha (ação do meuPlano não pede senha), nunca diga que fez."),
+        }
     return {
         "proposta_pendente": resumo,
         "vale_por_s": prazo_s,
@@ -343,11 +372,14 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
 
 
 def bloco_da_proposta(p: Pendente) -> str:
-    """O que a pessoa confirma com a senha — escrito pelo sistema, palavra por palavra."""
-    linhas = ["🔒 *Ação esperando a sua senha de atuação*", f"• {p.resumo}"]
+    """O que a pessoa confirma — escrito pelo sistema, palavra por palavra."""
+    sim = p.confirmacao == "sim"
+    linhas = ["📋 *Ação no meuPlano esperando a sua confirmação*" if sim else "🔒 *Ação esperando a sua senha de atuação*",
+              f"• {p.resumo}"]
     linhas += [f"  – {d}" for d in p.detalhes]
     linhas += [f"⚠️ {a}" for a in p.avisos]
-    linhas.append(f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
+    linhas.append(f"Para fazer, responda *SIM* até as {_limite(p)}. Qualquer outra mensagem cancela." if sim else
+                  f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
 
 
@@ -642,6 +674,17 @@ async def confirmar_por_mensagem(db, user, telefone: str, texto: str, analise: A
     - Errada: conta; `TENTATIVAS` erros bloqueiam por `BLOQUEIO_S`. Sem ação esperando, a frase
       é a mesma da certa.
     - "não"/"cancela" com uma ação que acabou de ser desarmada: `CANCELADO`, pelo sistema."""
+    if SIM.match(texto or "") and espera_sim(user.id):
+        p = PENDENTES[user.id]
+        if monotonic() > p.expira:
+            PENDENTES.pop(user.id, None)
+            return VENCEU.format(limite=_limite(p))
+        if _antes_do_resumo(p, chegou, mandada_em):
+            return ANTES_DO_RESUMO_SIM.format(limite=_limite(p))
+        PENDENTES.pop(user.id, None)                       # uma vez só, aconteça o que acontecer
+        if p.parte not in user.bot_ativo:
+            return PARTE_DESLIGADA
+        return await p.executar(db, user, telefone)
     if digitos_da_senha(texto) is None:
         return CANCELADO if esperava and CANCELA.match(texto or "") else None
     analise = analise or await analisar(user, texto)

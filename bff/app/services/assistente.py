@@ -104,7 +104,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
         return _assinatura_com_senha(ctx, pedido, mensagens)
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     r = await _perguntar_ao_meuplano(mp, mensagens)
-    return _proposta_do_meuplano(ctx, r) if r.get("type") == "proposal" else r
+    return _proposta_do_meuplano(ctx, r, mensagens) if r.get("type") == "proposal" else r
 
 
 async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
@@ -121,7 +121,7 @@ async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
 
 
 def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict]) -> dict:
-    """O pedido com assinatura digital só vai ao meuPlano depois da SENHA DE ATUAÇÃO."""
+    """O pedido com assinatura digital só vai ao meuPlano depois de a pessoa CONFIRMAR (SIM)."""
     from app.services.vinculos import SemConexao, cliente_meuplano
 
     async def executar(db: Session, user: User, telefone: str) -> str:
@@ -138,12 +138,12 @@ def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict])
         return r.get("texto") or "O meuPlano não respondeu nada."
 
     resumo = f"Pedir ao meuPlano, com a sua ASSINATURA DIGITAL (certificado): «{pedido[:300]}»"
-    return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano")
+    return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano", confirmacao="sim")
 
 
 #: Quantas mensagens da conversa vão ao meuPlano junto com a pergunta.
 HISTORICO_MEUPLANO = 8
-#: Quanto vale a proposta do meuPlano esperando a senha de atuação (é para ler o resumo com calma).
+#: Quanto vale a proposta do meuPlano esperando o SIM (é para ler o resumo com calma).
 PRAZO_PROPOSTA_MP_S = 600
 
 
@@ -159,11 +159,13 @@ def _o_que_nasceu(dados: Any) -> str:
     return f" ({', '.join(partes)})" if partes else ""
 
 
-def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
-    """Ação do assistente do meuPlano (criar OS, lançar o dia, lembrete…) volta como PROPOSTA:
-    nada foi gravado lá. Espera a mesma SENHA DE ATUAÇÃO do helper; confirmada pela pessoa, o
-    Gestão Solar chama o `/assistant/apply` de lá com o token DELA — é o "Confirmar" da web,
-    e o meuPlano revalida os argumentos e a permissão."""
+def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | None = None) -> dict:
+    """Ação do assistente do meuPlano (criar/concluir OS, lançar o dia, lembrete…) volta como
+    PROPOSTA: nada foi gravado lá. A pessoa confirma com SIM (pedido do dono, 24/10/2026: a senha
+    de atuação é para equipamento — "desligar, ligar, gravar" —, e o bot a cobrava para concluir
+    uma OS); o Gestão Solar chama o `/assistant/apply` de lá com o token DELA — é o "Confirmar" da
+    web, e o meuPlano revalida os argumentos e a permissão. `conversa` deixa o bot seguir para o
+    próximo passo do mesmo pedido depois de feito."""
     from app.services.integracoes import detalhe_do_upstream
     from app.services.vinculos import SemConexao, cliente_meuplano
 
@@ -187,7 +189,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict) -> dict:
 
     detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
     proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
-                             parte="bot_meuplano")
+                             parte="bot_meuplano", confirmacao="sim", conversa=conversa)
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
@@ -320,9 +322,13 @@ a essa parte não está liberado e que o gerente da O&M pode liberar — não te
   escondeu sem conferir (a frase tinha mais de 3 números longos, ou a pessoa passou do limite da hora): peça
   para reenviar numa frase com até 3 números (ex.: "a UC é 1234567") — nunca o número sozinho, que vale como
   tentativa de senha.
-- Ação (helper ou meuPlano: ligar, desligar, gravar, criar) NUNCA é executada por você: a ferramenta devolve
-  `proposta_pendente`. Mostre o resumo (e os detalhes) e peça a SENHA DE ATUAÇÃO da pessoa — quem confere é o
-  sistema. Nunca peça a senha de login, nunca escreva uma senha, nunca diga que fez. Ler não pede senha.
+- Ação NUNCA é executada por você: a ferramenta devolve `proposta_pendente`, e o SISTEMA põe o resumo e o pedido
+  de confirmação ao pé da sua resposta. No meuPlano (criar ou concluir OS, lançar o dia, lembrete) a pessoa
+  confirma com SIM — NÃO fale de senha. Só ação no EQUIPAMENTO pelo helper (ligar, desligar, gravar parâmetro)
+  pede a SENHA DE ATUAÇÃO; fale dela só nesse caso. Nunca peça a senha de login, nunca escreva uma senha,
+  nunca diga que fez. Ler não pede nada.
+- Pedido de vários passos no meuPlano ("crie a OS e conclua a 1638"): mande o pedido INTEIRO numa chamada de
+  `manutencao`; o meuPlano propõe um passo por vez e, a cada SIM, o sistema segue para o próximo.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
 - Período: calcule as datas a partir de hoje. Compare usinas pela produtividade (kWh/kWp).
 - Responda curto, em português do Brasil, formato WhatsApp (*negrito*, listas curtas): o número pedido
@@ -470,6 +476,46 @@ def _empresa_fora(db: Session, user: User) -> str | None:
     return None
 
 
+def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
+    """A ação NOVA desta pessoa (o resumo acabou de ir): a senha/o SIM só valem depois da saída,
+    marcada na hora do banco; se a mensagem não saiu, a pessoa não viu o resumo, e nada fica
+    esperando."""
+    p = helper.PENDENTES.get(user.id)
+    if p is None or p.mostrada_em is not None:
+        return
+    if saiu:
+        helper.mostrada(user.id, _agora_do_banco(db))
+    else:
+        helper.desarmar(user.id)
+
+
+async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, feito: str) -> str:
+    """Depois de uma ação do meuPlano feita, o próximo passo do MESMO pedido: lá é uma proposta por
+    vez, e "crie a OS e conclua a 1638" voltava só com a criação — o resto se perdia (24/10/2026).
+    O meuPlano decide se há próximo; havendo, vira outra proposta com SIM. Sem próximo, nada."""
+    from app.services.vinculos import SemConexao, cliente_meuplano
+
+    try:
+        mp = cliente_meuplano(db, user.id, so_proprio=True)
+    except SemConexao:
+        return ""
+    conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
+                {"role": "user", "content": f"{feito}. Se o meu pedido tinha mais passos, proponha o próximo agora; "
+                                            "se não tinha, responda só: Pronto."}]
+    db.commit()                                           # solta a conexão: o meuPlano leva até 2 min
+    try:
+        r = await _perguntar_ao_meuplano(mp, conversa)
+    except Exception:                                      # noqa: BLE001 — o feito já foi dito
+        log.warning("assistente: não seguiu para o próximo passo no meuPlano", exc_info=True)
+        return ""
+    if r.get("type") == "proposal":
+        ctx = ger.Contexto(db=db, user=user, telefone=telefone)
+        _proposta_do_meuplano(ctx, r, conversa)
+        return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
+    texto = (r.get("texto") or "").strip()
+    return "" if not texto or (texto.lower().startswith("pronto") and len(texto) < 40) else texto
+
+
 def _agora_do_banco(db: Session) -> datetime:
     """A hora do BANCO, não a deste servidor: a KingHost bloqueia o NTP e o relógio daqui anda
     ~17 s atrasado — e a senha é comparada com a hora da Meta, que é a certa (avaliação 11: a
@@ -577,9 +623,11 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, falha + (f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
-        # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha derruba a ação
-        # que a esperava — antes de "limpar" e de áudio/imagem, que saem logo abaixo.
-        esperava = False if helper.digitos_da_senha(texto) is not None else helper.desarmar(user.id)
+        # "Qualquer outra mensagem cancela": toda mensagem que não é APENAS a senha (ou o SIM da ação
+        # do meuPlano) derruba a ação que a esperava — antes de "limpar" e de áudio/imagem.
+        confirma = bool(helper.SIM.match(texto)) and helper.espera_sim(user.id)
+        esperava = (False if helper.digitos_da_senha(texto) is not None or confirma
+                    else helper.desarmar(user.id))
         nota = f"\n\n{helper.ACAO_CANCELADA}" if esperava else ""
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
@@ -608,10 +656,12 @@ async def _atender(evento: dict) -> None:
             _registrar(db, telefone, user, "zerou", pergunta=texto, inicio=inicio, em=enviada)
             return
         historico = json.loads(conv.mensagens or "[]")
-        historico.append({"role": "user", "content": seguro})
+        entrada = {"role": "user", "content": seguro}      # o que vai ao log (a senha já trocada)
+        historico.append(entrada)
         # A SENHA DE ATUAÇÃO é conferida aqui, antes de qualquer modelo: a IA nunca a vê nem
         # confirma nada. Tratada como senha, a mensagem sai do histórico, do log e do gateway;
         # o desfecho entra no histórico, para a conversa seguinte saber o que foi feito.
+        executada = helper.PENDENTES.get(user.id)         # a ação que esta mensagem pode confirmar
         resposta = await helper.confirmar_por_mensagem(db, user, telefone, texto, analise, esperava,
                                                        chegou=evento.get("_chegou"), mandada_em=enviada)
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
@@ -636,22 +686,27 @@ async def _atender(evento: dict) -> None:
         db.commit()
         fim.set()
         await tarefa
-        saiu = await _texto(telefone, para_whatsapp(resposta))
-        if ctx is not None and ctx.proposta is not None:
-            # A senha só passa a valer depois que o resumo SAIU; se não saiu, a pessoa não o
-            # viu, e a ação não fica esperando.
-            if saiu:
-                helper.mostrada(user.id, _agora_do_banco(db))
-            else:
-                helper.desarmar(user.id)
-        _registrar(db, telefone, user, "respondeu", pergunta=historico[-2]["content"], resposta=resposta,
-                   ferramentas=ctx.ferramentas if ctx else ["senha_de_atuacao"], inicio=inicio, em=enviada)
+        _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(resposta)))
+        if (executada is not None and executada.conversa is not None and resposta.startswith("✅")
+                and helper.PENDENTES.get(user.id) is not executada):
+            # O próximo passo do MESMO pedido ("crie a OS e conclua a 1638"): lá é uma proposta por vez.
+            seguinte = await _seguir_no_meuplano(db, user, telefone, executada, resposta)
+            if seguinte:
+                historico.append({"role": "assistant", "content": seguinte})
+                conv.mensagens = json.dumps(historico[-HISTORICO:], ensure_ascii=False)
+                db.commit()
+                _resumo_saiu(db, user, await _texto(telefone, para_whatsapp(seguinte)))
+                resposta += "\n\n" + seguinte
+        _registrar(db, telefone, user, "respondeu", pergunta=entrada["content"], resposta=resposta,
+                   ferramentas=ctx.ferramentas if ctx else
+                   ["senha_de_atuacao" if helper.digitos_da_senha(texto) else "confirmacao"],
+                   inicio=inicio, em=enviada)
     except Exception as exc:                               # noqa: BLE001
         log.exception("assistente: turno falhou (%s)", evento.get("wamid"))
         db.rollback()
         fim.set()
-        if ctx is not None and ctx.proposta is not None and ctx.proposta.mostrada_em is None:
-            helper.desarmar(user.id)                       # o resumo não chegou: nada fica esperando
+        if user is not None:
+            _resumo_saiu(db, user, False)                  # o resumo não chegou: nada fica esperando
         _registrar(db, telefone, user, "erro", pergunta=pergunta,
                    ferramentas=ctx.ferramentas if ctx else None, inicio=inicio, em=enviada,
                    erro=f"{type(exc).__name__}: {exc}")

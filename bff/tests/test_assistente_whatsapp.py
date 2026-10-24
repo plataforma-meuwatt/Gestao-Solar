@@ -499,9 +499,10 @@ class _MeuPlanoFalso:
         return {"ok": True, "message": "Ação aplicada.", "data": {"os_id": 1639, "status": "PROGRAMADA"}}
 
 
-async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_a_senha_da_pessoa(db, monkeypatch):
-    """O bot perguntava "Confirma que eu crie assim?" e, no "sim", mandava confirmar no site:
-    a proposta de lá vira o mesmo CONFIRMO do helper, e a conversa vai junto ao meuPlano."""
+async def test_a_os_que_o_meuplano_propoe_e_criada_com_o_sim_da_pessoa_sem_senha(db, monkeypatch):
+    """Ação do meuPlano (criar/concluir OS) confirma com SIM — a senha de atuação é para
+    equipamento ("desligar, ligar, gravar"). Em 24/10/2026 o bot cobrava a senha para concluir uma
+    OS de quem nem tinha senha, e repetia isso a cada resposta. A conversa vai junto ao meuPlano."""
     from app.services import assistente_helper as h
     from app.services import vinculos
 
@@ -512,28 +513,94 @@ async def test_a_os_que_o_meuplano_propoe_so_e_criada_com_a_senha_da_pessoa(db, 
         return None
 
     monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
-    h.PENDENTES.clear()
-    from app.core.security import gerar_hash_senha
-
-    dono = _conta(db, "dono", "+5517997377626")
+    dono = _conta(db, "dono", "+5517997377626")                 # SEM senha de atuação
     outro = _conta(db, "outro", "+5517997370000")
-    for u in (dono, outro):
-        u.senha_atuacao_hash = gerar_hash_senha("482913")
-    db.commit()
     antes = [{"role": "user", "content": "Serviço novo"}, {"role": "assistant", "content": "Confirma que eu crie assim?"}]
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone, historico=antes)
 
     proposta = await assistente.manutencao(ctx, {"pergunta": "Sim, crie a OS"})
     assert falso.conversas[0][:2] == antes and falso.conversas[0][-1]["content"].startswith("Sim, crie a OS")
-    assert "NADA foi executado" in proposta["instrucao"] and proposta["detalhes"] == ["Técnico: Michel"]
-    assert falso.aplicadas == []
+    assert "NADA foi executado" in proposta["instrucao"] and "Não fale de senha" in proposta["instrucao"]
+    assert "SENHA DE ATUAÇÃO" not in proposta["instrucao"]
+    assert "sem_senha_de_atuacao" not in proposta and proposta["detalhes"] == ["Técnico: Michel"]
+    bloco = h.bloco_da_proposta(ctx.proposta)
+    assert "responda *SIM*" in bloco and "senha" not in bloco
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim") == h.ANTES_DO_RESUMO_SIM.format(
+        limite=h._limite(ctx.proposta))                         # o resumo ainda não tinha saído
     h.mostrada(dono.id)
 
-    assert "não há ação" in (await h.confirmar_por_mensagem(db, outro, outro.telefone, "482913")).lower()
-    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    assert await h.confirmar_por_mensagem(db, outro, outro.telefone, "sim") is None   # o SIM de outro é só conversa
+    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "Sim!")
     assert feito.startswith("✅ Feito no meuPlano") and "(OS 1639, PROGRAMADA)" in feito
     assert falso.aplicadas == [("criar_ordem_servico", {"usina_id": 37, "nome": "Roçagem de 5 ruas"})]
-    assert "não há ação" in (await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")).lower()
+    assert await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim") is None     # uma vez só
+
+
+class _MeuPlanoEmPassos:
+    """O assistente do meuPlano: uma proposta por vez, e "Pronto." quando acabou."""
+
+    def __init__(self):
+        self.aplicadas, self.conversas = [], []
+        self.respostas = [
+            {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"nome": "Roçagem"},
+             "preview": {"summary": "Abrir a OS 'Roçagem de 5 ruas' na UFV Ibitinga", "lines": [], "warnings": []}},
+            {"status": "DONE", "type": "proposal", "action": "mudar_status_os", "args": {"os_id": 1638},
+             "preview": {"summary": "Mover a OS 1638 para CONCLUÍDA", "lines": [], "warnings": []}},
+            {"status": "DONE", "type": "message", "text": "Pronto."},
+        ]
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        return len(self.conversas)
+
+    async def assistente_run(self, token, run_id):
+        return self.respostas[run_id - 1]
+
+    async def assistente_aplicar(self, token, acao, args):
+        self.aplicadas.append(acao)
+        return {"ok": True, "data": {"os_id": 1639, "status": "PROGRAMADA"} if acao == "criar_ordem_servico" else {}}
+
+
+async def test_criar_a_os_e_concluir_a_outra_vira_dois_sim_em_sequencia(db, bot_local, monkeypatch):
+    """A conversa do dono (24/10/2026): "Crie a OS e a tarefa. A OS 1638 mova para concluída" voltava
+    só com a criação, cobrando senha. Agora: SIM cria, o bot segue sozinho para o próximo passo do
+    mesmo pedido, SIM conclui — e ninguém fala de senha."""
+    import json as _json
+
+    from app.services import vinculos
+
+    falso = _MeuPlanoEmPassos()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: falso)
+
+    async def _sem_espera(_):
+        return None
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Vou abrir a OS."}
+        if msgs[-1]["content"].lower().startswith("crie"):
+            return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+                "name": "manutencao", "arguments": _json.dumps({"pergunta": msgs[-1]["content"]})}}]}
+        return {"content": "Entendi."}
+
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")                 # SEM senha de atuação
+    await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa. A OS 1638 mova para concluída"))
+    assert "Abrir a OS" in bot_local.enviados[-1] and "*SIM*" in bot_local.enviados[-1]
+    await assistente.atender(_ev(dono, 2, "sim"))
+    assert falso.aplicadas == ["criar_ordem_servico"]
+    assert bot_local.enviados[-2].startswith("✅ Feito no meuPlano") and "(OS 1639" in bot_local.enviados[-2]
+    assert "Mover a OS 1638 para CONCLUÍDA" in bot_local.enviados[-1] and "*SIM*" in bot_local.enviados[-1]
+    assert "OS 1639" in falso.conversas[1][-1]["content"]      # o meuPlano sabe o que já foi feito
+    await assistente.atender(_ev(dono, 3, "sim"))
+    assert falso.aplicadas == ["criar_ordem_servico", "mudar_status_os"]
+    assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Mover a OS 1638")   # "Pronto." não vira mensagem
+    assert not any("senha" in m.lower() for m in bot_local.enviados)
 
 
 def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
@@ -1525,10 +1592,10 @@ def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
     assert _sem_segredos("a senha do wifi é Solar@2024") == "a senha do wifi é ••••"
 
 
-async def test_documento_assinado_no_meuplano_so_sai_com_a_senha(db, monkeypatch):
+async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
     """No meuPlano a ferramenta de PDF assina com o certificado da pessoa dentro de uma LEITURA
-    — "me manda o PDF da OS assinado" passava sem senha de atuação (avaliação 11). O pedido de
-    assinatura só vai ao meuPlano depois da senha."""
+    — "me manda o PDF da OS assinado" saía sem confirmação nenhuma (avaliação 11). O pedido de
+    assinatura só vai ao meuPlano depois do SIM da pessoa."""
     from app.core.security import gerar_hash_senha
     from app.services import assistente_helper as h
     from app.services import vinculos
@@ -1561,7 +1628,7 @@ async def test_documento_assinado_no_meuplano_so_sai_com_a_senha(db, monkeypatch
     r = await assistente.manutencao(ctx, {"pergunta": "PDF da OS 1639"})
     assert "NADA foi executado" in r["instrucao"] and pedidos == []
     h.mostrada(dono.id)
-    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "482913")
+    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim")
     assert feito.startswith("PDF da OS 1639 assinado") and pedidos == ["PDF da OS 1639\n\n(Resposta para WhatsApp: curta, sem tabela.)"]
     # Leitura comum continua sem senha.
     r = await assistente.manutencao(ger.Contexto(db=db, user=dono, telefone=dono.telefone), {"pergunta": "OS abertas?"})
