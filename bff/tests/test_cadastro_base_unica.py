@@ -271,3 +271,34 @@ def test_a_migracao_adota_as_mensagens_soltas_de_quem_tem_o_numero(db):
     por = {r.pergunta: r.gs_user_id for r in db.query(RegistroBot)}
     assert [por[f"m{i}"] for i in range(3)] == [kewyn.id] * 3
     assert por["dois donos"] is None and por["conta desligada"] is None and por["ninguém"] is None
+
+
+async def test_a_lista_de_usuarios_do_oem_le_o_banco_em_tres_idas(cenario):
+    """A tela Usuários do oem levava 3,6 s: ~15 idas ao banco (~200 ms cada, nos EUA). Com o
+    meuPlano lido ao fundo, são TRÊS — contas (com as usinas de cada uma), vínculos e
+    empresas —, seja qual for o número de pessoas."""
+    from sqlalchemy import event
+
+    from app.api.v1.empresa import usuarios_detalhados
+    from app.models.plant import PlantLink
+    from app.models.user import UserPlantAccess, VinculoProduto
+
+    db, emp, conta, mp = cenario
+    await cadastro.ligar(db, conta, emp.id, 7)
+    gerente = User(apelido="ger", nome="Gerente", perfil=Perfil.GESTOR_EMPRESA, empresa_id=emp.id)
+    outras = [User(apelido=f"c{i}", nome=f"Cliente {i}", perfil=Perfil.CLIENTE, empresa_id=emp.id) for i in range(4)]
+    usina = PlantLink(nome="Pirapozinho", mw_plant_slug="pirapozinho", empresa_id=emp.id)
+    db.add_all([gerente, *outras, usina])
+    db.commit()
+    db.add_all([UserPlantAccess(user_id=c.id, plant_link_id=usina.id) for c in outras[:2]]
+               + [VinculoProduto(gs_user_id=outras[0].id, produto="meuwatt", usuario_remoto_id="9", token_cifrado="x")])
+    db.commit()
+    gerente = db.get(User, gerente.id)
+    db.expunge(emp)                  # em produção ninguém mais segura a empresa na memória
+    idas = []
+    event.listen(db.bind, "before_cursor_execute", lambda *a: idas.append(a[2]))
+    lista = {u.apelido: u for u in await usuarios_detalhados(db=db, gerente=gerente)}
+    assert len(idas) <= 3, idas
+    assert set(lista) == {"ana", "ger", "c0", "c1", "c2", "c3"}
+    assert (lista["c0"].usinas, lista["c1"].usinas, lista["c2"].usinas) == (1, 1, 0)
+    assert lista["c0"].produtos == ["meuwatt"] and lista["ana"].meuplano == "Ana Souza"

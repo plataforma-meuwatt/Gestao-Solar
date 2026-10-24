@@ -1335,6 +1335,33 @@ class UsuarioDetalhado(BaseModel):
     sugestao_meuplano_id: int | None = None
 
 
+def _contas_detalhadas(db: Session, empresa_id: int):
+    """O que a lista de Usuários lê do banco, em três idas: as contas da empresa com quantas
+    usinas cada uma recebe, as empresas e os vínculos (os das contas daqui — tokens, ligação —
+    e TODOS os do meuPlano: quem lá já está ligado a alguém não é sugerido de novo)."""
+    # Só as usinas DESTA empresa (e as sem dono): a que o dono recebe de outra não é daqui.
+    n_usinas = (
+        select(func.count(UserPlantAccess.plant_link_id))
+        .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
+        .where(UserPlantAccess.user_id == User.id,
+               (PlantLink.empresa_id == empresa_id) | PlantLink.empresa_id.is_(None))
+        .correlate(User)
+        .scalar_subquery()
+    )
+    linhas = db.execute(
+        select(User, n_usinas)
+        .where(svc.contas_da_empresa(empresa_id), User.perfil.not_in(pessoas.DA_PLATAFORMA))
+        .order_by(User.nome)
+    ).all()
+    if not linhas:
+        return [], {}, [], []
+    contas = [u for u, _ in linhas]
+    vinculos = db.scalars(select(VinculoProduto).where(
+        VinculoProduto.gs_user_id.in_([c.id for c in contas])
+        | (VinculoProduto.produto == Produto.MEUPLANO.value))).all()
+    return contas, {u.id: n for u, n in linhas}, db.scalars(select(Empresa)).all(), vinculos
+
+
 @router.get("/usuarios/detalhados", response_model=list[UsuarioDetalhado])
 async def usuarios_detalhados(
     db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
@@ -1343,29 +1370,18 @@ async def usuarios_detalhados(
     do meuPlano o que mudou lá no cadastro de quem está ligado (base única)."""
     from app.services import cadastro
     empresa_id = svc.empresa_exigida(gerente)
-    pessoas_mp = await cadastro.todas_as_pessoas(db, empresa_id)
-    contas = list(
-        db.scalars(
-            select(User)
-            .where(
-                svc.contas_da_empresa(empresa_id),
-                User.perfil.not_in(pessoas.DA_PLATAFORMA),
-            )
-            .order_by(User.nome)
-        ).all()
-    )
+    # O meuPlano (rede) corre enquanto o banco é lido numa thread: as duas esperas se
+    # sobrepõem em vez de somar (a tela levava 3,6 s — avaliação 10; cada ida ao banco, nos
+    # EUA, custa ~200 ms).
+    pessoas_t = await cadastro.pessoas_ao_fundo(db, empresa_id)
+    contas, quantas, empresas, vinculos = await asyncio.to_thread(_contas_detalhadas, db, empresa_id)
+    pessoas_mp = await pessoas_t
     if not contas:
         return []
-    ids = [c.id for c in contas]
     por_id = {c.id: c for c in contas}
-    # Segura as empresas no mapa de identidade: sem a lista viva, o `db.get` de `sugestoes`
-    # voltava ao banco (~200 ms cada ida — a tela levava 3,6 s, avaliação 10).
-    empresas = db.scalars(select(Empresa)).all()
+    # `empresas` fica viva até o fim: sem ela no mapa de identidade, o `db.get` de `sugestoes`
+    # voltava ao banco.
     nomes = {e.id: e.nome for e in empresas}
-    # UMA ida para os vínculos: os das contas daqui (tokens, ligação) e TODOS os do meuPlano
-    # (quem lá já está ligado a alguém — a sugestão de ligar não oferece esses).
-    vinculos = db.scalars(select(VinculoProduto).where(
-        VinculoProduto.gs_user_id.in_(ids) | (VinculoProduto.produto == Produto.MEUPLANO.value))).all()
     do_mp = [v for v in vinculos if v.produto == Produto.MEUPLANO.value]
     # Base única: o que mudou no meuPlano chega às contas ANTES de a lista sair.
     await cadastro.sincronizar(db, empresa_id, pessoas_mp, ligadas=[
@@ -1374,18 +1390,6 @@ async def usuarios_detalhados(
     sugeridas = cadastro.sugestoes(db, empresa_id, pessoas_mp, [c for c in contas if c.empresa_id == empresa_id],
                                    ligadas=[(v.usuario_remoto_id, v.gs_user_id) for v in do_mp])
 
-    # Só as usinas DESTA empresa (e as sem dono): a que o dono recebe de outra não é daqui.
-    quantas = dict(
-        db.execute(
-            select(UserPlantAccess.user_id, func.count(UserPlantAccess.plant_link_id))
-            .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
-            .where(
-                UserPlantAccess.user_id.in_(ids),
-                (PlantLink.empresa_id == empresa_id) | PlantLink.empresa_id.is_(None),
-            )
-            .group_by(UserPlantAccess.user_id)
-        ).all()
-    )
     conectados: dict[int, list[str]] = {}
     tokens_de: dict[int, dict[str, str]] = {}
     ligado_mp: dict[int, str] = {}

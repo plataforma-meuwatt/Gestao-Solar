@@ -233,8 +233,15 @@ def test_a_saude_do_canal_conta_o_que_esta_parado(cliente, db):
 
     from datetime import UTC, datetime, timedelta
 
+    from gateway.models.mensagem import Mensagem
+
     agora = datetime.now(UTC)
+    recebida, entregue = agora - timedelta(minutes=30), agora - timedelta(minutes=20)
     db.add_all([
+        Mensagem(direcao="entrada", wa_id="5517", telefone="+5517", tipo="text", texto="oi", ocorrida_em=recebida,
+                 status="recebida", notificada_bff_em=agora),
+        Mensagem(direcao="saida", wa_id="5517", telefone="+5517", tipo="text", texto="olá",
+                 ocorrida_em=agora - timedelta(minutes=25), status="entregue", status_em=entregue),
         WebhookEvento(corpo={}, erro="StringDataRightTruncation", tentativas=1, recebido_em=agora - timedelta(minutes=10)),
         # A que acabou de chegar ainda está sendo processada, e a de dois dias atrás já desistiu:
         # nenhuma das duas diz que o canal está surdo AGORA.
@@ -248,6 +255,10 @@ def test_a_saude_do_canal_conta_o_que_esta_parado(cliente, db):
     assert r.status_code == 200
     d = r.json()
     assert d["eventos_parados"] == 1 and d["eventos_com_erro"] == 1 and "Truncation" in d["ultimo_erro"]
+    # As datas, cada uma da sua coluna (a consulta é uma só, com sete partes).
+    assert d["mensagens_sem_aviso"] == 0
+    assert datetime.fromisoformat(d["ultima_recebida_em"]).replace(tzinfo=UTC) == recebida
+    assert datetime.fromisoformat(d["ultima_entregue_em"]).replace(tzinfo=UTC) == entregue
 
 
 def test_a_senha_digitada_sai_da_mensagem_e_da_entrega_crua(cliente, db):

@@ -430,26 +430,29 @@ def saude(db: Session = Depends(get_db)) -> SaudeOut:
     agora = datetime.now(UTC)
     janela = (agora - timedelta(hours=24), agora - timedelta(minutes=2))
     parados = WebhookEvento.processado_em.is_(None) & WebhookEvento.recebido_em.between(*janela)
-    ultimo_erro = db.scalar(
-        select(WebhookEvento.erro).where(parados, WebhookEvento.erro.is_not(None)).order_by(WebhookEvento.id.desc()).limit(1)
-    )
+    com_erro = parados & WebhookEvento.erro.is_not(None)
+    # UMA ida ao banco: eram sete, uma atrás da outra (~200 ms cada, o banco está nos EUA), e
+    # o selo "Bot ouvindo" levava 2,5 s para aparecer (avaliação 10).
+    linha = db.execute(select(
+        select(func.count()).select_from(WebhookEvento).where(parados).scalar_subquery(),
+        select(func.count()).select_from(WebhookEvento).where(com_erro).scalar_subquery(),
+        select(WebhookEvento.erro).where(com_erro).order_by(WebhookEvento.id.desc()).limit(1).scalar_subquery(),
+        select(func.count()).select_from(Mensagem).where(
+            Mensagem.direcao == "entrada", Mensagem.notificada_bff_em.is_(None),
+            Mensagem.criada_em.between(*janela),
+        ).scalar_subquery(),
+        select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "entrada").scalar_subquery(),
+        select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "saida").scalar_subquery(),
+        select(func.max(Mensagem.status_em)).where(
+            Mensagem.direcao == "saida", Mensagem.status.in_(["entregue", "lida"])
+        ).scalar_subquery(),
+    )).one()
     return SaudeOut(
-        eventos_parados=db.scalar(select(func.count()).select_from(WebhookEvento).where(parados)) or 0,
-        eventos_com_erro=db.scalar(
-            select(func.count()).select_from(WebhookEvento).where(parados, WebhookEvento.erro.is_not(None))
-        ) or 0,
-        ultimo_erro=ultimo_erro,
-        mensagens_sem_aviso=db.scalar(
-            select(func.count()).select_from(Mensagem).where(
-                Mensagem.direcao == "entrada", Mensagem.notificada_bff_em.is_(None),
-                Mensagem.criada_em.between(*janela),
-            )
-        ) or 0,
-        ultima_recebida_em=db.scalar(select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "entrada")),
-        ultima_enviada_em=db.scalar(select(func.max(Mensagem.ocorrida_em)).where(Mensagem.direcao == "saida")),
-        ultima_entregue_em=db.scalar(
-            select(func.max(Mensagem.status_em)).where(
-                Mensagem.direcao == "saida", Mensagem.status.in_(["entregue", "lida"])
-            )
-        ),
+        eventos_parados=linha[0] or 0,
+        eventos_com_erro=linha[1] or 0,
+        ultimo_erro=linha[2],
+        mensagens_sem_aviso=linha[3] or 0,
+        ultima_recebida_em=linha[4],
+        ultima_enviada_em=linha[5],
+        ultima_entregue_em=linha[6],
     )

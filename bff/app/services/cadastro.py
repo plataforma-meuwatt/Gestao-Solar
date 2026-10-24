@@ -16,6 +16,7 @@ precisa da permissão de usuários lá — sem ela, a frase do meuPlano chega ao
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -259,11 +260,28 @@ async def gravar(db: Session, conta: User, empresa_id: int, *, nome: str | None 
 async def todas_as_pessoas(db: Session, empresa_id: int) -> list[dict[str, Any]] | None:
     """As pessoas que a credencial da empresa enxerga no meuPlano, numa ida só — ou `None`
     sem o meuPlano (melhor esforço: a tela mostra o que está guardado)."""
+    return await (await pessoas_ao_fundo(db, empresa_id))
+
+
+async def pessoas_ao_fundo(db: Session, empresa_id: int) -> asyncio.Task:
+    """`todas_as_pessoas` com a ida ao meuPlano correndo AO FUNDO: a credencial (banco) é lida
+    aqui, e a tarefa só fala com a rede — quem chama pode ler o banco enquanto isso."""
     try:
-        return await (await _mp(db, empresa_id)).usuarios_admin()
+        mp = await _mp(db, empresa_id)
     except Exception:                                      # noqa: BLE001
-        log.warning("cadastro: ler as pessoas do meuPlano falhou (empresa %s)", empresa_id, exc_info=True)
-        return None
+        log.warning("cadastro: sem a conta da empresa no meuPlano (empresa %s)", empresa_id, exc_info=True)
+        mp = None
+
+    async def _ler() -> list[dict[str, Any]] | None:
+        if mp is None:
+            return None
+        try:
+            return await mp.usuarios_admin()
+        except Exception:                                  # noqa: BLE001
+            log.warning("cadastro: ler as pessoas do meuPlano falhou (empresa %s)", empresa_id, exc_info=True)
+            return None
+
+    return asyncio.create_task(_ler())
 
 
 def sugestoes(db: Session, empresa_id: int, pessoas: list[dict[str, Any]] | None,
