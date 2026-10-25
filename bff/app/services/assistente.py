@@ -152,7 +152,7 @@ def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict])
             return "O meuPlano pediu outra confirmação para isso: peça de novo, em partes. Nada foi assinado."
         return r.get("texto") or "O meuPlano não respondeu nada."
 
-    resumo = f"Pedir ao meuPlano, com a sua ASSINATURA DIGITAL (certificado): «{pedido[:300]}»"
+    resumo = f"Assinar com o seu certificado (ASSINATURA DIGITAL) o que você pediu ao meuPlano: «{pedido[:300]}»"
     return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano", confirmacao="sim")
 
 
@@ -225,7 +225,10 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
                     "Confira no meuPlano antes de pedir de novo.")
         return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"), resumo)
 
-    detalhes = [ln.get("text") for ln in previa.get("lines") or []][:15]
+    linhas = [ln.get("text") for ln in previa.get("lines") or []]
+    # Até 15 linhas no resumo; o resto, dito — a pessoa não confirma o que não viu (avaliação 20)
+    detalhes = linhas[:15] + ([f"… e mais {len(linhas) - 15} — veja a lista inteira no meuPlano antes de confirmar"]
+                              if len(linhas) > 15 else [])
     proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
                              parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos,
                              acao=(acao, args))
@@ -567,6 +570,11 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
         helper.desarmar(user.id)
 
 
+#: O fim do pedido dito em texto ("Pronto.", "Não há mais passos", "Tudo feito") — não é falha (avaliação 20).
+_FIM_DO_PEDIDO = re.compile(r"^\W*(?:pronto|tudo (?:feito|certo|pronto)|n[ãa]o h[áa] (?:mais|outro|pr[óo]ximo)|"
+                            r"nada mais|era s[óo] isso|sem mais passos)\b", re.IGNORECASE)
+
+
 async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, feito: str) -> str:
     """Depois de uma ação do meuPlano feita, o próximo passo do MESMO pedido: lá é uma proposta por
     vez, e "crie a OS e conclua a 1638" voltava só com a criação — o resto se perdia (24/10/2026).
@@ -589,7 +597,8 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
                 {"role": "user", "content": f"{feito}.{pedido} Se o meu pedido tinha mais passos, proponha o "
                                             "próximo agora; se não tinha, responda só: Pronto."}]
-    feitos = (*p.feitos, feito.removeprefix("✅ Feito no meuPlano: "))
+    feitos = tuple(f.rstrip(". ") for f in (*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
+    de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
     for tentativa in range(2):
         db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
         try:
@@ -602,26 +611,30 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
         if r.get("type") == "proposal":
             if p.acao is not None and (r.get("action") or "", r.get("args") or {}) == p.acao:
                 # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos
-                # argumentos): oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16).
+                # argumentos): oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16). Depois
+                # do pedido de novo, o resto do pedido não veio — e isso se diz (avaliação 20).
                 log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
-                return ""
+                return "" if tentativa == 0 else (f"O meuPlano não trouxe outro passo depois deste. {de}, já foi "
+                                                  f"feito: {'; '.join(feitos)}. Se faltava algo, peça de novo.")
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
             _proposta_do_meuplano(ctx, r, conversa, feitos=feitos)
             return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
         texto = (r.get("texto") or "").strip()
-        if not texto or (texto.lower().startswith("pronto") and len(texto) < 40):
+        if not texto or _FIM_DO_PEDIDO.match(texto):
             return ""
         # O próximo passo veio em TEXTO ("aqui está a proposta… confirmando os dois, eu fecho a 1638"):
         # não há o que confirmar, e repassar a promessa deixou o pedido do dono parado no meio — a 1638
         # não foi fechada (uso real de 24/10/2026, avaliação 19). Pede de novo, uma vez, pela ferramenta.
         conversa = [*conversa, {"role": "assistant", "content": texto},
                     {"role": "user", "content": "Não descreva em texto: chame AGORA a ferramenta do próximo passo "
-                                                "(um só), para eu confirmar com o botão. Se não há próximo passo, "
-                                                "responda só: Pronto."}]
-    de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
-    return (f"⚠️ O meuPlano respondeu o próximo passo só em texto, sem deixá-lo pronto para você confirmar — então "
-            f"nada está esperando o seu Sim e ele não foi feito. {de}, já foi feito: {'; '.join(feitos)}. Peça de "
-            f"novo o que faltar (o meuPlano disse: «{texto[:160]}»).")
+                                                "(um só), para eu confirmar com o botão. Se falta um dado para isso, "
+                                                "pergunte em UMA frase qual. Se não há próximo passo, responda só: "
+                                                "Pronto."}]
+    # Texto de novo: a pergunta do meuPlano ("qual a data de término?") vai INTEIRA, como pergunta; o
+    # resto, como aviso de que o passo não ficou pronto — nunca a promessa "confirmando os dois…" solta.
+    pergunta = texto.rstrip().endswith("?")
+    return (f"{'' if pergunta else '⚠️ '}O próximo passo do seu pedido ainda não ficou pronto para confirmar — nada "
+            f"está esperando o seu Sim. {de}, já foi feito: {'; '.join(feitos)}. O meuPlano disse:\n\n{texto}")
 
 
 def _guardar(db: Session) -> None:

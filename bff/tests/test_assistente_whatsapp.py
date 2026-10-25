@@ -2017,10 +2017,62 @@ async def test_proximo_passo_em_texto_pede_a_acao_de_novo_e_nunca_repassa_a_prom
     await assistente.atender(_ev(dono2, 3, PEDIDO_DOIS_PASSOS))
     await assistente.atender(_toque(dono2, 4))
     aviso = bot_local.enviados[-1]
-    assert aviso.startswith("⚠️ O meuPlano respondeu o próximo passo só em texto") and dono2.id not in h.PENDENTES
-    assert "nada está esperando o seu Sim" in aviso and "Criar OS em UFV Ibitinga" in aviso
+    assert aviso.startswith("⚠️ O próximo passo do seu pedido ainda não ficou pronto") and dono2.id not in h.PENDENTES
+    assert "nada está esperando o seu Sim" in aviso and "Criar OS em UFV Ibitinga" in aviso and ".." not in aviso
+    assert aviso.endswith("(roçagem 09/2026). Confirmando os dois, eu fecho a 1638 e registro a 1843.")  # inteiro
     assert len(falso.conversas) == 3                                          # pediu de novo uma vez só
     assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
+
+
+async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, bot_local, monkeypatch):
+    """Avaliação 20: o fim dito em texto ("Não há mais passos.") virava falha; a pergunta do meuPlano
+    ("qual a data de término?") chegava como erro e cortada; e o passo já feito, reproposto depois do
+    pedido de novo, fazia o resto do pedido sumir calado."""
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    pergunta = "Para fechar a OS 1638 preciso da data de término da roçagem: qual foi?"
+    criar = {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"usina_id": 37},
+             "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
+
+    class _Repete(_MeuPlanoQueEscreve):
+        async def assistente_run(self, token, run_id):
+            if run_id == 3:
+                return criar                                           # o passo já feito, de novo
+            return await super().assistente_run(token, run_id)
+
+    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu"),
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano disse:\n\n" + pergunta, "respondeu"),
+             (_Repete(TEXTO_DO_MEUPLANO), "O meuPlano não trouxe outro passo depois deste", "respondeu"))
+    for n, (falso, espera, resultado) in enumerate(casos):
+        h.PENDENTES.clear()
+        _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        dono = _conta(db, f"dono{n}", f"+55179973770{n:02d}")
+        await assistente.atender(_ev(dono, 10 * n + 1, PEDIDO_DOIS_PASSOS))
+        antes = len(bot_local.enviados)
+        await assistente.atender(_toque(dono, 10 * n + 2))
+        saidas = bot_local.enviados[antes:]
+        assert saidas[0].startswith("✅ Feito no meuPlano: Criar OS"), n
+        if espera is None:
+            assert len(saidas) == 1, saidas                            # o fim: nada mais a dizer
+        else:
+            assert espera in saidas[-1] and not saidas[-1].startswith("⚠️"), saidas[-1]
+        assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == resultado, n
+
+
+def test_o_resumo_diz_quantas_linhas_ficaram_de_fora():
+    """Num APAGAR de 20 itens, só 15 apareciam no que a pessoa confirmava, sem aviso (avaliação 20)."""
+    import types
+
+    from app.services import assistente_geracao as ger
+
+    ctx = ger.Contexto(db=None, user=types.SimpleNamespace(id=1, bot_ativo=["meuplano"]), telefone="+55",
+                       pedido="apaga")
+    r = {"action": "apagar_nos", "args": {"node_ids": list(range(20))},
+         "preview": {"summary": "APAGAR 20 item(ns) — 20 nó(s) no total (cascata).",
+                     "lines": [{"text": f"Inversor {i} (INV-{i})"} for i in range(1, 21)], "warnings": []}}
+    out = assistente._proposta_do_meuplano(ctx, r)
+    assert len(out["detalhes"]) == 16 and out["detalhes"][-1].startswith("… e mais 5 —")
 
 
 async def test_o_resto_do_pedido_que_nao_vem_e_dito(db, bot_local, monkeypatch):
@@ -2141,6 +2193,43 @@ def test_a_migracao_poe_em_erro_a_confirmacao_que_falhou(db):
     assert [(r.resultado, r.erro) for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
         ("erro", "❌ O meuPlano recusou: Erro ao aplicar a ação. Nada foi feito."),
         ("respondeu", None), ("respondeu", None)]
+
+
+def test_a_migracao_poe_em_erro_a_linha_59_e_tira_a_promessa_da_conversa(db):
+    """A linha 59 (o resto do pedido que parou no meio) ficou "Respondeu", e a promessa "confirmando
+    os dois" seguia no que a IA lê (avaliação 20). A resposta do log e as outras falas ficam."""
+    import importlib.util
+    import json
+    import types
+    from pathlib import Path
+
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+
+    caminho = next(Path(__file__).parents[1].glob("alembic/versions/f5a7c9e1b3d4_*.py"))
+    spec = importlib.util.spec_from_file_location("mig_59", caminho)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+    resposta = f"✅ Feito no meuPlano: Concluir Roçagem\n\nFaltam 2 passos…\n\n{mig.PROMESSA}.\n\nQuer a pendência?"
+    turnos = [{"role": "user", "content": "Sim"}, {"role": "assistant", "content": "✅ Feito no meuPlano: Concluir"},
+              {"role": "assistant", "content": f"Faltam 2 passos…\n\n{mig.PROMESSA}."}]
+    db.add_all([
+        RegistroBot(id=58, telefone="+5517997377626", resultado="respondeu", ferramentas="confirmacao",
+                    resposta=resposta),                    # o mesmo texto em outra linha: fica
+        RegistroBot(id=59, telefone="+5517997377626", resultado="respondeu", ferramentas="confirmacao",
+                    resposta=resposta),
+        ConversaWhatsapp(telefone="+5517997377626", mensagens=json.dumps(turnos, ensure_ascii=False)),
+        ConversaWhatsapp(telefone="+5517000000000", mensagens='[{"role": "user", "content": "oi"}]'),
+    ])
+    db.commit()
+    mig.op = types.SimpleNamespace(get_bind=db.connection)
+    mig.upgrade()
+    db.commit()
+    db.expire_all()
+    assert [(r.id, r.resultado, r.erro, r.resposta) for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
+        (58, "respondeu", None, resposta), (59, "erro", mig.ERRO, resposta)]
+    conversas = {c.telefone: json.loads(c.mensagens) for c in db.query(ConversaWhatsapp)}
+    assert conversas["+5517997377626"] == [*turnos[:2], {"role": "assistant", "content": mig.NOTA}]
+    assert conversas["+5517000000000"] == [{"role": "user", "content": "oi"}]
 
 
 # ── avaliação 14 (24/10/2026): "para" é parar, o "valeu" de antes do resumo, o toque depois do deploy ──
@@ -2705,6 +2794,39 @@ def test_citar_parte_dos_itens_ou_das_pessoas_e_hesitar_nao_confirma():
                                ("Sim, com o Michel", ("Criar OS em UFV Ibitinga, programada com Michel Renan.", ()))):
         assert r(t, resumo, itens) == "sim", t
     assert h._pessoas_do_resumo("Criar OS em UFV Ibitinga com 1 tarefa(s), programada com Michel Renan.") == []
+
+
+def test_numa_acao_de_varios_alvos_so_confirma_quem_cita_todos():
+    """Avaliação 20: "Apaga o 3" diante de "APAGAR 3 item(ns)" (com o INV-3 entre eles) apagava os TRÊS —
+    a palavra estava no resumo e contava como neutra. Numa ação de vários alvos (ou que apaga), o alvo
+    citado só confirma se alcança todas as linhas; "todos", "os 3", "os inversores" confirmam."""
+    from app.services import assistente_helper as h
+
+    r = h._resposta_ao_resumo
+    apagar = ("APAGAR 3 item(ns) — 41 nó(s) no total (cascata).", ("Inversor 1 (INV-1)", "Inversor 2 (INV-2)",
+                                                                   "Inversor 3 (INV-3)"))
+    ligacoes = ("Apagar 2 ligação(ões) de rede.", ("Switch 1 —[fibra]→ SmartLogger 1", "Switch 1 —[fibra]→ SmartLogger 2"))
+    editar = ("Editar 4 nó(s) em Ibitinga, Pereiras — 4 alteração(ões) no total.",
+              ("Usina: Ibitinga, Pereiras", "INV-01: nome 'INV 01' → 'Inversor 01'", "INV-02: nome 'INV 02' → 'Inversor 02'"))
+    desinstalar = ("Desinstalar o equipamento de 2 ponto(s).", ("Ponto 1 · INV-01", "Ponto 2 · INV-02"))
+    real = ("Concluir Roçagem na OS 1638 — 23/10 a 24/10/2026, por Michel Renan Soares Ferreira, Diogo Dardani.",
+            ("OS 1638 · tarefa 8873 Roçagem", "Feito em 23/10 a 24/10/2026 (2 dia(s))", "Dias já lançados: 21/09",
+             "Por: Michel Renan Soares Ferreira, Diogo Dardani", "Parecer: aprovado"))
+    fechar = ("Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas.", ("#8873 Roçagem — realizada",))
+    for t, (resumo, itens) in (("Apaga o 3", apagar), ("Pode apagar o 3", apagar), ("Sim, o 3", apagar),
+                               ("Apaga a 2", ligacoes), ("Pode editar em Ibitinga", editar), ("Sim, em Ibitinga", editar),
+                               ("Desinstala o 2", desinstalar), ("Sim, o Diogo", real)):
+        assert r(t, resumo, itens) == "duvida", t
+    for t, (resumo, itens) in (("Pode apagar todos", apagar), ("Pode apagar os três", apagar),
+                               ("Pode apagar os 3", apagar), ("Apaga os 3 inversores", apagar),
+                               ("Pode apagar os inversores", apagar), ("Apaga INV-1, INV-2 e INV-3", apagar),
+                               ("Pode apagar as duas", ligacoes), ("Pode desinstalar os dois", desinstalar),
+                               ("Sim, os dois", real), ("Sim, Michel e Diogo", real), ("Sim, é isso", real),
+                               ("Sim, aprovado", real), ("Pode concluir a tarefa", real), ("Sim e obrigado", real),
+                               ("Sim, já pode", real), ("s", real), ("Tá", real), ("Então tá", real), ("Pode crer", real),
+                               ("Demorou", real), ("Pode fechar a OS 1638", fechar)):
+        assert r(t, resumo, itens) == "sim", t
+    assert r("Pode fechar todas", *fechar) != "sim"         # "todas" numa ação de um alvo só não é ela
 
 
 async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):

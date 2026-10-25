@@ -358,7 +358,8 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "show", "bora", "manda", "vai", "faz", "faça", "faca", "segue", "siga", "prossiga", "aprovado",
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "fechou",
            "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
-           "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos"}
+           "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos", "tá", "ta",
+           "certinho", "combinado", "feito", "demorou", "firmeza"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
@@ -367,7 +368,7 @@ _EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: ne
                              r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza)|"
                              r"n[ãa]o tem (?:problemas?|erro)(?: nenhum)?|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
                              r"nada (?:a|pra|para) acrescentar|vamos (?:l[áa]|nessa)|por mim (?:pode|tudo bem|ok)|manda brasa|"
-                             r"vamos(?=\s*[!.]*\s*$)|(?:t[áa]|est[áa]|tudo|muito) (?:bom|bem))\b")
+                             r"vamos(?=\s*[!.]*\s*$)|(?:t[áa]|est[áa]|tudo|muito) (?:bom|bem)|pode crer)\b")
 #: Hesitação sozinha ("Bem...", "Bom...", "Hmm") não é SIM: o sistema pergunta de novo (avaliação 19:
 #: confirmava). Acompanhada ("tá bom", "tudo bem"), é a expressão acima.
 _HESITACAO = {"bem", "bom", "hum", "hmm", "hmmm", "ah", "eh", "uhm", "pois", "então", "entao"}
@@ -416,7 +417,7 @@ _FAMILIAS = {
     "mover": ("mover",), "transferir": ("transferir", "transferencia"), "alocar": ("alocar",),
     "devolver": ("devolver", "devolucao"), "lancar": ("lançar", "lancamento"),
     "anexar": ("anexar",), "programar": ("programar",), "agendar": ("agendar",), "enviar": ("enviar",),
-    "arquivar": ("arquivar",), "atualizar": ("atualizar", "atualizacao"),
+    "arquivar": ("arquivar",), "atualizar": ("atualizar", "atualizacao"), "assinar": ("assinar", "assinatura"),
 }
 _VERBOS = {forma: raiz for raiz, palavras in _FAMILIAS.items() for p in palavras
            for forma in (_formas(p) if p.endswith(("ar", "er", "ir")) else {p})}
@@ -459,21 +460,61 @@ def _pessoas_do_resumo(acao: str) -> list[set[str]]:
     return grupos if len(grupos) >= 2 else []
 
 
+#: Ação de VÁRIOS alvos ("APAGAR 3 item(ns)", "Desinstalar … de 2 ponto(s)") ou que apaga/tira: na
+#: resposta DIGITADA, citar um alvo nunca confirma — é precisão ou correção ("Apaga o 3" apagava os três,
+#: avaliação 20); "todos", "os 3", "os inversores" confirmam. Nas outras, citar o alvo do resumo confirma
+#: ("Pode fechar a OS 1638", "Sim, pode criar a OS de Ibitinga").
+_DESTRUTIVOS = {"apagar", "remover", "desinstalar", "transferir"}
+_TODOS = {"todos", "todas", "tudo", "ambos", "ambas"}
+_NUMERAIS = {"dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
+             "oito": 8, "nove": 9, "dez": 10}
+
+
+def _contagens(resumo: str) -> set[int]:
+    """As quantidades que o resumo declara ("3 item(ns)", "41 nó(s)", "2 ligação(ões)")."""
+    return {int(n) for n in re.findall(r"\b(\d+)\s+[a-zà-ú]+\((?:s|ns|ões|es)\)", resumo.lower())}
+
+
+def _singular(p: str) -> str:
+    for fim, troca in (("ões", "ão"), ("ães", "ão"), ("ns", "m"), ("res", "r"), ("es", ""), ("s", "")):
+        if p.endswith(fim) and len(p) > len(fim) + 1:
+            return p[:-len(fim)] + troca
+    return p
+
+
+def _todos_os(p: str, contagens: set[int], da_acao: set[str]) -> bool:
+    """Depois de "os"/"as": o número de itens que o resumo declara (ou de pessoas que ele lista),
+    "os 3", "os três", "os dois" — todos, não um."""
+    n = int(p) if p.isdigit() else _NUMERAIS.get(p)
+    return n is not None and n in contagens
+
+
+def _plural_dos_itens(p: str, da_acao: set[str]) -> bool:
+    """O plural do que os itens são ("inversores", "ligações", "nós") — fala de todos eles."""
+    return p.endswith("s") and p not in da_acao and _singular(p) in da_acao
+
+
+def _cobre_todos(alvos: set[str], itens: Sequence[str]) -> bool:
+    """Os alvos citados alcançam TODAS as linhas da ação: cada linha tem a sua marca (o que só ela tem —
+    "1" em "Inversor 1 (INV-1)") e alguma marca de cada uma foi citada ("Apaga INV-1, INV-2 e INV-3").
+    Um alvo só: citá-lo é confirmá-lo. Linha sem marca própria (repetida) nunca fica coberta."""
+    linhas = [set(_palavras(l)) - _NEUTRAS for l in itens]
+    if len(linhas) < 2:
+        return True
+    return all((l - set().union(*(m for j, m in enumerate(linhas) if j != i))) & alvos for i, l in enumerate(linhas))
+
+
 def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -> str:
-    """Como a mensagem responde ao resumo que espera o SIM (`acao`: o texto dele):
-    - "sim": o 👍/✅, ou uma afirmativa e depois só palavra neutra ou do resumo ("Sim, pode criar a OS
-      de Ibitinga") — e número, só o que está nele ("Pode fechar a 1640" não confirma "Fechar a OS
-      1638", avaliação 15);
-    - "outra": pergunta, negação, parada, restrição, troca fora do resumo, número fora dele, ou o que
-      não começa por afirmativa — derruba a ação;
-    - "duvida": CURTA (até 4 palavras), começa como afirmativa, sem nada disso e SEM assunto novo, mas
-      não é um SIM limpo ("Sim, pode deixar", "Ok, vou ver") — não confirma nem derruba: o sistema
-      pergunta de novo (avaliação 16). Com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
-      longa, é outro pedido: derruba e vai à IA, que fica sabendo do cancelamento — perguntar de novo
-      engoliria o pedido (avaliação 17).
-    `itens`: as linhas da ação (um item por linha). Com dois ou mais, a resposta que cita o que só está
-    em parte delas ("Apaga o INV-13" para "APAGAR 3 item(ns)…") é dúvida, nunca SIM: confirmava os três
-    (avaliação 19)."""
+    """Como a mensagem responde ao resumo que espera o SIM (`acao`: o resumo; `itens`: as linhas dele):
+    - "sim": o 👍/✅, ou uma afirmativa (ou o verbo da própria ação) e depois só palavra neutra — e
+      palavra do resumo só numa ação de UM alvo que não apaga ("Sim, pode criar a OS de Ibitinga"); número
+      só o que está nele ("Pode fechar a 1640" não confirma "Fechar a OS 1638", avaliação 15);
+    - "outra": pergunta, negação, parada, restrição, troca fora do resumo, número fora dele, assunto novo,
+      ou o que não começa por afirmativa — derruba a ação (e vai à IA, que fica sabendo);
+    - "duvida": não confirma nem derruba — o sistema pergunta de novo: a afirmativa curta sem assunto
+      novo que não é SIM limpo ("Sim, pode deixar"), o verbo de outra ação, a hesitação, e — numa ação
+      de VÁRIOS alvos ou que apaga — o alvo citado ("Apaga o 3", "Sim, o INV-13"; avaliação 20), ou só
+      uma das pessoas listadas ("Sim, o Michel" para "…por Michel…, Diogo…"; avaliação 19)."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return "sim"
@@ -481,9 +522,8 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "duvida"
     if t.endswith("?"):
         return "outra"
-    dos_itens = set(_palavras(" ".join(itens)))
-    so_dos_itens = dos_itens - set(_palavras(acao)) if len(itens) >= 2 else set()
-    palavras, da_acao = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower())), set(_palavras(acao)) | dos_itens
+    palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
+    da_acao = set(_palavras(acao)) | set(_palavras(" ".join(itens)))
     if palavras and all(p in _HESITACAO for p in palavras):
         return "duvida"
     verbo_da_acao = _verbo(_palavras(acao)[0]) if _palavras(acao) else None
@@ -496,25 +536,39 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
     # PARA concluída").
     if any(_tem(_PARAR, p) and not (_tem(_TROCA, p) and (_tem(da_acao, p) or mesmo_verbo(p))) for p in palavras):
         return "outra"
-    # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
-    outro_verbo = any(_verbo(p) is not None and not mesmo_verbo(p) for p in palavras)
     while len(palavras) > 1 and _tem(_ANTES, palavras[0]) and not _tem(_AFIRMA, palavras[0]):
         palavras = palavras[1:]
     if (not palavras or not (_tem(_AFIRMA, palavras[0]) or mesmo_verbo(palavras[0]))
             or any(p.isdigit() and p not in da_acao for p in palavras)):
         return "outra"
-    if (not outro_verbo and len(palavras) <= 8
-            and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or mesmo_verbo(p) for p in palavras[1:])):
-        # Citar só parte dos itens, ou só uma das pessoas listadas ("Sim, o Michel" para "…por Michel…,
-        # Diogo…"), é precisão ou correção, não SIM (avaliação 19)
-        pessoas = _pessoas_do_resumo(acao)
-        citadas = [g for g in pessoas if g & set(palavras)]
-        parcial = any(p in so_dos_itens for p in palavras) or 0 < len(citadas) < len(pessoas)
-        return "duvida" if parcial else "sim"
-    if len(palavras) <= 4 and all(_tem(_NEUTRAS, p) or _tem(da_acao, p) or _tem(_SEM_ASSUNTO, p)
-                                  or _verbo(p) is not None for p in palavras[1:]):
+    pessoas = _pessoas_do_resumo(acao)
+    contagens = _contagens(acao)
+    varios = any(c >= 2 for c in contagens) or verbo_da_acao in _DESTRUTIVOS
+    contagens = contagens | ({len(pessoas)} if pessoas else set())       # "Sim, os dois" (as duas pessoas)
+    # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
+    outro_verbo, alvos, novos = False, [], []
+    for i, p in enumerate(palavras[1:], start=1):
+        # "todos/todas/ambos" só numa ação de vários alvos: "Pode fechar todas" não é a OS 1638 sozinha
+        if _tem(_NEUTRAS, p) or mesmo_verbo(p) or (p in _TODOS and varios):
+            continue
+        if (palavras[i - 1] in ("os", "as") and _todos_os(p, contagens, da_acao)) or _plural_dos_itens(p, da_acao):
+            continue
+        if _verbo(p) is not None:
+            outro_verbo = True
+        elif p in da_acao:
+            alvos.append(p)
+        else:
+            novos.append(p)
+    if novos and not all(_tem(_SEM_ASSUNTO, n) for n in novos):
+        return "outra"                                 # assunto novo: vai à IA
+    if outro_verbo or novos:
+        return "duvida" if len(palavras) <= 4 else "outra"
+    if alvos and varios and not _cobre_todos(set(alvos), itens):
+        return "duvida" if len(palavras) <= 8 else "outra"
+    citadas = [g for g in pessoas if g & set(palavras)]
+    if 0 < len(citadas) < len(pessoas):
         return "duvida"
-    return "outra"
+    return "sim" if len(palavras) <= 8 else "outra"
 
 
 def e_sim(texto: str, acao: str = "", itens: Sequence[str] = ()) -> bool:

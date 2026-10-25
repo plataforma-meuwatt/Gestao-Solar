@@ -851,7 +851,7 @@ ação cai e a frase vai à IA (`so_cancela`; avaliação 12: a correção se pe
 naquela mensagem, que a ação «…» foi cancelada por ela: não diz que vai fazê-la, propõe de novo
 (`CANCELADA_PARA_A_IA`; avaliação 16: respondia "vou fechar" com "(foi cancelada)" embaixo). UMA ação por
 mensagem (a 2ª chamada ouve "esperando o Sim" na do meuPlano — "a senha" só na do helper),
-e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta). O log
+e o texto que a pessoa confirma é do SISTEMA (`bloco_da_proposta`, ao pé da resposta; a prévia do meuPlano vai até 15 linhas e, passando disso, "… e mais N — veja a lista inteira no meuPlano antes de confirmar" — avaliação 20: num APAGAR de 20 itens, 5 sumiam calados). O log
 mascara "senha/PIN/código … X" que o meuPlano revelar. Selo "Helper alcançável" no adm e no oem:
 `ferramentas` (só a chave do chamador) + `POST /api/bot/rede`, respondida pelo filtro do túnel no
 srvclaude com a idade do contato do wg0 (exige a mesma chave de chamador) — VPN parada há mais
@@ -895,10 +895,17 @@ PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí", "Confirmo o fechamento"
 com sinônimos e substantivos, lista fechada (`_FAMILIAS` → `_VERBOS`; "abrir a OS" é criá-la), casados
 só com o PRIMEIRO verbo do resumo. Verbo de OUTRA ação NUNCA confirma — nem é palavra neutra: "Pode
 criar" confirmava "APAGAR 3 itens" e "Pode abrir a OS" fechava a 1638 (avaliação 18); agora o sistema
-pergunta de novo, e um teste falha se um verbo de ação entrar nas listas neutras. Citar só PARTE dos
-itens de uma ação de vários ("Apaga o INV-13" para "APAGAR 3 item(ns)…", as linhas da prévia vão em
-`itens`) ou só uma das pessoas listadas ("Sim, o Michel" para "…por Michel…, Diogo…") é dúvida, nunca
-SIM; "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
+pergunta de novo, e um teste falha se um verbo de ação entrar nas listas neutras. Na ação de VÁRIOS
+alvos (uma contagem de 2 ou mais no resumo: "APAGAR 3 item(ns)", "Apagar 2 ligação(ões)") ou
+destrutiva (apagar, remover, desinstalar, transferir), alvo citado só confirma se cobre TODOS os
+itens (as linhas da prévia vão em `itens`; cada linha precisa de uma palavra que só ela tem —
+`_cobre_todos`): "Apaga o 3" para INV-1, INV-2 e INV-3, "Pode editar em Ibitinga" com nós em duas
+usinas e "Sim, o Michel" para "…por Michel…, Diogo…" são dúvida, nunca SIM, mesmo a palavra estando
+no resumo (avaliação 20: a contagem e a usina contavam como citação inteira). "Todos", "os três"/"os
+3" (a contagem, ou o número de pessoas listadas) e o plural do item ("os inversores") confirmam; palavra
+neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "Sim, é isso", "Aprovado" e
+"s" viravam dúvida na proposta real). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
+(avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
 "Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
 sem ir à IA (`pergunta_de_novo`); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
@@ -911,9 +918,13 @@ a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
 é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
 passo do mesmo pedido — se o meuPlano responder esse passo em TEXTO ("aqui está a proposta… confirmando
-os dois, eu fecho a 1638"), o bot pede de novo, uma vez, a ação pela ferramenta; vindo texto de novo,
-diz que o passo não ficou pronto, que nada espera o Sim e o que já foi feito, e o log marca erro (uso
-real de 24/10/2026, avaliação 19: o texto era repassado e a 1638 ficou sem fechar) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+os dois, eu fecho a 1638"), o bot pede de novo, uma vez, a ação pela ferramenta (ou a pergunta do dado
+que falta); vindo texto de novo, diz que o passo não ficou pronto, que nada espera o Sim e o que já foi
+feito, e repassa o texto de lá INTEIRO — como pergunta, sem ⚠️, quando é pergunta ("qual a data de
+término?"); senão com ⚠️ e o log em erro (uso real de 24/10/2026, avaliação 19: o texto era repassado e a
+1638 ficou sem fechar). "Pronto", "Não há mais passos", "Tudo feito", "Nada mais" são o fim
+(`_FIM_DO_PEDIDO`), e o passo feito proposto de novo DEPOIS do pedido de novo vira "O meuPlano não
+trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 20: sumia calado) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
 avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
 não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o
