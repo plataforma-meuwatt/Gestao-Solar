@@ -289,14 +289,16 @@ _DE_ACESSO = r"(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acess
 _SEGREDO_NUMERO = re.compile(
     r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o" + _DE_ACESSO + r"|c[óo]digo" + _DE_ACESSO + r")\b"
     r"((?:[ \t]+d[eoa]s?[ \t]+(?:[^\W\d_][\w\-]*[ \t]+){0,3}?[^\W\d_][\w\-]*)?[ \t]*"
-    r"(?:\b(?:é|eh|para|pra)\b)?[ \t:=,;/.\-]*)"
-    r"(\d+(?:(?:\s{1,2}|\s?[.\-/–—]\s?)\d+)*)(?!\d|[:h]\d)")
+    r"(?:\b(?:é|eh|para|pra)\b)?[ \t:=,;/.\-(]*)"
+    # o número escrito de qualquer jeito, pelo mesmo leitor da senha: "(482) 913" e "quatro 8 dois 9 um 3"
+    # ficavam pela metade ("•••• 913" — avaliação 21)
+    r"(" + helper.NUMERO.pattern + r")(?!\d|[:h]\d)")
 
 
 def _sem_segredos(texto: str) -> str:
     # O do número primeiro: os outros mascaram só o primeiro grupo ("pin •••• 913").
     texto = _SEGREDO_NUMERO.sub(
-        lambda m: m.group(0) if len(re.sub(r"\D", "", m.group(3))) < 3 else m.group(1) + m.group(2) + "••••", texto)
+        lambda m: m.group(0) if len(helper._so_digitos(m.group(3))) < 3 else m.group(1) + m.group(2) + "••••", texto)
     for padrao in (_SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
     return texto
@@ -570,9 +572,24 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
         helper.desarmar(user.id)
 
 
-#: O fim do pedido dito em texto ("Pronto.", "Não há mais passos", "Tudo feito") — não é falha (avaliação 20).
+#: O fim do pedido dito em texto ("Pronto.", "Não há mais passos", "Tudo feito") — não é falha (avaliação 20)…
 _FIM_DO_PEDIDO = re.compile(r"^\W*(?:pronto|tudo (?:feito|certo|pronto)|n[ãa]o h[áa] (?:mais|outro|pr[óo]ximo)|"
                             r"nada mais|era s[óo] isso|sem mais passos)\b", re.IGNORECASE)
+#: …a não ser que diga que falta algo ou pergunte: "Pronto, … Falta registrar a 1843: qual a data?" não é o
+#: fim (avaliação 21: o bot calava).
+_AINDA_FALTA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpr[óo]ximo passo\b|\?", re.IGNORECASE)
+#: O pedido de novo quando o meuPlano repropõe o passo que acabou de ser feito.
+_REPETIU = ("Esse passo acabou de ser feito. Se o meu pedido tem outro passo, chame AGORA a ferramenta dele (um "
+            "só), para eu confirmar com o botão; se falta um dado para isso, pergunte em UMA frase qual. Se não "
+            "tem outro passo, responda só: Pronto.")
+#: …e quando ele descreve o próximo passo em texto.
+_EM_TEXTO = ("Não descreva em texto: chame AGORA a ferramenta do próximo passo (um só), para eu confirmar com o "
+             "botão. Se falta um dado para isso, pergunte em UMA frase qual. Se não há próximo passo, responda só: "
+             "Pronto.")
+
+
+def _fim_do_pedido(texto: str) -> bool:
+    return bool(_FIM_DO_PEDIDO.match(texto)) and not _AINDA_FALTA.search(texto)
 
 
 async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, feito: str) -> str:
@@ -599,6 +616,7 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
                                             "próximo agora; se não tinha, responda só: Pronto."}]
     feitos = tuple(f.rstrip(". ") for f in (*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
     de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
+    antes = ""                                             # o texto da 1ª resposta, se não foi o fim
     for tentativa in range(2):
         db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
         try:
@@ -608,33 +626,41 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
             return nao_seguiu("ele não respondeu")
         if r.get("erro"):
             return nao_seguiu(str(r["erro"]).rstrip(". "))
+        texto = ""
         if r.get("type") == "proposal":
-            if p.acao is not None and (r.get("action") or "", r.get("args") or {}) == p.acao:
-                # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos
-                # argumentos): oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16). Depois
-                # do pedido de novo, o resto do pedido não veio — e isso se diz (avaliação 20).
-                log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
-                return "" if tentativa == 0 else (f"O meuPlano não trouxe outro passo depois deste. {de}, já foi "
-                                                  f"feito: {'; '.join(feitos)}. Se faltava algo, peça de novo.")
-            ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
-            _proposta_do_meuplano(ctx, r, conversa, feitos=feitos)
-            return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
-        texto = (r.get("texto") or "").strip()
-        if not texto or _FIM_DO_PEDIDO.match(texto):
-            return ""
-        # O próximo passo veio em TEXTO ("aqui está a proposta… confirmando os dois, eu fecho a 1638"):
-        # não há o que confirmar, e repassar a promessa deixou o pedido do dono parado no meio — a 1638
-        # não foi fechada (uso real de 24/10/2026, avaliação 19). Pede de novo, uma vez, pela ferramenta.
-        conversa = [*conversa, {"role": "assistant", "content": texto},
-                    {"role": "user", "content": "Não descreva em texto: chame AGORA a ferramenta do próximo passo "
-                                                "(um só), para eu confirmar com o botão. Se falta um dado para isso, "
-                                                "pergunte em UMA frase qual. Se não há próximo passo, responda só: "
-                                                "Pronto."}]
-    # Texto de novo: a pergunta do meuPlano ("qual a data de término?") vai INTEIRA, como pergunta; o
-    # resto, como aviso de que o passo não ficou pronto — nunca a promessa "confirmando os dois…" solta.
-    pergunta = texto.rstrip().endswith("?")
+            if p.acao is None or (r.get("action") or "", r.get("args") or {}) != p.acao:
+                ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
+                _proposta_do_meuplano(ctx, r, conversa, feitos=feitos)
+                return helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
+            # O meuPlano propôs de novo o passo que acabou de ser feito (mesma ação, mesmos argumentos):
+            # oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16), e calar escondia o resto
+            # do pedido (avaliação 21) — pede de novo.
+            log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
+            de_novo = _REPETIU
+        else:
+            texto = (r.get("texto") or "").strip()
+            if not texto or _fim_do_pedido(texto):
+                if tentativa == 0:
+                    return ""                              # o fim do pedido
+                break                                      # "Pronto" depois do pedido de novo: vale o de antes
+            # O próximo passo veio em TEXTO ("aqui está a proposta… confirmando os dois, eu fecho a 1638"):
+            # não há o que confirmar, e repassar a promessa deixou o pedido do dono parado no meio — a 1638
+            # não foi fechada (uso real de 24/10/2026, avaliação 19). Pede de novo, uma vez, pela ferramenta.
+            de_novo = _EM_TEXTO
+        if tentativa == 0:
+            antes = texto
+            conversa = [*conversa, {"role": "assistant", "content": texto or f"(propus de novo: {p.resumo})"},
+                        {"role": "user", "content": de_novo}]
+    # Sem o próximo passo depois do pedido de novo, a pessoa sempre fica sabendo (avaliação 21: "Faltam 2
+    # passos" e depois "Pronto" calava): a pergunta do meuPlano ("qual a data de término?") vai INTEIRA, como
+    # pergunta; o resto, como aviso — com o log em erro —, nunca a promessa "confirmando os dois…" solta.
+    final = texto if texto and not _fim_do_pedido(texto) else antes
+    if not final:
+        return (f"⚠️ O meuPlano não trouxe outro passo depois deste. {de}, já foi feito: {'; '.join(feitos)}. "
+                "Se faltava algo, peça de novo.")
+    pergunta = bool(re.search(r"\?\W*$", final))
     return (f"{'' if pergunta else '⚠️ '}O próximo passo do seu pedido ainda não ficou pronto para confirmar — nada "
-            f"está esperando o seu Sim. {de}, já foi feito: {'; '.join(feitos)}. O meuPlano disse:\n\n{texto}")
+            f"está esperando o seu Sim. {de}, já foi feito: {'; '.join(feitos)}. O meuPlano disse:\n\n{final}")
 
 
 def _guardar(db: Session) -> None:

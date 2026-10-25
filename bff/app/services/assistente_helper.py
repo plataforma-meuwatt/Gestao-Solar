@@ -88,10 +88,16 @@ def _nao_e_senha(trecho: str, digitos: str) -> bool:
     return {int(b) - int(a) for a, b in zip(digitos, digitos[1:])} in ({0}, {1}, {-1})
 
 
+#: O enfeite dos dígitos de emoji ("4️⃣" é o 4, U+FE0F e U+20E3).
+_TECLA = ("\ufe0f", "\u20e3")
+
+
 def _digitos_normais(texto: str) -> str:
-    """Dígitos de outra escrita (os de largura cheia, "４８２９１３") viram os comuns, um por um —
-    as posições não mudam, e o que se esconde no texto original é o mesmo trecho."""
-    return "".join(str(unicodedata.decimal(c)) if c.isdecimal() and not c.isascii() else c for c in texto or "")
+    """Dígitos de outra escrita (os de largura cheia, "４８２９１３") viram os comuns, e o enfeite dos de
+    emoji ("4️⃣8️⃣2️⃣…", avaliação 21) vira espaço — um caractere por um: as posições não mudam, e o que
+    se esconde no texto original é o mesmo trecho."""
+    return "".join(" " if c in _TECLA else str(unicodedata.decimal(c)) if c.isdecimal() and not c.isascii() else c
+                   for c in texto or "")
 #: O que a IA, o histórico, o log e o gateway veem no lugar da senha escrita numa frase.
 SENHA_OCULTA = "[senha oculta]"
 #: …e no lugar de todo candidato quando a pessoa passou do limite de conferências por hora.
@@ -263,7 +269,7 @@ def candidatos_a_senha(texto: str) -> list[tuple[int, int, str]]:
     """(início, fim, dígitos) de tudo que pode ser a senha numa frase, na ordem de conferência:
     o número logo depois de "senha"/"pin"/"confirmo" primeiro (cada começo dele que soma 6 a 8
     dígitos: "senha 482913 12"), depois os outros na ordem do texto."""
-    texto = _digitos_normais(texto)
+    original, texto = texto, _digitos_normais(texto)
     achados: list[tuple[int, int, int, str]] = []
     for p in PALAVRA.finditer(texto):
         m = NUMERO.match(texto, p.end())
@@ -278,7 +284,12 @@ def candidatos_a_senha(texto: str) -> list[tuple[int, int, str]]:
     # O número de 6 a 8 dígitos dentro de um grupo maior também ("UC 1234567, 2345678" é um
     # número só para `NUMERO` quando a vírgula vem colada).
     achados += [(1, m.start(), m.end(), m.group()) for m in re.finditer(r"(?<!\d)\d{6,8}(?!\d)", texto)]
-    return [(a, b, d) for _, a, b, d in sorted(achados) if not _nao_e_senha(texto[a:b], d)]
+    def ate_o_enfeite(b: int) -> int:                   # o "️⃣" do último dígito de emoji vai junto
+        while original[b:b + 1] in _TECLA:
+            b += 1
+        return b
+
+    return [(a, ate_o_enfeite(b), d) for _, a, b, d in sorted(achados) if not _nao_e_senha(texto[a:b], d)]
 
 
 def mascarar(texto: str, analise: Analise) -> str:
@@ -462,18 +473,19 @@ def _pessoas_do_resumo(acao: str) -> list[set[str]]:
 
 
 #: Ação de VÁRIOS alvos ("APAGAR 3 item(ns)", "Desinstalar … de 2 ponto(s)") ou que apaga/tira: na
-#: resposta DIGITADA, citar um alvo nunca confirma — é precisão ou correção ("Apaga o 3" apagava os três,
-#: avaliação 20); "todos", "os 3", "os inversores" confirmam. Nas outras, citar o alvo do resumo confirma
-#: ("Pode fechar a OS 1638", "Sim, pode criar a OS de Ibitinga").
+#: resposta DIGITADA, citar um alvo só confirma se cobre todos — é precisão ou correção ("Apaga o 3" apagava
+#: os três, avaliação 20); "todos", "os 3" confirmam, e "os inversores" só se TODOS os itens forem
+#: inversores (avaliação 21). Nas outras, citar o alvo do resumo confirma ("Pode fechar a OS 1638", "Sim,
+#: pode criar a OS de Ibitinga").
 _DESTRUTIVOS = {"apagar", "remover", "desinstalar", "transferir"}
-_TODOS = {"todos", "todas", "tudo", "ambos", "ambas"}
 _NUMERAIS = {"dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
              "oito": 8, "nove": 9, "dez": 10}
 
 
-def _contagens(resumo: str) -> set[int]:
-    """As quantidades que o resumo declara ("3 item(ns)", "41 nó(s)", "2 ligação(ões)")."""
-    return {int(n) for n in re.findall(r"\b(\d+)\s+[a-zà-ú]+\((?:s|ns|ões|es)\)", resumo.lower())}
+def _contagens(resumo: str) -> list[tuple[int, str]]:
+    """As quantidades que o resumo declara e o que elas contam ("3 item(ns)" → (3, "item"), "41 nó(s)",
+    "2 ligação(ões)")."""
+    return [(int(n), o_que) for n, o_que in re.findall(r"\b(\d+)\s+([a-zà-ú]+)\((?:s|ns|ões|es)\)", resumo.lower())]
 
 
 def _singular(p: str) -> str:
@@ -483,16 +495,27 @@ def _singular(p: str) -> str:
     return p
 
 
-def _todos_os(p: str, contagens: set[int], da_acao: set[str]) -> bool:
-    """Depois de "os"/"as": o número de itens que o resumo declara (ou de pessoas que ele lista),
-    "os 3", "os três", "os dois" — todos, não um."""
+def _quantidade(p: str, anterior: str, quantos: set[int]) -> bool | None:
+    """Palavra de QUANTIDADE: True = todos ("todos", "tudo", "os 3" e "os três" quando o resumo declara
+    3, "ambos" quando são 2 — itens ou pessoas listadas); False = uma parte ("ambos" com 3 itens); None
+    = não é. O número depois de "os" que não é a contagem segue como alvo ou assunto: "a OS 1639" é a
+    ordem, não a quantidade."""
+    if p in ("todos", "todas", "tudo"):
+        return True
+    if p in ("ambos", "ambas"):
+        return 2 in quantos
     n = int(p) if p.isdigit() else _NUMERAIS.get(p)
-    return n is not None and n in contagens
+    return True if anterior in ("os", "as") and n in quantos else None
 
 
-def _plural_dos_itens(p: str, da_acao: set[str]) -> bool:
-    """O plural do que os itens são ("inversores", "ligações", "nós") — fala de todos eles."""
-    return p.endswith("s") and p not in da_acao and _singular(p) in da_acao
+def _plural_dos_itens(p: str, contados: set[str], linhas: list[set[str]], da_acao: set[str]) -> bool | None:
+    """O plural do que os itens são ("inversores", "ligações", "nós"): True = fala de todos — é o que o
+    resumo conta ("3 item(ns)" → "os itens") ou TODA linha é disso; False = só os desse tipo ("os
+    inversores" com uma medição na lista: apagava a medição junto — avaliação 21); None = não é."""
+    um = _singular(p)
+    if not (p.endswith("s") and p not in da_acao and um in da_acao):
+        return None
+    return um in contados or all(um in linha for linha in linhas)
 
 
 def _cobre_todos(alvos: set[str], itens: Sequence[str]) -> bool:
@@ -521,7 +544,7 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "sim"
     if t and _SO_MAOS.match(t):
         return "duvida"
-    if t.endswith("?"):
+    if "?" in t:                                       # "Apaga? 🤔", "Fecha?!" (avaliação 21)
         return "outra"
     palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
     da_acao = set(_palavras(acao)) | set(_palavras(" ".join(itens)))
@@ -544,15 +567,23 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "outra"
     pessoas = _pessoas_do_resumo(acao)
     contagens = _contagens(acao)
-    varios = any(c >= 2 for c in contagens) or verbo_da_acao in _DESTRUTIVOS
-    contagens = contagens | ({len(pessoas)} if pessoas else set())       # "Sim, os dois" (as duas pessoas)
+    varios = any(n >= 2 for n, _ in contagens) or verbo_da_acao in _DESTRUTIVOS
+    quantos = {n for n, _ in contagens} | ({len(pessoas)} if pessoas else set())  # "Sim, os dois" (as pessoas)
+    linhas = [set(_palavras(linha)) for linha in itens]
     # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
-    outro_verbo, alvos, novos = False, [], []
+    outro_verbo, parcial, alvos, novos = False, False, [], []
     for i, p in enumerate(palavras[1:], start=1):
-        # "todos/todas/ambos" só numa ação de vários alvos: "Pode fechar todas" não é a OS 1638 sozinha
-        if _tem(_NEUTRAS, p) or mesmo_verbo(p) or (p in _TODOS and varios):
+        if _tem(_NEUTRAS, p) or mesmo_verbo(p):
             continue
-        if (palavras[i - 1] in ("os", "as") and _todos_os(p, contagens, da_acao)) or _plural_dos_itens(p, da_acao):
+        quantidade = _quantidade(p, palavras[i - 1], quantos)
+        if quantidade is not None:
+            if not (varios or pessoas):
+                novos.append(p)                        # um alvo só: "Pode fechar todas" não é a OS 1638
+            parcial = parcial or not quantidade
+            continue
+        plural = _plural_dos_itens(p, {o for _, o in contagens}, linhas, da_acao)
+        if plural is not None:
+            parcial = parcial or (varios and not plural)
             continue
         if _verbo(p) is not None:
             outro_verbo = True
@@ -564,7 +595,7 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "outra"                                 # assunto novo: vai à IA
     if outro_verbo or novos:
         return "duvida" if len(palavras) <= 4 else "outra"
-    if alvos and varios and not _cobre_todos(set(alvos), itens):
+    if parcial or (alvos and varios and not _cobre_todos(set(alvos), itens)):
         return "duvida" if len(palavras) <= 8 else "outra"
     citadas = [g for g in pessoas if g & set(palavras)]
     if 0 < len(citadas) < len(pessoas):
@@ -585,9 +616,11 @@ def responde_sim(user_id: int, texto: str) -> bool:
     return p is not None and p.confirmacao == "sim" and e_sim(texto, p.resumo, p.detalhes)
 
 
-#: A afirmativa que não é um SIM limpo, com a ação do meuPlano esperando: nem confirma nem cancela.
-DE_NOVO = ("Para confirmar «{resumo}», toque em *Sim* (ou responda só SIM) até as {limite} — ainda não foi feito. "
-           "Se quiser mudar algo, diga o que mudar.")
+#: A afirmativa que não é um SIM limpo, com a ação do meuPlano esperando: nem confirma nem cancela — e
+#: diz o alcance inteiro: "Apaga o 15" virava dúvida, mas a pergunta não dizia que o Sim apaga os três
+#: (avaliação 21).
+DE_NOVO = ("Ainda não foi feito. O *Sim* vale para TUDO isto:\n{escopo}\n\nPara fazer tudo, toque em *Sim* (ou "
+           "responda só SIM) até as {limite}. Se era só uma parte, ou para mudar algo, diga o que mudar.")
 
 
 def pergunta_de_novo(user_id: int, texto: str) -> str | None:
@@ -600,7 +633,7 @@ def pergunta_de_novo(user_id: int, texto: str) -> str | None:
     if monotonic() > p.expira:
         PENDENTES.pop(user_id, None)
         return VENCEU.format(limite=_limite(p))
-    return DE_NOVO.format(resumo=p.resumo, limite=_limite(p))
+    return DE_NOVO.format(escopo=_escopo(p), limite=_limite(p))
 
 
 def so_ciencia(texto: str) -> bool:
@@ -609,7 +642,7 @@ def so_ciencia(texto: str) -> bool:
     if t and _SO_OK.match(t):
         return True
     palavras = _palavras(t)
-    return not t.endswith("?") and 0 < len(palavras) <= 6 and all(_tem(_CIENCIA, p) for p in palavras)
+    return "?" not in t and 0 < len(palavras) <= 6 and all(_tem(_CIENCIA, p) for p in palavras)
 
 
 #: Só o cancelamento ("não", "cancela", "não quero", "deixa pra lá") — curto. "Não, o técnico é o
@@ -784,13 +817,16 @@ def bloco_da_proposta(p: Pendente) -> str:
     """O que a pessoa confirma — escrito pelo sistema, palavra por palavra."""
     sim = p.confirmacao == "sim"
     linhas = ["📋 *Ação no meuPlano esperando a sua confirmação*" if sim else "🔒 *Ação esperando a sua senha de atuação*",
-              f"• {p.resumo}"]
-    linhas += [f"  – {d}" for d in p.detalhes]
-    linhas += [f"⚠️ {a}" for a in p.avisos]
+              _escopo(p)]
     linhas.append(f"Para fazer, toque em *Sim* (ou responda SIM) até as {_limite(p)}. Um não, uma correção ou "
                   "outro assunto cancela; na dúvida, pergunto de novo." if sim else
                   f"Para executar, responda só com a senha até as {_limite(p)}. Qualquer outra mensagem cancela.")
     return "\n".join(linhas)
+
+
+def _escopo(p: Pendente) -> str:
+    """O resumo, as linhas e os avisos da ação — o que um Sim faz."""
+    return "\n".join([f"• {p.resumo}", *(f"  – {d}" for d in p.detalhes), *(f"⚠️ {a}" for a in p.avisos)])
 
 
 def _limite(p: Pendente) -> str:

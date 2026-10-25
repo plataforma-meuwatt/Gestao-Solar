@@ -805,7 +805,8 @@ só de números (`assistente_helper.NUMERO`, avaliações 10 e 11) acha a senha 
 jeito: colada em pontuação ("Senha:482913", "senha/482913"), em grupos com espaço (inclusive o
 não separável) ou UMA pontuação ("482 913", "482/913", "482 9 13"), soletrada ("4 8 2 9 1 3",
 "4, 8, 2, 9, 1, 3" — o ditado por voz), por extenso ("quatro oito dois…") e em dígitos de
-largura cheia. Data, IP e o que a senha não pode ser (repetido, em sequência) nem são
+largura cheia ou de emoji ("4️⃣8️⃣2️⃣…", avaliação 21; o enfeite do último sai junto); misturada
+("quatro 8 dois 9 um 3") e com parênteses ("(482) 913"). Data, IP e o que a senha não pode ser (repetido, em sequência) nem são
 conferidos; "vírgula + espaço" separa itens de lista, não grupos. Sozinha, qualquer dessas
 formas é tentativa. Até 3 números distintos por mensagem (os de depois de "senha" primeiro) e
 20 por pessoa por hora; o que passa disso vira "[número oculto]" sem conferir. Frase nunca conta erro nem bloqueia; passado o
@@ -815,7 +816,8 @@ número, com até 3 grupos separados por espaço, ponto, vírgula, hífen ou sub
 com `to_thread`; cada erro conta; 5 em 15 min bloqueiam. O número que ganha conta leva para ela
 as mensagens que mandou antes (`cadastro.adotar_mensagens`, quando o celular MUDA — dentro da
 gravação de quem chama; as que já estavam soltas passaram uma vez na migração `c6d8e0f2a4b6`). O log mascara "senha … é/:/= X",
-"senha … para X", "PIN 1234" e o NÚMERO inteiro (3 dígitos ou mais) depois de senha/pin, com
+"senha … para X", "PIN 1234" e o NÚMERO inteiro (3 dígitos ou mais, lido pelo MESMO leitor da senha —
+"(482) 913" e "quatro 8 dois 9 um 3" ficavam pela metade, avaliação 21) depois de senha/pin, com
 qualquer pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "senha do cadeado
 3262"; "código" e "combinação" só de portão/porta/cadeado/cofre — "código de erro 2043",
 "PIN 3 do conector" e "combinação de strings 12" ficam). Os marcadores do bot ("[senha oculta]")
@@ -902,13 +904,20 @@ itens (as linhas da prévia vão em `itens`; cada linha precisa de uma palavra q
 `_cobre_todos`): "Apaga o 3" para INV-1, INV-2 e INV-3, "Pode editar em Ibitinga" com nós em duas
 usinas e "Sim, o Michel" para "…por Michel…, Diogo…" são dúvida, nunca SIM, mesmo a palavra estando
 no resumo (avaliação 20: a contagem e a usina contavam como citação inteira). "Todos", "os três"/"os
-3" (a contagem, ou o número de pessoas listadas) e o plural do item ("os inversores") confirmam; palavra
+3" (uma contagem do resumo, ou o número de pessoas listadas) confirmam; "ambos" só quando são dois; e o
+plural do item ("os inversores") só quando é o que o resumo conta ("os itens", "os 12 nós") ou quando
+TODA linha é daquele tipo — com dois inversores e a Medição, "Pode apagar os inversores" apagava a Medição
+junto (avaliação 21, a prévia real de Ibitinga) e agora é dúvida (`_quantidade`, `_plural_dos_itens`). O
+número depois de "os" que não é a contagem segue como alvo: "a OS 1639" é a ordem. Palavra
 neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "Sim, é isso", "Aprovado" e
-"s" viravam dúvida na proposta real). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
+"s" viravam dúvida na proposta real). Mensagem com "?" em qualquer lugar nunca confirma ("Apaga?!",
+"Apagar? 🤔", "Fecha?..." confirmavam — avaliação 21). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
 (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
 "Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
-sem ir à IA (`pergunta_de_novo`); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
+sem ir à IA (`pergunta_de_novo`) — repetindo o alcance INTEIRO (o resumo, as linhas e os avisos, a
+mesma `_escopo` do bloco) e dizendo que o Sim vale para tudo aquilo (avaliação 21: "Apaga o 15" ouvia só
+«APAGAR 3 item(ns)…», e o toque seguinte apagava os três); com assunto novo ("Ok, e Pereiras", "Pode mandar o PDF") ou mais
 longa, é outro pedido — derruba e vai à IA, que fica sabendo, em vez de o pedido ser engolido
 (avaliação 17). Limite: o sim com outro pedido junto ("sim, pode fechar e me manda o PDF") derruba — o bloco diz "um não, uma correção ou outro assunto cancela; na dúvida,
 pergunto de novo" (`_resposta_ao_resumo`, `e_sim`/`responde_sim`). Com o SIM esperando, o NÚMERO sozinho é conversa (a
@@ -924,7 +933,11 @@ feito, e repassa o texto de lá INTEIRO — como pergunta, sem ⚠️, quando é
 término?"); senão com ⚠️ e o log em erro (uso real de 24/10/2026, avaliação 19: o texto era repassado e a
 1638 ficou sem fechar). "Pronto", "Não há mais passos", "Tudo feito", "Nada mais" são o fim
 (`_FIM_DO_PEDIDO`), e o passo feito proposto de novo DEPOIS do pedido de novo vira "O meuPlano não
-trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 20: sumia calado) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 20: sumia calado). E (avaliação
+21): "Pronto" que diz o que falta ou pergunta ("Pronto, … Falta registrar a 1843: qual a data?") não é o fim
+(`_fim_do_pedido`); o passo feito proposto DE CARA também é pedido de novo (`_REPETIU`); e, sem o próximo
+passo depois do pedido de novo, a pessoa SEMPRE fica sabendo — "Faltam 2 passos" seguido de "Pronto" repassa o
+que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
 avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
 não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o

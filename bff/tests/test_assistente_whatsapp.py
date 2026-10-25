@@ -1455,6 +1455,7 @@ async def test_a_senha_e_comparada_com_a_hora_do_banco_e_nao_com_o_relogio_atras
 async def test_a_senha_depois_do_prazo_diz_que_venceu_certa_ou_errada(db, bot_local, helper_com_get, monkeypatch):
     """A senha que chega depois do prazo recebia "Não há ação esperando senha", sem dizer que
     venceu. Agora diz — com a MESMA frase para a certa e para a errada (sem oráculo)."""
+    import re
     from time import monotonic
 
     from app.services import assistente_helper as h
@@ -1466,7 +1467,8 @@ async def test_a_senha_depois_do_prazo_diz_que_venceu_certa_ou_errada(db, bot_lo
         h.PENDENTES[dono.id].expira = monotonic() - 1
         await assistente.atender(_ev(dono, n + 1, senha))
         assert "venceu" in bot_local.enviados[-1] and dono.id not in h.PENDENTES
-    assert bot_local.enviados[-1] == bot_local.enviados[-3]
+    # a mesma frase (a hora de cada uma pode virar o minuto entre as duas voltas)
+    assert re.sub(r"\d\d:\d\d", "HH:MM", bot_local.enviados[-1]) == re.sub(r"\d\d:\d\d", "HH:MM", bot_local.enviados[-3])
     assert helper_com_get.confirmadas == []
 
 
@@ -1593,16 +1595,18 @@ async def test_a_senha_soletrada_com_barra_ou_por_extenso_e_reconhecida(db, monk
     dono = _dono_com_usina(db)
     for so_ela in ["4 8 2 9 1 3", "4, 8, 2, 9, 1, 3", "senha 482/913", "senha: 482 9 13", "482 913",
                    "*482913*", "482913?", "４８２９１３", "quatro oito dois nove um três",
-                   "quatro 8 dois 9 um 3", "(482) 913", "(482913)"]:              # avaliação 20
+                   "quatro 8 dois 9 um 3", "(482) 913", "(482913)",               # avaliação 20
+                   "4️⃣8️⃣2️⃣9️⃣1️⃣3️⃣"]:                                              # avaliação 21
         assert h.digitos_da_senha(so_ela) == "482913", so_ela
     for nao in ["24/10/2026", "2026-10-24", "10.1.130.2", "12, 13, 14", "123456", "111111", "2026"]:
         assert h.digitos_da_senha(nao) is None, nao
     for frase in ["a senha é quatro oito dois nove um três", "pode ir 4 8 2 9 1 3", "minha senha 482/913 ok",
                   "vai 482 913 ok", "tenta ４８２９１３ aí",
-                  "a senha é quatro 8 dois 9 um 3", "liga (482) 913 aí"]:
+                  "a senha é quatro 8 dois 9 um 3", "liga (482) 913 aí", "a senha é 4️⃣8️⃣2️⃣9️⃣1️⃣3️⃣ ok"]:
         h._CONFERENCIAS.clear()
         visto = h.mascarar(frase, await h.analisar(dono, frase))
         assert "482913" not in re.sub(r"\D", "", visto) and "quatro" not in visto, (frase, visto)
+        assert "\u20e3" not in visto, visto                               # nem o enfeite do último dígito
 
 
 def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
@@ -1618,6 +1622,10 @@ def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
                   "senha 2 vezes errada", "código de erro 2043"]:
         assert _sem_segredos(texto) == texto
     assert _sem_segredos("a senha do wifi é Solar@2024") == "a senha do wifi é ••••"
+    # o número inteiro, escrito como a senha se escreve ("•••• 913" e "•••• 8 dois 9 um 3" — avaliação 21)
+    for segredo in ("(482) 913", "quatro 8 dois 9 um 3", "4 8 2 9 1 3", "482.913"):
+        assert _sem_segredos(f"a senha do cadeado é {segredo}, ok") in ("a senha do cadeado é ••••, ok",
+                                                                         "a senha do cadeado é (••••, ok"), segredo
     assert _sem_segredos("minha senha é: 4821x") == "minha senha é: ••••"
 
 
@@ -1956,6 +1964,8 @@ class _MeuPlanoQueEscreve(_MeuPlanoDoisPassos):
         if run_id == 1:
             return await super().assistente_run(token, run_id)
         r = self.depois.pop(0)
+        if isinstance(r, dict):
+            return r
         if r == "proposta":
             return {"status": "DONE", "type": "proposal", "action": "fechar_os", "args": {"os_id": 1638},
                     "preview": {"summary": "Fechar a OS 1638", "lines": [], "warnings": []}}
@@ -2029,7 +2039,9 @@ async def test_proximo_passo_em_texto_pede_a_acao_de_novo_e_nunca_repassa_a_prom
 async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, bot_local, monkeypatch):
     """Avaliação 20: o fim dito em texto ("Não há mais passos.") virava falha; a pergunta do meuPlano
     ("qual a data de término?") chegava como erro e cortada; e o passo já feito, reproposto depois do
-    pedido de novo, fazia o resto do pedido sumir calado."""
+    pedido de novo, fazia o resto do pedido sumir calado. Avaliação 21: "Pronto, … Falta registrar a 1843:
+    qual a data?" era tomado como o fim; "Faltam 2 passos" e, pedido de novo, "Pronto." calava; e o passo
+    já feito proposto DE CARA encerrava o pedido sem pedir de novo nem avisar."""
     from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
@@ -2037,15 +2049,14 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
     criar = {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"usina_id": 37},
              "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
 
-    class _Repete(_MeuPlanoQueEscreve):
-        async def assistente_run(self, token, run_id):
-            if run_id == 3:
-                return criar                                           # o passo já feito, de novo
-            return await super().assistente_run(token, run_id)
-
-    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu"),
+    falta = "Pronto, a OS 1638 foi fechada. Falta registrar a 1843 (tarefa 9330): qual a data de término?"
+    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu"),        # o fim: nada a dizer
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano disse:\n\n" + pergunta, "respondeu"),
-             (_Repete(TEXTO_DO_MEUPLANO), "O meuPlano não trouxe outro passo depois deste", "respondeu"))
+             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano disse:\n\n" + falta, "respondeu"),   # pergunta
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro"),   # vale o de antes
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro"),       # o passo já feito
+             (_MeuPlanoQueEscreve(criar, "Pronto."), "⚠️ O meuPlano não trouxe outro passo depois deste", "erro"),
+             (_MeuPlanoQueEscreve(criar, "proposta"), "• Fechar a OS 1638", "respondeu"))       # pediu de novo
     for n, (falso, espera, resultado) in enumerate(casos):
         h.PENDENTES.clear()
         _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
@@ -2057,9 +2068,10 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
         assert saidas[0].startswith("✅ Feito no meuPlano: Criar OS"), n
         if espera is None:
             assert len(saidas) == 1, saidas                            # o fim: nada mais a dizer
-        else:
-            assert espera in saidas[-1] and not saidas[-1].startswith("⚠️"), saidas[-1]
+        else:                                                          # avisado só quando é erro
+            assert espera in saidas[-1] and saidas[-1].startswith("⚠️") == (resultado == "erro"), (n, saidas[-1])
         assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == resultado, n
+        assert len(falso.conversas) == (2 if n == 0 else 3), n                  # pediu de novo uma vez só
 
 
 def test_o_resumo_diz_quantas_linhas_ficaram_de_fora():
@@ -2651,7 +2663,7 @@ class _MeuPlanoQueRepete:
 
     def __init__(self, *args_por_vez, acao="fechar_os", resumo="Fechar a OS {os_id} (Roçagem)"):
         self.args_por_vez, self.acao, self.resumo = args_por_vez, acao, resumo
-        self.aplicadas, self.conversas = [], []
+        self.aplicadas, self.conversas, self.linhas = [], [], []
 
     async def assistente_chat(self, token, mensagens):
         self.conversas.append(mensagens)
@@ -2662,7 +2674,8 @@ class _MeuPlanoQueRepete:
             return {"status": "DONE", "type": "message", "text": "Pronto."}
         args = self.args_por_vez[run_id - 1]
         return {"status": "DONE", "type": "proposal", "action": self.acao, "args": dict(args),
-                "preview": {"summary": self.resumo.format(**args), "lines": [], "warnings": []}}
+                "preview": {"summary": self.resumo.format(**args), "lines": [{"text": t} for t in self.linhas],
+                            "warnings": []}}
 
     async def assistente_aplicar(self, token, acao, args):
         self.aplicadas.append((acao, args))
@@ -2831,6 +2844,49 @@ def test_numa_acao_de_varios_alvos_so_confirma_quem_cita_todos():
     assert r("Pode fechar todas", *fechar) != "sim"         # "todas" numa ação de um alvo só não é ela
 
 
+def test_o_plural_de_um_tipo_numa_lista_mista_e_a_pergunta_com_emoji_nao_confirmam():
+    """Avaliação 21: com a prévia REAL de Ibitinga («APAGAR 3 item(ns) — 12 nó(s)»: dois inversores e a
+    Medição), "Pode apagar os inversores" apagava a Medição junto — o plural de UM tipo valia como "todos".
+    Só vale quando é o que o resumo conta ("os itens", "os 12 nós") ou quando todos os itens são daquele
+    tipo. E "Apaga?!", "Apagar? 🤔", "Fecha?..." confirmavam: pergunta nunca confirma."""
+    from app.services import assistente_helper as h
+
+    r = h._resposta_ao_resumo
+    resumo = "APAGAR 3 item(ns) — 12 nó(s) no total (cascata)."
+    misto = ("Inversor 1 (Inversor1)", "Inversor 2 (Inversor2)", "Medição (AGR01)")
+    inversores = ("Inversor 1 (Inversor1)", "Inversor 2 (Inversor2)", "Inversor 3 (Inversor3)")
+    for t in ("Pode apagar os inversores", "Sim, os inversores", "Pode apagar ambos os inversores", "Apaga ambos",
+              "Pode apagar todos os inversores", "Apaga os inversores", "Pode apagar o inversor 1 e o 2"):
+        assert r(t, resumo, misto) == "duvida", t
+    for t in ("Pode apagar todos", "Pode apagar os itens", "Sim, os três", "Pode apagar os 3", "Apaga tudo",
+              "Pode apagar os 12 nós", "Apaga o 1, o 2 e a medição"):
+        assert r(t, resumo, misto) == "sim", t
+    for t in ("Pode apagar os inversores", "Sim, todos os inversores"):
+        assert r(t, resumo, inversores) == "sim", t
+    assert r("Pode apagar ambas", "Apagar 2 ligação(ões) de rede.", ("Switch 1 → SL 1", "Switch 1 → SL 2")) == "sim"
+    assert r("Sim, crie a OS 1639", "Abrir a OS 1639") == "sim"            # "a OS 1639" não é quantidade
+    for t in ("Apagar? 🤔", "Apaga? 😳", "Apaga?!", "Sim? 😅", "Sim?!", "Pode fechar?!", "Fecha?..."):
+        assert r(t, resumo, inversores) == "outra" and r(t, "Fechar a OS 1638") == "outra", t
+
+
+async def test_a_pergunta_de_novo_diz_que_o_sim_vale_para_tudo(db, bot_local, monkeypatch):
+    """Avaliação 21: "Apaga o 15" virava dúvida (certo), mas a pergunta repetia só «APAGAR 3 item(ns)…» —
+    sem as linhas e sem dizer que o Sim apaga os TRÊS; o toque seguinte apagava os três."""
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoQueRepete({"node_ids": [13, 14, 15]}, acao="apagar_nos",
+                               resumo="APAGAR 3 item(ns) — 41 nó(s) no total (cascata).")
+    falso.linhas = ["Inversor 13 (INV-13)", "Inversor 14 (INV-14)", "Inversor 15 (INV-15)"]
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie: apaga os inversores 13 a 15"))
+    await assistente.atender(_ev(dono, 2, "Apaga o 15"))
+    assert falso.aplicadas == [] and dono.id in h.PENDENTES
+    de_novo = bot_local.enviados[-1]
+    assert "O *Sim* vale para TUDO isto" in de_novo and "Se era só uma parte" in de_novo
+    assert all(f"– Inversor {n} (INV-{n})" in de_novo for n in (13, 14, 15)), de_novo
+
+
 async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, bot_local, monkeypatch):
     """"Sim, pode deixar" — começa como sim, mas não é um SIM limpo — DERRUBAVA a ação: o contrário do que a
     pessoa disse. Agora ela continua esperando, e o SISTEMA (não a IA) diz como confirmar, com os botões."""
@@ -2844,8 +2900,9 @@ async def test_afirmativa_ambigua_nao_cancela_e_o_sistema_pergunta_de_novo(db, b
     codigo, n = h.PENDENTES[dono.id].codigo, len(vistos)
     await assistente.atender(_ev(dono, 2, "Sim, pode deixar"))
     assert dono.id in h.PENDENTES and len(vistos) == n and falso.aplicadas == []      # armada; a IA nem soube
-    assert bot_local.enviados[-1] == h.DE_NOVO.format(resumo="Criar OS em UFV Ibitinga com 1 tarefa(s)",
+    assert bot_local.enviados[-1] == h.DE_NOVO.format(escopo=h._escopo(h.PENDENTES[dono.id]),
                                                        limite=h._limite(h.PENDENTES[dono.id]))
+    assert "• Criar OS em UFV Ibitinga com 1 tarefa(s)" in bot_local.enviados[-1]
     assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]               # os do MESMO resumo
     # só a resposta CURTA é dúvida; a longa é outro assunto (derruba e vai à IA) — perguntar de novo
     # engoliria o pedido
@@ -2920,9 +2977,10 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
         dono = _conta(db, f"dono{i}", f"+551799737000{i}")
         await assistente.atender(_ev(dono, 10 * i, "crie: feche a 1638"))
         await assistente.atender(_toque(dono, 10 * i + 1))
-        assert falso.aplicadas == [("fechar_os", {"os_id": 1638})] and len(falso.conversas) == 2   # perguntou
+        assert falso.aplicadas == [("fechar_os", {"os_id": 1638})]                # uma vez só
         if oferecido:
-            assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)"
+            assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)" and len(falso.conversas) == 2
         else:
-            assert dono.id not in h.PENDENTES
-            assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")
+            # pede de novo (avaliação 21: calar escondia o resto do pedido) e, sem outro passo, avisa
+            assert dono.id not in h.PENDENTES and len(falso.conversas) == 3
+            assert bot_local.enviados[-1].startswith("⚠️ O meuPlano não trouxe outro passo depois deste")
