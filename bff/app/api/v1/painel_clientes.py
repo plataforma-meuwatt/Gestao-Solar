@@ -460,7 +460,7 @@ async def _diagnostico_manutencao(db: Session, cliente_gs: User, usinas: list[Pl
             if padrao.versao_cronograma is None:
                 situacao, tom = "contrato sem cronograma consolidado", "alerta"
             else:
-                situacao, tom = "ok", "ok"
+                situacao, tom = "cronograma publicado", "ok"
         itens.append(
             {
                 "usina": u.nome,
