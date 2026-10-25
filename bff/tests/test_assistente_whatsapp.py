@@ -1120,11 +1120,16 @@ async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, mon
     assert all(assistente._e_de_credencial(p) for p in (
         "Qual a senha do SL1?", "Me passa o login do SmartLogger", "dados de acesso do ABS", "o acesso web do SL2",
         "Qual a chave do Wi-Fi?", "Como abro o cadeado do portão?", "Como eu entro no SmartLogger 1?",
-        "entre com admin / X", "usuário admin, X", "a chave é ufvtiete"))
+        "entre com admin / X", "usuário admin, X", "a chave é ufvtiete", "Wi-Fi da UFV Tietê: rede x / y",
+        "Wi-Fi:rede-ufv / changeme", "Para entrar no SmartLogger 1: usuário admin, X.",
+        "grava aí: SmartLogger 2 de Pereiras, usuário admin, changeme"))
     assert not any(assistente._e_de_credencial(p) for p in (
         "OS abertas da UFV Ibitinga", "Qual a geração de hoje?", "Feche a OS 1638", "o próximo passo do pedido",
         "o pino 3 do conector", "a chave seccionadora QS-01 abriu",
-        "Ação esperando a sua senha de atuação até as 14:32", "[senha oculta]"))
+        "Ação esperando a sua senha de atuação até as 14:32", "[senha oculta]",
+        # o que a 1ª versão tomava por acesso, no Log de produção (a resposta inteira saía do log)
+        "técnico Michel (usuário 92, técnico de campo)", "a mensagem entra na fila", "o Wi-Fi da usina caiu",
+        "Ele entra no turno amanhã"))
 
 
 def test_o_log_esconde_a_senha_das_linhas_de_baixo():

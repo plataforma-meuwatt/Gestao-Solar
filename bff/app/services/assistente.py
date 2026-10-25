@@ -432,8 +432,13 @@ def _e_prosa(m: re.Match) -> bool:
 #: 3262", "rede ufv-tiete / changeme", "login admin / X"). A LINHA assim tem todo valor escondido (`_sem_credencial`); e,
 #: no turno que trata do assunto, o texto livre da resposta fica fora do log. Não conta o conceito do bot (`_DO_BOT`).
 _CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|pass|passwd|pwd|pins?|credenc\w*|passcodes?|logins?|logar|"
-                         r"cadeados?|wi-?fi|acessos|dados de acesso|acesso (?:d[oa]s?|ao|à|web|remoto|ssh|snmp)|"
-                         r"usu[áa]rio e senha|usu[áa]rio:? \S+(?:,| /)|entr(?:e|ar|a|o) (?:com|no|na)|"
+                         r"cadeados?|acessos|dados de acesso|acesso (?:d[oa]s?|ao|à|web|remoto|ssh|snmp)|"
+                         # o Wi-Fi como rótulo ("Wi-Fi da UFV Tietê: …") ou a senha/rede dele — não "o Wi-Fi caiu"
+                         r"wi-?fi\b[^:\n]{0,40}(?=:)|(?:senha|chave|rede|ssid) (?:d[oa] )?wi-?fi|"
+                         # "usuário admin, X" — não "usuário 92, técnico de campo"; "entre com", "entrar no SmartLogger"
+                         r"usu[áa]rio e senha|usu[áa]rio:? (?![\d(])\S+(?:,| /)|entr(?:e|ar|a|o) com|"
+                         r"entr(?:e|ar|a|o) n[oa] (?:\w+ )?(?:smartlogger|roteador|inversor|datalogger|equipamento|"
+                         r"sistema|site|portal|helper|wi-?fi)|"
                          r"chaves? (?:d[aoe]s? )?(?:wi-?fi|rede|acesso|port[ãa]o|porta|cadeado|cofre)|chave (?:é|:))"
                          r"(?!\w)")                         # "passo" não é "pass", "pino" não é "pin"
 _DO_BOT = re.compile(r"(?i)senha de atua|\[(?:senha|n[úu]mero) ")      # "sua senha do SmartLogger é X" não é do bot
