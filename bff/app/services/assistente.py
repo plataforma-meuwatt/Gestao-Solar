@@ -360,13 +360,74 @@ _PROSA = {"definida", "definido", "pessoal", "secreta", "individual", "única", 
           "mas", "uma", "dos", "das", "nos", "nas", "ser", "foi", "está", "são", "sao", "vale", "padrão", "padrao",
           "comparada", "conferida", "enviada", "mandada", "escondida", "guardada", "cifrada", "criptografada",
           "trocada", "alterada", "usada", "exigida", "solicitada", "cadastrada", "configurada", "digitada", "dita",
-          "temporária", "temporaria", "provisória", "provisoria"}
+          "temporária", "temporaria", "provisória", "provisoria",
+          # o que se diz DA senha, sem dizê-la (avaliação 25: "A senha era antiga", "é fornecida pela operadora")
+          "antiga", "bloqueada", "bloqueado", "desconhecida", "desconhecido", "forte", "fraca", "longa", "curta",
+          "fornecida", "informada", "expirada", "vencida", "incorreta", "segura", "fácil", "facil", "difícil",
+          "dificil", "simples", "opcional", "de", "do", "da", "critério", "criterio", "responsabilidade"}
+#: O ESTADO da senha entre a palavra e o separador ("Senha errada 5 vezes: as ações…", "Senha bloqueada: tente amanhã")
+#: faz da linha uma afirmação sobre ela, não a revelação — "Senha nova: X" (QUAL senha) continua escondida.
+_ESTADO_DA_SENHA = {"errada", "errado", "incorreta", "incorreto", "bloqueada", "bloqueado", "expirada", "expirado", "vencida",
+           "vencido", "inválida", "invalida", "recusada", "trocada"}
+#: O número seguido da unidade é tamanho ou contagem, não o segredo ("O PIN é 4 dígitos", "Senha errada 5 vezes").
+_UNIDADE = {"dígitos", "digitos", "dígito", "digito", "caracteres", "letras", "números", "numeros", "vezes", "minutos",
+            "min", "horas", "dias", "tentativas"}
 
 
 def _e_prosa(m: re.Match) -> bool:
     """O que vem depois de "senha … é/:" é PROSA, não o segredo: a palavra de `_PROSA` ("é definida no oem-gs", "é
     pessoal", "desta mensagem: ela é só para equipamento" — o aviso do próprio bot, que saía comido na avaliação 23)."""
-    return m.group(3).lower() in _PROSA
+    return m.group(3).lower().rstrip(":.!?") in _PROSA
+
+
+#: A LINHA que fala de credencial e a REVELA — o formato do meuPlano, que o IA.MD de lá manda exibir a quem tem nível
+#: ("• **Senha:** Huawei@123", "As senhas: SL1 …", "A senha padrão de fábrica do SmartLogger é X", "Credenciais do
+#: SmartLogger: admin / X", "Usuário admin, senha X", "| senha | X |"; avaliação 25: 20 de 22 formatos passavam). O
+#: valor some até o fim da linha — menos a prosa ("é a mesma do meuPlano", `_PROSA`) e o conceito do próprio bot ("sua
+#: senha", "senha de atuação", os marcadores), que nunca trazem o valor.
+_CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|pins?|credenciais|credencial|passcodes?)\b")
+_DO_BOT = re.compile(r"(?i)senha de atua|\[(?:senha|n[úu]mero) ")      # "sua senha do SmartLogger é X" não é do bot
+_SEPARADOR = re.compile(r"(?i)\*{0,2}[ \t]*(?<!\d)[:=]\*{0,2}|[ \t]+(?:é|eh|s[ãa]o|ficou|fica|era|ser[áa]|virou)\b|"
+                        r"[ \t]*(?:->|=>|→|–|—|\|)")
+#: …ou a palavra e o valor logo depois, numa LISTA ("admin, senha X", "login admin e senha X", "· **senha** X").
+_EM_LISTA = re.compile(r"(?i)(?:[,·/|—–]|\be)[ \t]*\*{0,2}(?:senhas?|passwords?|pins?)\*{0,2}[ \t]+(?=([^\s,;]{3,}))")
+_DETERMINANTE = {"a", "o", "as", "os", "um", "uma"}
+
+
+def _sem_credencial(linha: str) -> str:
+    if _DO_BOT.search(linha):
+        return linha
+    lista = _EM_LISTA.search(linha)
+    if lista is not None and lista.group(1).lower().strip("*") not in _PROSA | {"de", "do", "da", "não", "nao", "foi"}:
+        return linha[:lista.end()] + "••••"
+    for m in _CREDENCIAL.finditer(linha):
+        # o separador na MESMA frase, perto da palavra ("A senha padrão de fábrica do SmartLogger é X")
+        frase = re.search(r"[.!?](?:\s|$)", linha[m.end():])
+        ate = min(m.end() + (frase.start() if frase else len(linha)), m.end() + 60)
+        sep = _SEPARADOR.search(linha, m.end(), ate)
+        if (sep is None or set(re.findall(r"[^\W_]+", linha[m.end():sep.start()].lower())) & _ESTADO_DA_SENHA
+                or linha[sep.end():].lstrip(" (*").startswith(("••••", "["))):   # já escondido pela regra da palavra
+            continue
+        palavras = [p for p in re.findall(r"[^\W_]+", linha[sep.end():].lower()) if p not in _DETERMINANTE]
+        if palavras and palavras[0] not in _PROSA and not (palavras[0].isdigit() and palavras[1:2] and
+                                                           palavras[1] in _UNIDADE):
+            return linha[:sep.end()] + " ••••"
+    return linha
+
+
+def _sem_coluna_de_senha(texto: str) -> str:
+    """A tabela com COLUNA de senha ("| Equipamento | Usuário | Senha |"): o valor dela some nas linhas de baixo."""
+    linhas, colunas = texto.split("\n"), None             # None: fora de tabela; senão, as colunas de senha
+    for i, linha in enumerate(linhas):
+        if not linha.lstrip().startswith("|"):
+            colunas = None
+            continue
+        celulas = linha.split("|")
+        if colunas is None:
+            colunas = {j for j, c in enumerate(celulas) if _CREDENCIAL.search(c) and not _DO_BOT.search(c)}
+        elif colunas and not all(set(c.strip()) <= set("-: ") for c in celulas):
+            linhas[i] = "|".join(" •••• " if j in colunas and c.strip() else c for j, c in enumerate(celulas))
+    return "\n".join(linhas)
 
 
 def _sem_segredos(texto: str) -> str:
@@ -375,12 +436,12 @@ def _sem_segredos(texto: str) -> str:
         lambda m: m.group(0) if (len(helper._so_digitos(m.group(3))) < 3 or helper._data_ou_ip(m.group(3))
                                  or _IDENTIFICADOR.search(m.group(2))) else m.group(1) + m.group(2) + "••••", texto)
     for padrao in (_SEGREDO, _SEGREDO_SETA, _SEGREDO_LISTA, _SEGREDO_EM_SEGUIDA):
-        texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) or _e_prosa(m)
+        texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) or _e_prosa(m) or _DO_BOT.search(m.group(0))
                            else m.group(1) + m.group(2) + "••••", texto)
     for padrao in (_SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) else m.group(1) + m.group(2) + "••••",
                            texto)
-    return texto
+    return "\n".join(_sem_credencial(linha) for linha in _sem_coluna_de_senha(texto).split("\n"))
 
 
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
@@ -679,11 +740,19 @@ _CORTESIA = re.compile(r"(?:^|(?<=[.!?,;\n—–]))\s*(?:(?:(?:posso|consigo) (?
 #: O que o meuPlano disse e que deixa algo do pedido por fazer ("falta", "pendente", "pode ser fechada", "depende",
 #: "precisa", "vou propor"): sem o passo, a pessoa é AVISADA (⚠️, erro no log); sem nada disso, a fala dele vai a ela
 #: como informação. Decide só o tom do aviso — calar, nunca. A negação ("não há mais tarefas pendentes") não conta.
-_NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum[a]?)\b[^.!?\n]{0,30}?\b(?:falta(?:m|ndo)?|pr[óo]ximo passo|outro "
-                         r"passo|pendentes?|pend[êe]ncias?|precisa|vou)\b", re.IGNORECASE)
+#: A negação só conta COLADA na palavra ("não falta", "não há mais tarefas pendentes", "não precisa"): em "Não é
+#: possível fechar a OS 1638: falta concluir a 8873" o "não" nega outro verbo (avaliação 25: o "falta" sumia).
+_NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum[a]?)\s+(?:(?:h[áa]|tem|existe|resta|mais|ficou|outr[oa]s?|tarefas?|"
+                         r"itens?|nada)\s+){0,3}(?:falta(?:m|ndo)?|pr[óo]xim[oa]s?(?: passos?)?|outros? passos?|pendentes?|"
+                         r"pend[êe]ncias?|precisa|vou|passos?)\b", re.IGNORECASE)
 _PENDENCIA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpendentes?\b|\bpend[êe]ncias?\b|\bpode ser (?:fechad|conclu|finalizad|"
                         r"registrad|feit)|\bdepende\b|\bprecisa\b|\bpr[óo]ximo passo\b|\bconfirmando\b|"
                         r"\bpropo(?:r|nho|sta)\b|\bquer que eu\b|\bainda n[ãa]o\b|\bpront[ao]s? para\b|"
+                        # o que não deu e o que ficou para depois ("Não consegui fechar", "continua aberta", "Resta
+                        # lançar", "Agora é só registrar", "Depois eu fecho", "O próximo é fechar" — avaliação 25)
+                        r"\bn[ãa]o (?:foi|foram|consegui|conseguiu|deu|d[áa]|pude|p[ôo]de|[ée] poss[íi]vel)\b|"
+                        r"\bimposs[íi]vel\b|\bfalh|\berro\b|\bcontinua\b|\bresta(?:m)?\b|\bdepois\b|"
+                        r"\bagora [ée] s[óo]\b|\bpr[óo]xim[oa]s?\b|"
                         # o que ele pede à pessoa ("confirme e eu concluo", "mande a data de término")
                         r"\b(?:confirme|mande|envie|informe|diga|escolha|defina)\b", re.IGNORECASE)
 #: O pedido de novo quando o meuPlano repropõe o passo que acabou de ser feito.
@@ -694,6 +763,23 @@ _REPETIU = ("Esse passo acabou de ser feito. Se o meu pedido tem outro passo, ch
 _EM_TEXTO = ("Não descreva em texto: chame AGORA a ferramenta do próximo passo (um só), para eu confirmar com o "
              "botão. Se falta um dado para isso, pergunte em UMA frase qual. Se não há próximo passo, responda só: "
              "Não há próximo passo.")
+
+
+#: O texto que AFIRMA que acabou — o sinal de fim em qualquer parte ("Não há próximo passo: o pedido era só fechar a
+#: OS 1638.") ou o passo dado como feito ("A OS 1638 foi fechada.") — e não diz que falta algo: vai como informação.
+#: Qualquer outro texto, sem o passo, é AVISO (avaliação 25: "Não é possível fechar…", "A OS 1638 continua aberta.",
+#: "Depois eu fecho a 1638." saíam como informação, com o log verde).
+_FIM_NO_TEXTO = re.compile(r"n[ãa]o (?:h[áa]|existe|tem|resta) " + _PASSO + r"|\b(?:nenhum|sem) " + _PASSO +
+                           r"|n[ãa]o h[áa] mais nada|\bpronto\b|\bnada mais\b|\bmais nada\b|\btudo (?:feito|pronto|certo|"
+                           r"conclu[ií]do|ok|resolvido|finalizado)\b|n[ãa]o falta (?:mais )?nada|pedido (?:est[áa] |foi )?"
+                           r"(?:completo|conclu[ií]do|finalizado|atendido)|era s[óo] isso|isso [ée] tudo", re.IGNORECASE)
+_FEITO = re.compile(r"\b(?:foi|foram|est[áa]|est[ãa]o|ficou|ficaram)\s+(?:\w+\s+)?(?:fechad|conclu[ií]d|criad|"
+                    r"registrad|lan[çc]ad|feit|apagad|removid|atualizad|programad|cancelad|aprovad|exclu[ií]d|instalad|"
+                    r"desinstalad|enviad|gerad|assinad|atendid|finalizad)[oa]s?\b", re.IGNORECASE)
+
+
+def _afirma_o_fim(texto: str) -> bool:
+    return bool(_FIM_NO_TEXTO.search(texto) or _FEITO.search(texto)) and not _PENDENCIA.search(_NEGA_FALTA.sub("", texto))
 
 
 def _so_o_fim(texto: str) -> bool:
@@ -770,9 +856,9 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     if re.search(rf"{helper._PERGUNTA.pattern}\W*$", final):
         return (f"O próximo passo do seu pedido precisa de uma resposta sua — nada está esperando o seu Sim. {de}, já "
                 f"foi feito: {'; '.join(feitos)}. O meuPlano perguntou:\n\n{final}")
-    # o texto sem nada por fazer é informação — também quando ele veio igual nas duas respostas (avaliação 24: "A OS
-    # 1638 foi fechada." duas vezes virava ⚠️ e erro no log; a lista decide o tom em TODO caminho)
-    if not _PENDENCIA.search(_NEGA_FALTA.sub("", final)):
+    # informação só quando o texto AFIRMA que acabou — também quando veio igual nas duas respostas (avaliação 24: "A OS
+    # 1638 foi fechada." duas vezes virava ⚠️ e erro no log); o resto é aviso (avaliação 25)
+    if _afirma_o_fim(final):
         return f"O meuPlano não propôs outro passo do seu pedido — nada está esperando o seu Sim — e disse:\n\n{final}"
     return (f"⚠️ O próximo passo do seu pedido ainda não ficou pronto para confirmar — nada está esperando o seu Sim. "
             f"{de}, já foi feito: {'; '.join(feitos)}. O meuPlano disse:\n\n{final}")

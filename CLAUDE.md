@@ -829,7 +829,12 @@ saía comido — e as de `_PROSA`, "é pessoal, não a passe" — `_e_prosa`; av
 da palavra deixava em claro "a senha do SmartLogger é changeme para o usuário admin", e a prosa passou a ser uma lista
 POSITIVA — o resto some; também a seta e o travessão logo depois da palavra, "a senha nova ficou X", a lista de
 credenciais "admin / senha X" e o segundo segredo da frase "… e do 4 é Y"; "código" só de porta/cadeado: "Código do
-alarme: 2043" fica). Os marcadores do bot ("[senha oculta]")
+alarme: 2043" fica). E a LINHA que fala de credencial e a revela — o formato do meuPlano, que o IA.MD de lá manda
+exibir a quem tem nível: "• **Senha:** X", "As senhas: SL1 …", "A senha padrão de fábrica do SmartLogger é X",
+"Credenciais do SmartLogger: admin / X", "Usuário admin, senha X", a tabela com coluna "Senha" — tem o valor escondido
+até o fim da linha (`_sem_credencial`, `_sem_coluna_de_senha`; avaliação 25: 20 de 22 formatos passavam), menos a
+prosa da lista, o ESTADO da senha ("Senha errada 5 vezes: …") e o conceito do bot ("senha de atuação" e os
+marcadores — "sua senha do SmartLogger é X" não é do bot e some). Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -923,8 +928,9 @@ neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "
 "?", "？", "¿", "❓", "❔", "⁉️", "‽" (`_PERGUNTA`; "Apaga?!", "Fecha?...", "Apaga❓", "¿Apaga" confirmavam —
 avaliações 21 a 23) —, e emoji: a lista FECHADA é a do sim (`_EMOJI_DE_SIM`: 👍 ✅ 👌 🙂 😊 ❤️…); qualquer outro —
 ❌ 👎 ✋ 🛑 🤷 🙄 🤔 😳 🙏 — é dúvida (avaliação 23: com a lista fechada dos de dúvida, "Apaga ❌" e "Sim 👎"
-apagavam). O emoticon de texto de dúvida (":/", ":(", "-_-", "¬¬", "._.") também é dúvida; o alegre (":)", ":D") não
-atrapalha. O PRONOME no singular ("Pode apagar esse", "Apaga ele") numa ação de vários alvos é dúvida — qual? —, no
+apagavam). O emoticon de TEXTO segue a mesma regra: a lista fechada é a dos alegres (":)", ":D", ";)", "xD"); qualquer
+outro só de sinais (";-;", "-.-", ">.<", "):", ":<", "e.e") é dúvida (avaliação 25: a lista fechada dos de dúvida
+deixava "Apaga ;-;" apagar). "Apaga isso aí" numa ação de vários alvos também é dúvida. O PRONOME no singular ("Pode apagar esse", "Apaga ele") numa ação de vários alvos é dúvida — qual? —, no
 plural ("Apaga esses") são todos, e numa ação de um alvo só é ele ("Pode fechar ela") — avaliação 24: o singular
 apagava os três. "Pode fechar mesmo" (a pergunta sem "?") é dúvida; "Isso mesmo" confirma. O agradecimento
 abreviado ("Sim, obg", "Sim vlw", "pfv", "tmj") é palavra neutra. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
@@ -960,10 +966,13 @@ bot só CALA quando a resposta é SÓ o fim (`_so_o_fim`: "Não há próximo pas
 próximo passo.", "Não há próximo passo a propor.", "Não, não há próximo passo.", "Pronto, não falta nada.", "Seu
 pedido está completo." — a cortesia sozinha não conta: "Posso ajudar em algo mais?", "Estou à disposição."). Qualquer coisa além
 disso é pedida de novo e, sem o passo, DITA à pessoa: como pergunta, sem ⚠️, se o meuPlano pergunta; com ⚠️ e o log
-em erro se o texto diz que algo ficou por fazer (`_PENDENCIA`: "falta", "pendente", "pode ser fechada", "depende",
-"precisa", "vou propor", "confirme", "mande a data"…; a negação — "não há mais tarefas pendentes", "não precisa
-fazer mais nada" — não conta); e como informação, sem ⚠️, se não diz ("Não há próximo passo: o pedido era só fechar
-a OS 1638."; "A OS 1638 foi fechada." nas duas respostas — avaliação 24: era ⚠️ e erro no log). A lista de palavras
+em erro POR PADRÃO; como informação, sem ⚠️, só quando o texto AFIRMA que acabou (`_afirma_o_fim`: o sinal de fim
+em qualquer parte — "Não há próximo passo: o pedido era só fechar a OS 1638." — ou o passo dado como feito — "A OS
+1638 foi fechada.", nas duas respostas: avaliação 24 — ) e não diz que falta algo (`_PENDENCIA`: "falta",
+"pendente", "pode ser fechada", "depende", "precisa", "não consegui", "não foi", "continua", "resta", "depois", "o
+próximo é"…; a negação COLADA — "não há mais tarefas pendentes", "não precisa" — não conta; em "Não é possível fechar
+…: falta…" o "não" nega outro verbo). Avaliação 25: "Não é possível fechar a OS 1638: falta concluir a 8873", "A OS
+1638 continua aberta", "Depois eu fecho a 1638" saíam como informação, com o log verde. A lista de palavras
 decide só o TOM do aviso, nunca se a pessoa fica sabendo (avaliação 23: procurar o fim em qualquer parte do texto
 calava "Não há mais tarefas pendentes na OS 1638, que já pode ser fechada"; avaliação 22: tomar só o começo era
 alarme falso). O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o

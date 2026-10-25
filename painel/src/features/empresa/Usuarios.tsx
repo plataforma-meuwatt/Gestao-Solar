@@ -430,6 +430,8 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
     <Modal titulo={`Cadastro de ${usuario.nome}`} aoFechar={aoFechar} largura="max-w-2xl">
       <div className="grid gap-4">
         <Cartao>
+          {/* a caixa não tem margem própria: sem esta, o texto encostava na borda e o "Desligar" no canto (avaliação 25) */}
+          <div className="px-4 py-3">
           {ligadoA ? (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm text-corpo">
@@ -465,6 +467,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
           {avisos.map((a) => (
             <p key={a} className="text-xs text-fraco mt-2">{a}</p>
           ))}
+          </div>
         </Cartao>
 
         <div className="grid sm:grid-cols-2 gap-3">

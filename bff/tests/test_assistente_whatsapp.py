@@ -1659,7 +1659,23 @@ def test_o_log_esconde_o_segredo_escrito_do_jeito_que_se_escreve():
                   "A senha do cadeado é <<girassol>> com G maiúsculo? Não, minúsculo.",
                   "O PIN do ABS é <<abcd>> em todas as caixas.", "Senha – <<482913>>", "Senha → <<Huawei@123>>",
                   "senha -> <<Changeme1>>", "A senha nova ficou <<Solar#2026>>", "Usuário admin / senha <<changeme>>",
-                  "Login: admin | Senha: <<Changeme>>", "a senha do SmartLogger 3 é <<sungrow>> e do 4 é <<sungrow4>>"]:
+                  "Login: admin | Senha: <<Changeme>>", "a senha do SmartLogger 3 é <<sungrow>> e do 4 é <<sungrow4>>",
+                  # o jeito que o meuPlano escreve a credencial que o IA.MD de lá manda exibir (avaliação 25: 20 de 22)
+                  "**Senha:** <<Huawei@123>>", "*Senha:* <<Huawei@123>>", "- **Senha:** <<Huawei@123>>",
+                  "**Senha**: <<Huawei@123>>", "• Usuário: admin\n• **Senha:** <<Solar#2026>>",
+                  "SmartLogger 1 — **usuário** admin · **senha** <<Huawei@123>>",
+                  "| usuario | admin |\n| senha | <<Huawei@123>> |", "As senhas: SL1 <<Huawei@123>>, SL2 <<Sungrow@2>>",
+                  "Senhas dos SmartLoggers — SL1: <<Huawei@123>>; SL2: <<Sungrow@2>>",
+                  "A senha padrão de fábrica do SmartLogger é <<Changeme>>", "Senha padrão do SmartLogger: <<Changeme>>",
+                  "Senha atual do roteador: <<Splendor2024>>", "senha (SmartLogger 1): <<Huawei@123>>",
+                  "login admin e senha <<changeme>>", "A senha que usamos no SmartLogger é <<Huawei@123>>",
+                  "A senha para entrar no SmartLogger é <<Huawei@123>>",
+                  "Credenciais do SmartLogger: admin / <<Huawei@123>>",
+                  "Wi-Fi da usina — SSID UFV-Ibitinga, senha <<splendor>>", "A senha do Wi-Fi é a <<splendor2024>>",
+                  "Senha nova: <<Solar#2026>>", "Sua senha do SmartLogger é <<Huawei@123>>",   # "sua" não isenta
+                  # a tabela com COLUNA de senha
+                  "| Equipamento | Usuário | Senha |\n|---|---|---|\n| SL1 | admin | <<Huawei@123>> |\n"
+                  "| SL2 | admin | <<Sungrow@2>> |"]:
         limpo, segredos = re.sub(r"<<|>>", "", texto), re.findall(r"<<(.+?)>>", texto)
         assert not [v for v in segredos if v in _sem_segredos(limpo)], (texto, _sem_segredos(limpo))
     for texto in ["Sua senha de atuação é pessoal, não a passe a ninguém.",
@@ -1668,7 +1684,15 @@ def test_o_log_esconde_o_segredo_escrito_do_jeito_que_se_escreve():
                   "confirma com Sim.)", "A senha é a mesma do meuPlano.",
                   "Você ainda não tem senha de atuação — sem ela o bot não comanda equipamento pelo helper.",
                   "Senha não confere (1 de 5). Nada foi feito.", "A ação esperava a sua resposta até as 14:32 e venceu.",
-                  "Código do alarme: 2043", "o código de erro é E-2043"]:          # "código" só de porta/cadeado
+                  "Código do alarme: 2043", "o código de erro é E-2043",          # "código" só de porta/cadeado
+                  # o que se diz DA senha, sem dizê-la (avaliação 25)
+                  "A senha era antiga e foi trocada.", "A senha ficou bloqueada no SmartLogger.",
+                  "A senha do SmartLogger é desconhecida: não há registro.", "Sua senha é forte.", "A senha é longa demais.",
+                  "O PIN é 4 dígitos.", "A senha fica a critério do gerente.",
+                  "A senha do roteador é fornecida pela operadora.", "Senha: não cadastrada no meuPlano.",
+                  "Senha: sem registro.", "A senha do inversor é a de fábrica.", "A senha da OS 1638 não existe.",
+                  "Senha errada 5 vezes: as ações ficam bloqueadas por 15 min.", "Senha bloqueada: tente amanhã.",
+                  "Senha de atuação: peça ao gerente da sua O&M."]:          # o conceito do bot, nunca o valor
         assert _sem_segredos(texto) == texto, (texto, _sem_segredos(texto))
 
 
@@ -2159,6 +2183,19 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
               "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
              (_MeuPlanoQueEscreve("Não precisa fazer mais nada.", "Não precisa fazer mais nada."),
               "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
+             # o passo que NÃO veio, dito sem as palavras da lista: aviso — informação só quando o texto afirma que
+             # acabou (avaliação 25: saíam como informação, com o log verde)
+             (_MeuPlanoQueEscreve("Não é possível fechar a OS 1638: falta concluir a tarefa 8873.",
+                                  "Não é possível fechar a OS 1638: falta concluir a tarefa 8873."),
+              "falta concluir a tarefa 8873", "erro", 3),
+             (_MeuPlanoQueEscreve("A OS 1638 continua aberta.", "A OS 1638 continua aberta."), "continua aberta", "erro", 3),
+             (_MeuPlanoQueEscreve("Depois eu fecho a 1638.", "Não há próximo passo."), "Depois eu fecho", "erro", 3),
+             (_MeuPlanoQueEscreve("O próximo é fechar a OS 1638.", "Não há próximo passo."), "O próximo é fechar", "erro", 3),
+             (_MeuPlanoQueEscreve("A OS 1638 não foi fechada.", "A OS 1638 não foi fechada."), "não foi fechada", "erro", 3),
+             (_MeuPlanoQueEscreve("A OS 1638 segue como estava.", "A OS 1638 segue como estava."), "segue como estava",
+              "erro", 3),                                     # sem afirmar o fim nem dizer o que falta: aviso
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada, mas nada mudou na 1843: falta a data.", "Não há próximo passo."),
+              "falta a data", "erro", 3),                     # o "nada" longe do "falta" não o nega
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro", 3),   # vale o de antes
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro", 3),       # o passo já feito
              # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
@@ -3000,6 +3037,12 @@ def test_o_plural_de_um_tipo_numa_lista_mista_e_a_pergunta_com_emoji_nao_confirm
     for t in ("Sim :)", "Fecha :D", "Sim ;)", "Sim ✓", "Fechou 🤙", "É pra fechar", "Isso mesmo"):
         assert r(t, "Fechar a OS 1638") == "sim", t
     assert r("Pode fechar mesmo", "Fechar a OS 1638") == "duvida"     # a pergunta sem "?"
+    # o emoticon só de sinais: a lista fechada é a dos ALEGRES (avaliação 25: "Apaga ;-;" e "Sim -.-" apagavam)
+    for t in ("Apaga ;-;", "Apaga ;_;", "Sim -.-", "Apaga -.-'", "Pode apagar >.<", "Apaga ¬_¬", "Sim ¬.¬", "Apaga ):",
+              "Sim :<", "Pode apagar :-<", "Apaga e.e", "Apaga -__-", "Apaga isso aí"):
+        assert r(t, resumo, inversores) == "duvida", t
+    for t in ("Sim xD", "Sim!!", "Sim...", "Pode apagar todos ;)"):
+        assert r(t, resumo, inversores) == "sim", t
 
 
 async def test_a_pergunta_de_novo_diz_que_o_sim_vale_para_tudo(db, bot_local, monkeypatch):
@@ -3167,3 +3210,19 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
             # pede de novo (avaliação 21: calar escondia o resto do pedido); o "Pronto." depois disso é o fim
             assert dono.id not in h.PENDENTES and len(falso.conversas) == 3
             assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")
+
+
+def test_os_modulos_do_bot_nao_repetem_nome():
+    """Um `_ESTADO` novo (o estado da senha, na máscara do log) sobrescreveu o `_ESTADO` da assinatura, e "a OS 1638 já
+    foi assinada?" voltaria a ser pedido de assinatura (avaliação 25 — a suíte pegou). Nome repetido no módulo: um some."""
+    import ast
+    import collections
+    from pathlib import Path
+
+    for arq in ("assistente.py", "assistente_helper.py", "assistente_geracao.py"):
+        arvore = ast.parse((Path(__file__).parents[1] / "app" / "services" / arq).read_text())
+        nomes = collections.Counter(
+            alvo.id for n in arvore.body if isinstance(n, (ast.Assign, ast.AnnAssign))
+            for alvo in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(alvo, ast.Name))
+        nomes.update(n.name for n in arvore.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+        assert not [k for k, v in nomes.items() if v > 1], arq

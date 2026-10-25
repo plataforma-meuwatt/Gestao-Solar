@@ -464,7 +464,23 @@ _ENFEITE_DE_EMOJI = {"\ufe0f", "\u200d", *map(chr, range(0x1F3FB, 0x1F400))}
 #: Emoticon de TEXTO de dúvida, desânimo ou susto (":/", ":(", ":|", "-_-", "¬¬", "._.", ":'(", "D:"): o mesmo que
 #: 😕 🙁 😑 — pergunta de novo (avaliação 24: confirmavam o APAGAR). O alegre (":)", ":D", ";)") sai antes das palavras.
 _EMOTICON_DE_DUVIDA = re.compile(r"(?<![\w:])(?:[:;=]['’]?-?[/\\(|\[{@$sSoO0]|D:|-_-|¬¬|\._\.|>_<|[oO]_[oO]|T_T|u_u)(?!\w)")
-_EMOTICON_ALEGRE = re.compile(r"(?<![\w:])(?:[:;=]['’]?-?[)\]DpP3*]+|\(:|\^_?\^|<3)(?!\w)")
+_EMOTICON_ALEGRE = re.compile(r"(?<![\w:])(?:[:;=]['’]?-?[)\]DpP3*]+|\(:|\^_?\^|<3|[xX][dD])(?!\w)")
+
+
+def _emoticon_que_nao_e_alegre(texto: str) -> bool:
+    """O emoticon de TEXTO que não é dos alegres (";-;", "-.-", ">.<", "):", ":<", "e.e") — a lista fechada é a dos
+    alegres, como a dos emojis (avaliação 25: a fechada dos de dúvida deixava "Apaga ;-;" e "Sim -.-" apagarem)."""
+    for pedaco in texto.split():
+        nucleo = pedaco.strip(",.!")
+        if not nucleo or _EMOTICON_ALEGRE.fullmatch(nucleo):
+            continue
+        if re.fullmatch(r"([a-z0-9])[._]\1", nucleo, re.IGNORECASE):          # "e.e", "o_o", "u.u"
+            return True
+        so_sinais = not re.search(r"[^\W_]", nucleo) and not any(
+            unicodedata.category(c) in ("So", "Sk", "Mn", "Cf") for c in nucleo)    # o emoji tem a regra dele
+        if so_sinais and len(nucleo) >= 2:
+            return True
+    return False
 
 
 def _emoji_que_nao_e_sim(texto: str) -> bool:
@@ -570,7 +586,7 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "sim"
     if _PERGUNTA.search(t):                            # "Apaga? 🤔", "Fecha?!", "Apaga❓" (avaliações 21 e 22)
         return "outra"
-    if _emoji_que_nao_e_sim(t) or _EMOTICON_DE_DUVIDA.search(t):
+    if _emoji_que_nao_e_sim(t) or _EMOTICON_DE_DUVIDA.search(t) or _emoticon_que_nao_e_alegre(t):
         return "duvida"
     t = _EMOTICON_ALEGRE.sub(" ", t)
     palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
@@ -600,6 +616,9 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
     # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
     outro_verbo, parcial, alvos, novos = False, False, [], []
     for i, p in enumerate(palavras[1:], start=1):
+        if p == "isso" and varios:                     # "Apaga isso aí" (avaliação 25: apagava os três)
+            parcial = True
+            continue
         if p in _PRONOME_UM:
             parcial = parcial or varios or bool(pessoas)
             continue
