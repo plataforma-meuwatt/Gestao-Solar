@@ -437,11 +437,9 @@ _SISTEMA = (r"(?:\w+ )?(?:smartloggers?|sl ?\d+|roteador(?:es)?|inversor(?:es)?|
             r"sistemas?|sites?|portal|portais|helper|wi-?fi|rede|abs|rel[ée]s?|medidor(?:es)?|c[âa]meras?|nvr|dvr|"
             r"switch|modem|vpn|servidor(?:es)?|cofre|app|aplicativo|meuplano|meuwatt|painel|scada)")
 _CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|(?<!by-)pass|passwd|pwd|pins?|credenc\w*|passcodes?|logins?|"
-                         r"logar|cadeados?|dados de acesso|acessos?(?=\**[ \t]*:(?!\d))|"
+                         r"logar|cadeados?|wi-?fi|dados de acesso|acessos?(?=\**[ \t]*:(?!\d))|"
                          r"acessos? (?:d[oa]s? |aos? |à |às )" + _SISTEMA + r"|"
                          r"acessos? (?:web|remotos?|ssh|snmp|ftp|telnet|admin|root|de administrador|de instalador)|"
-                         # o Wi-Fi como rótulo ("Wi-Fi da UFV Tietê: …") ou a senha/rede dele — não "o Wi-Fi caiu às 10:30"
-                         r"wi-?fi\b[^:\n]{0,40}(?<!\d)(?=:(?!\d))|(?:senha|chave|rede|ssid) (?:d[oa] )?wi-?fi|"
                          # "usuário admin, X" — não "usuário 92, técnico de campo"; "entre com admin / X" — não "entra
                          # com a equipe"; "entrar no SmartLogger" — não "entra na fila"
                          r"usu[áa]rio e senha|usu[áa]rio:? (?![\d(])\S+(?:,| /)|"
