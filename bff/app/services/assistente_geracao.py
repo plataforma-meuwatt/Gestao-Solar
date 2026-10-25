@@ -62,6 +62,8 @@ class Contexto:
     #: a mensagem desta vez, como a IA a vê (sem a senha) — o pedido de documento ASSINADO é
     #: reconhecido nela também, não só na pergunta que a IA monta
     pedido: str = ""
+    #: o bot perguntou ao meuPlano por SENHA ou ACESSO de equipamento: a resposta não vai ao log
+    credencial: bool = False
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

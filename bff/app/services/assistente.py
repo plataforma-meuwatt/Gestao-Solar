@@ -111,6 +111,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     except SemConexao as e:
         return {"erro": f"Manutenção indisponível: {e}"}
     pedido = a.get("pergunta") or ""
+    ctx.credencial = ctx.credencial or bool(_PEDE_CREDENCIAL.search(_DO_BOT.sub("", pedido)))
     pergunta = pedido + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
@@ -339,7 +340,7 @@ _SEGREDO_NUMERO = re.compile(
 #: O travessão depois de "senha de atuação — sem ela…" é prosa (não vem logo depois da palavra).
 _SEGREDO_SETA = re.compile(r"(?i)\b(senha|password|pin)(\s*(?:->|=>|→|–|—)\s*)(?!\[)([^\s,;]{3,}?)"
                            r"(?=[.!?]*(?:\s|$|[,;]))")
-_SEGREDO_LISTA = re.compile(r"(?i)(?:(?<=[/|·•]\s)|(?<=[/|·•]))(senha|password|pin)(\s+)(?!(?:d[eoa]s?)\b)(?!\[)"
+_SEGREDO_LISTA = re.compile(r"(?i)(?:(?<=[/|·•][ \t])|(?<=[/|·•]))(senha|password|pin)([ \t]+)(?!(?:d[eoa]s?)\b)(?!\[)"
                             r"([^\s,;]{3,}?)(?=[.!?]*(?:\s|$|[,;]))")
 #: O segundo segredo da mesma frase ("a senha do 3 é •••• e do 4 é sungrow4").
 _SEGREDO_EM_SEGUIDA = re.compile(r"(••••)(\s+e\s+d[eoa]s?\s+[^\n:=.!?;]{1,40}?\s*(?:\bé\b|:)\s*)(?!\[)"
@@ -383,22 +384,54 @@ def _e_prosa(m: re.Match) -> bool:
 #: A LINHA que fala de credencial e a REVELA — o formato do meuPlano, que o IA.MD de lá manda exibir a quem tem nível
 #: ("• **Senha:** Huawei@123", "As senhas: SL1 …", "A senha padrão de fábrica do SmartLogger é X", "Credenciais do
 #: SmartLogger: admin / X", "Usuário admin, senha X", "| senha | X |"; avaliação 25: 20 de 22 formatos passavam). O
-#: valor some até o fim da linha — menos a prosa ("é a mesma do meuPlano", `_PROSA`) e o conceito do próprio bot ("sua
-#: senha", "senha de atuação", os marcadores), que nunca trazem o valor.
-_CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|pins?|credenciais|credencial|passcodes?)\b")
+#: valor some até o fim da linha — menos a prosa ("é a mesma do meuPlano", `_PROSA`) e o conceito do próprio bot ("senha
+#: de atuação", os marcadores), que nunca trazem o valor.
+_CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|pass|passwd|pwd|pins?|credenciais|credencial|passcodes?)\b")
 _DO_BOT = re.compile(r"(?i)senha de atua|\[(?:senha|n[úu]mero) ")      # "sua senha do SmartLogger é X" não é do bot
-_SEPARADOR = re.compile(r"(?i)\*{0,2}[ \t]*(?<!\d)[:=]\*{0,2}|[ \t]+(?:é|eh|s[ãa]o|ficou|fica|era|ser[áa]|virou)\b|"
+#: O ":" entre dois números é a hora ("14:32"), não o separador; depois do número, é ("Senha do SL1: X").
+_SEPARADOR = re.compile(r"(?i)\*{0,2}[ \t]*(?:(?<!\d)[:=]|[:=](?!\d))\*{0,2}|[ \t]+(?:é|eh|s[ãa]o|ficou|fica|era|ser[áa]|virou)\b|"
                         r"[ \t]*(?:->|=>|→|–|—|\|)")
 #: …ou a palavra e o valor logo depois, numa LISTA ("admin, senha X", "login admin e senha X", "· **senha** X").
 _EM_LISTA = re.compile(r"(?i)(?:[,·/|—–]|\be)[ \t]*\*{0,2}(?:senhas?|passwords?|pins?)\*{0,2}[ \t]+(?=([^\s,;]{3,}))")
 _DETERMINANTE = {"a", "o", "as", "os", "um", "uma"}
+#: A pontuação e o Markdown em volta da palavra ("**Nova@2024**", "`X`", "(não").
+_BORDA = "*_`'\"«»“”()[]{}<>.,;:!?•"                # "•": o que a regra da palavra já escondeu
+_CODIGO = re.compile(r"`([^`\n]+)`")
+#: Dentro do BLOCO de credenciais (abaixo de "Senhas:"), o separador da linha de valor ("• SL1: X", "- SL1 → X",
+#: "a do SL2 é X"), o marcador de lista e a cerca do bloco de código.
+_SEP_DO_BLOCO = re.compile(r"(?i)[ \t]*(?:(?<!\d)[:=]|[:=](?!\d))\*{0,2}|[ \t]+(?:é|eh|s[ãa]o)\b|[ \t]*(?:->|=>|→|–|—|\|)")
+_MARCADOR = re.compile(r"[ \t]*(?:(?:[-*•·]|\d+[.)])[ \t]+)?")
+_CERCA = re.compile(r"[ \t]*(?:```|~~~)")
+
+
+def _palavras(trecho: str) -> list[str]:
+    """As palavras do trecho, sem a pontuação e o Markdown em volta e sem o artigo — a palavra INTEIRA: "Nova@2024"
+    não é a prosa "nova" (avaliação 26)."""
+    return [p for p in (t.strip(_BORDA).lower() for t in trecho.split()) if p and p not in _DETERMINANTE]
+
+
+def _e_prosa_ou_tamanho(trecho: str) -> bool:
+    p = _palavras(trecho)
+    return bool(p) and (p[0] in _PROSA or (p[0].isdigit() and len(p) > 1 and p[1] in _UNIDADE))
+
+
+def _sem_forma_de_senha(trecho: str) -> str:
+    """A palavra com cara de senha — letra e número, ou símbolo ("Changeme1", "Huawei@123") — some."""
+    def troca(m: re.Match) -> str:
+        nucleo = m.group(0).strip(_BORDA)
+        if len(nucleo) >= 4 and re.search(r"[^\W\d_]", nucleo) and re.search(r"[\d@#$%&*!]", nucleo):
+            return m.group(0).replace(nucleo, "••••")
+        return m.group(0)
+    return re.sub(r"\S+", troca, trecho)
 
 
 def _sem_credencial(linha: str) -> str:
     if _DO_BOT.search(linha):
         return linha
+    # o valor entre crases na linha que fala de credencial ("Use `X` (senha padrão de fábrica)")
+    linha = _CODIGO.sub(lambda m: m.group(0) if _CREDENCIAL.search(m.group(1)) else "`••••`", linha)
     lista = _EM_LISTA.search(linha)
-    if lista is not None and lista.group(1).lower().strip("*") not in _PROSA | {"de", "do", "da", "não", "nao", "foi"}:
+    if lista is not None and lista.group(1).strip(_BORDA).lower() not in _PROSA | {"de", "do", "da", "não", "nao", "foi"}:
         return linha[:lista.end()] + "••••"
     for m in _CREDENCIAL.finditer(linha):
         # o separador na MESMA frase, perto da palavra ("A senha padrão de fábrica do SmartLogger é X")
@@ -406,28 +439,74 @@ def _sem_credencial(linha: str) -> str:
         ate = min(m.end() + (frase.start() if frase else len(linha)), m.end() + 60)
         sep = _SEPARADOR.search(linha, m.end(), ate)
         if (sep is None or set(re.findall(r"[^\W_]+", linha[m.end():sep.start()].lower())) & _ESTADO_DA_SENHA
-                or linha[sep.end():].lstrip(" (*").startswith(("••••", "["))):   # já escondido pela regra da palavra
+                or linha[sep.end():].lstrip(" (*`").startswith(("••••", "["))):  # já escondido pela regra da palavra
             continue
-        palavras = [p for p in re.findall(r"[^\W_]+", linha[sep.end():].lower()) if p not in _DETERMINANTE]
-        if palavras and palavras[0] not in _PROSA and not (palavras[0].isdigit() and palavras[1:2] and
-                                                           palavras[1] in _UNIDADE):
+        if _palavras(linha[sep.end():]) and not _e_prosa_ou_tamanho(linha[sep.end():]):
             return linha[:sep.end()] + " ••••"
     return linha
 
 
+def _sem_credenciais(texto: str) -> str:
+    """Linha a linha (`_sem_credencial`); e a linha de credencial que TERMINA em ":" ("Senhas:", "**Senha do
+    SmartLogger:**", "As credenciais são:", "a senha é a de fábrica:") abre um BLOCO até o fim da resposta: o valor
+    vem nas linhas de baixo — em lista, no bloco de código ou sozinho (avaliação 26: 11 de 15 formatos de várias
+    linhas passavam). No bloco, a linha de valor perde o que vem depois do separador; a linha curta (menos de 4
+    palavras), o conteúdo; a frase fica, sem a palavra com cara de senha. A prosa (`_PROSA`) fica inteira."""
+    saida, bloco, cerca = [], False, False
+    for linha in texto.split("\n"):
+        if _CERCA.match(linha):
+            cerca = not cerca
+            saida.append(linha)
+        elif _CREDENCIAL.search(linha) and not _DO_BOT.search(linha):
+            saida.append(_sem_credencial(linha))
+            bloco = bloco or linha.rstrip(" \t*_").endswith(":")
+        elif not bloco or not linha.strip():
+            saida.append(linha)
+        else:
+            marcador = _MARCADOR.match(linha).group(0)
+            conteudo = linha[len(marcador):]
+            sep = None if cerca else _SEP_DO_BLOCO.search(conteudo)
+            if cerca:
+                saida.append(marcador + "••••")
+            elif sep is not None:
+                resto = conteudo[sep.end():]
+                saida.append(linha if not _palavras(resto) or _e_prosa_ou_tamanho(resto)
+                             else marcador + conteudo[:sep.end()] + " ••••")
+            elif len(_palavras(conteudo)) < 4:
+                saida.append(linha if _e_prosa_ou_tamanho(conteudo) else marcador + "••••")
+            else:
+                saida.append(marcador + _sem_forma_de_senha(conteudo))
+    return "\n".join(saida)
+
+
+def _so_tracos(linha: str) -> bool:
+    return "-" in linha and all(set(c.strip()) <= set("-: ") for c in linha.split("|"))
+
+
 def _sem_coluna_de_senha(texto: str) -> str:
-    """A tabela com COLUNA de senha ("| Equipamento | Usuário | Senha |"): o valor dela some nas linhas de baixo."""
+    """A tabela com COLUNA de senha ("| Equipamento | Usuário | Senha |", ou sem a barra da frente e com a linha de
+    traços embaixo — avaliação 26): o valor dela some nas linhas de baixo."""
     linhas, colunas = texto.split("\n"), None             # None: fora de tabela; senão, as colunas de senha
     for i, linha in enumerate(linhas):
-        if not linha.lstrip().startswith("|"):
+        if "|" not in linha:
             colunas = None
             continue
         celulas = linha.split("|")
         if colunas is None:
-            colunas = {j for j, c in enumerate(celulas) if _CREDENCIAL.search(c) and not _DO_BOT.search(c)}
-        elif colunas and not all(set(c.strip()) <= set("-: ") for c in celulas):
+            if linha.lstrip().startswith("|") or (i + 1 < len(linhas) and _so_tracos(linhas[i + 1])):
+                colunas = {j for j, c in enumerate(celulas) if _CREDENCIAL.search(c) and not _DO_BOT.search(c)}
+        elif colunas and not _so_tracos(linha):
             linhas[i] = "|".join(" •••• " if j in colunas and c.strip() else c for j, c in enumerate(celulas))
     return "\n".join(linhas)
+
+
+#: A pergunta ao meuPlano que pede SENHA ou ACESSO de equipamento — é a que faz o assistente de lá revelar a senha
+#: (`consultar_acessos_equipamentos`, a quem tem nível): a resposta, que pode trazê-la em qualquer formato, fica FORA
+#: do Log do bot (avaliação 26). A pessoa a recebe inteira, e o meuPlano audita cada senha revelada.
+_PEDE_CREDENCIAL = re.compile(r"(?i)\b(?:senhas?|passwords?|pass|passwd|pwd|pins?|credenc\w*|passcodes?|logins?|logar|"
+                              r"acessos|dados de acesso)\b|\bacesso (?:d[oa]s?|ao|à|web|remoto|ssh|snmp)\b")
+RESPOSTA_OMITIDA = ("[resposta fora do log: o bot pediu ao meuPlano o acesso de um equipamento; a pessoa recebeu a "
+                    "resposta inteira, e o meuPlano registra cada revelação]")
 
 
 def _sem_segredos(texto: str) -> str:
@@ -441,7 +520,7 @@ def _sem_segredos(texto: str) -> str:
     for padrao in (_SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) else m.group(1) + m.group(2) + "••••",
                            texto)
-    return "\n".join(_sem_credencial(linha) for linha in _sem_coluna_de_senha(texto).split("\n"))
+    return _sem_credenciais(_sem_coluna_de_senha(texto))
 
 
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
@@ -460,7 +539,7 @@ def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
             pergunta=(pergunta or None) and _sem_segredos(pergunta)[:4000],
             resposta=(resposta or None) and _sem_segredos(resposta)[:8000],
             duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
-            erro=(erro or None) and erro[:1000],
+            erro=(erro or None) and _sem_segredos(erro)[:1000],
             **({"em": em} if em else {}),
         ))
         db.commit()
@@ -742,9 +821,10 @@ _CORTESIA = re.compile(r"(?:^|(?<=[.!?,;\n—–]))\s*(?:(?:(?:posso|consigo) (?
 #: como informação. Decide só o tom do aviso — calar, nunca. A negação ("não há mais tarefas pendentes") não conta.
 #: A negação só conta COLADA na palavra ("não falta", "não há mais tarefas pendentes", "não precisa"): em "Não é
 #: possível fechar a OS 1638: falta concluir a 8873" o "não" nega outro verbo (avaliação 25: o "falta" sumia).
-_NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum[a]?)\s+(?:(?:h[áa]|tem|existe|resta|mais|ficou|outr[oa]s?|tarefas?|"
-                         r"itens?|nada)\s+){0,3}(?:falta(?:m|ndo)?|pr[óo]xim[oa]s?(?: passos?)?|outros? passos?|pendentes?|"
-                         r"pend[êe]ncias?|precisa|vou|passos?)\b", re.IGNORECASE)
+_NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum[a]?)\s+(?:(?:h[áa]|havia[m]?|tem|t[êe]m|tinha[m]?|existe[m]?|"
+                         r"existia[m]?|resta[m]?|restou|mais|ficou|ficaram|outr[oa]s?|tarefas?|itens?|nada)\s+){0,3}"
+                         r"(?:falta(?:m|ndo)?|pr[óo]xim[oa]s?(?: passos?)?|outros? passos?|pendentes?|pend[êe]ncias?|precisa|"
+                         r"vou|passos?|abert[oa]s?|em aberto)\b", re.IGNORECASE)
 _PENDENCIA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpendentes?\b|\bpend[êe]ncias?\b|\bpode ser (?:fechad|conclu|finalizad|"
                         r"registrad|feit)|\bdepende\b|\bprecisa\b|\bpr[óo]ximo passo\b|\bconfirmando\b|"
                         r"\bpropo(?:r|nho|sta)\b|\bquer que eu\b|\bainda n[ãa]o\b|\bpront[ao]s? para\b|"
@@ -753,6 +833,11 @@ _PENDENCIA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpendentes?\b|\bpend[êe]ncias?\b
                         r"\bn[ãa]o (?:foi|foram|consegui|conseguiu|deu|d[áa]|pude|p[ôo]de|[ée] poss[íi]vel)\b|"
                         r"\bimposs[íi]vel\b|\bfalh|\berro\b|\bcontinua\b|\bresta(?:m)?\b|\bdepois\b|"
                         r"\bagora [ée] s[óo]\b|\bpr[óo]xim[oa]s?\b|"
+                        # o que segue ABERTO ou esperando ("a 1843 ainda está aberta", "segue em execução", "aguarda o
+                        # cliente", "ficou para outra hora", "exceto a 1843", "não encontrei essa OS" — avaliação 26)
+                        r"\babert[oa]s?\b|\bem aberto\b|\bem (?:execu[çc][ãa]o|andamento)\b|\baguard|\bpermanece|"
+                        r"\bseguem?\b|\bainda (?:h[áa]|tem|existe|est[áa]|resta)\b|\bfic(?:a|am|ou|aram|ar) para\b|"
+                        r"\bexceto\b|\bpor[ée]m\b|\blembr|\bn[ãa]o (?:encontrei|achei|localizei|sei|tenho)\b|"
                         # o que ele pede à pessoa ("confirme e eu concluo", "mande a data de término")
                         r"\b(?:confirme|mande|envie|informe|diga|escolha|defina)\b", re.IGNORECASE)
 #: O pedido de novo quando o meuPlano repropõe o passo que acabou de ser feito.
@@ -1144,7 +1229,8 @@ async def _atender(evento: dict) -> None:
         # log (aparecia verde, "Respondeu").
         erro = resposta.split("\n")[0] if falhou else erro_do_resto
         _registrar(db, telefone, user, "erro" if erro else "respondeu", pergunta=entrada["content"],
-                   resposta=resposta, ferramentas=ctx.ferramentas if ctx else
+                   resposta=RESPOSTA_OMITIDA if ctx is not None and ctx.credencial else resposta,
+                   ferramentas=ctx.ferramentas if ctx else
                    ["senha_de_atuacao" if tentativa else "confirmacao"],
                    inicio=inicio, em=enviada, erro=erro)
     except Exception as exc:                               # noqa: BLE001

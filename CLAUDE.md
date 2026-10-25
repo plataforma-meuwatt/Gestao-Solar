@@ -833,8 +833,16 @@ alarme: 2043" fica). E a LINHA que fala de credencial e a revela — o formato d
 exibir a quem tem nível: "• **Senha:** X", "As senhas: SL1 …", "A senha padrão de fábrica do SmartLogger é X",
 "Credenciais do SmartLogger: admin / X", "Usuário admin, senha X", a tabela com coluna "Senha" — tem o valor escondido
 até o fim da linha (`_sem_credencial`, `_sem_coluna_de_senha`; avaliação 25: 20 de 22 formatos passavam), menos a
-prosa da lista, o ESTADO da senha ("Senha errada 5 vezes: …") e o conceito do bot ("senha de atuação" e os
-marcadores — "sua senha do SmartLogger é X" não é do bot e some). Os marcadores do bot ("[senha oculta]")
+prosa da lista (pela palavra INTEIRA: "Nova@2024" não é a prosa "nova"), o ESTADO da senha ("Senha errada 5 vezes:
+…") e o conceito do bot ("senha de atuação" e os marcadores — "sua senha do SmartLogger é X" não é do bot e some).
+Também "Pass:"/"Pwd:", o valor entre crases na linha da credencial e a tabela sem a barra da frente. A linha de
+credencial que TERMINA em ":" ("Senhas:", "**Senha do SmartLogger:**", "As credenciais são:") abre um BLOCO até o fim
+da resposta (`_sem_credenciais`): a linha de valor perde o que vem depois do separador ("• SL1: ••••"), a curta (menos
+de 4 palavras) o conteúdo, o bloco de código tudo, e a frase fica sem a palavra com cara de senha (avaliação 26: 11 de
+15 formatos de várias linhas passavam). E quando a pergunta que o bot fez ao meuPlano é de SENHA ou ACESSO
+(`_PEDE_CREDENCIAL`, conferida na pergunta da IA — a pessoa pode não ter dito "senha"), a resposta inteira fica fora
+do log (`RESPOSTA_OMITIDA`): é a pergunta que faz o meuPlano revelar (`consultar_acessos_equipamentos`, a quem tem
+nível), e lá cada revelação fica registrada. O campo do erro do log passa pela mesma máscara. Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -972,7 +980,10 @@ em qualquer parte — "Não há próximo passo: o pedido era só fechar a OS 163
 "pendente", "pode ser fechada", "depende", "precisa", "não consegui", "não foi", "continua", "resta", "depois", "o
 próximo é"…; a negação COLADA — "não há mais tarefas pendentes", "não precisa" — não conta; em "Não é possível fechar
 …: falta…" o "não" nega outro verbo). Avaliação 25: "Não é possível fechar a OS 1638: falta concluir a 8873", "A OS
-1638 continua aberta", "Depois eu fecho a 1638" saíam como informação, com o log verde. A lista de palavras
+1638 continua aberta", "Depois eu fecho a 1638" saíam como informação, com o log verde. Avaliação 26: o feito junto
+com o que segue ABERTO ou esperando também é aviso ("…, mas a 1843 ainda está aberta", "segue em execução", "aguarda
+o cliente", "permanece", "ficou para outra hora", "exceto a 1843", "porém", "lembre-se de…", "não encontrei a 1843");
+"não havia tarefas pendentes", "não há tarefas abertas" seguem sendo o fim. A lista de palavras
 decide só o TOM do aviso, nunca se a pessoa fica sabendo (avaliação 23: procurar o fim em qualquer parte do texto
 calava "Não há mais tarefas pendentes na OS 1638, que já pode ser fechada"; avaliação 22: tomar só o começo era
 alarme falso). O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o

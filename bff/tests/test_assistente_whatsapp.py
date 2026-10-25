@@ -1064,6 +1064,127 @@ def test_o_log_nao_guarda_o_segredo_que_o_meuplano_revelou():
     assert _sem_segredos("[senha de atuação]") == "[senha de atuação]"
 
 
+async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, monkeypatch):
+    """O meuPlano revela a senha do equipamento a quem tem nível e a escreve do jeito que quiser (lista, linha de baixo,
+    bloco de código): a resposta a um pedido de SENHA ou ACESSO fica fora do Log do bot — pela pergunta que a IA fez,
+    mesmo quando a pessoa não disse "senha" —, e a pessoa a recebe inteira (avaliação 26)."""
+    import json as _json
+
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import vinculos
+
+    respostas = iter(["**Senhas dos SmartLoggers:**\n• SL1: Huawei@123\n• SL2: Changeme1", "2 OS abertas: 1638 e 1843."])
+    perguntas = iter(["Quais os acessos dos SmartLoggers da UFV Ibitinga?", "OS abertas da UFV Ibitinga"])
+
+    class _MP:
+        async def assistente_chat(self, token, mensagens):
+            self.texto = next(respostas)
+            return 7
+
+        async def assistente_run(self, token, run_id):
+            return {"status": "DONE", "type": "message", "text": self.texto}
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": _json.loads(msgs[-1]["content"])["texto"]}
+        return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+            "name": "manutencao", "arguments": _json.dumps({"pergunta": next(perguntas)})}}]}
+
+    mp = _MP()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: mp)
+    monkeypatch.setattr(assistente.asyncio, "sleep", _nada)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "como entro nos SL de Ibitinga?"))
+    assert "Huawei@123" in bot_local.enviados[-1] and "Changeme1" in bot_local.enviados[-1]
+    await assistente.atender(_ev(dono, 2, "e as OS abertas?"))
+    linhas = db.query(RegistroBot).order_by(RegistroBot.id).all()
+    assert [(r.pergunta, r.resposta) for r in linhas] == [
+        ("como entro nos SL de Ibitinga?", assistente.RESPOSTA_OMITIDA), ("e as OS abertas?", "2 OS abertas: 1638 e 1843.")]
+    assert all(assistente._PEDE_CREDENCIAL.search(p) for p in (
+        "Qual a senha do SL1?", "Me passa o login do SmartLogger", "dados de acesso do ABS", "o acesso web do SL2"))
+    assert not any(assistente._PEDE_CREDENCIAL.search(p) for p in (
+        "OS abertas da UFV Ibitinga", "Qual a geração de hoje?", "Feche a OS 1638"))
+
+
+def test_o_log_esconde_a_senha_das_linhas_de_baixo():
+    """A linha que termina em ":" ("Senhas:", "**Senha do SmartLogger:**", "As credenciais são:") e o valor nas linhas
+    de baixo — em lista, no bloco de código, sozinho —, a tabela sem a barra da frente, "Pass:"/"Pwd:", a senha que
+    começa com palavra de prosa ("Nova@2024") e o valor entre crases antes da palavra: 11 de 15 passavam (avaliação 26)."""
+    from app.services.assistente import _sem_segredos
+
+    for texto, guardado in (
+        ("**Senha do SmartLogger:**\n`Huawei@123`", "**Senha do SmartLogger:**\n••••"),
+        ("**Senhas dos SmartLoggers:**\n• SL1: Huawei@123\n• SL2: Changeme1",
+         "**Senhas dos SmartLoggers:**\n• SL1: ••••\n• SL2: ••••"),
+        ("Senhas:\n- SL1 → Huawei@123\n- SL2 → Changeme1", "Senhas:\n- SL1 → ••••\n- SL2 → ••••"),
+        ("As credenciais são:\n- usuário: admin\n- Huawei@123", "As credenciais são:\n- usuário: ••••\n- ••••"),
+        ("Equipamento | Usuário | Senha\n--- | --- | ---\nSL1 | admin | Huawei@123",
+         "Equipamento | Usuário | Senha\n--- | --- | ---\nSL1 | admin | •••• "),
+        ("**Senha:** Nova@2024", "**Senha:** ••••"),
+        ("Use `Huawei@123` (senha padrão de fábrica).", "Use `••••` (senha padrão de fábrica)."),
+        ("Login: admin\nPass: Huawei@123", "Login: admin\nPass: ••••"),
+        ("Pwd: Huawei@123", "Pwd: ••••"),
+        ("A senha está abaixo:\n```\nHuawei@123\n```", "A senha está abaixo:\n```\n••••\n```"),
+        ("Para o inversor 13 a senha é a de fábrica:\nHuawei@123", "Para o inversor 13 a senha é a de fábrica:\n••••"),
+        ("Senhas:\n\nPara o SL2, use Changeme1 no acesso web.",
+         "Senhas:\n\nPara o SL2, use •••• no acesso web."),
+        ("A senha está abaixo:\n```\nentre com admin e changeme na tela\n```", "A senha está abaixo:\n```\n••••\n```"),
+        ("**Senha do SL1:** Huawei@123", "**Senha do SL1:** ••••"),        # o ":" depois do número separa
+    ):
+        assert _sem_segredos(texto) == guardado, texto
+    for prosa in (
+        "Senha:\nNão encontrei a senha desse equipamento no meuPlano.",
+        "**Senha:**\nSó quem tem nível 3 vê a senha. Peça ao gerente.",
+        "A senha é definida no oem-gs.\nA OS 1638 foi fechada.",
+        "Senhas:\n- a do SL1 é a mesma do SL2\n- a do ABS é pessoal",
+        "Senha:\nNão cadastrada.",
+        "| Equipamento | Senha |\n|---|---|\n| SL1 | |",
+        "Ligue o SL1:\n- admin abre a tela\n- 2 vezes o reset",
+        "A senha de atuação vale até as 14:32.",
+    ):
+        assert _sem_segredos(prosa) == prosa, prosa
+
+
+def test_o_erro_do_log_tambem_esconde_a_senha(db):
+    from app.models.conversa_whatsapp import RegistroBot
+
+    assistente._registrar(db, "+5517997377626", None, "erro", erro="⚠️ … e disse: Senha do SL1: Huawei@123")
+    assert db.query(RegistroBot).one().erro == "⚠️ … e disse: Senha do SL1: ••••"
+
+
+def test_o_feito_com_algo_aberto_ou_esperando_nao_e_o_fim():
+    """O texto que junta o feito com o que segue aberto ou esperando ("…, mas a 1843 ainda está aberta") é AVISO; o
+    feito com a negação colada ("não havia tarefas pendentes") é o fim (avaliação 26: 15 de 16 saíam como fim)."""
+    for texto in ("A OS 1638 foi fechada, mas a 1843 ainda está aberta.", "Tudo certo com a 1638; a 1843 segue em execução.",
+                  "A OS 1638 foi fechada. A 1843 está aguardando a assinatura do cliente.",
+                  "A tarefa 8873 foi concluída; a OS 1638 permanece em execução.",
+                  "A OS 1638 foi fechada. Lembre-se de lançar o dia do Michel na 1843.",
+                  "Nenhum próximo passo: a OS 1843 ficou aberta.", "O pedido está completo, exceto a OS 1843.",
+                  "A tarefa foi concluída e a OS 1638 está aberta.", "A OS 1638 foi fechada. A OS 1843 ficou para outra hora.",
+                  "Tudo certo! A OS 1843 aguarda a sua confirmação.", "A OS 1638 foi fechada. Ainda há a 1843 em aberto.",
+                  "A OS 1638 foi fechada. Sobre a 1843: não encontrei essa OS.", "A OS 1638 foi fechada; a 1843 em aberto.",
+                  "A ficha foi concluída, porém a OS 1638 não pôde ser encerrada.", "Pronto, mas não achei a 1843.",
+                  "A OS 1638 foi fechada; a 1843 está em andamento.", "Pronto. A OS 1843 ainda tem a tarefa 9330 aberta.",
+                  "Tudo feito na 1638. As OS 1843 e 1844 seguem abertas.", "Pronto; não sei qual é a 1843.",
+                  "A OS 1638 foi fechada; não tenho acesso à 1843.", "A OS 1638 foi fechada; não localizei a 1843.",
+                  "Pronto. A 1843 ainda existe sem tarefa.", "Pronto. A 1843 ainda resta.", "Pronto. A 1843 fica para amanhã.",
+                  "A OS 1638 foi fechada; a 1843 permanece sem data.", "A OS 1638 foi fechada; a 1843 segue sem a data.",
+                  "A ficha foi concluída, porém a 1843 não."):
+        assert not (assistente._afirma_o_fim(texto) or assistente._so_o_fim(texto)), texto
+    for texto in ("A OS 1638 foi fechada.", "A OS 1638 foi fechada. Não há tarefas abertas.",
+                  "A OS 1638 foi fechada e não há mais pendências.", "Pronto: a OS 1638 está fechada.",
+                  "Não há próximo passo: o pedido era só fechar a OS 1638, que já está fechada.",
+                  "Não há próximo passo. Nenhuma tarefa ficou aberta.", "A OS 1638 foi fechada; não havia tarefas pendentes.",
+                  "Tudo feito: a OS 1639 foi criada e a 1638 foi fechada.", "A OS 1638 foi fechada; não restam itens em aberto.",
+                  "A OS 1638 foi fechada; nada ficou em aberto.", "A OS 1638 foi fechada; não existem tarefas abertas."):
+        assert assistente._afirma_o_fim(texto) or assistente._so_o_fim(texto), texto
+
+
 # ── avaliação de 24/10/2026 (7ª): técnico, adivinhar a senha, bordas ──────────────────
 
 
@@ -2196,6 +2317,25 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
               "erro", 3),                                     # sem afirmar o fim nem dizer o que falta: aviso
              (_MeuPlanoQueEscreve("A OS 1638 foi fechada, mas nada mudou na 1843: falta a data.", "Não há próximo passo."),
               "falta a data", "erro", 3),                     # o "nada" longe do "falta" não o nega
+             # o feito junto com o que segue ABERTO ou esperando: aviso (avaliação 26: 15 de 16 saíam como informação)
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada, mas a 1843 ainda está aberta.", "Não há próximo passo."),
+              "ainda está aberta", "erro", 3),
+             (_MeuPlanoQueEscreve("A tarefa 8873 foi concluída. A OS 1638 está em execução.",
+                                  "A tarefa 8873 foi concluída. A OS 1638 está em execução."), "está em execução", "erro", 3),
+             (_MeuPlanoQueEscreve("Tudo certo! A OS 1843 aguarda a sua confirmação.", "Não há próximo passo."),
+              "aguarda a sua confirmação", "erro", 3),
+             (_MeuPlanoQueEscreve("Nenhum próximo passo: a OS 1843 ficou aberta.",
+                                  "Nenhum próximo passo: a OS 1843 ficou aberta."), "ficou aberta", "erro", 3),
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada. Sobre a 1843: não encontrei essa OS.", "Não há próximo passo."),
+              "não encontrei essa OS", "erro", 3),
+             (_MeuPlanoQueEscreve("O pedido está completo, exceto a OS 1843.", "Não há próximo passo."), "exceto a OS 1843",
+              "erro", 3),
+             # …e a negação COLADA continua sem alarme
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada; não havia tarefas pendentes.",
+                                  "A OS 1638 foi fechada; não havia tarefas pendentes."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada. Não há tarefas abertas.", "Não há próximo passo."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro", 3),   # vale o de antes
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro", 3),       # o passo já feito
              # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
