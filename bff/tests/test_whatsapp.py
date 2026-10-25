@@ -254,6 +254,26 @@ def test_a_saude_do_canal_diz_quando_o_bot_esta_surdo(cliente_http, administrado
 
 
 @respx.mock
+def test_a_ultima_respondida_conta_a_que_respondeu_com_aviso(cliente_http, administrador, configurado, db):
+    """O selo dizia "última mensagem respondida 18:05", e a das 18:13 tinha sido respondida — com o aviso ⚠️,
+    marcada como erro (avaliação 22). A atrasada (sem resposta) não conta."""
+    from datetime import UTC, datetime
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    respx.get(f"{GW}/interno/saude").mock(return_value=httpx.Response(200, json={
+        "eventos_parados": 0, "eventos_com_erro": 0, "mensagens_sem_aviso": 0}))
+    db.add_all([RegistroBot(telefone="+5517997377626", resultado="respondeu", resposta="Na UFV Ibitinga…",
+                            em=datetime(2026, 10, 24, 21, 5, tzinfo=UTC)),
+                RegistroBot(telefone="+5517997377626", resultado="erro", resposta="✅ Feito… ⚠️ O próximo passo…",
+                            em=datetime(2026, 10, 24, 21, 13, tzinfo=UTC)),
+                RegistroBot(telefone="+5517997377626", resultado="atrasada", em=datetime(2026, 10, 24, 21, 20, tzinfo=UTC))])
+    db.commit()
+    d = cliente_http.get("/api/painel/whatsapp/saude", headers=_sessao(administrador)).json()
+    assert d["ultima_resposta_em"].startswith("2026-10-24T21:13"), d["ultima_resposta_em"]
+
+
+@respx.mock
 async def test_o_gerente_ve_se_o_bot_esta_ouvindo_sem_o_detalhe_tecnico(db, configurado):
     from app.api.v1.empresa import bot_ouvindo
 

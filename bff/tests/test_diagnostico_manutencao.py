@@ -142,3 +142,38 @@ async def test_sem_usina_no_meuplano_o_bloco_explica(db, cliente, usinas, monkey
 
     assert not bloco.ok and bloco.itens == []
     assert "meuPlano" in bloco.detalhe
+
+
+async def test_o_diagnostico_diz_o_numero_em_ptbr_e_o_nome_da_os(db, cliente, usinas, monkeypatch):
+    """Avaliação 22: a tela mostrava "6710.21", "94.34", "tom alerta", "versao consolidada" e "recentes , ,"
+    (a OS do meuPlano não tem `titulo` nem `numero`). O rótulo e o valor vêm PRONTOS em `campos`; 0 kWh é
+    medição e não cai no outro campo (REGRA 0)."""
+    from app.api.v1.painel_clientes import _diagnostico_meuplano, _diagnostico_meuwatt
+
+    porto, ribeirao = usinas
+
+    class _MW:
+        async def geracao_diaria(self, slug, dia):
+            return ({"total_generation_kwh": 6710.21, "plant_availability_pct": 94.34} if slug == "porto-ferreira"
+                    else {"total_generation_kwh": 0, "generation_kwh": 55.0, "plant_availability_pct": None})
+
+    class _MP:
+        async def ordens_servico(self, usina_id):
+            return [{"id": 1843, "name": "Roçagem"}, {"id": 969, "objetivo": None}]
+
+    monkeypatch.setattr("app.api.v1.painel_clientes.vinculos.cliente_meuwatt", lambda _db, _id=None: _MW())
+    monkeypatch.setattr("app.api.v1.painel_clientes.vinculos.cliente_meuplano", lambda _db, _id=None: _MP())
+    mw = _por_usina(await _diagnostico_meuwatt(db, cliente, [porto, ribeirao]))
+    assert mw["Porto Ferreira"]["campos"] == [{"rotulo": "Energia hoje", "valor": "6.710,21 kWh"},
+                                             {"rotulo": "Disponibilidade", "valor": "94,34%"}]
+    assert mw["Ribeirão Bonito"]["campos"] == [{"rotulo": "Energia hoje", "valor": "0,00 kWh"},
+                                              {"rotulo": "Disponibilidade", "valor": None}]
+    mp = _por_usina(await _diagnostico_meuplano(db, cliente, [porto]))
+    assert mp["Porto Ferreira"]["campos"] == [{"rotulo": "Ordens de serviço", "valor": "2"},
+                                             {"rotulo": "Mais recentes", "valor": "OS 1843 · Roçagem; OS 969"}]
+    _fantasia(monkeypatch, ClienteFalso({1: [{"id": 20, "numero": 200, "title": "O&M 2026", "vigente": True,
+                                              "versao_consolidada": None}]}))
+    item = _por_usina(await _diagnostico_manutencao(db, cliente, [porto]))["Porto Ferreira"]
+    assert item["tom"] == "alerta" and item["campos"] == [
+        {"rotulo": "Contratos", "valor": "1"}, {"rotulo": "Contrato", "valor": "O&M 2026"},
+        {"rotulo": "Versão do cronograma publicada", "valor": None}]

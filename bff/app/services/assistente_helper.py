@@ -448,6 +448,11 @@ _CIENCIA = {"valeu", "vlw", "obrigado", "obrigada", "obg", "brigado", "brigada",
 _SO_OK = re.compile(r"^[\s👍✅👌✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
 #: As mãos juntas são "por favor" ou "obrigado" tanto quanto "sim": pergunta de novo (avaliação 19).
 _SO_MAOS = re.compile(r"^[\s🙏\U0001F3FB-\U0001F3FF]+$")
+#: Pergunta, escrita com qualquer sinal: o "?" e o de largura cheia, o espanhol, os de emoji (avaliação 22:
+#: "Apaga❓", "Apaga⁉️", "Apaga？", "¿Apaga" apagavam).
+_PERGUNTA = re.compile(r"[?？¿❓❔⁉⁈⁇]")
+#: Emoji de dúvida, espanto ou receio: o sistema pergunta de novo ("Apagar 🤔" e "Sim 🤔" confirmavam).
+_EMOJI_DE_DUVIDA = re.compile(r"[🤔🧐🤨😕🫤😟🙁☹😬😳😱😨😰😮😯😲🫣😶]")
 
 
 def _palavras(texto: str) -> list[str]:
@@ -544,8 +549,10 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "sim"
     if t and _SO_MAOS.match(t):
         return "duvida"
-    if "?" in t:                                       # "Apaga? 🤔", "Fecha?!" (avaliação 21)
+    if _PERGUNTA.search(t):                            # "Apaga? 🤔", "Fecha?!", "Apaga❓" (avaliações 21 e 22)
         return "outra"
+    if _EMOJI_DE_DUVIDA.search(t):
+        return "duvida"
     palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
     da_acao = set(_palavras(acao)) | set(_palavras(" ".join(itens)))
     if palavras and all(p in _HESITACAO for p in palavras):
@@ -636,13 +643,23 @@ def pergunta_de_novo(user_id: int, texto: str) -> str | None:
     return DE_NOVO.format(escopo=_escopo(p), limite=_limite(p))
 
 
+def de_novo_para_reacao(user_id: int) -> str | None:
+    """A reação (👍) ao resumo da ação do meuPlano esperando o Sim: não confirma — pode ser só "vi" —, mas
+    também não fica em silêncio até a ação vencer (avaliação 22): o sistema pergunta de novo, com os botões.
+    `None` = não há ação do meuPlano esperando (a reação segue ignorada)."""
+    p = PENDENTES.get(user_id)
+    if p is None or p.confirmacao != "sim" or p.mostrada_em is None or monotonic() > p.expira:
+        return None
+    return DE_NOVO.format(escopo=_escopo(p), limite=_limite(p))
+
+
 def so_ciencia(texto: str) -> bool:
     """A mensagem é só agradecimento ou ciência ("valeu", "ok, aguardo", 👍). Pergunta não é."""
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return True
     palavras = _palavras(t)
-    return "?" not in t and 0 < len(palavras) <= 6 and all(_tem(_CIENCIA, p) for p in palavras)
+    return not _PERGUNTA.search(t) and 0 < len(palavras) <= 6 and all(_tem(_CIENCIA, p) for p in palavras)
 
 
 #: Só o cancelamento ("não", "cancela", "não quero", "deixa pra lá") — curto. "Não, o técnico é o

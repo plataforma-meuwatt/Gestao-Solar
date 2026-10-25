@@ -1404,12 +1404,17 @@ def test_o_log_esconde_o_numero_do_segredo_em_qualquer_forma():
         ("a combinação do cadeado é 3262", "a combinação do cadeado é ••••"),
         ("senha 482 - 913 ok", "senha •••• ok"),                  # separador com espaço (avaliação 12)
         ("a senha é: 482 / 913", "a senha é: ••••"),
+        # o trecho "do …" com número ("do inversor 13", "do IP …") passava em claro (avaliação 22)
+        ("senha do inversor 13 é 4821", "senha do inversor 13 é ••••"),
+        ("a senha do IP 10.1.130.2 é admin123", "a senha do IP 10.1.130.2 é ••••"),
     ]:
         assert _sem_segredos(texto) == guardado
     for texto in ["código de erro 2043 no inversor 3", "o código da OS 1639", "Senha não confere (2 de 5). Nada foi feito.",
                   h.ANTES_DO_RESUMO.format(limite="14:32"), "mande a senha de novo até as 14:32.",
                   "Para executar, responda só com a senha até as 14:32. Qualquer outra mensagem cancela.",
-                  "🔒 *Ação esperando a sua senha de atuação*\n• Desligar o inversor 3", "[senha oculta]"]:
+                  "🔒 *Ação esperando a sua senha de atuação*\n• Desligar o inversor 3", "[senha oculta]",
+                  # o número do IDENTIFICADOR e a data não são o segredo (avaliação 22: sumiam do log)
+                  "a senha da OS 1638 é a mesma de ontem", "nova senha 24/10", "senha do IP 10.1.130.2"]:
         assert _sem_segredos(texto) == texto
 
 
@@ -1486,6 +1491,25 @@ async def test_reacao_e_figurinha_nao_cancelam_a_acao_nem_ganham_resposta(db, bo
     assert len(bot_local.enviados) == enviadas and dono.id in h.PENDENTES
     await assistente.atender(_ev(dono, 4, "482913"))
     assert helper_com_get.confirmadas == [("P-1", "pin")]
+
+
+async def test_a_reacao_ao_resumo_que_espera_o_sim_faz_perguntar_de_novo(db, bot_local, monkeypatch):
+    """Avaliação 22: o 👍 (reação) no resumo da ação do meuPlano era ignorado em silêncio, e a ação vencia sem
+    aviso. Não confirma (pode ser só "vi"), mas o sistema pergunta de novo, com os botões do MESMO resumo."""
+    from app.services import assistente_helper as h
+
+    falso = _MeuPlanoDoisPassos()
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    codigo, enviadas = h.PENDENTES[dono.id].codigo, len(bot_local.enviados)
+    await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "reaction", "texto": None})
+    assert falso.aplicadas == [] and dono.id in h.PENDENTES                       # não confirmou nem caiu
+    assert len(bot_local.enviados) == enviadas + 1 and "O *Sim* vale para TUDO isto" in bot_local.enviados[-1]
+    assert bot_local.botoes[-1] == [f"sim:{codigo}", f"nao:{codigo}"]
+    h.PENDENTES.clear()                                                           # sem ação esperando: nada
+    await assistente.atender({"id": 3, "telefone": dono.telefone, "wa_id": "1", "tipo": "reaction", "texto": None})
+    assert len(bot_local.enviados) == enviadas + 1
 
 
 async def test_a_mesma_entrega_duas_vezes_e_atendida_uma_vez_so(db, bot_local, helper_com_get, monkeypatch):
@@ -2050,14 +2074,22 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
              "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
 
     falta = "Pronto, a OS 1638 foi fechada. Falta registrar a 1843 (tarefa 9330): qual a data de término?"
-    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu"),        # o fim: nada a dizer
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano disse:\n\n" + pergunta, "respondeu"),
-             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano disse:\n\n" + falta, "respondeu"),   # pergunta
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro"),   # vale o de antes
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro"),       # o passo já feito
-             (_MeuPlanoQueEscreve(criar, "Pronto."), "⚠️ O meuPlano não trouxe outro passo depois deste", "erro"),
-             (_MeuPlanoQueEscreve(criar, "proposta"), "• Fechar a OS 1638", "respondeu"))       # pediu de novo
-    for n, (falso, espera, resultado) in enumerate(casos):
+    # (o meuPlano, o que a pessoa lê depois do ✅ — None: nada —, o log, quantas vezes o bot perguntou)
+    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu", 2),        # o fim: nada a dizer
+             # o fim dito de outro jeito (avaliação 22: a regra 7 do IA.MD de lá proíbe "pronto")
+             (_MeuPlanoQueEscreve("Não há próximo passo."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Pronto, não falta nada."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Seu pedido está completo."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Pronto! Posso ajudar em algo mais?"), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano disse:\n\n" + pergunta, "respondeu", 3),
+             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano disse:\n\n" + falta, "respondeu", 3),   # pergunta
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro", 3),   # vale o de antes
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro", 3),       # o passo já feito
+             # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
+             (_MeuPlanoQueEscreve(criar, "Pronto."), None, "respondeu", 3),
+             (_MeuPlanoQueEscreve(criar, criar), "⚠️ O meuPlano não trouxe outro passo depois deste", "erro", 3),
+             (_MeuPlanoQueEscreve(criar, "proposta"), "• Fechar a OS 1638", "respondeu", 3))       # pediu de novo
+    for n, (falso, espera, resultado, perguntas) in enumerate(casos):
         h.PENDENTES.clear()
         _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
         dono = _conta(db, f"dono{n}", f"+55179973770{n:02d}")
@@ -2071,7 +2103,7 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
         else:                                                          # avisado só quando é erro
             assert espera in saidas[-1] and saidas[-1].startswith("⚠️") == (resultado == "erro"), (n, saidas[-1])
         assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == resultado, n
-        assert len(falso.conversas) == (2 if n == 0 else 3), n                  # pediu de novo uma vez só
+        assert len(falso.conversas) == perguntas, n                              # pediu de novo uma vez só
 
 
 def test_o_resumo_diz_quantas_linhas_ficaram_de_fora():
@@ -2867,6 +2899,11 @@ def test_o_plural_de_um_tipo_numa_lista_mista_e_a_pergunta_com_emoji_nao_confirm
     assert r("Sim, crie a OS 1639", "Abrir a OS 1639") == "sim"            # "a OS 1639" não é quantidade
     for t in ("Apagar? 🤔", "Apaga? 😳", "Apaga?!", "Sim? 😅", "Sim?!", "Pode fechar?!", "Fecha?..."):
         assert r(t, resumo, inversores) == "outra" and r(t, "Fechar a OS 1638") == "outra", t
+    # a pergunta escrita com outro sinal e o emoji de dúvida (avaliação 22: "Apaga❓" e "Sim 🤔" apagavam)
+    for t in ("Apaga❓", "Apaga⁉️", "Pode apagar❔", "Sim❓", "Apaga？", "¿Apaga", "Apaga mesmo❓"):
+        assert r(t, resumo, inversores) == "outra" and r(t, "Fechar a OS 1638") == "outra", t
+    for t in ("Apagar 🤔", "Sim 🤔", "Pode apagar 😬", "Fecha 😳"):
+        assert r(t, resumo, inversores) == "duvida" and r(t, "Fechar a OS 1638") == "duvida", t
 
 
 async def test_a_pergunta_de_novo_diz_que_o_sim_vale_para_tudo(db, bot_local, monkeypatch):
@@ -2964,6 +3001,50 @@ async def test_o_toque_depois_de_a_propria_mensagem_cancelar_diz_isso(db, bot_lo
     assert falso.aplicadas == [] and not any("482913" in (m or "") for m in bot_local.enviados)
 
 
+class _MeuPlanoQueDevolve(_MeuPlanoQueRepete):
+    """Propõe desinstalar 2 pontos e, no apply, devolve o `data` dado — o resultado REAL do handler de lá."""
+
+    def __init__(self, dados):
+        super().__init__({"node_ids": [1, 2]}, acao="desinstalar_equipamento",
+                         resumo="Desinstalar o equipamento de 2 ponto(s).")
+        self.dados = dados
+
+    async def assistente_aplicar(self, token, acao, args):
+        self.aplicadas.append((acao, args))
+        return {"ok": True, "message": "Ação aplicada.", "data": self.dados}
+
+
+async def test_o_feito_diz_o_resultado_real_do_meuplano(db, bot_local, monkeypatch):
+    """Avaliação 22, contra o meuPlano real: desinstalar os Inversores 1 e 2 voltou "1 equipamento(s)
+    removido(s); 0 vazio(s); 1 bloqueado(s)" e o bot dizia "✅ Feito… Desinstalar o equipamento de 2
+    ponto(s)", com o log verde. E o handler que recusa sem gravar responde 200 com `erro`."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    bloqueado = {"removidos": 1, "pulados_vazios": 0, "resumo": "1 equipamento(s) removido(s); 0 vazio(s); 1 bloqueado(s).",
+                 "erros": [{"node_id": 1, "detail": "Inversor 1 tem 9 ensaios: não dá para desinstalar."}]}
+    recusa = {"erro": "Não dá para apagar 'Huawei': está em uso por 3 equipamento(s)/modelo(s).", "total": 3}
+    inteiro = {"removidos": 2, "resumo": "2 equipamento(s) removido(s); 0 vazio(s); 0 bloqueado(s)."}
+    sem_resumo = {"criadas": 1, "erros": [{"source": 1}, {"source": 2}]}           # sem o motivo de cada um
+    casos = ((bloqueado, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 1 "
+                         "equipamento(s) removido(s); 0 vazio(s); 1 bloqueado(s).\n• Inversor 1 tem 9 ensaios", "erro", 1),
+             (recusa, "❌ O meuPlano recusou: Não dá para apagar 'Huawei': está em uso por 3 equipamento(s)/modelo(s). "
+                      "Nada foi feito.", "erro", 1),
+             (inteiro, "✅ Feito no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 2 equipamento(s) "
+                       "removido(s); 0 vazio(s); 0 bloqueado(s).", "respondeu", 2),
+             (sem_resumo, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — 2 item(ns) com "
+                          "falha.\n\n", "erro", 1))
+    for n, (dados, comeca, resultado, perguntas) in enumerate(casos):
+        falso = _MeuPlanoQueDevolve(dados)
+        _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        dono = _conta(db, f"dono{n}", f"+55179973771{n:02d}")
+        await assistente.atender(_ev(dono, 10 * n + 1, "crie: desinstala os inversores 1 e 2"))
+        antes = len(bot_local.enviados)
+        await assistente.atender(_toque(dono, 10 * n + 2))
+        assert bot_local.enviados[antes].startswith(comeca), (n, bot_local.enviados[antes])
+        assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == resultado, n
+        assert len(falso.conversas) == perguntas, n                 # em parte ou recusado: não segue para o resto
+
+
 async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_oferecido(db, bot_local, monkeypatch):
     """Num pedido de vários passos, nada impedia o meuPlano de repropor a MESMA ação que acabou de ser feita
     — e o próximo Sim a faria duas vezes. Mesma ação e mesmos argumentos: é o fim do pedido. Outros
@@ -2981,6 +3062,6 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
         if oferecido:
             assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)" and len(falso.conversas) == 2
         else:
-            # pede de novo (avaliação 21: calar escondia o resto do pedido) e, sem outro passo, avisa
+            # pede de novo (avaliação 21: calar escondia o resto do pedido); o "Pronto." depois disso é o fim
             assert dono.id not in h.PENDENTES and len(falso.conversas) == 3
-            assert bot_local.enviados[-1].startswith("⚠️ O meuPlano não trouxe outro passo depois deste")
+            assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")

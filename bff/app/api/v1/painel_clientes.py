@@ -8,7 +8,9 @@ gerente da empresa dela, no oem-gs. A ficha só diz se a pessoa tem o token dela
 A senha provisória aparece **uma vez**, na resposta que a gera. Nenhum GET aqui a devolve.
 """
 
+import asyncio
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -294,9 +296,10 @@ async def diagnostico(
         .order_by(PlantLink.nome)
     ).all()
 
-    mw = await _diagnostico_meuwatt(db, cliente, usinas)
-    mp = await _diagnostico_meuplano(db, cliente, usinas)
-    contrato = await _diagnostico_manutencao(db, cliente, usinas)
+    # Os três ao mesmo tempo, e cada um com as usinas ao mesmo tempo (avaliação 22: um por vez levava 8 a 24 s)
+    mw, mp, contrato = await asyncio.gather(_diagnostico_meuwatt(db, cliente, usinas),
+                                            _diagnostico_meuplano(db, cliente, usinas),
+                                            _diagnostico_manutencao(db, cliente, usinas))
 
     return DiagnosticoOut(
         cliente=cliente.nome,
@@ -318,6 +321,19 @@ async def diagnostico(
     )
 
 
+def _br(valor: Any, casas: int = 2) -> str | None:
+    """Número em pt-BR ("6.710,21"); o que não veio fica nulo — a tela mostra "—"."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _campo(rotulo: str, valor: str | None, sufixo: str = "") -> dict:
+    """O que a tela mostra de cada item: o rótulo e o valor PRONTOS (avaliação 22: "6710.21", "tom alerta" e
+    "versao consolidada" saíam crus). As chaves de máquina do item ficam ao lado, para os testes e a regra."""
+    return {"rotulo": rotulo, "valor": f"{valor}{sufixo}" if valor is not None else None}
+
+
 async def _diagnostico_meuwatt(db: Session, cliente_gs: User, usinas: list[PlantLink]) -> BlocoDiagnostico:
     alvos = [u for u in usinas if u.mw_plant_slug]
     if not alvos:
@@ -330,20 +346,24 @@ async def _diagnostico_meuwatt(db: Session, cliente_gs: User, usinas: list[Plant
 
     hoje = hoje_na_usina()
     itens = []
-    for u in alvos:
-        try:
-            diario = await cliente.geracao_diaria(u.mw_plant_slug, hoje)
-            itens.append(
-                {
-                    "usina": u.nome,
-                    "origem": f"GET /plants/{u.mw_plant_slug}/generation/daily",
-                    "energia_hoje_kwh": diario.get("total_generation_kwh")
-                    or diario.get("generation_kwh"),
-                    "disponibilidade_pct": diario.get("plant_availability_pct"),
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            itens.append({"usina": u.nome, "erro": f"{type(exc).__name__}: {exc}"})
+    respostas = await asyncio.gather(*(cliente.geracao_diaria(u.mw_plant_slug, hoje) for u in alvos),
+                                     return_exceptions=True)
+    for u, diario in zip(alvos, respostas, strict=True):
+        if isinstance(diario, BaseException):
+            itens.append({"usina": u.nome, "erro": f"{type(diario).__name__}: {diario}"})
+            continue
+        energia = diario.get("total_generation_kwh")
+        if energia is None:                  # 0 kWh é medição: não cai no outro campo (REGRA 0)
+            energia = diario.get("generation_kwh")
+        disponibilidade = diario.get("plant_availability_pct")
+        itens.append({
+            "usina": u.nome,
+            "origem": f"GET /plants/{u.mw_plant_slug}/generation/daily",
+            "energia_hoje_kwh": energia,
+            "disponibilidade_pct": disponibilidade,
+            "campos": [_campo("Energia hoje", _br(energia), " kWh"),
+                       _campo("Disponibilidade", _br(disponibilidade), "%")],
+        })
 
     falhas = [i for i in itens if "erro" in i]
     return BlocoDiagnostico(
@@ -365,20 +385,28 @@ async def _diagnostico_meuplano(db: Session, cliente_gs: User, usinas: list[Plan
     except Exception as exc:  # noqa: BLE001
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 
+    from app.api.v1.manutencao import _para_saida  # noqa: PLC0415 — o rótulo da OS é o da aba Ordens
+
     itens = []
-    for u in alvos:
-        try:
-            ordens = await cliente.ordens_servico(u.mp_usina_id)
-            itens.append(
-                {
-                    "usina": u.nome,
-                    "origem": f"GET /meuacesso/service-orders?plant_id={u.mp_usina_id}",
-                    "ordens_de_servico": len(ordens),
-                    "recentes": [o.get("titulo") or o.get("numero") for o in ordens[:3]],
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            itens.append({"usina": u.nome, "erro": f"{type(exc).__name__}: {exc}"})
+    respostas = await asyncio.gather(*(cliente.ordens_servico(u.mp_usina_id) for u in alvos), return_exceptions=True)
+    for u, ordens in zip(alvos, respostas, strict=True):
+        if isinstance(ordens, BaseException):
+            itens.append({"usina": u.nome, "erro": f"{type(ordens).__name__}: {ordens}"})
+            continue
+        # "recentes , ,": a OS do meuPlano não tem `titulo` nem `numero` (avaliação 22) — o nome dela é o da aba
+        # Ordens do portal ("OS 1843 · Roçagem")
+        recentes = []
+        for o in ordens[:3]:
+            saida = _para_saida(o, u)
+            recentes.append(saida.objetivo if saida.objetivo == f"OS {saida.id}" else f"OS {saida.id} · {saida.objetivo}")
+        itens.append({
+            "usina": u.nome,
+            "origem": f"GET /meuacesso/service-orders?plant_id={u.mp_usina_id}",
+            "ordens_de_servico": len(ordens),
+            "recentes": recentes,
+            "campos": [_campo("Ordens de serviço", _br(len(ordens), 0)),
+                       _campo("Mais recentes", "; ".join(recentes) or None)],
+        })
 
     falhas = [i for i in itens if "erro" in i]
     return BlocoDiagnostico(
@@ -415,13 +443,12 @@ async def _diagnostico_manutencao(db: Session, cliente_gs: User, usinas: list[Pl
         return BlocoDiagnostico(ok=False, detalhe=str(exc))
 
     itens = []
-    for u in alvos:
+    respostas = await asyncio.gather(*(_contratos_da_usina(cliente, u) for u in alvos), return_exceptions=True)
+    for u, contratos in zip(alvos, respostas, strict=True):
         origem = f"GET /meuacesso/visao-cliente/usinas/{u.mp_usina_id}/contratos"
-        try:
-            contratos = await _contratos_da_usina(cliente, u)
-        except Exception as exc:  # noqa: BLE001
+        if isinstance(contratos, BaseException):
             itens.append({"usina": u.nome, "origem": origem,
-                          "erro": f"{type(exc).__name__}: {exc}"})
+                          "erro": f"{type(contratos).__name__}: {contratos}"})
             continue
 
         padrao = _contrato_padrao(contratos)
@@ -443,6 +470,11 @@ async def _diagnostico_manutencao(db: Session, cliente_gs: User, usinas: list[Pl
                 "contratos": len(contratos),
                 "contrato": rotulo,
                 "versao_consolidada": padrao.versao_cronograma if padrao else None,
+                # a situação vai no selo, com o tom; aqui, o resto
+                "campos": [_campo("Contratos", _br(len(contratos), 0)), _campo("Contrato", rotulo),
+                           _campo("Versão do cronograma publicada",
+                                  str(padrao.versao_cronograma) if padrao and padrao.versao_cronograma is not None
+                                  else None)],
             }
         )
 

@@ -376,8 +376,10 @@ async def saude_atual(db: Session) -> SaudeDoCanalOut:
 
 
 async def _saude_do_canal(db: Session) -> SaudeDoCanalOut:
+    # a última mensagem que RECEBEU resposta — também a marcada como erro, que respondeu com o aviso
+    # (avaliação 22: o selo dizia 18:05, e a das 18:13 tinha sido respondida)
     ultima_resposta = db.scalar(
-        select(func.max(RegistroBot.em)).where(RegistroBot.resultado == "respondeu")
+        select(func.max(RegistroBot.em)).where(RegistroBot.resposta.isnot(None))
     )
     try:
         g = await gateway.saude()

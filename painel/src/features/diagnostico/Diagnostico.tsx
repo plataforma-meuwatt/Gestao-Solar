@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 
-import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
+import { Cartao, Carregando, Erro, Pagina, Selo, Vazio, type Tom } from '@/components/base'
 import { carregarDiagnostico, listarClientes, type BlocoDiagnostico } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -133,12 +133,15 @@ function ItemDiagnostico({
   item: Record<string, unknown>
   primeiro: boolean
 }) {
-  const { usina, origem, erro, ...resto } = item as Record<string, any>
+  // O rótulo e o valor vêm PRONTOS da API (`campos`: "Energia hoje" · "6.710,21 kWh") — a tela não traduz chave
+  // nem formata número. A situação vai no selo, com o tom dela.
+  const { usina, origem, erro, campos, tom, situacao } = item as Record<string, any>
 
   return (
     <div className={`px-5 py-3.5 ${primeiro ? '' : 'border-t border-borda'}`}>
-      <div className="flex items-baseline gap-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <p className="text-sm font-semibold text-forte">{String(usina)}</p>
+        {tom && situacao ? <Selo tom={tom as Tom}>{String(situacao)}</Selo> : null}
         {origem ? <code className="mono text-[11px] text-fraco truncate">{String(origem)}</code> : null}
       </div>
 
@@ -146,18 +149,10 @@ function ItemDiagnostico({
         <p className="text-sm text-parado mt-1.5">{String(erro)}</p>
       ) : (
         <dl className="flex flex-wrap gap-x-6 gap-y-1 mt-2">
-          {Object.entries(resto).map(([chave, valor]) => (
-            <div key={chave} className="flex items-baseline gap-1.5">
-              <dt className="text-xs text-rotulo">{chave.replace(/_/g, ' ')}</dt>
-              <dd className="mono text-sm text-forte">
-                {Array.isArray(valor)
-                  ? valor.length
-                    ? valor.join(', ')
-                    : '—'
-                  : valor === null || valor === undefined
-                    ? '—'
-                    : String(valor)}
-              </dd>
+          {((campos ?? []) as { rotulo: string; valor: string | null }[]).map((c) => (
+            <div key={c.rotulo} className="flex items-baseline gap-1.5">
+              <dt className="text-xs text-rotulo">{c.rotulo}</dt>
+              <dd className="mono text-sm text-forte">{c.valor ?? '—'}</dd>
             </div>
           ))}
         </dl>

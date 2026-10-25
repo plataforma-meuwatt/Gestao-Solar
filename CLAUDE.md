@@ -820,7 +820,9 @@ gravação de quem chama; as que já estavam soltas passaram uma vez na migraç�
 "(482) 913" e "quatro 8 dois 9 um 3" ficavam pela metade, avaliação 21) depois de senha/pin, com
 qualquer pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "senha do cadeado
 3262"; "código" e "combinação" só de portão/porta/cadeado/cofre — "código de erro 2043",
-"PIN 3 do conector" e "combinação de strings 12" ficam). Os marcadores do bot ("[senha oculta]")
+"PIN 3 do conector" e "combinação de strings 12" ficam; o número do IDENTIFICADOR — "senha da OS 1638", "senha do
+IP 10.1.130.2" —, data e IP também ficam, e o trecho "do inversor 13" não esconde mais o segredo que vem depois:
+"senha do inversor 13 é 4821" passava em claro — avaliação 22). Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -910,8 +912,11 @@ TODA linha é daquele tipo — com dois inversores e a Medição, "Pode apagar o
 junto (avaliação 21, a prévia real de Ibitinga) e agora é dúvida (`_quantidade`, `_plural_dos_itens`). O
 número depois de "os" que não é a contagem segue como alvo: "a OS 1639" é a ordem. Palavra
 neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "Sim, é isso", "Aprovado" e
-"s" viravam dúvida na proposta real). Mensagem com "?" em qualquer lugar nunca confirma ("Apaga?!",
-"Apagar? 🤔", "Fecha?..." confirmavam — avaliação 21). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
+"s" viravam dúvida na proposta real). Mensagem com sinal de pergunta em qualquer lugar nunca confirma —
+"?", "？", "¿", "❓", "❔", "⁉️" (`_PERGUNTA`; "Apaga?!", "Fecha?...", "Apaga❓", "¿Apaga" confirmavam —
+avaliações 21 e 22) —, e emoji de dúvida, espanto ou receio ("Sim 🤔", "Apaga 😳" — `_EMOJI_DE_DUVIDA`) é
+dúvida. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
+botões (`de_novo_para_reacao`; avaliação 22: era ignorada em silêncio e a ação vencia sem aviso). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
 (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
 "Ok, vou ver" — `_SEM_ASSUNTO`), não confirma nem derruba: o SISTEMA pergunta de novo, com os botões,
@@ -937,14 +942,22 @@ trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 
 21): "Pronto" que diz o que falta ou pergunta ("Pronto, … Falta registrar a 1843: qual a data?") não é o fim
 (`_fim_do_pedido`); o passo feito proposto DE CARA também é pedido de novo (`_REPETIU`); e, sem o próximo
 passo depois do pedido de novo, a pessoa SEMPRE fica sabendo — "Faltam 2 passos" seguido de "Pronto" repassa o
-que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️). O sinal de fim que o bot PEDE é "Não
+há próximo passo" — a regra 7 do `IA.MD` do meuPlano proíbe o modelo de lá de escrever "pronto" e "feito" —, e o
+fim é reconhecido em qualquer parte da resposta e de vários jeitos ("Não há próximo passo", "Pronto, não falta
+nada", "Seu pedido está completo"); a negação ("não falta nada") e a pergunta de cortesia ("Posso ajudar em algo
+mais?") não contam como "falta" (`_NEGA_FALTA`, `_CORTESIA`; avaliação 22: viravam ⚠️ e erro no log). O passo
+feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
 avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
 não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o
 "digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). **O resultado de
 uma ação confirmada sempre chega:** falhar ao gravar a conversa não derruba o turno (`_guardar`), e
 erro depois de a ação rodar nunca vira "Tente de novo" (repetir criaria a OS em dobro) — vai o
-desfecho dela, ou "PODE ter sido feita — confira" se a execução estourou no meio
+desfecho dela, que é o RESULTADO que o meuPlano devolveu (`_desfecho_do_meuplano`: o `data.resumo` dele, como a
+web mostra; `erros` → "⚠️ Feito EM PARTE…" com os motivos e o log em erro, sem seguir para o próximo passo; `erro`
+com 200 — o handler recusou sem gravar — → "❌ O meuPlano recusou… Nada foi feito"; avaliação 22: "1 removido; 1
+bloqueado" virava "✅ Feito… Desinstalar 2 pontos"), ou "PODE ter sido feita — confira" se a execução estourou no meio
 (`Pendente.desfecho`, avaliação 15). A proposta guarda o
 pedido nas palavras da PESSOA e o que dele já foi feito (`Pendente.pedido`/`feitos`): passo que falha
 diz "Do seu pedido «…», antes disso já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou

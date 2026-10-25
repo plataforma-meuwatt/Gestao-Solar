@@ -178,6 +178,29 @@ def _o_que_nasceu(dados: Any, resumo: str = "") -> str:
     return f" ({', '.join(partes)})" if partes else ""
 
 
+def _desfecho_do_meuplano(resumo: str, dados: Any) -> str:
+    """O que a pessoa lê depois do Sim — o RESULTADO que o meuPlano devolveu, não a proposta repetida
+    (avaliação 22: desinstalar 2 inversores voltou "1 removido; 1 bloqueado" e o bot dizia "✅ Feito").
+    - `erro` com 200 (o handler recusou sem gravar: "Não dá para apagar 'X': está em uso…") → ❌;
+    - falha de item (`erros`: lá, todo handler que engole falha item a item a devolve — desinstalar, ligar
+      a rede) → ⚠️ em parte, com os motivos;
+    - senão ✅, com o resultado dele quando vem."""
+    dados = dados if isinstance(dados, dict) else {}
+    if dados.get("erro"):
+        return f"❌ O meuPlano recusou: {str(dados['erro']).rstrip('. ')}. Nada foi feito."
+    texto = resumo + _o_que_nasceu(dados, resumo)
+    if dados.get("resumo"):
+        texto = f"{resumo.rstrip('. ')}{_o_que_nasceu(dados, resumo)} — resultado: {str(dados['resumo']).rstrip('. ')}."
+    erros = dados.get("erros") or []
+    if erros:
+        if not dados.get("resumo"):
+            texto = f"{resumo.rstrip('. ')} — {len(erros)} item(ns) com falha."
+        motivos = [str(e["detail"]) for e in erros if isinstance(e, dict) and e.get("detail")]
+        lista = "".join(f"\n• {m}" for m in motivos[:5]) + (f"\n• … e mais {len(motivos) - 5}" if len(motivos) > 5 else "")
+        return f"⚠️ Feito EM PARTE no meuPlano: {texto}{lista}"
+    return f"✅ Feito no meuPlano: {texto}"
+
+
 def _o_que_ficou(p: Any) -> str:
     """O que do pedido da pessoa foi feito e o que não foi, quando um passo falha — nas palavras
     DELA, nunca a instrução que o bot mandou ao meuPlano (avaliação 13)."""
@@ -223,7 +246,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
         except httpx.HTTPError:
             return ("⚠️ O meuPlano não respondeu a tempo — a ação PODE ter sido gravada. "
                     "Confira no meuPlano antes de pedir de novo.")
-        return f"✅ Feito no meuPlano: {resumo}" + _o_que_nasceu((feito or {}).get("data"), resumo)
+        return _desfecho_do_meuplano(resumo, (feito or {}).get("data"))
 
     linhas = [ln.get("text") for ln in previa.get("lines") or []]
     # Até 15 linhas no resumo; o resto, dito — a pessoa não confirma o que não viu (avaliação 20)
@@ -268,7 +291,11 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 #: ou mais, sem o trecho atravessar o fim da frase: "a senha é a mesma" e "senha de atuação. Quem
 #: define isso é o gerente" ficam inteiros (avaliação 13).
 _SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
-                      r"((?:\s+d[eoa]s?\s+[^\n:=\d.!?;]{1,30}?)?\s*(?:(?:\bé\b|\beh\b)\s*[:=]?|[:=])\s*)(?![\[:=])"
+                      # "do inversor 13", "do IP 10.1.130.2": dígito pode, ponto só entre dígitos — o fim da frase
+                      # não ("senha de atuação. Quem define é Marcos" fica inteiro — avaliação 13; "senha do
+                      # inversor 13 é 4821" passava em claro)
+                      r"((?:\s+d[eoa]s?\s+(?:[^\n:=.!?;]|(?<=\d)\.(?=\d)){1,40}?)?\s*(?:(?:\bé\b|\beh\b)\s*[:=]?|(?<!\d)[:=])\s*)"
+                      r"(?![\[:=])"
                       r"([^\s,;]{3,}?)"
                       r"(?=[.!?]*(?:\s|$|[,;]))")
 #: "senha 1234", "PIN ab12": três caracteres ou mais — "PIN 3 do conector" e "senha 2 vezes" são
@@ -295,12 +322,20 @@ _SEGREDO_NUMERO = re.compile(
     r"(" + helper.NUMERO.pattern + r")(?!\d|[:h]\d)")
 
 
+#: O número logo depois de "senha da OS", "senha do IP"… é o IDENTIFICADOR, não o segredo; e data e IP nunca
+#: são o segredo (avaliação 22: "senha da OS ••••" e datas sumiam do log).
+_IDENTIFICADOR = re.compile(r"\b(?:os|ip|uc|usina|inversor|tarefa|ponto|string|n[óo]|protocolo|contrato|chamado|item)"
+                            r"[ \t]*$", re.IGNORECASE)
+
+
 def _sem_segredos(texto: str) -> str:
     # O do número primeiro: os outros mascaram só o primeiro grupo ("pin •••• 913").
     texto = _SEGREDO_NUMERO.sub(
-        lambda m: m.group(0) if len(helper._so_digitos(m.group(3))) < 3 else m.group(1) + m.group(2) + "••••", texto)
+        lambda m: m.group(0) if (len(helper._so_digitos(m.group(3))) < 3 or helper._data_ou_ip(m.group(3))
+                                 or _IDENTIFICADOR.search(m.group(2))) else m.group(1) + m.group(2) + "••••", texto)
     for padrao in (_SEGREDO, _SEGREDO_PARA, _SEGREDO_NUM):
-        texto = padrao.sub(lambda m: m.group(1) + m.group(2) + "••••", texto)
+        texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) else m.group(1) + m.group(2) + "••••",
+                           texto)
     return texto
 
 
@@ -529,7 +564,7 @@ _ATENDIDAS: OrderedDict[Any, None] = OrderedDict()
 async def atender(evento: dict) -> None:
     """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202. As mensagens do
     mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
-    if evento.get("tipo") in IGNORADOS:
+    if evento.get("tipo") in IGNORADOS - {"reaction"}:     # a reação ao resumo esperando o Sim é perguntada de novo
         return
     if evento.get("id") is not None:
         if evento["id"] in _ATENDIDAS:
@@ -572,24 +607,33 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
         helper.desarmar(user.id)
 
 
-#: O fim do pedido dito em texto ("Pronto.", "Não há mais passos", "Tudo feito") — não é falha (avaliação 20)…
-_FIM_DO_PEDIDO = re.compile(r"^\W*(?:pronto|tudo (?:feito|certo|pronto)|n[ãa]o h[áa] (?:mais|outro|pr[óo]ximo)|"
-                            r"nada mais|era s[óo] isso|sem mais passos)\b", re.IGNORECASE)
+#: O fim do pedido dito em texto ("Não há próximo passo.", "Pronto.", "Seu pedido está completo") — não é falha
+#: (avaliação 20). O sinal que o bot pede é "Não há próximo passo": a regra 7 do IA.MD do meuPlano proíbe o
+#: modelo de lá de escrever "pronto" e "feito" (avaliação 22: ele dizia o fim com outras palavras)…
+_FIM_DO_PEDIDO = re.compile(r"\b(?:pronto|tudo (?:feito|certo|pronto|conclu[ií]do|finalizado|resolvido|ok)|"
+                            r"n[ãa]o h[áa] (?:mais|outro|pr[óo]ximo)|nada mais|era s[óo] isso|sem mais passos|"
+                            r"pedido (?:est[áa] )?(?:completo|conclu[ií]do|finalizado|atendido)|isso [ée] tudo|"
+                            r"n[ãa]o falta (?:mais )?nada|nada (?:mais )?falta)\b", re.IGNORECASE)
 #: …a não ser que diga que falta algo ou pergunte: "Pronto, … Falta registrar a 1843: qual a data?" não é o
-#: fim (avaliação 21: o bot calava).
+#: fim (avaliação 21: o bot calava). A negação ("não há próximo passo", "não falta nada") e a pergunta de
+#: cortesia ("Posso ajudar em algo mais?") não contam (avaliação 22: viravam alarme falso).
 _AINDA_FALTA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpr[óo]ximo passo\b|\?", re.IGNORECASE)
+_NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum)\b[^.!?\n]{0,25}?\b(?:falta(?:m|ndo)?|pr[óo]ximo passo|outro "
+                         r"passo)\b", re.IGNORECASE)
+_CORTESIA = re.compile(r"[^.!?\n]*\b(?:algo mais|mais alguma coisa|alguma coisa a mais|em que mais|mais algum[a]?)\b"
+                       r"[^.!?\n]*\?", re.IGNORECASE)
 #: O pedido de novo quando o meuPlano repropõe o passo que acabou de ser feito.
 _REPETIU = ("Esse passo acabou de ser feito. Se o meu pedido tem outro passo, chame AGORA a ferramenta dele (um "
             "só), para eu confirmar com o botão; se falta um dado para isso, pergunte em UMA frase qual. Se não "
-            "tem outro passo, responda só: Pronto.")
+            "tem outro passo, responda só: Não há próximo passo.")
 #: …e quando ele descreve o próximo passo em texto.
 _EM_TEXTO = ("Não descreva em texto: chame AGORA a ferramenta do próximo passo (um só), para eu confirmar com o "
              "botão. Se falta um dado para isso, pergunte em UMA frase qual. Se não há próximo passo, responda só: "
-             "Pronto.")
+             "Não há próximo passo.")
 
 
 def _fim_do_pedido(texto: str) -> bool:
-    return bool(_FIM_DO_PEDIDO.match(texto)) and not _AINDA_FALTA.search(texto)
+    return bool(_FIM_DO_PEDIDO.search(texto)) and not _AINDA_FALTA.search(_CORTESIA.sub("", _NEGA_FALTA.sub("", texto)))
 
 
 async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, feito: str) -> str:
@@ -613,10 +657,10 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     pedido = f" O meu pedido inteiro: «{p.pedido}»." if p.pedido else ""
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"},
                 {"role": "user", "content": f"{feito}.{pedido} Se o meu pedido tinha mais passos, proponha o "
-                                            "próximo agora; se não tinha, responda só: Pronto."}]
+                                            "próximo agora; se não tinha, responda só: Não há próximo passo."}]
     feitos = tuple(f.rstrip(". ") for f in (*p.feitos, feito.removeprefix("✅ Feito no meuPlano: ")))
     de = f"Do seu pedido «{p.pedido[:200]}»" if p.pedido else "Do seu pedido"
-    antes = ""                                             # o texto da 1ª resposta, se não foi o fim
+    antes, repetiu = "", False                             # o texto da 1ª resposta, se não foi o fim
     for tentativa in range(2):
         db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
         try:
@@ -636,13 +680,13 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
             # oferecer seria pedir à pessoa para fazê-lo duas vezes (avaliação 16), e calar escondia o resto
             # do pedido (avaliação 21) — pede de novo.
             log.warning("assistente: o meuPlano repropôs a ação que acabou de ser feita (%s)", p.acao[0])
-            de_novo = _REPETIU
+            de_novo, repetiu = _REPETIU, tentativa == 0
         else:
             texto = (r.get("texto") or "").strip()
             if not texto or _fim_do_pedido(texto):
-                if tentativa == 0:
-                    return ""                              # o fim do pedido
-                break                                      # "Pronto" depois do pedido de novo: vale o de antes
+                if tentativa == 0 or repetiu:
+                    return ""                              # o fim do pedido (também depois do passo repetido)
+                break                                      # o fim depois do pedido de novo: vale o de antes
             # O próximo passo veio em TEXTO ("aqui está a proposta… confirmando os dois, eu fecho a 1638"):
             # não há o que confirmar, e repassar a promessa deixou o pedido do dono parado no meio — a 1638
             # não foi fechada (uso real de 24/10/2026, avaliação 19). Pede de novo, uma vez, pela ferramenta.
@@ -741,6 +785,16 @@ async def _atender(evento: dict) -> None:
     respondeu = False
     try:
         user = conta_do_telefone(db, telefone)
+        if evento.get("tipo") == "reaction":
+            # O 👍 no resumo da ação do meuPlano era ignorado em silêncio e a ação vencia sem aviso (avaliação 22):
+            # não confirma, mas o sistema pergunta de novo, com os botões. Fora disso, a reação segue ignorada.
+            de_novo = (helper.de_novo_para_reacao(user.id) if user is not None and user.bot_liberado
+                       and _empresa_fora(db, user) is None and not _atrasada(evento.get("ocorrida_em")) else None)
+            if de_novo is not None:
+                await _botoes(telefone, de_novo, helper.PENDENTES[user.id].codigo)
+                _registrar(db, telefone, user, "respondeu", pergunta="[reação ao resumo]", resposta=de_novo,
+                           ferramentas=["confirmacao"], inicio=inicio, em=enviada)
+            return
         # A senha, conferida UMA vez e fora do laço da API, antes de qualquer saída: a mensagem
         # que É a senha some inteira; numa frase, só a senha some ("[senha oculta]") — e do
         # gateway sai só ela, não a frase. Com uma ação do meuPlano esperando o SIM, o número
