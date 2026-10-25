@@ -25,7 +25,7 @@ export const PARTES_DO_BOT: { campo: ProdutoDoBot; rotulo: string; token: Produt
 
 /** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */
 export function textoDoBot(liberado: ProdutoDoBot[], tokens: Produto[], temCelular: boolean): string {
-  if (!temCelular) return 'sem celular — o bot não reconhece a pessoa'
+  if (!temCelular) return 'sem celular: o bot não reconhece a pessoa'
   const partes = PARTES_DO_BOT.filter((p) => liberado.includes(p.campo)).map((p) =>
     tokens.includes(p.token) ? p.rotulo : `${p.rotulo} (falta o token)`,
   )

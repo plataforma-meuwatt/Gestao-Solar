@@ -13,6 +13,8 @@ O que se protege aqui é a HONESTIDADE do número, não a beleza da tela:
 Nada de rede: o cliente do meuWatt é uma subclasse que responde da memória.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -28,9 +30,11 @@ from app.models.user import Perfil, User, UserPlantAccess
 REFERENCIA = "2026-08-15"
 
 #: Uma rodada do detector como a de produção em 24/10/2026: de 01/02/2026 (meia-noite BRT)
-#: até agora.
+#: até AGORA. Com o fim fixo (24/10 14:16), o teste quebrava 20 h depois: o detector passava a
+#: "parado" (avaliação 28).
 RODADA = {"run_id": 89, "plant_id": 9378, "plant_slug": "porto-ferreira",
-          "window_start": "2026-02-01T03:00:00Z", "window_end": "2026-10-24T14:16:46Z"}
+          "window_start": "2026-02-01T03:00:00Z",
+          "window_end": (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def _erro_http(status: int, detalhe: str = "Internal Server Error") -> httpx.HTTPStatusError:

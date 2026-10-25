@@ -109,7 +109,7 @@ def assinar(usuario: User, produto: Produto) -> str:
     s = get_settings()
     if not s.gs_sso_private_key:
         raise SemChave(
-            "GS_SSO_PRIVATE_KEY não configurada — o Gestão Solar não consegue assinar a "
+            "GS_SSO_PRIVATE_KEY não configurada: o Gestão Solar não consegue assinar a "
             "identidade desta conta. Gere um par de chaves e informe a privada aqui e a "
             "pública no produto."
         )

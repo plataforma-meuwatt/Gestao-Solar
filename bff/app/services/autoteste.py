@@ -169,14 +169,14 @@ async def _numero_confere(estado: dict[str, Any] | None) -> Item:
             "Número em uso",
             FALHA,
             "O número gravado não está nesta conta do WhatsApp. Confira o Phone Number ID "
-            "e o WABA ID em Painel → WhatsApp — provavelmente um deles é da conta de teste.",
+            "e o WABA ID em Painel → WhatsApp: provavelmente um deles é da conta de teste.",
             {"gravado": em_uso, "na_conta": [str(n.get("id")) for n in numeros]},
         )
     return Item(
         "numero",
         "Número em uso",
         OK,
-        f"{achado.get('display_phone_number')} — {achado.get('verified_name')}.",
+        f"{achado.get('display_phone_number')}, {achado.get('verified_name')}.",
         {
             "id": em_uso,
             "numero": achado.get("display_phone_number"),
@@ -314,7 +314,7 @@ def _preferencias(db: Session) -> Item:
             "Preferências marcadas",
             ALERTA,
             f"{orfas} marcação(ões) apontam para usina que não é mais do cliente. "
-            "Elas não enviam nada e confundem a tela — vale limpar.",
+            "Elas não enviam nada e confundem a tela: vale limpar.",
             {"total": total, "orfas": orfas},
         )
     return Item(

@@ -214,7 +214,7 @@ function LinhaDoUsuario({
               Também é de {usuario.cuidada_por}, que cuida da conta (senha, celular, tokens e bot).
               Aqui ela recebe só o que esta empresa der
               {usuario.perfil === 'cliente'
-                ? ' — e, no aplicativo, as usinas daqui só trazem dado com o token próprio da pessoa.'
+                ? '. No aplicativo, as usinas daqui só trazem dado com o token próprio da pessoa.'
                 : '.'}
             </p>
           ) : usuario.outras_empresas.length ? (
@@ -266,7 +266,7 @@ function LinhaDoUsuario({
                   `Tirar ${usuario.nome} de ${empresa.nome}? A conta continua existindo; as usinas que essa conta recebe desta empresa saem junto.` +
                     (usuario.outras_empresas.length || usuario.cuidada_por
                       ? ''
-                      : ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa — nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'),
+                      : ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa: nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'),
                 )
               )
                 tirar.mutate()
@@ -346,9 +346,9 @@ function NovoUsuario({ empresa, aoFechar }: { empresa: Empresa; aoFechar: () => 
             onChange={(e) => setPerfil(e.target.value as PapelNaEmpresa)}
             aria-label="Papel na empresa"
           >
-            <option value="gestor_empresa">Gerente — opera a empresa no oem-gs</option>
-            <option value="tecnico">Técnico — usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
-            <option value="cliente">Dono de usina — entra no aplicativo</option>
+            <option value="gestor_empresa">Gerente: opera a empresa no oem-gs</option>
+            <option value="tecnico">Técnico: usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
+            <option value="cliente">Dono de usina: entra no aplicativo</option>
           </select>
         </div>
         <Campo rotulo="Nome" value={nome} onChange={(e) => aoDigitarNome(e.target.value)} placeholder="Maria Silva" />

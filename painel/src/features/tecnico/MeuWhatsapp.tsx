@@ -224,7 +224,7 @@ export function MeuWhatsapp() {
                 <li>Abre uma janela da Meta: entre com o seu Facebook.</li>
                 <li>Escolha a conta e o número do seu WhatsApp Business.</li>
                 <li>
-                  Se o número já está no aplicativo do celular, escolha mantê-lo lá — ele continua
+                  Se o número já está no aplicativo do celular, escolha mantê-lo lá: ele continua
                   funcionando no celular, e as conversas aparecem nos dois lugares.
                 </li>
               </ol>

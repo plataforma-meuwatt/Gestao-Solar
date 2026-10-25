@@ -45,7 +45,7 @@ export function Diagnostico() {
           value={clienteId ?? ''}
           onChange={(e) => setParams(e.target.value ? { cliente: e.target.value } : {})}
         >
-          <option value="">— escolha o dono de usina —</option>
+          <option value="">Escolha o dono de usina</option>
           {(clientes ?? []).map((c) => (
             <option key={c.id} value={c.id}>
               {c.nome}
@@ -89,10 +89,10 @@ export function Diagnostico() {
             )}
           </Cartao>
 
-          <Bloco titulo="meuWatt — geração" bloco={diag.meuwatt} />
-          <Bloco titulo="meuPlano — manutenção" bloco={diag.meuplano} />
+          <Bloco titulo="meuWatt: geração" bloco={diag.meuwatt} />
+          <Bloco titulo="meuPlano: manutenção" bloco={diag.meuplano} />
           {diag.manutencao ? (
-            <Bloco titulo="Portal do dono — cronograma do contrato" bloco={diag.manutencao} />
+            <Bloco titulo="Portal do dono: cronograma do contrato" bloco={diag.manutencao} />
           ) : null}
         </div>
       ) : null}

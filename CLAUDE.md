@@ -838,7 +838,12 @@ acesso traz o valor (`_valores_secretos`): esses valores somem do Log do bot (in
 antes, `_apagar_os_valores_de_antes`), da cópia do gateway (`/interno/conteudo` com `guardar`; `/interno/mensagens/{id}/
 ocultar` — também para a que SAIU — e `/interno/mensagens/mascarar`) e do histórico que vai ao meuPlano e à IA nos turnos
 seguintes (`_para_fora` — só as REVELADAS; as digitadas seguem, porque "é L2" refaz a proposta com elas). A conversa
-guardada fica com todas, CIFRADA (`_ler_conversa`/`_gravar_conversa`, com as listas "s" e "d"). (2) O turno que TRATA de
+guardada fica com todas, CIFRADA (`_ler_conversa`/`_gravar_conversa`, com as listas "s" e "d"). (2) **O texto LIVRE do turno que passou pelo meuPlano fica fora do log e da cópia do gateway**
+(`RESPOSTA_OMITIDA`), trate ou não de acesso: a senha de texto livre (wiki, OS, relato) vem com qualquer pergunta ("Como
+acesso o SmartLogger de Pereiras?", "Qual o código do portão?": 10 de 14 ficavam em claro pela regra de palavras,
+avaliação 28) e pode ser só de letras ("admin / ufvtiete"). Os blocos do sistema (✅, o resumo da ação) ficam; no resto
+do pedido, o texto que a IA escreveu (o motivo, a pergunta) também fica fora, com uma linha do sistema no lugar. Também
+fica fora o turno que TRATA de
 acesso (`_e_de_credencial` na mensagem da pessoa, na pergunta da IA ao meuPlano ou na resposta: senha, PIN, credencial,
 login, cadeado, Wi-Fi, "chave do/da rede|portão…", "dados de acesso", "acesso" como rótulo ("Acessos:") ou com o que
 se acessa com senha — SmartLogger, roteador, sistema, web, SSH… (`_SISTEMA`) —, "entre com" usuário/login/"admin /",
@@ -855,7 +860,16 @@ data, hora, IP e medida) e a palavra com letra e número; o endereço e o e-mail
 tem nível", "Senha — fale com o Kewyn"); valor de menos de 3 caracteres ou data não é senha ("PIN 3 do conector",
 "senha 24/10"). Há teste que passa por TODA frase fixa dos módulos do bot e exige que nenhuma seja mascarada. (4) Em
 qualquer texto, some a palavra com MINÚSCULA, número e símbolo @#$&*! ("Huawei@123"); o dado técnico fica ("S3=139,5",
-"PR=82,5%", "MPPT1+MPPT2", "2043@INV-13", "CB-03#2" — avaliação 27). Os marcadores do bot ("[senha oculta]")
+"PR=82,5%", "MPPT1+MPPT2", "2043@INV-13", "CB-03#2", avaliação 27). (5) **Em todo texto guardado, o NÚMERO com cara de
+segredo some, sem palavra-chave** (`_sem_numeros`, avaliação 28: "o código novo do portão é 4455, anota no wiki" e
+"admin / ufvtiete9" ficavam em claro): o de 3 dígitos ou mais e a palavra com minúscula e número de 6 caracteres ou
+mais. Fica o identificador depois do nome dele (`_NOMES_DE_NUMERO`: "OS 1638", "inversor 13", "a UC é 1234567"), o
+número que o próprio turno mostra como identificador (`publicos_do_turno`: o "1638 pode fechar" do resumo "Fechar a OS
+1638"), data, hora, IP, ano, versão, medida e contagem ("4821 kWh", "5670 módulos"), dinheiro, número formatado
+("1.234", "82,5"), o código de equipamento ("INV-13", "SUN2000-100KTL") e o endereço. A lista de nomes é de
+legibilidade: errar nela só esconde um número a mais. A cópia da mensagem da pessoa no gateway sai assim já na chegada
+(também quando o turno para antes: sem conta, mídia, atrasada) e é refeita no fim do turno. Na mensagem que trata de
+acesso, só a linha de UMA palavra fora das comuns é o valor ("changeme"); "Pereiras também" e "Michel avisou" ficam. Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -971,34 +985,22 @@ UC, o protocolo), para quem tem senha e para quem não tem (`e_tentativa`, decid
 cair): não conta erro nem bloqueia, e se for a senha some como numa frase, com o limite por hora —
 a senha não confirma ação do meuPlano. E confirmada o BFF chama o
 `/assistant/apply` de lá com o token da pessoa (10 min); a conversa vai junto ao meuPlano, que
-é sem estado. Lá é uma proposta por vez: depois de cada SIM o bot SEGUE sozinho para o próximo
-passo do mesmo pedido — se o meuPlano responder esse passo em TEXTO ("aqui está a proposta… confirmando
-os dois, eu fecho a 1638"), o bot pede de novo, uma vez, a ação pela ferramenta (ou a pergunta do dado
-que falta); vindo texto de novo, diz que o passo não ficou pronto, que nada espera o Sim e o que já foi
-feito, e repassa o texto de lá INTEIRO — como pergunta, sem ⚠️, quando é pergunta ("qual a data de
-término?"); senão com ⚠️ e o log em erro (uso real de 24/10/2026, avaliação 19: o texto era repassado e a
-1638 ficou sem fechar). "Pronto", "Não há mais passos", "Tudo feito", "Nada mais" são o fim
-(`_FIM_DO_PEDIDO`), e o passo feito proposto de novo DEPOIS do pedido de novo vira "O meuPlano não
-trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 20: sumia calado). E (avaliação
-21): "Pronto" que diz o que falta ou pergunta ("Pronto, … Falta registrar a 1843: qual a data?") não é o fim
-(`_fim_do_pedido`); o passo feito proposto DE CARA também é pedido de novo (`_REPETIU`); e, sem o próximo
-passo depois do pedido de novo, a pessoa SEMPRE fica sabendo — "Faltam 2 passos" seguido de "Pronto" repassa o
-que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️). O bot só CALA quando a resposta é SÓ o fim
-(`_so_o_fim`: "FEITO", "Não há próximo passo.", "Não há próximos passos.", "Nenhum
-próximo passo.", "Não há próximo passo a propor.", "Não, não há próximo passo.", "Pronto, não falta nada.", "Seu
-pedido está completo." — a cortesia sozinha não conta: "Posso ajudar em algo mais?", "Estou à disposição."). O resto é DECIDIDO pelo STATUS que o meuPlano devolve, nunca pela prosa dele (avaliações 22 a 27: as
-listas de palavras erravam nos dois sentidos — "Não há mais nada a fazer nela" virava alarme, "A OS 1638 está
-EM_EXECUCAO" saía como fim). Depois de um passo feito, o bot pede: a ferramenta do próximo passo, ou UMA linha começando
-por FEITO (o pedido inteiro está feito), FALTA: o que ficou e por quê, ou PERGUNTA: o dado que falta (`_STATUS_PEDIDO`;
-só vale na forma do status, com ":"/"—" ou sozinha — "Faltam 2 passos do que você pediu…", o uso real de 24/10, é
-pedido de novo). FEITO cala ou vai como informação; FALTA (e "NÃO DÁ:") vai com ⚠️ e o log em erro; PERGUNTA vai como
-pergunta. Fora do status, o bot pede de novo uma vez; vindo texto (ou o fim solto) de novo, ele NÃO adivinha: diz "O
-meuPlano não propôs outro passo e não confirmou se o seu pedido terminou… Ele disse: …" e o log fica **"a conferir"**
-(amarelo, `NAO_CONFIRMOU`). A pergunta ("…?") vai como pergunta, sem ⚠️. O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
-pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
-avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
-não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o
-"digitando…" de volta logo depois do ✅ (o próximo passo leva de 20 a 65 s lá). **O resultado de
+é sem estado. Lá é uma proposta por vez: depois de cada SIM, **o resto do pedido é decidido pela IA do
+bot, numa chamada que TEM de ser de ferramenta** (`_decidir_o_resto`: `tool_choice="required"` e o modo sem raciocínio
+do DeepSeek, porque com raciocínio o `required` volta 400, conferido em 25/10/2026). Ela recebe o pedido nas palavras da
+pessoa e o que já foi feito, e chama `proximo_passo` (o passo que falta, que o meuPlano propõe e a pessoa confirma com o
+botão) ou `fim_do_pedido` (feito, falta com o motivo, ou pergunta com o dado que falta). O meuPlano não é mais lido para
+saber se o pedido acabou: a regra 7 do IA.MD de lá proíbe o modelo de escrever "feito" e "pronto", e as listas de
+palavras para ler a prosa dele erraram nos dois sentidos das avaliações 22 a 28 (o pedido de um passo só, feito,
+terminava em "não confirmou se o seu pedido terminou"). Feito: nada mais é dito (o ✅ já disse). Falta: ⚠️ com o motivo,
+o que já foi feito e o log em erro. Pergunta: a pergunta, log verde. O passo que o meuPlano responde em TEXTO volta à IA
+como resultado e nunca é repassado à pessoa ("confirmando os dois, eu fecho a 1638", o uso real de 24/10); o mesmo
+passo proposto de novo (mesma ação e argumentos, `Pendente.acao`) também volta à IA como aviso, nunca vira botão. Até
+`RODADAS_DO_RESTO` (3) decisões; sem decisão, "⚠️ Não consegui conferir se o seu pedido tinha mais passos… Já foi
+feito: …" e o log **"a conferir"** (`NAO_CONFIRMOU`, amarelo na tela do Log). O meuPlano fora do ar ou com erro no passo:
+"⚠️ Não consegui pedir ao meuPlano o resto do seu pedido «…» (motivo)", log em erro. O pedido inteiro da pessoa vai
+junto ao meuPlano em cada passo (a IA pode ter mandado só uma parte: avaliação 15), com o "digitando…" de volta logo
+depois do ✅ (o próximo passo leva de 20 a 65 s lá). **O resultado de
 uma ação confirmada sempre chega:** falhar ao gravar a conversa não derruba o turno (`_guardar`), e
 erro depois de a ação rodar nunca vira "Tente de novo" (repetir criaria a OS em dobro) — vai o
 desfecho dela, que é o RESULTADO que o meuPlano devolveu (`_desfecho_do_meuplano`: o `data.resumo` dele, como a

@@ -115,12 +115,12 @@ OCULTA = "[senha de atuação]"
 TENTATIVAS = 5
 BLOQUEIO_S = 15 * 60
 TETO_RESPOSTA = 12000
-SEM_SENHA = ("Você ainda não tem senha de atuação — sem ela o bot não comanda equipamento pelo helper "
+SEM_SENHA = ("Você ainda não tem senha de atuação. Sem ela o bot não comanda equipamento pelo helper "
              "(ligar, desligar, gravar). Peça ao gerente da sua O&M para definir no oem-gs (Bot do WhatsApp). "
              "Nada foi feito.")
 #: A MESMA frase para a senha certa e para a errada, sem ação esperando: senão, mandar números
 #: até a frase mudar descobriria a senha.
-NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito — se era "
+NADA_ESPERANDO = ("Não há ação esperando senha (o pedido vale poucos minutos). Nada foi feito. Se era "
                   "outra coisa, escreva com palavras.")
 BLOQUEADO = "Ações bloqueadas por senha errada por 15 minutos. Nada foi feito."
 #: O que vai ao pé da resposta quando uma mensagem que não era só a senha derrubou a ação.
@@ -136,7 +136,7 @@ CANCELADO_PASSO = "Cancelado: este passo não será executado."
 ANTES_DO_RESUMO_SIM = ("Esse \"sim\" foi mandado antes de o resumo da ação chegar, então não vale. Leia o resumo "
                        "acima e, se for isso mesmo, responda SIM de novo até as {limite}. Nada foi feito.")
 #: A senha (certa ou errada — a mesma frase, sem oráculo) depois do prazo da ação.
-VENCEU = ("A ação esperava a sua resposta até as {limite} e venceu, então não vale mais. Nada foi feito — se "
+VENCEU = ("A ação esperava a sua resposta até as {limite} e venceu, então não vale mais. Nada foi feito. Se "
           "ainda quiser, peça de novo.")
 ANTES_DO_RESUMO = ("Essa senha foi mandada antes de o resumo da ação chegar, então não vale. Leia o resumo "
                    "acima e, se for isso mesmo, mande a senha outra vez até as {limite}. Nada foi feito.")
@@ -765,16 +765,16 @@ def e_tentativa(user, texto: str) -> bool:
 
 
 #: O toque num botão de um resumo que não é o da ação esperando agora.
-BOTAO_ANTIGO = "Esse botão é de um resumo antigo — nada foi feito."
+BOTAO_ANTIGO = "Esse botão é de um resumo antigo. Nada foi feito."
 #: O toque quando não há ação esperando nenhuma: venceu e saiu, ou o bot foi atualizado (a ação
 #: esperando vive em memória e se perde no deploy — avaliação 14: dizia "resumo antigo").
-BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot foi atualizado. Nada foi feito — "
-                  "se ainda quiser, peça de novo.")
+BOTAO_SEM_ACAO = ("Essa confirmação não vale mais: o pedido venceu ou o bot foi atualizado. Nada foi feito. "
+                  "Se ainda quiser, peça de novo.")
 #: O toque de novo no Sim/Não de um resumo JÁ confirmado (o WhatsApp deixa os botões tocáveis):
 #: ouvia "Nada foi feito — peça de novo" logo abaixo do ✅, um convite a duplicar a OS (avaliação 15).
 JA_CONFIRMADA = "Essa ação já foi confirmada e não roda de novo. O que houve: {desfecho}"
 #: O desfecho de uma ação que estourou no meio da execução.
-INCERTA = "⚠️ A ação «{resumo}» deu erro no meio — ela PODE ter sido feita. Confira antes de pedir de novo."
+INCERTA = "⚠️ A ação «{resumo}» deu erro no meio: ela PODE ter sido feita. Confira antes de pedir de novo."
 #: O toque no Sim/Não de um resumo que a PRÓPRIA mensagem da pessoa derrubou ("esta ação", e não "nada
 #: foi feito": no pedido de vários passos, o passo anterior foi — avaliação 15).
 CANCELADA_PELA_MENSAGEM = ("Essa ação foi cancelada pela sua mensagem «{trecho}» e não foi feita. Se ainda quiser, "
@@ -863,7 +863,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
                               "(Bot do WhatsApp). Leitura continua liberada.")}
     if ctx.proposta is not None:
         if ctx.proposta.confirmacao == "sim":           # avaliação 15: a IA ouvia "senha" na do meuPlano
-            seguir = (" — depois do Sim, o sistema segue sozinho para o próximo passo do pedido"
+            seguir = (". Depois do Sim, o sistema segue sozinho para o próximo passo do pedido"
                       if ctx.proposta.conversa is not None else "")
             return {"erro": f"Uma ação por vez: já há uma esperando o Sim da pessoa nesta mensagem. Fale só dela{seguir}."}
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
@@ -1095,8 +1095,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     liberadas = {p.mw_plant_slug for p in ger.usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug}
     pedidas = _usinas_pedidas(rota, corpo)
     if not pedidas and _tem_alvo(rota, corpo):
-        return {"erro": ("Equipamento pelo IP só com a usina junto: mande também o slug (ou plant_id) da usina — "
-                         "o bot só fala com equipamento de usina liberada para esta pessoa.")}
+        return {"erro": ("Equipamento pelo IP só com a usina junto: mande também o slug (ou plant_id) da usina. "
+                         "O bot só fala com equipamento de usina liberada para esta pessoa.")}
     fora = pedidas - liberadas
     if fora:
         return {"erro": f"Usina não liberada para você no Gestão Solar: {', '.join(sorted(fora))}."}
@@ -1137,22 +1137,22 @@ def _desfecho(resumo: str, r: dict) -> str:
     """O que o helper fez, em texto de WhatsApp — o ajuste em massa item por item, com a
     conferência da leitura final (o "OLHE, deu certo" da tela)."""
     if r.get("incerto") and not r.get("resultado"):
-        return (f"⚠️ {resumo}: sem resposta — a ação PODE ter chegado. Confira a leitura antes de repetir. "
+        return (f"⚠️ {resumo}: sem resposta, e a ação PODE ter chegado. Confira a leitura antes de repetir. "
                 f"{r.get('error') or ''}").strip()
     res = r.get("resultado")
     if isinstance(res, dict) and res.get("itens"):
         linhas = [f"• {i.get('nome')} {i.get('sigla') or i.get('campo')}: {i.get('antes')} → {i.get('valor')} "
-                  f"{i.get('unidade') or ''} — {_ESTADO.get(i.get('st'), i.get('st'))}".replace("  ", " ")
+                  f"{i.get('unidade') or ''}: {_ESTADO.get(i.get('st'), i.get('st'))}".replace("  ", " ")
                   for i in res["itens"]]
         if (res.get("conferencia") or {}).get("tudo_confirmado"):
             fim = "✅ A leitura final confere com tudo."
         elif r.get("acompanhe"):
-            fim = "⏳ O envio ainda não terminou — peça o andamento em instantes."
+            fim = "⏳ O envio ainda não terminou. Peça o andamento em instantes."
         else:
-            fim = "⚠️ A leitura final NÃO confere em tudo — veja os itens."
+            fim = "⚠️ A leitura final NÃO confere em tudo. Veja os itens."
         return "\n".join([f"{resumo}:", *linhas, fim])
     if r.get("reason") == "proposta_inexistente":
-        return ("⌛ O pedido expirou no helper (ele vale 2 minutos) — nada foi feito. Peça de novo e mande "
+        return ("⌛ O pedido expirou no helper (ele vale 2 minutos). Nada foi feito. Peça de novo e mande "
                 "a senha logo em seguida.")
     releitura = _leitura_curta((r.get("releitura") or {}).get("resposta"))
     if not r.get("ok"):
@@ -1187,7 +1187,7 @@ def _leitura_curta(dados: Any, limite: int = 10) -> str:
             pares.append(f"{prefixo}: {v}")
 
     if isinstance(dados, dict) and dados.get("ok") is False:
-        return f"falhou — {dados.get('error') or 'sem detalhe'}"
+        return f"falhou: {dados.get('error') or 'sem detalhe'}"
     andar(dados)
     return " · ".join(pares)
 
@@ -1259,7 +1259,7 @@ FERRAMENTAS = {
         "parameters": {"type": "object", "properties": {}}}}),
     "usina_helper": (usina_helper, {"type": "function", "function": {
         "name": "usina_helper",
-        "description": ("A USINA AO VIVO pelo helper — os equipamentos via Modbus (inversores, relés, SmartLogger, "
+        "description": ("A USINA AO VIVO pelo helper: os equipamentos via Modbus (inversores, relés, SmartLogger, "
                         "caixas ABS, térmica): ler, testar a comunicação (healthcheck), alarmes. Comece por "
                         "/api/registry/plants (libera as usinas da pessoa) e /api/registry/devices {slug}. "
                         "AJUSTE EM MASSA (mesmos parâmetros em vários relés): /api/massa/plano {slug, plant_id} lê; "
@@ -1271,7 +1271,7 @@ FERRAMENTAS = {
         "parameters": {"type": "object", "properties": {
             "rota": _ROTA,
             "metodo": {"type": "string", "enum": ["POST", "GET"],
-                       "description": "POST (padrão) ou GET — use o método que o catálogo diz para a rota. "
+                       "description": "POST (padrão) ou GET: use o método que o catálogo diz para a rota. "
                                       "GET é sempre leitura: /api/devices (os comandos e ações de cada equipamento), "
                                       "/api/healthcheck/state?id=<id> (o resultado do teste de comunicação)."},
             "corpo": {"type": "object", "description": "O JSON que a tela da web mandaria (ex.: {\"slug\": \"pirapozinho\"})."},

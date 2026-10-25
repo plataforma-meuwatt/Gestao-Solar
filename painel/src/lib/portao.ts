@@ -35,7 +35,7 @@ export function enderecoDe(escopo: Escopo | string): string {
 export function fraseDaPortaErrada(escopo: Escopo | string): string {
   const destino = enderecoDe(escopo)
   const quem = escopo === 'painel' ? 'da administração da plataforma' : 'do gerente da empresa de O&M'
-  return `Esta conta é ${quem}${destino ? ` — entre em ${destino.replace(/^https?:\/\//, '')}` : ''}.`
+  return `Esta conta é ${quem}${destino ? `. Entre em ${destino.replace(/^https?:\/\//, '')}` : ''}.`
 }
 
 export const TITULO =

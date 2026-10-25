@@ -49,7 +49,7 @@ const ROTULO_EVENTO: Record<string, string> = {
 }
 
 const APOIO =
-  'O número de WhatsApp da PLATAFORMA — o do bot —, pelo qual as notificações saem e as mensagens das ' +
+  'O número de WhatsApp da PLATAFORMA (o do bot), pelo qual as notificações saem e as mensagens das ' +
   'pessoas chegam. O token vale o que a conta que o gerou vale, e o segredo do app é o ' +
   'que prova que uma entrega veio mesmo da Meta.'
 
@@ -208,7 +208,7 @@ export function Whatsapp() {
         <ol className="px-5 pb-5 pt-1 text-sm text-rotulo list-decimal ml-4 flex flex-col gap-1.5">
           <li>
             Gere um token <strong>permanente</strong> (usuário do sistema) no Gerenciador de
-            Negócios — o do painel do app expira em 24 horas.
+            Negócios: o do painel do app expira em 24 horas.
           </li>
           <li>Cole aqui o token, o Phone Number ID e o segredo do app.</li>
           <li>
@@ -315,7 +315,7 @@ function Modelos() {
 
         {data && data.length === 0 ? (
           <p className="text-sm text-rotulo">
-            Nenhum modelo nesta conta. Sem modelo aprovado, nenhum aviso sai — crie em
+            Nenhum modelo nesta conta. Sem modelo aprovado, nenhum aviso sai. Crie em
             Gerenciador do WhatsApp → Modelos de mensagem.
           </p>
         ) : null}

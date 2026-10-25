@@ -343,7 +343,7 @@ async def irradiacao(ctx: Contexto, a: dict) -> dict:
         "total_kwh_m2": {"poa_estacao": _soma(col["irradiacao_poa_dia"]), "ghi_estacao": _soma(col["irradiacao_ghi_dia"]),
                          "ghi_satelite": _soma(col["irradiacao_ghi_sat_dia"])},
         "dias": dias if len(dias) <= 62 else "período longo: veja o total",
-        "fontes": "'estacao' = medida na usina. 'satelite' = estimativa externa — diga que é satélite.",
+        "fontes": "'estacao' = medida na usina. 'satelite' = estimativa externa: diga que é satélite.",
         "nao_disponivel": "Vento, chuva e umidade não estão disponíveis."}
     if fim == hoje():
         c = await ctx.mw.monitoramento_atual(u["slug"])
@@ -397,7 +397,7 @@ async def paradas(ctx: Contexto, a: dict) -> dict:
     def conta(campo, rot=None):
         c: dict[str, int] = {}
         for x in linhas:
-            k = (rot or {}).get(x.get(campo), x.get(campo) or "—")
+            k = (rot or {}).get(x.get(campo), x.get(campo) or "não informado")
             c[k] = c.get(k, 0) + 1
         return dict(sorted(c.items(), key=lambda kv: -kv[1]))
 
@@ -417,7 +417,7 @@ async def paradas(ctx: Contexto, a: dict) -> dict:
             "aviso": saida.aviso,
             "nota": ("Só paradas relevantes, como na tela de Paradas (piscadas curtas e buracos de leitura ficam de "
                      "fora). Total nulo = o detector não analisou o período (não é zero). Perda nula = em alguma "
-                     "parada o detector não fez a conta (sem par para comparar) — diga isso, não some zero.")}
+                     "parada o detector não fez a conta (sem par para comparar): diga isso, não some zero.")}
 
 
 async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
@@ -532,7 +532,7 @@ FERRAMENTAS = {
     "irradiacao": (irradiacao, _f("irradiacao", "IRRADIAÇÃO de uma usina por dia e total (estação POA/GHI quando houver; "
         "GHI de satélite sempre) e a estação agora. Vento/chuva/umidade não existem.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "projeto": (projeto, _f("projeto", "Real × projeto PVsyst por mês (energia, PR e irradiação de projeto, "
-        "disponibilidade, perdas) — 'gerou conforme o PVsyst? por que não?'.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
+        "disponibilidade, perdas): 'gerou conforme o PVsyst? por que não?'.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "paradas": (paradas, _f("paradas", "Paradas de inversor no período, pela mesma régua da tela de Paradas: total, "
         "em aberto, fechadas, tempo parado, perda, por causa, por inversor, maiores perdas.",
         {"usina": _USINA, "inicio": _INI, "fim": _FIM})),

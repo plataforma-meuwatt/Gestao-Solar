@@ -113,7 +113,7 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
 
       {!ligada ? (
         <Aviso>
-          Sem a conta da empresa conectada, nada do {NOME[conexao.produto]} é lido para ela — a
+          Sem a conta da empresa conectada, nada do {NOME[conexao.produto]} é lido para ela: a
           plataforma não tem token. Gere um token dentro da conta da empresa no{' '}
           {NOME[conexao.produto]} e cole aqui.
         </Aviso>
@@ -160,7 +160,7 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
               className="btn-secundario"
               onClick={() =>
                 window.confirm(
-                  `Desconectar a conta da empresa no ${NOME[conexao.produto]}? Quem lê com ela — os donos de usina sem token próprio — fica sem dado do ${NOME[conexao.produto]} até conectar de novo.`,
+                  `Desconectar a conta da empresa no ${NOME[conexao.produto]}? Quem lê com ela (os donos de usina sem token próprio) fica sem dado do ${NOME[conexao.produto]} até conectar de novo.`,
                 ) && desconectar.mutate()
               }
               disabled={desconectar.isPending}
@@ -173,7 +173,7 @@ function Conexao({ conexao }: { conexao: ConexaoDaEmpresa }) {
 
       {ligada ? (
         <p className="text-xs text-fraco mt-3">
-          Desconectar aqui não revoga o token no {NOME[conexao.produto]} — ele continua válido
+          Desconectar aqui não revoga o token no {NOME[conexao.produto]}: ele continua válido
           lá, e é lá que a porta se fecha de verdade.
         </p>
       ) : null}

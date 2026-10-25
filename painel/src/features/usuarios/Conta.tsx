@@ -151,7 +151,7 @@ export function EmpresasDaConta({ conta, aoFechar }: { conta: Conta; aoFechar: (
                         window.confirm(
                           `Tirar ${conta.nome} de ${e.nome}? As usinas que essa conta recebe de lá saem junto.` +
                             (conta.empresas.length === 1
-                              ? ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa — nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'
+                              ? ' Esta é a ÚNICA empresa da pessoa: ela fica sem empresa: nenhum gerente a enxerga e o aplicativo dela fica vazio até alguém a pôr em outra.'
                               : ''),
                         )
                       )

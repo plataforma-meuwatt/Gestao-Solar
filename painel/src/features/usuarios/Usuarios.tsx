@@ -84,7 +84,7 @@ export function Usuarios() {
   return (
     <Pagina
       titulo="Usuários"
-      apoio="Todo mundo que entra no Gestão Solar, e de qual empresa é — uma pessoa pode estar em mais de uma. A equipe da plataforma aparece marcada. Para criar alguém de uma empresa, entre na empresa."
+      apoio="Todo mundo que entra no Gestão Solar, e de qual empresa é. Uma pessoa pode estar em mais de uma. A equipe da plataforma aparece marcada. Para criar alguém de uma empresa, entre na empresa."
       acao={
         <div className="flex gap-2">
           <button onClick={() => setAgrupando(true)} className="btn-secundario">
@@ -385,7 +385,7 @@ function PainelDeAreas({
     <div className="mt-2.5 rounded-campo bg-superficie p-4">
       {ehAdmin ? (
         <p className="text-xs text-rotulo mb-3">
-          Administrador abre todas as telas pelo perfil — inclusive esta. Para limitar o que
+          Administrador abre todas as telas pelo perfil, inclusive esta. Para limitar o que
           esta pessoa vê, mude o perfil para Atendimento e marque as telas abaixo.
         </p>
       ) : null}
@@ -493,22 +493,22 @@ function ModalNovoUsuario({ areas, aoFechar }: { areas: Area[]; aoFechar: () => 
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          nota="Opcional — serve para alcançar a pessoa, não para entrar."
+          nota="Opcional: serve para alcançar a pessoa, não para entrar."
         />
         <Seletor
           rotulo="Perfil"
           value={perfil}
           onChange={(e) => setPerfil(e.target.value as Membro['perfil'])}
         >
-          <option value="atendimento">Atendimento — abre só as telas marcadas</option>
-          <option value="administrador">Administrador — abre tudo, inclusive esta tela</option>
+          <option value="atendimento">Atendimento: abre só as telas marcadas</option>
+          <option value="administrador">Administrador: abre tudo, inclusive esta tela</option>
         </Seletor>
 
         {perfil === 'atendimento' ? (
           <div>
             <p className="text-sm text-rotulo mb-2">
               Telas que esta pessoa abre. Sem nenhuma marcada, ela entra no painel e lê que
-              falta acesso — o que é honesto, e você concede depois aqui mesmo.
+              falta acesso (o que é honesto), e você concede depois aqui mesmo.
             </p>
             <div className="rounded-campo bg-superficie p-3 grid gap-2">
               {areas.map((a) => (
@@ -715,7 +715,7 @@ function MesmaPessoa({ aoFechar }: { aoFechar: () => void }) {
         <div className="grid gap-4">
           <Aviso>
             Agrupar não junta poderes: cada sessão continua valendo para um portão só. O que
-            muda é poder trocar de papel sem sair e entrar de novo — e entrar como gestor da
+            muda é poder trocar de papel sem sair e entrar de novo, e entrar como gestor da
             plataforma continua pedindo a senha daquela conta.
           </Aviso>
 

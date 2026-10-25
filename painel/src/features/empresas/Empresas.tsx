@@ -26,7 +26,7 @@ export function Empresas() {
   return (
     <Pagina
       titulo="Empresas"
-      apoio="Os clientes da plataforma: as empresas de O&M. Entre numa empresa para ver e cuidar dos usuários dela — gerentes, técnicos e donos de usina."
+      apoio="Os clientes da plataforma: as empresas de O&M. Entre numa empresa para ver e cuidar dos usuários dela: gerentes, técnicos e donos de usina."
       acao={
         <button className="btn-primario" onClick={() => setNovaAberta(true)}>
           Cadastrar empresa
@@ -122,7 +122,7 @@ function Nova({ aoFechar }: { aoFechar: () => void }) {
     <Modal titulo="Cadastrar empresa de O&M" aoFechar={aoFechar}>
       <div className="grid gap-4">
         <Aviso>
-          O nome é único. “Splendor O&M” e “splendor o&amp;m” são a mesma empresa — era
+          O nome é único. “Splendor O&M” e “splendor o&amp;m” são a mesma empresa, e era
           exatamente isso que o cadastro por texto livre deixava passar.
         </Aviso>
 

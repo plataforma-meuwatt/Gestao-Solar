@@ -1035,7 +1035,7 @@ def definir_usinas_do_cliente(
     if cliente.abre_empresa:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "O gerente já vê todas as usinas da empresa — não há o que conceder a ele.",
+            "O gerente já vê todas as usinas da empresa: não há o que conceder a ele.",
         )
     # O técnico não entra no aplicativo do dono: conceder-lhe usina disputaria a usina com
     # o cliente dela ("cada usina pertence a UM cliente só") por uma tela que ele não abre.
@@ -1733,7 +1733,7 @@ async def bot_ouvindo(
     return BotOuvindoOut(
         ouvindo=False,
         resumo=("O bot não está recebendo as mensagens agora. É o canal da plataforma, não o "
-                "cadastro de vocês — a administração do Gestão Solar vê o mesmo aviso."),
+                "cadastro de vocês. A administração do Gestão Solar vê o mesmo aviso."),
         **helper,
     )
 

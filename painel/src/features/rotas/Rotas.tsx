@@ -85,7 +85,7 @@ function BlocoHelper() {
     <Cartao>
       <div className="px-5 pt-4 pb-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <p className="text-forte font-semibold">Helper — porta do bot</p>
+          <p className="text-forte font-semibold">Helper: porta do bot</p>
           {data ? <Selo tom={data.ok ? 'ok' : 'parado'}>{data.ok ? 'alcançável' : 'fora'}</Selo> : null}
           {data ? <Selo tom="sem-dados">{data.rotas.length} catalogadas</Selo> : null}
         </div>

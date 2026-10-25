@@ -53,7 +53,7 @@ def normalizar(valor: str | None) -> str:
         )
     if not _FORMATO.match(limpo):
         raise ApelidoInvalido(
-            "O apelido aceita letras sem acento, números, ponto, hífen e sublinhado — "
+            "O apelido aceita letras sem acento, números, ponto, hífen e sublinhado, "
             "sempre com uma letra ou número nas pontas. Exemplo: renan.marquezini."
         )
     return limpo

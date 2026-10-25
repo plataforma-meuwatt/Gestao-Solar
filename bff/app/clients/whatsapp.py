@@ -75,7 +75,7 @@ async def _req(metodo: str, caminho: str, **kw: Any) -> Any:
     if r.status_code == 401:
         raise GatewayIndisponivel(
             "O gateway recusou a chave interna. Confira WHATSAPP_CHAVE_INTERNA nos dois "
-            "serviços — ela precisa ser a mesma."
+            "serviços: ela precisa ser a mesma."
         )
     if r.status_code >= 400:
         detalhe = ""

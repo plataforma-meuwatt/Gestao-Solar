@@ -51,10 +51,10 @@ export function problemaNoToken(produto: Produto, valor: string): string | null 
   }
 
   if (limpo.length < TAMANHO_TOKEN) {
-    return `Faltam ${TAMANHO_TOKEN - limpo.length} caracteres — a cópia veio cortada.`
+    return `Faltam ${TAMANHO_TOKEN - limpo.length} caracteres: a cópia veio cortada.`
   }
   if (limpo.length > TAMANHO_TOKEN) {
-    return `Sobram ${limpo.length - TAMANHO_TOKEN} caracteres — pode ter vindo espaço ou aspas junto.`
+    return `Sobram ${limpo.length - TAMANHO_TOKEN} caracteres: pode ter vindo espaço ou aspas junto.`
   }
   if (!ALFABETO.test(limpo.slice(PREFIXO[produto].length))) {
     return 'O token tem caracteres que não pertencem ao formato.'

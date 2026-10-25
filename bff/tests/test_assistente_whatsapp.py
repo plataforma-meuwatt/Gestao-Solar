@@ -314,7 +314,8 @@ async def test_cada_mensagem_vira_uma_linha_no_log_do_bot(db, monkeypatch):
     linhas = db.query(RegistroBot).order_by(RegistroBot.id).all()
     assert [(r.resultado, r.gs_user_id) for r in linhas] == [("sem_conta", None), ("respondeu", dono.id)]
     assert linhas[1].pergunta == "OS abertas?" and linhas[1].ferramentas == "manutencao"
-    assert linhas[1].resposta == "*2 OS abertas*" and linhas[1].duracao_ms is not None
+    # o texto livre do meuPlano fica fora do log (avaliação 28); a pessoa recebeu "*2 OS abertas*"
+    assert linhas[1].resposta == assistente.RESPOSTA_OMITIDA and linhas[1].duracao_ms is not None
     conversa = db.query(ConversaWhatsapp).one()
     assert conversa.gs_user_id == dono.id and "segredo da outra conta" not in _conversa_em_claro(db)
 
@@ -597,6 +598,7 @@ async def test_criar_a_os_e_concluir_a_outra_vira_dois_sim_em_sequencia(db, bot_
     monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
     monkeypatch.setattr(assistente, "_llm", _llm)
     monkeypatch.setattr(ger, "preparar", _nada)
+    _resto(monkeypatch, *SEGUE_E_ACABA)
     dono = _conta(db, "dono", "+5517997377626")                 # SEM senha de atuação
     await assistente.atender(_ev(dono, 1, "Crie a OS e a tarefa. A OS 1638 mova para concluída"))
     # A fala da IA em texto, e o resumo numa mensagem só dele, com os botões Sim / Não.
@@ -810,7 +812,7 @@ def test_o_ajuste_em_massa_volta_item_por_item_com_a_conferencia():
         {"nome": "TEMP-SKID-02", "sigla": "trd", "antes": 2, "valor": 2, "unidade": "s", "st": "ja"},
     ]}}
     texto = _desfecho("Ajuste em massa em 2 relés", r)
-    assert "TEMP-SKID-01 trd: 3 → 2 s — ✅ confirmado" in texto and "já estava" in texto
+    assert "TEMP-SKID-01 trd: 3 → 2 s: ✅ confirmado" in texto and "já estava" in texto
     assert texto.endswith("✅ A leitura final confere com tudo.")
     r["resultado"]["conferencia"]["tudo_confirmado"] = False
     assert "NÃO confere" in _desfecho("Ajuste", r)
@@ -1102,6 +1104,8 @@ async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, mon
     async def _llm(msgs, ferramentas=None):
         if msgs[-1]["role"] == "tool":
             return {"content": _json.loads(msgs[-1]["content"])["texto"]}
+        if msgs[-1]["content"] == "obrigado":
+            return {"content": "De nada! A OS 1638 segue aberta."}            # sem o meuPlano: o texto fica no log
         return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
             "name": "manutencao", "arguments": _json.dumps({"pergunta": next(perguntas)})}}]}
 
@@ -1114,9 +1118,12 @@ async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, mon
     await assistente.atender(_ev(dono, 1, "como entro nos SL de Ibitinga?"))
     assert "Huawei@123" in bot_local.enviados[-1] and "Changeme1" in bot_local.enviados[-1]
     await assistente.atender(_ev(dono, 2, "e as OS abertas?"))
+    await assistente.atender(_ev(dono, 3, "obrigado"))
     linhas = db.query(RegistroBot).order_by(RegistroBot.id).all()
+    # o que passou pelo meuPlano fica fora do log, trate ou não de acesso (avaliação 28); o resto fica
     assert [(r.pergunta, r.resposta) for r in linhas] == [
-        ("como entro nos SL de Ibitinga?", assistente.RESPOSTA_OMITIDA), ("e as OS abertas?", "2 OS abertas: 1638 e 1843.")]
+        ("como entro nos SL de Ibitinga?", assistente.RESPOSTA_OMITIDA), ("e as OS abertas?", assistente.RESPOSTA_OMITIDA),
+        ("obrigado", "De nada! A OS 1638 segue aberta.")]
     assert all(assistente._e_de_credencial(p) for p in (
         "Qual a senha do SL1?", "Me passa o login do SmartLogger", "dados de acesso do ABS", "o acesso web do SL2",
         "Qual a chave do Wi-Fi?", "Como abro o cadeado do portão?", "Como eu entro no SmartLogger 1?",
@@ -1222,7 +1229,8 @@ async def test_numero_em_frase_so_esconde_a_senha_e_nunca_conta_erro(db, helper_
 
 async def test_sem_acao_esperando_a_senha_numa_frase_some_e_o_numero_comum_fica(db, bot_local, helper_com_get, monkeypatch):
     """ "a 482913" (a senha) some e a pessoa é avisada; "a 482914" (outro número) chega à IA como
-    está — sem contar erro nem bloquear ninguém."""
+    está, sem contar erro nem bloquear ninguém. Na cópia GUARDADA, o número sem nome some, como todo número com cara
+    de segredo (avaliação 28): por isso o gateway é chamado também para a 2ª."""
     from app.services import assistente_helper as h
 
     async def _nada(*a, **k):
@@ -1232,7 +1240,7 @@ async def test_sem_acao_esperando_a_senha_numa_frase_some_e_o_numero_comum_fica(
     dono = _dono_com_usina(db)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482913"})
     await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482914"})
-    assert bot_local.llm == [f"a {h.SENHA_OCULTA}", "a 482914"] and bot_local.ocultadas == [1]
+    assert bot_local.llm == [f"a {h.SENHA_OCULTA}", "a 482914"] and bot_local.ocultadas == [1, 2]
     assert "Escondi a sua senha de atuação" in bot_local.enviados[0]
     assert "482913" not in _conversa_em_claro(db) and dono.id not in h._ERROS
 
@@ -1945,6 +1953,30 @@ async def test_gateway_que_recusa_botoes_manda_o_resumo_em_texto(db, bot_local, 
 # ── avaliação 12 (24/10/2026): o SIM do jeito que se fala, a correção, o 500 no meio e a assinatura ──
 
 
+def _resto(monkeypatch, *decisoes, vistos=None):
+    """A IA de mentira do RESTO do pedido (`assistente._decidir_o_resto`): cada decisão é (ferramenta, argumentos), na
+    ordem; acabadas, ela não chama ferramenta nenhuma (o bot diz que não conseguiu conferir). `vistos` recebe as
+    mensagens de cada decisão."""
+    import json as _json
+
+    fila = list(decisoes)
+
+    async def _decidir(msgs):
+        if vistos is not None:
+            vistos.append(msgs)
+        if not fila:
+            return {"content": "ok"}
+        nome, args = fila.pop(0)
+        return {"content": "", "tool_calls": [{"id": f"r{len(fila)}", "type": "function", "function": {
+            "name": nome, "arguments": _json.dumps(args)}}]}
+
+    monkeypatch.setattr(assistente, "_decidir_o_resto", _decidir)
+
+
+#: O resto mais comum: pedir ao meuPlano o passo que falta e, depois dele, o fim.
+SEGUE_E_ACABA = (("proximo_passo", {"passo": "Mover a OS 1638 para concluída"}), ("fim_do_pedido", {"situacao": "feito"}))
+
+
 def _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos):
     """A IA de mentira: "crie …" vai ao meuPlano (`falso`); o resto, "Entendi." — e anota o que viu."""
     import json as _json
@@ -1970,6 +2002,7 @@ def _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos):
     monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
     monkeypatch.setattr(assistente, "_llm", _llm)
     monkeypatch.setattr(ger, "preparar", _nada)
+    _resto(monkeypatch, *SEGUE_E_ACABA)
 
 
 async def test_sim_com_palavras_confirma_e_nao_com_correcao_vai_a_ia(db, bot_local, monkeypatch):
@@ -2208,108 +2241,76 @@ async def test_falha_num_passo_seguinte_diz_o_pedido_da_pessoa_e_o_que_ja_foi_fe
         assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "erro"
 
 
-async def test_proximo_passo_em_texto_pede_a_acao_de_novo_e_nunca_repassa_a_promessa(db, bot_local, monkeypatch):
-    """Uso real de 24/10/2026 (avaliação 19): depois do Sim, o próximo passo veio em TEXTO ("confirmando os
-    dois, eu fecho a 1638") e o bot o repassou — sem botões, nada a confirmar, a 1638 não foi fechada, e o
-    log ficou verde. Agora pede de novo, uma vez, pela ferramenta; se vier texto de novo, diz claramente
-    que o passo não ficou pronto e o que já foi feito, e o log marca erro."""
+async def test_proximo_passo_em_texto_volta_a_ia_e_nunca_e_repassado(db, bot_local, monkeypatch):
+    """Uso real de 24/10/2026 (avaliação 19): depois do Sim, o próximo passo veio em TEXTO ("confirmando os dois, eu fecho
+    a 1638") e o bot o repassou, sem botões, e a 1638 não foi fechada. Agora o texto de lá volta à IA, que pede o passo
+    de novo; e, se ela não decide, a pessoa lê que não se conferiu o resto do pedido (log "a conferir")."""
     from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
     falso = _MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "proposta")
     _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    decisoes = []
+    _resto(monkeypatch, ("proximo_passo", {"passo": "Mover a OS 1638 para concluída"}),
+           ("proximo_passo", {"passo": "Fechar a OS 1638"}), vistos=decisoes)
     dono = _conta(db, "dono", "+5517997377626")
     await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
     await assistente.atender(_toque(dono, 2))
     assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1638"                    # pronto para o botão
-    assert "Confirmando os dois" not in bot_local.enviados[-1] and "Não descreva em texto" in falso.conversas[-1][-1]["content"]
+    assert not any("Confirmando os dois" in m for m in bot_local.enviados)       # a promessa não chegou à pessoa
+    assert "Confirmando os dois" in decisoes[-1][-1]["content"]                  # chegou à IA, como resultado
 
     h.PENDENTES.clear()
-    falso = _MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, TEXTO_DO_MEUPLANO)
+    falso = _MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO)
     _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    _resto(monkeypatch, ("proximo_passo", {"passo": "Fechar a OS 1638"}))       # e depois a IA não decide
     dono2 = _conta(db, "dono2", "+5517997370000")
     await assistente.atender(_ev(dono2, 3, PEDIDO_DOIS_PASSOS))
     await assistente.atender(_toque(dono2, 4))
     aviso = bot_local.enviados[-1]
     assert aviso.startswith(assistente.NAO_CONFIRMOU) and dono2.id not in h.PENDENTES
-    assert "nada está esperando o seu Sim" in aviso and "Criar OS em UFV Ibitinga" in aviso and ".." not in aviso
-    assert "(roçagem 09/2026). Confirmando os dois, eu fecho a 1638 e registro a 1843." in aviso    # inteiro
-    assert len(falso.conversas) == 3                                          # pediu de novo uma vez só
+    assert "Criar OS em UFV Ibitinga" in aviso and "Confirmando os dois" not in aviso and ".." not in aviso
     assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "a_conferir"
 
 
-async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, bot_local, monkeypatch):
-    """Depois de um passo feito, o meuPlano diz o STATUS do pedido (FEITO, FALTA: …, PERGUNTA: …) ou propõe o próximo
-    passo. O bot não lê a prosa de lá (avaliações 22 a 27: as listas de palavras erravam nos dois sentidos): o status
-    decide; o fim SOZINHO ("Não há próximo passo.") cala; a pergunta ("…?") vai como pergunta; o texto fora do status,
-    pedido de novo e sem o status, vira "não confirmou se o seu pedido terminou", com o log "a conferir"."""
+async def test_o_resto_do_pedido_e_a_decisao_da_ia_nunca_a_prosa_do_meuplano(db, bot_local, monkeypatch):
+    """Depois de um passo feito, a IA decide numa chamada de ferramenta: o próximo passo (o meuPlano propõe) ou o fim
+    (feito, falta, pergunta). Antes o meuPlano respondia um status em texto que a regra 7 do IA.MD de lá proíbe
+    ("feito"), e o pedido de UM passo, feito, terminava numa 2ª mensagem dizendo que não se confirmou (avaliação 28).
+    O texto da IA (o motivo, a pergunta) vai à pessoa e fica fora do log; o estado vai ao log."""
     from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
-    pergunta = "Para fechar a OS 1638 preciso da data de término da roçagem: qual foi?"
     criar = {"status": "DONE", "type": "proposal", "action": "criar_ordem_servico", "args": {"usina_id": 37},
              "preview": {"summary": "Criar OS em UFV Ibitinga com 1 tarefa(s)", "lines": [], "warnings": []}}
-    falta = "Pronto, a OS 1638 foi fechada. Falta registrar a 1843 (tarefa 9330): qual a data de término?"
-    nao = assistente.NAO_CONFIRMOU
-    # (o meuPlano, o que a pessoa lê depois do ✅ — None: nada —, o log, quantas vezes o bot perguntou)
-    casos = ((_MeuPlanoQueEscreve("Não há mais passos."), None, "respondeu", 2),        # o fim sozinho: calado
-             (_MeuPlanoQueEscreve("Não há próximo passo."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Pronto, não falta nada."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Seu pedido está completo."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Pronto! Posso ajudar em algo mais?"), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Tudo concluído."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Não há próximos passos."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Nenhum próximo passo."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Não há próximo passo a propor."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Não, não há próximo passo."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Não há próximo passo. Estou à disposição."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("Não há próximo passo, posso ajudar em algo mais?"), None, "respondeu", 2),
-             # o STATUS (avaliação 27): FEITO cala ou informa; FALTA avisa; PERGUNTA pergunta
-             (_MeuPlanoQueEscreve("FEITO"), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("FEITO."), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve("FEITO: a OS 1843 foi criada e programada."),
-              "O meuPlano não propôs outro passo do seu pedido — nada está esperando o seu Sim — e disse:\n\na OS 1843 "
-              "foi criada", "respondeu", 2),
-             (_MeuPlanoQueEscreve("A OS 1638 foi fechada. Não há mais nada a fazer nela.", "FEITO"),
-              "disse:\n\nA OS 1638 foi fechada. Não há mais nada a fazer nela.", "respondeu", 3),
-             (_MeuPlanoQueEscreve("FALTA: concluir a ficha da 8873 — falta a data de término."),
-              "⚠️ O resto do seu pedido não ficou feito", "erro", 2),
-             (_MeuPlanoQueEscreve("Falta: a data de término da 8873."), "a data de término da 8873", "erro", 2),
-             (_MeuPlanoQueEscreve("NÃO DÁ: a OS 1638 tem tarefa sem data de término."), "tarefa sem data", "erro", 2),
-             (_MeuPlanoQueEscreve("A ficha da 8873 foi concluída. A OS 1638 está EM_EXECUCAO.",
-                                  "FALTA: fechar a OS 1638 — use o botão Fechar na web."), "use o botão Fechar", "erro", 3),
-             (_MeuPlanoQueEscreve("PERGUNTA: qual a data de término da roçagem?"),
-              "O meuPlano perguntou:\n\nqual a data de término", "respondeu", 2),
-             # o texto que COMEÇA como o status não é o status ("Faltam 2 passos do que você pediu — aqui está…", o
-             # uso real de 24/10): pedido de novo
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "FALTA: a data de término da 1843."), "a data de término da 1843",
-              "erro", 3),
-             # a pergunta vai INTEIRA, como pergunta, sem ⚠️ (avaliação 20)
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano perguntou:\n\n" + pergunta, "respondeu", 3),
-             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano perguntou:\n\n" + falta, "respondeu", 3),
-             (_MeuPlanoQueEscreve("Pronto! Quer que eu feche a OS 1638 também ou algo mais?", "Não há próximo passo."),
-              "O meuPlano perguntou:\n\nPronto! Quer que eu feche", "respondeu", 3),
-             # fora do status, nos dois sentidos — o completo dito com palavras comuns, o pendente sem palavra de
-             # pendência (avaliações 24 a 27): o bot não adivinha; diz que não confirmou, com o que ele disse
-             (_MeuPlanoQueEscreve("A OS 1638 foi fechada.", "A OS 1638 foi fechada."), nao, "a_conferir", 3),
-             (_MeuPlanoQueEscreve("A OS 1638 foi fechada. Não há mais nada a fazer nela.", "Não há próximo passo."),
-              "Não há mais nada a fazer nela", "a_conferir", 3),
-             (_MeuPlanoQueEscreve("A ficha da 8873 foi concluída. A OS 1638 está EM_EXECUCAO.", "Não há próximo passo."),
-              "EM_EXECUCAO", "a_conferir", 3),
-             (_MeuPlanoQueEscreve("Não é possível fechar a OS 1638: falta concluir a tarefa 8873.",
-                                  "Não é possível fechar a OS 1638: falta concluir a tarefa 8873."),
-              "falta concluir a tarefa 8873", "a_conferir", 3),
-             (_MeuPlanoQueEscreve("Depois eu fecho a 1638.", "Não há próximo passo."), "Depois eu fecho", "a_conferir", 3),
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "a_conferir", 3),
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "a_conferir", 3),  # o passo já feito
-             # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
-             (_MeuPlanoQueEscreve(criar, "Pronto."), None, "respondeu", 3),
-             (_MeuPlanoQueEscreve(criar, "FEITO"), None, "respondeu", 3),
-             (_MeuPlanoQueEscreve(criar, criar), "⚠️ O meuPlano não trouxe outro passo depois deste", "erro", 3),
-             (_MeuPlanoQueEscreve(criar, "proposta"), "• Fechar a OS 1638", "respondeu", 3))       # pediu de novo
-    for n, (falso, espera, resultado, perguntas) in enumerate(casos):
+    falta = ("fim_do_pedido", {"situacao": "falta", "texto": "A OS 1638 ainda tem a tarefa 8873 sem data de término"})
+    pergunta = ("fim_do_pedido", {"situacao": "pergunta", "texto": "Qual foi a data de término da roçagem?"})
+    feito = ("fim_do_pedido", {"situacao": "feito"})
+    passo = ("proximo_passo", {"passo": "Fechar a OS 1638"})
+    ja = "Já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) (OS 1843, PROGRAMADA)."
+    # (as decisões, o que o meuPlano responde a cada passo pedido, o que a pessoa lê depois do ✅ (None: nada), o log,
+    #  quantas vezes se perguntou ao meuPlano, o que fica no log no lugar do texto da IA)
+    casos = (([feito], (), None, "respondeu", 1, None),                                  # o pedido de um passo: calado
+             ([passo], ("proposta",), "• Fechar a OS 1638", "respondeu", 2, None),
+             ([falta], (), f"⚠️ A OS 1638 ainda tem a tarefa 8873 sem data de término. {ja}", "erro", 1,
+              "o motivo foi à pessoa e está fora do log"),
+             ([pergunta], (), "Qual foi a data de término da roçagem?", "respondeu", 1, "a pergunta está fora do log"),
+             # o pedido também perguntava algo ("e quantas OS sobraram?"): a resposta vai, sem ⚠️, e fica fora do log
+             ([("fim_do_pedido", {"situacao": "feito", "texto": "Em Ibitinga ficaram 2 OS abertas: 1843 e 1900."})], (),
+              "Em Ibitinga ficaram 2 OS abertas: 1843 e 1900.", "respondeu", 1, "a resposta ao resto do pedido"),
+             ([passo, passo], (TEXTO_DO_MEUPLANO, "proposta"), "• Fechar a OS 1638", "respondeu", 3, None),
+             ([passo, feito], ("A OS 1638 foi fechada.",), None, "respondeu", 2, None),
+             ([passo, feito], (criar,), None, "respondeu", 2, None),                     # o mesmo passo de novo: a IA sabe
+             ([passo], (TEXTO_DO_MEUPLANO,), assistente.NAO_CONFIRMOU, "a_conferir", 2, None),   # a IA não decidiu
+             ([("fim_do_pedido", {"situacao": "pergunta"})], (), assistente.NAO_CONFIRMOU, "a_conferir", 1, None),
+             ([("fim_do_pedido", {"situacao": "talvez"})], (), assistente.NAO_CONFIRMOU, "a_conferir", 1, None),
+             ([passo, passo, passo], (TEXTO_DO_MEUPLANO,) * 3, assistente.NAO_CONFIRMOU, "a_conferir", 4, None))
+    for n, (decisoes, depois, espera, resultado, perguntas, no_log) in enumerate(casos):
         h.PENDENTES.clear()
+        falso = _MeuPlanoQueEscreve(*depois)
         _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        vistos = []
+        _resto(monkeypatch, *decisoes, vistos=vistos)
         dono = _conta(db, f"dono{n}", f"+55179973770{n:02d}")
         await assistente.atender(_ev(dono, 10 * n + 1, PEDIDO_DOIS_PASSOS))
         antes = len(bot_local.enviados)
@@ -2317,14 +2318,62 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
         saidas = bot_local.enviados[antes:]
         assert saidas[0].startswith("✅ Feito no meuPlano: Criar OS"), n
         if espera is None:
-            assert len(saidas) == 1, (n, saidas)                       # o fim: nada mais a dizer
-        else:                                                          # avisado só quando é erro
-            assert espera in saidas[-1] and saidas[-1].startswith("⚠️") == (resultado == "erro"), (n, saidas[-1])
-            assert saidas[-1].startswith(nao) == (resultado == "a_conferir"), (n, saidas[-1])
-        assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == resultado, n
-        assert len(falso.conversas) == perguntas, n                              # pediu de novo uma vez só
-    # o que se pede ao meuPlano é o STATUS — nunca mais "responda só: Não há próximo passo"
-    assert "FEITO — o meu pedido inteiro está feito; FALTA:" in falso.conversas[1][-1]["content"]
+            assert len(saidas) == 1, (n, saidas)                       # nada mais a dizer
+        else:
+            assert espera in saidas[-1] and saidas[-1].startswith("⚠️") == (resultado != "respondeu"), (n, saidas[-1])
+        log = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
+        assert log.resultado == resultado and len(falso.conversas) == perguntas, n
+        assert not any("Faltam 2 passos" in m for m in saidas), n         # a prosa de lá nunca é repassada
+        if no_log:
+            assert no_log in log.resposta and decisoes[0][1]["texto"] not in log.resposta, n
+        # a IA decide com o pedido da pessoa e o que já foi feito
+        assert PEDIDO_DOIS_PASSOS in vistos[0][0]["content"] and "Criar OS em UFV Ibitinga" in vistos[0][0]["content"]
+        if depois == (criar,):                                       # o mesmo passo de novo: a IA ficou sabendo
+            assert "propôs de novo o passo que acabou de ser feito" in vistos[1][-1]["content"], n
+
+
+async def test_a_decisao_do_resto_exige_ferramenta_e_o_modo_sem_raciocinio():
+    """`tool_choice="required"` volta 400 no modo de raciocínio do DeepSeek (conferido em 25/10/2026): a decisão do resto
+    pede a ferramenta e desliga o raciocínio; a conversa comum, não."""
+    import httpx
+
+    from app.core.config import get_settings
+
+    corpos = []
+
+    class _Resposta:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "", "tool_calls": []}}]}
+
+    class _Cliente:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def post(self, url, headers=None, json=None):
+            corpos.append(json)
+            return _Resposta()
+
+    original, httpx.AsyncClient = httpx.AsyncClient, _Cliente
+    try:
+        await assistente._decidir_o_resto([{"role": "user", "content": "x"}])
+        await assistente._llm([{"role": "user", "content": "x"}], [assistente._MANUTENCAO])
+    finally:
+        httpx.AsyncClient = original
+    resto, comum = corpos
+    assert resto["tool_choice"] == "required" and resto["thinking"] == {"type": "disabled"}
+    assert [f["function"]["name"] for f in resto["tools"]] == ["proximo_passo", "fim_do_pedido"]
+    assert comum["tool_choice"] == "auto" and "thinking" not in comum
+    assert resto["model"] == get_settings().llm_model
+
 
 def test_o_resumo_diz_quantas_linhas_ficaram_de_fora():
     """Num APAGAR de 20 itens, só 15 apareciam no que a pessoa confirmava, sem aviso (avaliação 20)."""
@@ -2338,7 +2387,7 @@ def test_o_resumo_diz_quantas_linhas_ficaram_de_fora():
          "preview": {"summary": "APAGAR 20 item(ns) — 20 nó(s) no total (cascata).",
                      "lines": [{"text": f"Inversor {i} (INV-{i})"} for i in range(1, 21)], "warnings": []}}
     out = assistente._proposta_do_meuplano(ctx, r)
-    assert len(out["detalhes"]) == 16 and out["detalhes"][-1].startswith("… e mais 5 —")
+    assert len(out["detalhes"]) == 16 and out["detalhes"][-1].startswith("… e mais 5. Veja")
 
 
 async def test_o_resto_do_pedido_que_nao_vem_e_dito(db, bot_local, monkeypatch):
@@ -2354,8 +2403,9 @@ async def test_o_resto_do_pedido_que_nao_vem_e_dito(db, bot_local, monkeypatch):
     await assistente.atender(_toque(dono, 2))
     feito, aviso = bot_local.enviados[n:]
     assert feito.startswith("✅ Feito no meuPlano: Criar OS")
-    assert aviso == (f"⚠️ Não consegui pedir ao meuPlano o resto do seu pedido «{PEDIDO_DOIS_PASSOS}»: O modelo "
-                     "não respondeu. O resto não foi feito — confira e peça de novo o que faltar.")
+    assert aviso == (f"⚠️ Não consegui pedir ao meuPlano o resto do seu pedido «{PEDIDO_DOIS_PASSOS}» (O modelo não "
+                     "respondeu). Já foi feito: Criar OS em UFV Ibitinga com 1 tarefa(s) (OS 1843, PROGRAMADA). Confira "
+                     "e peça de novo o que faltar.")
     linha = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
     assert linha.resultado == "erro" and linha.erro == aviso and dono.id not in h.PENDENTES
 
@@ -3274,15 +3324,15 @@ async def test_o_feito_diz_o_resultado_real_do_meuplano(db, bot_local, monkeypat
     # todos falharam: nada foi feito — "EM PARTE" mentia (avaliação 23, o ensaio de lá com o nó 6539)
     nada = {"removidos": 0, "pulados_vazios": 1, "resumo": "0 equipamento(s) removido(s); 1 vazio(s); 1 bloqueado(s).",
             "erros": [{"node_id": 6539, "detail": "Inversor 1 tem 9 ensaios: não dá para desinstalar."}]}
-    casos = ((bloqueado, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 1 "
+    casos = ((bloqueado, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s). Resultado: 1 "
                          "equipamento(s) removido(s); 0 vazio(s); 1 bloqueado(s).\n• Inversor 1 tem 9 ensaios", "erro", 1),
              (recusa, "❌ O meuPlano recusou: Não dá para apagar 'Huawei': está em uso por 3 equipamento(s)/modelo(s). "
                       "Nada foi feito.", "erro", 1),
-             (inteiro, "✅ Feito no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 2 equipamento(s) "
+             (inteiro, "✅ Feito no meuPlano: Desinstalar o equipamento de 2 ponto(s). Resultado: 2 equipamento(s) "
                        "removido(s); 0 vazio(s); 0 bloqueado(s).", "respondeu", 2),
-             (sem_resumo, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — 2 item(ns) com "
+             (sem_resumo, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s): 2 item(ns) com "
                           "falha.\n\n", "erro", 1),
-             (nada, "❌ O meuPlano recusou: Desinstalar o equipamento de 2 ponto(s) — resultado: 0 equipamento(s) "
+             (nada, "❌ O meuPlano recusou: Desinstalar o equipamento de 2 ponto(s). Resultado: 0 equipamento(s) "
                     "removido(s); 1 vazio(s); 1 bloqueado(s).\n• Inversor 1 tem 9 ensaios: não dá para desinstalar."
                     "\n\nNada foi feito.", "erro", 1))
     for n, (dados, comeca, resultado, perguntas) in enumerate(casos):
@@ -3305,8 +3355,9 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
 
     for i, (segundo, oferecido) in enumerate((({"os_id": 1638}, False), ({"os_id": 1640}, True)), start=1):
         h.PENDENTES.clear()
-        falso = _MeuPlanoQueRepete({"os_id": 1638}, segundo)
+        falso, decisoes = _MeuPlanoQueRepete({"os_id": 1638}, segundo), []
         _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+        _resto(monkeypatch, *SEGUE_E_ACABA, vistos=decisoes)
         dono = _conta(db, f"dono{i}", f"+551799737000{i}")
         await assistente.atender(_ev(dono, 10 * i, "crie: feche a 1638"))
         await assistente.atender(_toque(dono, 10 * i + 1))
@@ -3314,8 +3365,9 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
         if oferecido:
             assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)" and len(falso.conversas) == 2
         else:
-            # pede de novo (avaliação 21: calar escondia o resto do pedido); o "Pronto." depois disso é o fim
-            assert dono.id not in h.PENDENTES and len(falso.conversas) == 3
+            # a IA fica sabendo que o meuPlano repetiu o passo e decide (aqui, o fim)
+            assert dono.id not in h.PENDENTES and len(falso.conversas) == 2
+            assert "propôs de novo o passo que acabou de ser feito" in decisoes[-1][-1]["content"]
             assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")
 
 
@@ -3527,46 +3579,28 @@ def test_a_mascara_esconde_so_o_valor_e_deixa_a_prosa():
         assert _sem_segredos(prosa) == prosa, prosa
 
 
-def test_o_status_so_vale_na_forma_do_protocolo():
-    """O status vem no começo, sozinho ou com ":"/"—" — o texto que só começa pela palavra ("Faltam 2 passos do que você
-    pediu — aqui está a proposta…", "Feito o lançamento…") é pedido de novo (avaliação 27)."""
-    for texto, palavra, dito in (("FEITO", "feito", None), ("Feito.", "feito", None), ("FEITO: a OS 1638 foi fechada.",
-                                 "feito", "a OS 1638 foi fechada."), ("**FALTA:** fechar a 1638", "falta", "fechar a 1638"),
-                                 ("NÃO DÁ — a 1638 tem tarefa aberta", "não dá", "a 1638 tem tarefa aberta"),
-                                 ("Pergunta: qual a data?", "pergunta", "qual a data?")):
-        m = assistente._STATUS.match(texto)
-        assert m is not None and m.group(1).lower() == palavra and (m.group(2) or None) == dito, texto
-    for texto in ("Faltam 2 passos do que você pediu — aqui está a proposta", "Feito o lançamento do dia.",
-                  "A OS 1638 foi fechada. FEITO", "Perguntaram se a OS 1638 fecha.", "Falta concluir a tarefa 8873."):
-        assert assistente._STATUS.match(texto) is None, texto
-
-
-async def test_o_status_do_meuplano_decide_e_sem_ele_o_fim_fica_a_conferir(db, bot_local, monkeypatch):
-    """"Feche a OS 1638" → Sim → ✅. O meuPlano responde em texto e, pedido de novo: FEITO → informação, log verde;
-    FALTA: … → ⚠️, log em erro; o fim solto ("Não há próximo passo.") ou o texto de novo → "não confirmou", log "a
-    conferir" — nos dois sentidos, sem ler a prosa (avaliação 27: "Não há mais nada a fazer nela" virava alarme; "A OS
-    1638 está EM_EXECUCAO" saía como fim)."""
+async def test_o_pedido_de_um_passo_feito_nao_ganha_segunda_mensagem(db, bot_local, monkeypatch):
+    """"Feche a OS 1638" → Sim → ✅, e a IA vê que o pedido acabou: nenhuma 2ª mensagem, log verde, e o meuPlano nem é
+    perguntado de novo (avaliação 28: o controle C3 da avaliação 27 recebia "não confirmou se o seu pedido terminou")."""
     from app.models.conversa_whatsapp import RegistroBot
 
-    for n, (primeira, segunda, comeco, resultado) in enumerate((
-            ("A OS 1638 foi fechada. Não há mais nada a fazer nela.", "FEITO", "O meuPlano não propôs outro passo",
-             "respondeu"),
-            ("A ficha da 8873 foi concluída. A OS 1638 está EM_EXECUCAO.", "FALTA: fechar a OS 1638.", "⚠️", "erro"),
-            ("A OS 1638 foi fechada. Não há mais nada a fazer nela.", "Não há próximo passo.", assistente.NAO_CONFIRMOU,
-             "a_conferir"),
-            ("A ficha da 8873 foi concluída. A OS 1638 está EM_EXECUCAO.", "Não há próximo passo.",
-             assistente.NAO_CONFIRMOU, "a_conferir"),
-            ("Não fechei a OS 1638.", "Não fechei a OS 1638.", assistente.NAO_CONFIRMOU, "a_conferir"))):
-        _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoQueEscreve(primeira, segunda), [])
-        dono = _conta(db, f"dono{n}", f"+55179973771{n:02d}")
-        await assistente.atender(_ev(dono, 10 * n + 1, PEDIDO_DOIS_PASSOS))
-        antes = len(bot_local.enviados)
-        await assistente.atender(_toque(dono, 10 * n + 2))
-        depois = bot_local.enviados[antes:]
-        log = db.query(RegistroBot).filter_by(gs_user_id=dono.id).order_by(RegistroBot.id.desc()).first()
-        assert depois[0].startswith("✅") and depois[-1].startswith(comeco), (n, depois[-1])
-        dito = segunda.removeprefix("FALTA:").strip() if segunda.startswith("FALTA:") else primeira
-        assert dito in depois[-1] and log.resultado == resultado, n
+    fechar = {"status": "DONE", "type": "proposal", "action": "fechar_os", "args": {"os_id": 1638},
+              "preview": {"summary": "Fechar a OS 1638 (Roçagem)", "lines": [], "warnings": []}}
+
+    class _MP(_MeuPlanoQueEscreve):
+        async def assistente_run(self, token, run_id):
+            return fechar if run_id == 1 else await super().assistente_run(token, run_id)
+
+    falso = _MP("A OS 1638 foi fechada.")
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    _resto(monkeypatch, ("fim_do_pedido", {"situacao": "feito"}))
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie: feche a OS 1638"))
+    antes = len(bot_local.enviados)
+    await assistente.atender(_toque(dono, 2))
+    assert len(bot_local.enviados) - antes == 1 and bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar")
+    assert len(falso.conversas) == 1 and falso.aplicadas == ["fechar_os"]
+    assert db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resultado == "respondeu"
 
 
 def test_os_sins_que_faltavam_e_as_recusas_que_nao_executam():
@@ -3620,22 +3654,23 @@ async def test_o_assunto_vem_da_pergunta_da_ia_ao_meuplano_ou_da_pessoa(db, bot_
 
 
 async def test_a_senha_revelada_no_proximo_passo_some_e_o_texto_dele_fica_fora(db, bot_local, monkeypatch):
-    """O PRÓXIMO PASSO do pedido também revela (e o meuPlano conta): a senha some do log e do gateway; e o texto dele,
-    que trata de acesso, fica fora (avaliação 27: ignorava a lista)."""
-    from app.models.conversa_whatsapp import RegistroBot
+    """O PRÓXIMO PASSO do pedido também revela (e o meuPlano conta): a senha some do log e do gateway, e o texto que a IA
+    escreveu a partir dele fica fora dos dois (avaliação 27: ignorava a lista)."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 
     falso = _MeuPlanoQueEscreve({"status": "DONE", "type": "message", "segredos": ["roteador99"],
-                                 "text": "FEITO: o acesso web do roteador continua: admin / roteador99"})
+                                 "text": "O acesso web do roteador continua: admin / roteador99"})
     _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    _resto(monkeypatch, ("proximo_passo", {"passo": "Conferir o acesso do roteador"}),
+           ("fim_do_pedido", {"situacao": "falta", "texto": "O roteador continua com admin / roteador99"}))
     dono = _conta(db, "dono", "+5517997377626")
     await assistente.atender(_ev(dono, 1, PEDIDO_DOIS_PASSOS))
     await assistente.atender(_toque(dono, 2))
     log = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
     assert "roteador99" in bot_local.enviados[-1]                           # a pessoa recebe
-    assert "roteador99" not in log.resposta and assistente.RESPOSTA_OMITIDA in log.resposta
-    assert bot_local.guardados[-1] == assistente.RESPOSTA_OMITIDA
-    assert "roteador99" in assistente._ler_conversa(db.query(__import__(
-        "app.models.conversa_whatsapp", fromlist=["ConversaWhatsapp"]).ConversaWhatsapp).one())[1]
+    assert "roteador99" not in log.resposta and "roteador99" not in (log.erro or "")
+    assert "roteador99" not in bot_local.guardados[-1] and "fora do log" in bot_local.guardados[-1]
+    assert "roteador99" in assistente._ler_conversa(db.query(ConversaWhatsapp).one())[1]
 
 
 async def test_a_senha_revelada_nao_volta_ao_meuplano_no_historico(db, bot_local, monkeypatch):
@@ -3691,3 +3726,122 @@ def test_os_sins_da_avaliacao_27():
     fechar = "Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas."
     for sim in ("Executa", "Execute", "Lógico", "Excelente", "Perfeitamente", "Certamente"):
         assert h._resposta_ao_resumo(sim, fechar) == "sim", sim
+
+
+# ── avaliação 28: o texto livre do meuPlano fora do log sem palavra-chave, o número com cara de segredo, a linha curta ──
+LIVRES_28 = [  # (a pergunta da pessoa, a resposta do meuPlano em texto livre, o segredo): perguntas sem palavra de acesso
+    ("Qual o código do portão de Tietê?", "Pela OS 1721, o portão de Tietê abre com 4455.", "4455"),
+    ("Como eu abro o portão da UFV Tietê?", "Digite 4455 e # no teclado do portão.", "4455"),
+    ("Qual a combinação do cofre de Ibitinga?", "A combinação é 12-34-56, conforme o relato do Michel.", "12-34-56"),
+    ("Como acesso o SmartLogger de Pereiras?", "Pelo wiki: https://10.1.130.2, admin / Changeme1", "Changeme1"),
+    ("Como acesso o SmartLogger de Pereiras?", "Entre em https://10.1.130.2 com o usuário admin e changeme.", "changeme"),
+    ("Qual o token da API do datalogger de Tietê?", "O token anotado no wiki é 9f8e7d6c5b4a.", "9f8e7d6c5b4a"),
+    ("Qual o código de liberação da guarita de Pirapozinho?", "É 7781, segundo a OS 1690.", "7781"),
+    ("Como desarmo o alarme da cabine de Ibitinga?", "O alarme desarma com 2468 no painel da cabine.", "2468"),
+    ("O que o Michel anotou na OS 1721?", "Anotou que trocou o roteador e que o novo é admin / ufvtiete.", "ufvtiete"),
+    ("O que tem no wiki da UFV Tietê?", "O wiki diz: portão 4455, SmartLogger admin/girassol.", "girassol"),
+]
+
+
+async def test_o_texto_livre_do_meuplano_fica_fora_do_log_sem_depender_de_palavra(db, bot_local, monkeypatch):
+    """O turno que passou pelo meuPlano deixa o texto livre dele fora do log e da cópia do gateway, com qualquer pergunta:
+    a regra de palavras ("assunto de acesso") deixava 10 de 14 respostas com a senha em claro (avaliação 28), e a senha só
+    de letras ("ufvtiete", "girassol") nenhuma forma acharia. A pessoa recebe a resposta inteira."""
+    import json as _json
+
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import vinculos
+
+    class _MP:
+        async def assistente_chat(self, token, mensagens):
+            return 1
+
+        async def assistente_run(self, token, run_id):
+            return {"status": "DONE", "type": "message", "text": self.texto}
+
+    async def _llm(msgs, ferramentas=None):                     # toda pergunta vai ao meuPlano
+        return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+            "name": "manutencao", "arguments": _json.dumps({"pergunta": msgs[-1]["content"]})}}]}
+
+    async def _nada(*a, **k):
+        return None
+
+    mp = _MP()
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: mp)
+    monkeypatch.setattr(assistente.asyncio, "sleep", _nada)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+    for n, (pergunta, resposta, segredo) in enumerate(LIVRES_28):
+        mp.texto = resposta
+        dono = _conta(db, f"dono{n}", f"+55179973772{n:02d}")
+        await assistente.atender(_ev(dono, 100 + n, pergunta))
+        log = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
+        assert segredo in bot_local.enviados[-1], n                                # a pessoa recebe
+        assert log.resposta == assistente.RESPOSTA_OMITIDA and log.pergunta == pergunta, n
+        assert bot_local.guardados[-1] == assistente.RESPOSTA_OMITIDA, n            # e a cópia do gateway também
+
+
+def test_o_numero_com_cara_de_segredo_some_da_mensagem_da_pessoa():
+    """O pedido de anotar ou trocar um código, escrito sem palavra de senha (avaliação 28: 7 de 9 ficavam em claro no log
+    e no gateway): o número de 3 dígitos ou mais e a palavra com minúscula e número somem; o identificador, a data, a
+    hora, a medida e o código de equipamento ficam."""
+    from app.services.assistente import _sem_segredos, publicos_do_turno
+
+    for texto, guardado in (
+        ("o código novo do portão de Tietê é 4455, anota no wiki", "o código novo do portão de Tietê é ••••, anota no wiki"),
+        ("anota aí: o portão de Tietê agora abre com 4455", "anota aí: o portão de Tietê agora abre com ••••"),
+        ("troca o token do datalogger de Tietê para 9f8e7d6c5b4a", "troca o token do datalogger de Tietê para ••••"),
+        ("o alarme da cabine de Ibitinga agora desarma com 2468, registra na OS 1721",
+         "o alarme da cabine de Ibitinga agora desarma com ••••, registra na OS 1721"),
+        ("a combinação do cofre mudou pra 12-34-56", "a combinação do cofre mudou pra ••••"),
+        ("registra no relato: roteador novo de Tietê, admin / ufvtiete9", "registra no relato: roteador novo de Tietê, "
+                                                                          "admin / ••••"),
+        ("guarita de Pirapozinho: liberação 7781, põe no wiki", "guarita de Pirapozinho: liberação ••••, põe no wiki"),
+        ("o usuário do SmartLogger 2 é instalador e a chave sungrow88", "o usuário do SmartLogger 2 é instalador e a "
+                                                                        "chave ••••"),
+        ("token=9f8e7d6c5b4a e admin/Huawei2024", "token=•••• e admin/••••"),
+    ):
+        assert _sem_segredos(texto) == guardado, texto
+    for tecnico in ("Feche a OS 1638 hoje às 14:30", "Inversor 13: 4821 W, PR 82,5%, 4,2kWh/kWp em 09/2026",
+                    "S3=139,5 °C, MPPT1+MPPT2, 2043@INV-13, CB-03#2, SUN2000-100KTL", "código de erro 2043 no inversor 13",
+                    "A usina tem 5670 módulos e gerou 12.345 kWh em 2025", "R$ 1.500,00 no contrato #657, a UC é 1234567",
+                    "a troca custou R$ 1500 e a placa saiu por R$1800",
+                    "helper 2.17.0, IP 10.1.130.2:502, dia 24/10/2026", "5 ruas em 2 horas, ele levou 2hr",
+                    "Produtividade: kWh/kWp=4,21 no dia.", "CNPJ 60.096.696/0001-23", "[senha oculta] e [número oculto]"):
+        assert _sem_segredos(tecnico) == tecnico, tecnico
+    # o número que o próprio turno mostra como identificador fica ("1638 pode fechar" e o resumo "Fechar a OS 1638")
+    assert _sem_segredos("1638 pode fechar") == "•••• pode fechar"
+    assert _sem_segredos("1638 pode fechar", publicos=publicos_do_turno("📋 Fechar a OS 1638 (Roçagem)")) == "1638 pode fechar"
+
+
+async def test_o_pedido_com_o_numero_da_os_fica_legivel_no_log(db, bot_local, monkeypatch):
+    """"1638 pode fechar" (o uso real de 24/10) e o resumo "Fechar a OS 1638": o número é o da OS, e fica no log; o do
+    portão, mandado junto, some."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoQueRepete({"os_id": 1638}), [])     # propõe "Fechar a OS 1638"
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie: 1638 pode fechar, e o portão novo abre com 4455"))
+    log = db.query(RegistroBot).order_by(RegistroBot.id.desc()).first()
+    assert log.pergunta == "crie: 1638 pode fechar, e o portão novo abre com ••••"
+    assert bot_local.textos_ocultados[-1] == log.pergunta and "4455" not in " ".join(bot_local.textos_ocultados)
+
+
+def test_numa_conversa_de_acesso_so_a_linha_de_uma_palavra_e_o_valor():
+    """Na mensagem que trata de acesso, a linha curta virava •••• sem segredo nenhum ("Pereiras também", "Michel avisou",
+    "urgente": avaliação 28). Só a linha de UMA palavra fora das comuns é o valor ("changeme" sozinha)."""
+    from app.services.assistente import _sem_segredos
+
+    for texto in ("O Wi-Fi de Tietê caiu de novo\nPereiras também", "Qual a senha do SmartLogger de Ibitinga?\nurgente",
+                  "o cadeado do portão de Pirapozinho quebrou\nMichel avisou", "Wi-Fi de Ouro Fino fora\nInversor 3 parado"):
+        assert _sem_segredos(texto, credencial=True) == texto, texto
+    assert _sem_segredos("a senha nova do Wi-Fi:\nchangeme", credencial=True) == "a senha nova do Wi-Fi:\n••••"
+    assert _sem_segredos("changeme", credencial=True) == "••••"
+
+
+async def test_a_copia_do_gateway_sai_sem_o_numero_ja_na_chegada(db, bot_local, monkeypatch):
+    """O turno que para antes (número sem conta, mídia, atrasada) também guarda a mensagem sem o número com cara de
+    segredo (avaliação 28): a cópia do gateway é refeita na chegada, não só no fim do turno."""
+    await assistente.atender({"id": 7, "telefone": "+5511900000001", "wa_id": "9", "tipo": "text",
+                              "texto": "o portão de Tietê abre com 4455"})
+    assert bot_local.ocultadas == [7] and bot_local.textos_ocultados == ["o portão de Tietê abre com ••••"]

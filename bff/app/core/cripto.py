@@ -41,5 +41,5 @@ def decifrar(valor: str) -> str:
     except InvalidToken as exc:
         raise SegredoInvalido(
             "Não foi possível abrir o segredo guardado. Isso acontece quando a "
-            "GS_ENCRYPTION_KEY muda — reconfigure a integração para gravar de novo."
+            "GS_ENCRYPTION_KEY muda. Reconfigure a integração para gravar de novo."
         ) from exc

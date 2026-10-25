@@ -67,7 +67,7 @@ export function VinculosDaEmpresa() {
       ) : (
         <div className="grid gap-5 max-w-3xl">
           <Aviso>
-            Ter só um dos lados é normal — dá para contratar só a manutenção. O que não pode
+            Ter só um dos lados é normal: dá para contratar só a manutenção. O que não pode
             é não ter nenhum: sem vínculo, as telas desta empresa vêm vazias.
           </Aviso>
 
@@ -138,7 +138,7 @@ function Escolha({
         <p className="rotulo-campo">{titulo}</p>
         <p className="text-sm text-rotulo mt-1">
           {houveAviso
-            ? 'O produto não respondeu — veja o aviso acima e confira o token em Conexões.'
+            ? 'O produto não respondeu. Veja o aviso acima e confira o token em Conexões.'
             : 'O produto respondeu, e não há nenhuma empresa cadastrada lá. Deixe “Nenhuma”: ' +
               'ter só um dos lados é normal.'}
         </p>

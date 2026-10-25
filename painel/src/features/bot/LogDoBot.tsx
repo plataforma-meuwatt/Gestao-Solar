@@ -19,12 +19,12 @@ import { mensagemDeErro } from '@/lib/api'
 const RESULTADO: Record<RegistroBot['resultado'], { tom: Tom; rotulo: string }> = {
   respondeu: { tom: 'ok', rotulo: 'Respondeu' },
   // o pedido de vários passos sem o status do meuPlano (FEITO / FALTA / PERGUNTA): o bot disse que não confirmou o fim
-  a_conferir: { tom: 'alerta', rotulo: 'Respondeu — conferir o fim do pedido' },
+  a_conferir: { tom: 'alerta', rotulo: 'Respondeu: conferir o fim do pedido' },
   sem_conta: { tom: 'alerta', rotulo: 'Número sem cadastro' },
   nao_liberado: { tom: 'alerta', rotulo: 'Bot não liberado' },
   sem_texto: { tom: 'sem-dados', rotulo: 'Não era texto' },
   zerou: { tom: 'sem-dados', rotulo: 'Conversa zerada' },
-  atrasada: { tom: 'alerta', rotulo: 'Chegou atrasada — sem resposta' },
+  atrasada: { tom: 'alerta', rotulo: 'Chegou atrasada, sem resposta' },
   erro: { tom: 'parado', rotulo: 'Erro' },
 }
 
@@ -54,7 +54,7 @@ export function LogDoBot() {
   return (
     <Pagina
       titulo="Log do bot"
-      apoio="Cada mensagem que chegou ao bot do WhatsApp: de quem e de qual empresa, o que perguntou, o que o bot respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece — é quem tentou falar com o bot sem conta no Gestão Solar."
+      apoio="Cada mensagem que chegou ao bot do WhatsApp: de quem e de qual empresa, o que perguntou, o que o bot respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece: é quem tentou falar com o bot sem conta no Gestão Solar."
     >
       <SaudeDoCanalCartao />
 

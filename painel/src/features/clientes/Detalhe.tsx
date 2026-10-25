@@ -368,7 +368,7 @@ function CartaoPermissoes({ clienteId, nome }: { clienteId: number; nome: string
       ) : (
         <>
           <p className="px-5 pt-4 text-sm text-rotulo">
-            O que {nome} recebe no aplicativo. Sem marcar, nada chega — e o aparelho
+            O que {nome} recebe no aplicativo. Sem marcar, nada chega, e o aparelho
             ainda precisa autorizar os avisos no Android.
           </p>
 
@@ -457,7 +457,7 @@ function ModalDados({
         <Campo rotulo="Nome" value={nome} onChange={(e) => setNome(e.target.value)} required autoFocus />
         <p className="text-xs text-fraco">
           A empresa se muda em Usuários → Empresas (uma pessoa pode estar em mais de uma).
-          E-mail e celular, o gerente da empresa edita no oem-gs — ligados ao meuPlano, valem
+          E-mail e celular, o gerente da empresa edita no oem-gs. Ligados ao meuPlano, valem
           nos dois.
         </p>
         <div className="flex gap-2">

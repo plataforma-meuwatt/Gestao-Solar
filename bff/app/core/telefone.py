@@ -48,7 +48,7 @@ def normalizar(valor: str | None) -> str | None:
 
     if len(digitos) < 10:
         raise TelefoneInvalido(
-            "Telefone curto demais. Informe com DDD — ex.: (16) 99999-8888."
+            "Telefone curto demais. Informe com DDD, por exemplo (16) 99999-8888."
         )
     if len(digitos) > 11:
         raise TelefoneInvalido(

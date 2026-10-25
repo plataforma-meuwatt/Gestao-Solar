@@ -44,7 +44,7 @@ export function SenhaProvisoria({
     <Modal titulo="Acesso criado" aoFechar={aoFechar}>
       <p className="text-sm text-rotulo">
         Envie estes dados para <strong className="text-forte">{nome}</strong>. Esta senha
-        aparece <strong className="text-forte">uma única vez</strong> — depois de fechar, só
+        aparece <strong className="text-forte">uma única vez</strong>. Depois de fechar, só
         gerando outra.
       </p>
 
@@ -74,7 +74,7 @@ export function SenhaProvisoria({
         ) : (
           <p className="flex items-start gap-2 text-sm text-alerta">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-            Copie ou anote antes de fechar — não dá para ver esta senha de novo.
+            Copie ou anote antes de fechar: não dá para ver esta senha de novo.
           </p>
         )}
       </div>

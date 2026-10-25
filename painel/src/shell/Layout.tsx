@@ -373,7 +373,7 @@ function TrocarSenha({ aoFechar }: { aoFechar: () => void }) {
         {pronto ? (
           <>
             <p className="text-sm text-ok">
-              Senha trocada. Ela vale a partir da próxima vez que você entrar — esta sessão
+              Senha trocada. Ela vale a partir da próxima vez que você entrar. Esta sessão
               continua aberta.
             </p>
             <div className="flex justify-end mt-4">
@@ -482,12 +482,12 @@ function FaixaDePapel({
       </p>
       <span className="text-xs opacity-80 truncate">
         {escopo === 'tecnico'
-          ? 'técnico — você vê apenas o seu WhatsApp'
+          ? 'técnico: você vê apenas o seu WhatsApp'
           : daEmpresa
           ? 'você vê apenas a carteira desta empresa'
           : perfil === 'administrador'
-            ? 'administrador do sistema — você vê todas as empresas'
-            : 'atendimento — você vê todas as empresas'}
+            ? 'administrador do sistema: você vê todas as empresas'
+            : 'atendimento: você vê todas as empresas'}
       </span>
       <div className="ml-auto flex items-center gap-2">
         {daEmpresa ? <TrocarEmpresa /> : null}

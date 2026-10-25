@@ -118,7 +118,7 @@ def _organizacao(db: Session, empresa_id: int) -> int:
         raise HTTPException(
             status.HTTP_424_FAILED_DEPENDENCY,
             "Ligue esta empresa à organização dela no meuPlano (Vínculos) antes de puxar "
-            "pessoas de lá — sem isso viriam pessoas de outras empresas.",
+            "pessoas de lá. Sem isso viriam pessoas de outras empresas.",
         )
     return empresa.mp_tenant_id
 

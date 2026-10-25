@@ -91,7 +91,7 @@ def validar(produto: Produto, token: str) -> str:
     resto = limpo[len(prefixo):]
     if not set(resto) <= _ALPHABET:
         raise TokenInvalido(
-            "O token tem caracteres que não pertencem ao formato — pode ter vindo com "
+            "O token tem caracteres que não pertencem ao formato: pode ter vindo com "
             "espaço, quebra de linha ou aspas junto."
         )
 
@@ -99,7 +99,7 @@ def validar(produto: Produto, token: str) -> str:
     if verificador != _verificador(corpo):
         raise TokenInvalido(
             "O dígito verificador não confere. Isso acontece quando falta um caractere "
-            "na cópia ou quando um deles foi trocado — gere e copie o token de novo."
+            "na cópia ou quando um deles foi trocado. Gere e copie o token de novo."
         )
     return limpo
 

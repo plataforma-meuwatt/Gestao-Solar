@@ -48,9 +48,9 @@ CATALOGO: list[Area] = [
         chave="empresas",
         rotulo="Empresas e seus usuários",
         descricao=(
-            "As empresas de O&M — os clientes da plataforma — e os usuários de cada uma: "
+            "As empresas de O&M (os clientes da plataforma) e os usuários de cada uma: "
             "cadastrar empresa e usuário, pôr e tirar usuário de empresa, renovar senha, "
-            "desativar. Quem abre isto vê todas — nenhuma empresa sabe que as outras existem."
+            "desativar. Quem abre isto vê todas, e nenhuma empresa sabe que as outras existem."
         ),
         grupo="Operação",
     ),
@@ -97,8 +97,8 @@ CATALOGO: list[Area] = [
         chave="bot",
         rotulo="Log do bot",
         descricao=(
-            "O que o assistente do WhatsApp recebeu e respondeu, de quem e de qual empresa "
-            "— inclusive os números sem cadastro que tentaram falar com ele."
+            "O que o assistente do WhatsApp recebeu e respondeu, de quem e de qual empresa, "
+            "inclusive os números sem cadastro que tentaram falar com ele."
         ),
         grupo="Operação",
     ),
@@ -106,7 +106,7 @@ CATALOGO: list[Area] = [
         chave="whatsapp",
         rotulo="WhatsApp da plataforma",
         descricao=(
-            "O número da PLATAFORMA — por onde o bot responde e TODAS as notificações "
+            "O número da PLATAFORMA, por onde o bot responde e TODAS as notificações "
             "saem: credencial da Meta, segredo do app e endereço do webhook."
         ),
         grupo="Sistema",

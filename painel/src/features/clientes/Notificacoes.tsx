@@ -286,7 +286,7 @@ function FormularioContato({
         value={valor}
         onChange={(e) => setValor(e.target.value)}
         placeholder="(16) 99999-8888"
-        nota="Pode digitar como quiser — com DDD. O sistema guarda num formato só."
+        nota="Pode digitar como quiser, com DDD. O sistema guarda num formato só."
       />
       <label className="flex items-start gap-2.5 cursor-pointer">
         <input

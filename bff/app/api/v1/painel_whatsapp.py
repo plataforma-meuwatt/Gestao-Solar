@@ -397,7 +397,7 @@ async def _saude_do_canal(db: Session) -> SaudeDoCanalOut:
             partes.append(f"{parados} entrega(s) da Meta parada(s) no gateway")
         if sem_aviso:
             partes.append(f"{sem_aviso} mensagem(ns) que o bot ainda não recebeu")
-        resumo = " · ".join(partes) + (f" — último erro: {g['ultimo_erro']}" if g.get("ultimo_erro") else "")
+        resumo = " · ".join(partes) + (f". Último erro: {g['ultimo_erro']}" if g.get("ultimo_erro") else "")
     else:
         resumo = "Ouvindo: nada parado no gateway."
     return SaudeDoCanalOut(

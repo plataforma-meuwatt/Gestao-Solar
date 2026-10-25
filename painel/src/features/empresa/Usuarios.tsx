@@ -435,14 +435,14 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
           {ligadoA ? (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm text-corpo">
-                Ligado a <b>{ligadoA}</b> no meuPlano — nome, e-mail e celular valem nos dois.
+                Ligado a <b>{ligadoA}</b> no meuPlano: nome, e-mail e celular valem nos dois.
               </p>
               <button
                 className="btn-fantasma"
                 disabled={desligar.isPending}
                 onClick={() =>
                   window.confirm(
-                    `Desligar o cadastro de ${usuario.nome} do meuPlano? Nome, e-mail e celular deixam de valer nos dois — cada lado fica com o seu. Dá para ligar de novo.`,
+                    `Desligar o cadastro de ${usuario.nome} do meuPlano? Nome, e-mail e celular deixam de valer nos dois, e cada lado fica com o seu. Dá para ligar de novo.`,
                   ) && desligar.mutate()
                 }
               >
@@ -451,7 +451,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
             </div>
           ) : ligando ? (
             <div className="grid gap-2">
-              <p className="text-sm text-corpo">Escolha a pessoa no meuPlano — os dados de lá vêm para cá.</p>
+              <p className="text-sm text-corpo">Escolha a pessoa no meuPlano: os dados de lá vêm para cá.</p>
               <EscolherPessoaMeuPlano aoEscolher={(p) => ligar.mutate(p)} />
             </div>
           ) : (
@@ -555,7 +555,7 @@ export function UsinasDoUsuario({
         <div className="grid gap-4">
           <Aviso>
             A lista é completa: o que ficar desmarcado é retirado desta pessoa. Hoje recebe{' '}
-            {usuario.usinas} {usuario.usinas === 1 ? 'usina' : 'usinas'} — marque tudo o que
+            {usuario.usinas} {usuario.usinas === 1 ? 'usina' : 'usinas'}. Marque tudo o que
             deve ver.
           </Aviso>
 
@@ -690,7 +690,7 @@ export function Tokens({ usuario: inicial, aoFechar }: { usuario: UsuarioDetalha
         <Aviso>
           No aplicativo o token é <strong>opcional</strong>: sem ele, os dados desta pessoa são
           lidos com a conta da <strong>empresa</strong>, e o que ela vê continua sendo o que você
-          concedeu. O <strong>bot do WhatsApp</strong> só responde com o token próprio da pessoa — sem o
+          concedeu. O <strong>bot do WhatsApp</strong> só responde com o token próprio da pessoa: sem o
           do meuWatt, nada de geração nem helper; sem o do meuPlano, nada de manutenção.
         </Aviso>
 
@@ -809,7 +809,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
             <p className="text-forte font-semibold text-lg mt-1">{criado.senha}</p>
           </Cartao>
           <p className="text-xs text-fraco">
-            Entregue as duas juntas. O e-mail é só contato — quem autentica é o apelido.
+            Entregue as duas juntas. O e-mail é só contato: quem autentica é o apelido.
           </p>
           {criado.avisos.map((a) => (
             <p key={a} className="text-xs text-fraco">{a}</p>
@@ -834,15 +834,15 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
             value={perfil}
             onChange={(e) => setPerfil(e.target.value as 'cliente' | 'gestor_empresa' | 'tecnico')}
           >
-            <option value="cliente">Dono de usina — entra no aplicativo</option>
-            <option value="gestor_empresa">Gerente — opera a empresa com você</option>
-            <option value="tecnico">Técnico — usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
+            <option value="cliente">Dono de usina: entra no aplicativo</option>
+            <option value="gestor_empresa">Gerente: opera a empresa com você</option>
+            <option value="tecnico">Técnico: usa o bot (geração, manutenção e helper) nas usinas da empresa e conecta o próprio WhatsApp</option>
           </select>
           <p className="text-xs text-fraco mt-1.5">
             {perfil === 'cliente'
               ? 'Vê apenas as usinas que você conceder.'
               : perfil === 'tecnico'
-                ? 'Entra no painel só para conectar o próprio WhatsApp Business. Depois, ligue em Token a conta desta pessoa no meuPlano — é ela que diz de quem é cada ticket.'
+                ? 'Entra no painel só para conectar o próprio WhatsApp Business. Depois, ligue em Token a conta desta pessoa no meuPlano: é ela que diz de quem é cada ticket.'
                 : 'Vê e opera tudo desta empresa, como você.'}
           </p>
         </div>
@@ -902,7 +902,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
           <input className="campo mt-1" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
-          <p className="rotulo-campo">Celular (opcional — o bot do WhatsApp reconhece por ele)</p>
+          <p className="rotulo-campo">Celular (opcional: o bot do WhatsApp reconhece por ele)</p>
           <input
             className="campo mt-1"
             type="tel"

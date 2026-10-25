@@ -239,7 +239,7 @@ async def micro_alertas_das_usinas(
         if not link.mw_micro_plant_id:
             continue
         if link.empresa_id is None:
-            falhas.append(f"{link.nome}: usina sem empresa — não há conta de empresa para ler o MICRO.")
+            falhas.append(f"{link.nome}: usina sem empresa, e não há conta de empresa para ler o MICRO.")
             continue
         por_empresa.setdefault(link.empresa_id, []).append(link)
 
@@ -293,7 +293,7 @@ def traduzir_falha(exc: Exception, produto: Produto) -> ResultadoTeste:
     if isinstance(exc, httpx.ConnectError):
         return ResultadoTeste(
             False,
-            f"Não foi possível alcançar o endereço do {nome}. Confira a URL — costuma "
+            f"Não foi possível alcançar o endereço do {nome}. Confira a URL: costuma "
             "ser http em vez de https, uma barra a mais ou o domínio errado.",
         )
     if isinstance(exc, httpx.TimeoutException):
@@ -312,7 +312,7 @@ def traduzir_falha(exc: Exception, produto: Produto) -> ResultadoTeste:
             )
         if codigo >= 500:
             return ResultadoTeste(
-                False, f"O {nome} respondeu {codigo} — problema do lado dele, não do token."
+                False, f"O {nome} respondeu {codigo}: problema do lado dele, não do token."
             )
         return ResultadoTeste(False, dito or f"O {nome} respondeu {codigo}.")
 
@@ -349,7 +349,7 @@ async def _exercitar(produto: Produto, base_url: str, token: str) -> ResultadoTe
         return ResultadoTeste(
             False,
             f"Token aceito ({quem}), mas esta conta não enxerga nenhuma usina no "
-            f"{NOME[produto]}. Dê acesso a ela lá — do jeito que está, o aplicativo "
+            f"{NOME[produto]}. Dê acesso a ela lá: do jeito que está, o aplicativo "
             "abriria vazio sem apresentar erro.",
             usinas=0,
             dono_nome=dono_nome,

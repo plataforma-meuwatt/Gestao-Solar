@@ -62,7 +62,7 @@ export function BotDaEmpresa() {
     >
       <div className="mb-4">
         <Aviso>
-          Regra: cada pessoa usa o bot com o <strong>token dela</strong> — nunca o da empresa.
+          Regra: cada pessoa usa o bot com o <strong>token dela</strong>, nunca o da empresa.
           Geração precisa do token do meuWatt dela; manutenção, do token do meuPlano dela. Sem o
           celular, o bot não sabe quem está escrevendo. <strong>Ação no equipamento</strong> (helper:
           ligar, desligar, gravar) só roda com a <strong>senha de atuação</strong> da pessoa;{' '}
@@ -246,7 +246,7 @@ function LinhaDoBot({
         <span className={u.tem_senha_atuacao ? 'text-ok' : 'text-alerta'}>
           {u.tem_senha_atuacao
             ? 'Senha de atuação definida'
-            : 'Sem senha de atuação — o bot não comanda equipamento (helper); o meuPlano confirma com Sim'}
+            : 'Sem senha de atuação: o bot não comanda equipamento (helper); o meuPlano confirma com Sim'}
         </span>
         <button className="btn-fantasma" onClick={aoAbrirSenha}>
           {u.tem_senha_atuacao ? 'Trocar senha' : 'Definir senha'}
@@ -277,7 +277,7 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
         <Aviso>
           O bot pede esta senha antes de <strong>ligar, desligar ou gravar</strong> no equipamento
           (helper). Ação no meuPlano (criar ou fechar OS) a pessoa confirma com Sim, sem senha. Ler
-          não pede. Só números, de 6 a 8 — nada de sequência nem número repetido. Entregue à pessoa
+          não pede. Só números, de 6 a 8, sem sequência nem número repetido. Entregue à pessoa
           como a senha provisória: ela não aparece de novo.
         </Aviso>
         <Campo
