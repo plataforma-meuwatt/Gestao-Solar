@@ -10,6 +10,7 @@ import json
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from gateway.api import interno, webhook
 from gateway.core.db import get_db
@@ -431,3 +432,60 @@ def test_o_toque_no_botao_chega_ao_bot_com_o_id_do_resumo(cliente, credencial, d
     assert r.status_code == 200
     assert [(a["texto"], a["botao"]) for a in avisos] == [("Sim", "sim:a1b2c3d4")]
     assert db.query(Mensagem).filter_by(wamid="wamid.B9").one().botao == "sim:a1b2c3d4"
+
+
+# ── avaliação 26: a senha que o bot revela ou que a pessoa manda gravar não fica guardada aqui ─────────────────
+
+
+def test_a_resposta_vai_inteira_a_meta_e_fica_guardada_sem_a_senha(cliente, credencial, monkeypatch, db):
+    from gateway.meta import graph
+
+    enviados = []
+
+    async def _enviar(**k):
+        enviados.append(k["conteudo"]["body"])
+        return graph.Resposta(ok=True, wamid="wamid.S")
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _enviar)
+    r = cliente.post("/interno/conteudo", headers={CABECALHO_CHAVE_INTERNA: CHAVE},
+                     json={"telefone": "+5516999998888", "tipo": "text", "texto": "SL1: admin / Huawei@123",
+                           "guardar": "SL1: admin / ••••"})
+    assert enviados == ["SL1: admin / Huawei@123"]
+    assert db.get(Mensagem, r.json()["id"]).texto == "SL1: admin / ••••"
+
+
+def test_os_valores_somem_das_mensagens_recentes_do_numero(cliente, db):
+    from datetime import UTC, datetime, timedelta
+
+    from gateway.models.mensagem import WebhookEvento
+
+    agora = datetime.now(UTC)
+    corpo = {"entry": [{"changes": [{"value": {"messages": [
+        {"id": "wamid.G", "type": "text", "text": {"body": "grava aí: SL2, usuário admin, changeme"}}]}}]}]}
+    db.add_all([
+        WebhookEvento(corpo=corpo, processado_em=agora, recebido_em=agora),
+        Mensagem(wamid="wamid.G", direcao="entrada", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="grava aí: SL2, usuário admin, changeme", ocorrida_em=agora),
+        Mensagem(direcao="saida", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="Gravar changeme no SL2?", ocorrida_em=agora),
+        Mensagem(direcao="saida", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="changemeX não é o valor", ocorrida_em=agora),                  # só o valor INTEIRO
+        Mensagem(direcao="saida", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="ab de abril", ocorrida_em=agora),                              # curto demais para ser senha
+        Mensagem(direcao="saida", wa_id="5511900000000", telefone="+5511900000000", tipo="text",
+                 texto="changeme de outro número", ocorrida_em=agora),
+        Mensagem(direcao="saida", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="changeme de três dias atrás", ocorrida_em=agora - timedelta(days=3)),
+    ])
+    db.commit()
+    h = {"X-Chave-Interna": "chave-interna-de-teste"}
+    assert cliente.post("/interno/mensagens/mascarar", json={"telefone": "+5517997377626", "valores": ["x"]}
+                        ).status_code == 401
+    r = cliente.post("/interno/mensagens/mascarar", headers=h,
+                     json={"telefone": "+55 17 99737-7626", "valores": ["changeme", "ab"]})
+    assert r.json() == {"alteradas": 2}
+    db.expire_all()
+    textos = {m.texto for m in db.scalars(select(Mensagem))}
+    assert textos == {"grava aí: SL2, usuário admin, ••••", "Gravar •••• no SL2?", "changemeX não é o valor", "ab de abril",
+                      "changeme de outro número", "changeme de três dias atrás"}
+    assert "changeme" not in str(db.scalars(select(WebhookEvento)).one().corpo)

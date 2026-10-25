@@ -829,20 +829,28 @@ saía comido — e as de `_PROSA`, "é pessoal, não a passe" — `_e_prosa`; av
 da palavra deixava em claro "a senha do SmartLogger é changeme para o usuário admin", e a prosa passou a ser uma lista
 POSITIVA — o resto some; também a seta e o travessão logo depois da palavra, "a senha nova ficou X", a lista de
 credenciais "admin / senha X" e o segundo segredo da frase "… e do 4 é Y"; "código" só de porta/cadeado: "Código do
-alarme: 2043" fica). E a LINHA que fala de credencial e a revela — o formato do meuPlano, que o IA.MD de lá manda
-exibir a quem tem nível: "• **Senha:** X", "As senhas: SL1 …", "A senha padrão de fábrica do SmartLogger é X",
-"Credenciais do SmartLogger: admin / X", "Usuário admin, senha X", a tabela com coluna "Senha" — tem o valor escondido
-até o fim da linha (`_sem_credencial`, `_sem_coluna_de_senha`; avaliação 25: 20 de 22 formatos passavam), menos a
-prosa da lista (pela palavra INTEIRA: "Nova@2024" não é a prosa "nova"), o ESTADO da senha ("Senha errada 5 vezes:
-…") e o conceito do bot ("senha de atuação" e os marcadores — "sua senha do SmartLogger é X" não é do bot e some).
-Também "Pass:"/"Pwd:", o valor entre crases na linha da credencial e a tabela sem a barra da frente. A linha de
-credencial que TERMINA em ":" ("Senhas:", "**Senha do SmartLogger:**", "As credenciais são:") abre um BLOCO até o fim
-da resposta (`_sem_credenciais`): a linha de valor perde o que vem depois do separador ("• SL1: ••••"), a curta (menos
-de 4 palavras) o conteúdo, o bloco de código tudo, e a frase fica sem a palavra com cara de senha (avaliação 26: 11 de
-15 formatos de várias linhas passavam). E quando a pergunta que o bot fez ao meuPlano é de SENHA ou ACESSO
-(`_PEDE_CREDENCIAL`, conferida na pergunta da IA — a pessoa pode não ter dito "senha"), a resposta inteira fica fora
-do log (`RESPOSTA_OMITIDA`): é a pergunta que faz o meuPlano revelar (`consultar_acessos_equipamentos`, a quem tem
-nível), e lá cada revelação fica registrada. O campo do erro do log passa pela mesma máscara. Os marcadores do bot ("[senha oculta]")
+alarme: 2043" fica). ⛔ **Senha de equipamento sai pelo VALOR** (avaliação 26: a máscara pelo formato do texto
+sempre deixava um formato escapar — e comia a prosa). O meuPlano devolve, no run do assistente, as senhas que aquele
+turno revelou (`segredos`, só a quem pediu, só na 1ª leitura; a cópia guardada lá fica sem elas — meuPlano
+`tools_consulta.coletar_reveladas`), e a proposta de gravar ou alterar um acesso traz o valor nos `campos`
+(`_valores_secretos`): esses valores somem de tudo o que a plataforma lê — o Log do bot (a linha do turno e, quando o
+valor só fica conhecido depois, as da pessoa nas últimas 24 h: "grava aí: SL2, usuário admin, changeme" vira proposta só
+no turno seguinte — `_apagar_os_valores_de_antes`), a cópia do gateway (a mensagem que sai é guardada sem eles,
+`/interno/conteudo` com `guardar`; as recebidas, por `/interno/mensagens/{id}/ocultar` e `/interno/mensagens/mascarar`).
+A conversa guardada FICA com eles — o turno seguinte precisa ("manda de novo"; "o nível é L1" e a proposta nasce com o
+valor) —, mas CIFRADA (`gs_whatsapp_conversas.mensagens` com a `GS_ENCRYPTION_KEY`, junto da lista das senhas que ela
+conhece, que o log e o gateway escondem nos turnos seguintes; `_ler_conversa`/`_gravar_conversa`; a antiga, em texto,
+ainda se lê). Sem a lista (meuPlano antigo), o pedido de senha ou acesso feito pela IA (`_PEDE_CREDENCIAL`) fica com a
+resposta inteira fora do log (`RESPOSTA_OMITIDA`). E o que ninguém conhece pelo valor: some só o VALOR, nunca o resto da
+linha — depois de "senha … :/é/→/—" (e na linha seguinte a "Senhas:", "As credenciais são:", "a senha é a de fábrica:",
+`_sem_credenciais`; na coluna "Senha" de tabela; entre crases na linha da credencial; "Pass:", "Pwd:"), as palavras até
+a primeira COMUM (`_COMUNS`, lista fechada: artigo, verbo do dia a dia, "você", "acima", "consulte", "ninguém", "ação",
+"nível"…): "a senha é changeme para o usuário admin" → "a senha é •••• para o usuário admin"; "Senha: você não tem
+nível" e "Senha — fale com o Kewyn" ficam inteiras; também o ESTADO da senha ("Senha errada 5 vezes: …") e o conceito do
+bot ("senha de atuação", os marcadores; há teste que passa por TODA frase fixa dos módulos do bot). Em qualquer texto, a
+palavra com letra, número e símbolo some ("Huawei@123", "Solar#2026x" — nome de equipamento, e-mail, endereço, dinheiro
+e "OS#1638" não têm essa forma, `_NAO_E_SENHA`); na linha da credencial, também a de letra e número ("Changeme1").
+Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -913,8 +921,9 @@ tudo!" executava — avaliação 14). A afirmativa de mais de uma palavra ("Sim,
 problema", "Sem dúvida", "Claro que sim", "Sim senhor", "Por favor") é lista FECHADA e vale para
 qualquer resumo (`_EXPRESSOES_SIM`; avaliação 16: cancelavam, e "com certeza" só confirmava resumo
 com "com"; avaliação 17: também "Não tem problema", "Vai em frente", "Sim, só isso", "Top",
-"Boa", "Massa", "Yes"; avaliação 18: "Concordo", "Vamos lá", "Por mim pode", "Manda brasa"). Só o
-PRÓPRIO VERBO da ação confirma ("Fecha", "Feche aí", "Confirmo o fechamento" para "Fechar a OS
+"Boa", "Massa", "Yes"; avaliação 18: "Concordo", "Vamos lá", "Por mim pode", "Manda brasa"; avaliação 26:
+"Procede", "Pode efetuar", "Pode dar andamento", "Liberado", "Valido", "Sim, 100%"). Só o
+PRÓPRIO VERBO da ação confirma ("Fecha", "Encerra", "Feche aí", "Confirmo o fechamento" para "Fechar a OS
 1638…"): os verbos das ações do meuPlano (o primeiro de cada resumo, conferidos nas prévias de lá),
 com sinônimos e substantivos, lista fechada (`_FAMILIAS` → `_VERBOS`; "abrir a OS" é criá-la), casados
 só com o PRIMEIRO verbo do resumo. Verbo de OUTRA ação NUNCA confirma — nem é palavra neutra: "Pode
@@ -974,16 +983,19 @@ bot só CALA quando a resposta é SÓ o fim (`_so_o_fim`: "Não há próximo pas
 próximo passo.", "Não há próximo passo a propor.", "Não, não há próximo passo.", "Pronto, não falta nada.", "Seu
 pedido está completo." — a cortesia sozinha não conta: "Posso ajudar em algo mais?", "Estou à disposição."). Qualquer coisa além
 disso é pedida de novo e, sem o passo, DITA à pessoa: como pergunta, sem ⚠️, se o meuPlano pergunta; com ⚠️ e o log
-em erro POR PADRÃO; como informação, sem ⚠️, só quando o texto AFIRMA que acabou (`_afirma_o_fim`: o sinal de fim
-em qualquer parte — "Não há próximo passo: o pedido era só fechar a OS 1638." — ou o passo dado como feito — "A OS
-1638 foi fechada.", nas duas respostas: avaliação 24 — ) e não diz que falta algo (`_PENDENCIA`: "falta",
-"pendente", "pode ser fechada", "depende", "precisa", "não consegui", "não foi", "continua", "resta", "depois", "o
-próximo é"…; a negação COLADA — "não há mais tarefas pendentes", "não precisa" — não conta; em "Não é possível fechar
-…: falta…" o "não" nega outro verbo). Avaliação 25: "Não é possível fechar a OS 1638: falta concluir a 8873", "A OS
-1638 continua aberta", "Depois eu fecho a 1638" saíam como informação, com o log verde. Avaliação 26: o feito junto
-com o que segue ABERTO ou esperando também é aviso ("…, mas a 1843 ainda está aberta", "segue em execução", "aguarda
-o cliente", "permanece", "ficou para outra hora", "exceto a 1843", "porém", "lembre-se de…", "não encontrei a 1843");
-"não havia tarefas pendentes", "não há tarefas abertas" seguem sendo o fim. A lista de palavras
+em erro POR PADRÃO; como informação, sem ⚠️, quando o meuPlano DISSE que acabou — o sinal de fim
+("Não há próximo passo") depois do pedido de novo vale, salvo o texto de antes dizer que algo ficou por fazer (avaliação
+26: "OS 1638 fechada com sucesso.", "Segue o resumo…", "o próximo cronograma…" e depois o sinal viravam alarme) —, ou,
+sem o sinal, quando o texto diz que o passo foi FEITO (`_afirma_o_fim`: o particípio — "fechada", "encerrada", "status
+FECHADA", "consta como fechada" — ou a 1ª pessoa do passado — "Fechei", "Criei" — ou o fim dito) e não diz que falta algo
+(`_tem_pendencia`). Pendência: primeiro sai a negação BOA, colada no que nega ("não há mais tarefas pendentes", "sem
+problemas", "nada ficou em aberto", "não precisa", o "Não," da resposta); o que sobrar de negação ou falha conta, dito de
+qualquer jeito ("não está fechada", "Não fechei", "recusou", "ficou sem fechar", "está bloqueada", "Faltou", "ficou de
+fora" — avaliação 26: 13 de 14 passavam), e o que ficou para depois ou espera ("continua aberta", "resta lançar", "agora é
+só registrar", "depois eu fecho", "o próximo é fechar", "segue em execução", "aguarda o cliente", "fica para amanhã",
+"pode ser fechada", "confirme…"). A palavra comum no sentido comum não é pendência ("Segue o resumo", "o próximo
+cronograma", "depois de conferir", "Lembrando:"). No pedido de novo o bot também oferece "NÃO DÁ: o quê e por quê" para o
+que não pôde ser feito. A lista de palavras
 decide só o TOM do aviso, nunca se a pessoa fica sabendo (avaliação 23: procurar o fim em qualquer parte do texto
 calava "Não há mais tarefas pendentes na OS 1638, que já pode ser fechada"; avaliação 22: tomar só o começo era
 alarme falso). O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o

@@ -373,7 +373,10 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos", "tá", "ta",
            "certinho", "combinado", "feito", "demorou", "firmeza",
            # avaliação 23: "Sí", "Yep", "Simbora" cancelavam
-           "sí", "yep", "yup", "yeah", "simbora", "partiu"}
+           "sí", "yep", "yup", "yeah", "simbora", "partiu",
+           # avaliação 26: "Procede", "Liberado", "Valido" derrubavam a ação
+           "procede", "proceda", "efetue", "efetua", "realize", "realiza", "liberado", "liberada", "libera", "libere",
+           "valido", "válido", "validado", "validada", "valide"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
@@ -382,7 +385,8 @@ _EXPRESSOES_SIM = re.compile(r"\b(?:com certeza|sem (?:nenhum )?problemas?(?: ne
                              r"claro que (?:sim|pode)|sim,? senhora?|pode sim|por (?:favor|gentileza)|"
                              r"n[ãa]o tem (?:problemas?|erro)(?: nenhum)?|(?:pode )?(?:ir|vai) em frente|manda ver|s[óo] isso|"
                              r"nada (?:a|pra|para) acrescentar|vamos (?:l[áa]|nessa)|por mim (?:pode|tudo bem|ok)|manda brasa|"
-                             r"vamos(?=\s*[!.]*\s*$)|(?:t[áa]|est[áa]|tudo|muito) (?:bom|bem)|pode crer)\b")
+                             r"vamos(?=\s*[!.]*\s*$)|(?:t[áa]|est[áa]|tudo|muito) (?:bom|bem)|pode crer|"
+                             r"cem por cento)\b|(?<!\d)100 ?%")
 #: Hesitação sozinha ("Bem...", "Bom...", "Hmm") não é SIM: o sistema pergunta de novo (avaliação 19:
 #: confirmava). Acompanhada ("tá bom", "tudo bem"), é a expressão acima.
 _HESITACAO = {"bem", "bom", "hum", "hmm", "hmmm", "ah", "eh", "uhm", "pois", "então", "entao"}
@@ -399,7 +403,10 @@ _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "t
                       "mandar", "mande", "lá", "la", "é", "está", "esta", "já", "ja",
                       # o agradecimento abreviado ("Sim, obg", "Sim vlw" — avaliação 23: cancelavam)
                       "vlw", "valew", "obg", "obgd", "obgda", "brigado", "brigada", "grato", "grata", "pfv", "pfvr",
-                      "pf", "tmj"}
+                      "pf", "tmj",
+                      # o "pode seguir" dito de outro jeito ("Pode proceder", "Pode dar andamento" — avaliação 26)
+                      "proceder", "efetuar", "realizar", "liberar", "validar", "dar", "andamento", "sequência",
+                      "sequencia", "seguimento", "prosseguimento", "continuidade"}
 def _formas(infinitivo: str) -> set[str]:
     """As formas que se digitam de um verbo regular: o infinitivo, a 3ª pessoa e o imperativo
     ("apagar" → apaga, apague; "concluir" → conclui, conclua; "mover" → move, mova)."""
@@ -430,7 +437,7 @@ _FAMILIAS = {
     "ajustar": ("ajustar", "ajuste"), "clonar": ("clonar",), "trocar": ("trocar",),
     "desinstalar": ("desinstalar", "desinstalacao"), "instalar": ("instalar", "instalacao"),
     "definir": ("definir",), "aplicar": ("aplicar",), "comentar": ("comentar", "comentario"),
-    "alterar": ("alterar", "alteracao"), "fechar": ("fechar", "fechamento"), "associar": ("associar",),
+    "alterar": ("alterar", "alteracao"), "fechar": ("fechar", "fechamento", "encerrar", "encerramento"), "associar": ("associar",),
     "mover": ("mover",), "transferir": ("transferir", "transferencia"), "alocar": ("alocar",),
     "devolver": ("devolver", "devolucao"), "lancar": ("lançar", "lancamento"),
     "anexar": ("anexar",), "programar": ("programar",), "agendar": ("agendar",), "enviar": ("enviar",),

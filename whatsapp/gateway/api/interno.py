@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from gateway.core.config import get_settings
 from gateway.core.db import get_db
 from gateway.core.seguranca import CABECALHO_CHAVE_INTERNA, chave_interna_confere
+from gateway.core.telefone import TelefoneInvalido, normalizar
 from gateway.models.mensagem import Mensagem, WebhookEvento
 from gateway.services import contas as svc_contas
 from gateway.services import credenciais as svc
@@ -203,6 +204,9 @@ class ConteudoIn(BaseModel):
     mime: str | None = None
     origem: str | None = None
     botoes: list[BotaoIn] | None = Field(default=None, max_length=3)
+    #: O que fica GUARDADO aqui no lugar do `texto`, que vai inteiro à Meta: a resposta sem as senhas que ela
+    #: revela (o bot pede ao meuPlano a senha de um equipamento; a pessoa recebe, o banco daqui não guarda).
+    guardar: str | None = Field(default=None, max_length=4096)
 
 
 @router.post("/conteudo", response_model=EnvioOut, dependencies=[Depends(_porta)])
@@ -241,7 +245,8 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
                 conteudo["caption"] = corpo.texto[:1024]
         r = await svc_envio.enviar_conteudo(
             db, telefone=corpo.telefone, tipo=tipo, conteudo=conteudo,
-            texto=corpo.texto if corpo.tipo in ("text", "botoes") else (corpo.filename or corpo.texto),
+            texto=(corpo.guardar or corpo.texto) if corpo.tipo in ("text", "botoes")
+            else (corpo.filename or corpo.guardar or corpo.texto),
             origem=corpo.origem)
     except svc_envio.EnvioIndisponivel as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
@@ -419,6 +424,46 @@ def ocultar_texto(mensagem_id: int, corpo: OcultarIn | None = None, db: Session 
         )):
             ev.corpo = _sem_o_texto(ev.corpo, m.wamid, texto)
     db.commit()
+
+
+class MascararIn(BaseModel):
+    telefone: str
+    #: Os valores a esconder (as senhas que o bot só soube depois: o meuPlano as revelou, ou a pessoa as mandou gravar).
+    valores: list[str] = Field(max_length=50)
+    horas: int = Field(default=24, ge=1, le=72)
+
+
+@router.post("/mensagens/mascarar", dependencies=[Depends(_porta)])
+def mascarar(corpo: MascararIn, db: Session = Depends(get_db)) -> dict:
+    """Esconde VALORES (••••) nas mensagens recentes do número, nos dois sentidos, e na entrega crua da Meta: a senha
+    de equipamento que a pessoa mandou gravar numa mensagem sem a palavra "senha" só fica conhecida no turno seguinte,
+    quando vira a proposta do meuPlano."""
+    import re
+
+    from sqlalchemy import Text, cast
+
+    valores = sorted({v for v in corpo.valores if v and len(v) >= 3}, key=len, reverse=True)
+    if not valores:
+        return {"alteradas": 0}
+    padrao = re.compile("|".join(rf"(?<!\w){re.escape(v)}(?!\w)" for v in valores))
+    desde = datetime.now(UTC) - timedelta(hours=corpo.horas)
+    try:
+        telefone = normalizar(corpo.telefone)
+    except TelefoneInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    alteradas = 0
+    for m in db.scalars(select(Mensagem).where(Mensagem.telefone == telefone, Mensagem.ocorrida_em >= desde)):
+        if not m.texto or not padrao.search(m.texto):
+            continue
+        m.texto = padrao.sub("••••", m.texto)
+        alteradas += 1
+        if m.direcao == "entrada" and m.wamid:
+            for ev in db.scalars(select(WebhookEvento).where(
+                WebhookEvento.recebido_em >= desde, cast(WebhookEvento.corpo, Text).contains(m.wamid)
+            )):
+                ev.corpo = _sem_o_texto(ev.corpo, m.wamid, m.texto)
+    db.commit()
+    return {"alteradas": alteradas}
 
 
 # ── saúde do canal ──────────────────────────────────────────────────────────

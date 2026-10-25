@@ -10,6 +10,15 @@ from app.services import assistente
 from app.services import assistente_geracao as ger
 
 
+def _conversa_em_claro(db) -> str:
+    """A conversa guardada, DECIFRADA (no banco ela fica cifrada desde a avaliação 26): o que o bot vai ler dela."""
+    import json
+
+    from app.models.conversa_whatsapp import ConversaWhatsapp
+
+    return json.dumps(assistente._ler_conversa(db.query(ConversaWhatsapp).one())[0], ensure_ascii=False)
+
+
 def _token(db, conta, *produtos):
     """O token PRÓPRIO da conta (o valor não importa: o bot só confere que existe)."""
     db.add_all([VinculoProduto(gs_user_id=conta.id, produto=p, usuario_remoto_id="1", token_cifrado="x")
@@ -308,7 +317,7 @@ async def test_cada_mensagem_vira_uma_linha_no_log_do_bot(db, monkeypatch):
     assert linhas[1].pergunta == "OS abertas?" and linhas[1].ferramentas == "manutencao"
     assert linhas[1].resposta == "*2 OS abertas*" and linhas[1].duracao_ms is not None
     conversa = db.query(ConversaWhatsapp).one()
-    assert conversa.gs_user_id == dono.id and "segredo da outra conta" not in conversa.mensagens
+    assert conversa.gs_user_id == dono.id and "segredo da outra conta" not in _conversa_em_claro(db)
 
 
 # ── o helper pelo bot: ação só com CONFIRMO <código>, conferido pelo Gestão Solar ──────
@@ -627,8 +636,6 @@ async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch)
     juntas — duas respostas que se contradiziam, e a conversa ficou sem uma das trocas."""
     import asyncio
 
-    from app.models.conversa_whatsapp import ConversaWhatsapp
-
     rodando, sobreposicao = [], []
 
     async def _llm(msgs, ferramentas=None):
@@ -656,7 +663,7 @@ async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch)
         assistente.atender({"telefone": dono.telefone, "wa_id": "5517997377626", "tipo": "text", "texto": "amanhã ele volta"}),
     )
     assert sobreposicao == []
-    conversa = [m["content"] for m in __import__("json").loads(db.query(ConversaWhatsapp).one().mensagens)]
+    conversa = [m["content"] for m in __import__("json").loads(_conversa_em_claro(db))]
     assert conversa == ["Serviço novo", "resposta a Serviço novo", "amanhã ele volta", "resposta a amanhã ele volta"]
 
 
@@ -668,10 +675,12 @@ def bot_local(db, monkeypatch):
     """O turno inteiro (`atender`) contra o banco de teste, com o gateway e a IA de mentira."""
     import types
 
-    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[], tipos=[], botoes=[])
+    estado = types.SimpleNamespace(enviados=[], ocultadas=[], textos_ocultados=[], llm=[], tipos=[], botoes=[],
+                                   guardados=[], mascarados=[])
 
     async def _enviar(**k):
         estado.enviados.append(k.get("texto"))
+        estado.guardados.append(k.get("guardar") or k.get("texto"))
         estado.tipos.append((k.get("tipo"), [b["titulo"] for b in k.get("botoes") or []]))
         estado.botoes.append([b["id"] for b in k.get("botoes") or []])
         return {"ok": True}
@@ -679,6 +688,9 @@ def bot_local(db, monkeypatch):
     async def _ocultar(mid, texto=None):
         estado.ocultadas.append(mid)
         estado.textos_ocultados.append(texto)
+
+    async def _mascarar(telefone, valores):
+        estado.mascarados.append((telefone, valores))
 
     async def _nada(*a, **k):
         return None
@@ -690,6 +702,7 @@ def bot_local(db, monkeypatch):
     monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
     monkeypatch.setattr(assistente.whatsapp, "digitando", _nada)
     monkeypatch.setattr(assistente.whatsapp, "ocultar_texto", _ocultar)
+    monkeypatch.setattr(assistente.whatsapp, "mascarar", _mascarar)
     monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(assistente, "_llm", _llm)
@@ -754,7 +767,7 @@ async def test_meuwatt_fora_nao_cala_a_manutencao(db, bot_local, monkeypatch):
 
 async def test_a_senha_nao_vai_a_ia_nem_ao_log_nem_ao_historico(db, bot_local, helper_ligado):
     from app.core.security import gerar_hash_senha
-    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
     dono = _conta(db, "dono", "+5517997377626")
@@ -769,7 +782,7 @@ async def test_a_senha_nao_vai_a_ia_nem_ao_log_nem_ao_historico(db, bot_local, h
     assert bot_local.ocultadas == [77] and bot_local.enviados[0].startswith("✅")
     linha = db.query(RegistroBot).one()
     assert linha.pergunta == h.OCULTA and linha.ferramentas == "senha_de_atuacao"
-    conversa = db.query(ConversaWhatsapp).one().mensagens
+    conversa = _conversa_em_claro(db)
     assert "482913" not in conversa and h.OCULTA in conversa
 
 
@@ -894,7 +907,7 @@ async def test_o_helper_respeita_as_usinas_liberadas_no_gestao_solar(db, helper_
 async def test_a_senha_numa_frase_nao_executa_some_e_cancela(db, bot_local, helper_com_get, monkeypatch):
     """Só a mensagem que é APENAS a senha executa (avaliação 8): "a senha é 482913" cancela a
     ação, e o número some da IA, do log, do histórico e do gateway."""
-    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
     async def _nada(*a, **k):
@@ -911,7 +924,7 @@ async def test_a_senha_numa_frase_nao_executa_some_e_cancela(db, bot_local, help
     assert "Escondi a sua senha de atuação" in bot_local.enviados[0]
     assert h.ACAO_CANCELADA in bot_local.enviados[0]
     assert "482913" not in db.query(RegistroBot).one().pergunta
-    assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
+    assert "482913" not in _conversa_em_claro(db)
 
 
 def test_a_falha_diz_o_motivo_e_o_sucesso_traz_a_releitura():
@@ -979,7 +992,7 @@ async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local
     """S1: frase com a senha e SEM ação esperando; S4: frase de 100 caracteres com a senha e
     COM ação esperando. Nenhuma executa, e o número nunca chega à IA, ao log, ao histórico nem
     ao gateway."""
-    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.models.conversa_whatsapp import RegistroBot
 
     async def _nada(*a, **k):
         return None
@@ -996,7 +1009,7 @@ async def test_a_senha_em_qualquer_frase_nunca_vai_a_ia_nem_ao_log(db, bot_local
     assert helper_com_get.confirmadas == [] and all("482913" not in m for m in bot_local.llm)
     assert bot_local.ocultadas == [1, 2]
     assert all("482913" not in (r.pergunta or "") for r in db.query(RegistroBot))
-    assert "482913" not in db.query(ConversaWhatsapp).one().mensagens
+    assert "482913" not in _conversa_em_claro(db)
 
 
 async def test_cancela_desarma_e_a_senha_depois_nao_executa(db, bot_local, helper_com_get):
@@ -1118,7 +1131,7 @@ def test_o_log_esconde_a_senha_das_linhas_de_baixo():
     from app.services.assistente import _sem_segredos
 
     for texto, guardado in (
-        ("**Senha do SmartLogger:**\n`Huawei@123`", "**Senha do SmartLogger:**\n••••"),
+        ("**Senha do SmartLogger:**\n`Huawei@123`", "**Senha do SmartLogger:**\n`••••`"),
         ("**Senhas dos SmartLoggers:**\n• SL1: Huawei@123\n• SL2: Changeme1",
          "**Senhas dos SmartLoggers:**\n• SL1: ••••\n• SL2: ••••"),
         ("Senhas:\n- SL1 → Huawei@123\n- SL2 → Changeme1", "Senhas:\n- SL1 → ••••\n- SL2 → ••••"),
@@ -1228,7 +1241,6 @@ async def test_numero_em_frase_so_esconde_a_senha_e_nunca_conta_erro(db, helper_
 async def test_sem_acao_esperando_a_senha_numa_frase_some_e_o_numero_comum_fica(db, bot_local, helper_com_get, monkeypatch):
     """ "a 482913" (a senha) some e a pessoa é avisada; "a 482914" (outro número) chega à IA como
     está — sem contar erro nem bloquear ninguém."""
-    from app.models.conversa_whatsapp import ConversaWhatsapp
     from app.services import assistente_helper as h
 
     async def _nada(*a, **k):
@@ -1240,7 +1252,7 @@ async def test_sem_acao_esperando_a_senha_numa_frase_some_e_o_numero_comum_fica(
     await assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "1", "tipo": "text", "texto": "a 482914"})
     assert bot_local.llm == [f"a {h.SENHA_OCULTA}", "a 482914"] and bot_local.ocultadas == [1]
     assert "Escondi a sua senha de atuação" in bot_local.enviados[0]
-    assert "482913" not in db.query(ConversaWhatsapp).one().mensagens and dono.id not in h._ERROS
+    assert "482913" not in _conversa_em_claro(db) and dono.id not in h._ERROS
 
 
 async def test_a_conferencia_da_senha_sai_do_laco_da_api(db, monkeypatch):
@@ -1368,7 +1380,7 @@ async def test_limpar_e_audio_cancelam_a_acao(db, bot_local, helper_com_get):
 
 async def test_a_senha_com_separador_e_reconhecida_e_nao_vaza(db, bot_local, helper_com_get):
     """ "482 913" e "482-913" iam inteiros à IA, ao histórico e ao meuPlano."""
-    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+    from app.models.conversa_whatsapp import RegistroBot
     from app.services import assistente_helper as h
 
     dono = _dono_com_usina(db)
@@ -1383,7 +1395,7 @@ async def test_a_senha_com_separador_e_reconhecida_e_nao_vaza(db, bot_local, hel
     # Lista e data com espaço não são a senha (avaliação 12).
     assert h.digitos_da_senha("12, 13, 14") is None and h.digitos_da_senha("24 / 10 / 2026") is None
     assert all("913" not in (r.pergunta or "") for r in db.query(RegistroBot))
-    assert "913" not in db.query(ConversaWhatsapp).one().mensagens
+    assert "913" not in _conversa_em_claro(db)
 
 
 # ── avaliação 10 (24/10/2026): a senha em frase com pontuação, e a senha antes do resumo ──
@@ -3366,3 +3378,241 @@ def test_os_modulos_do_bot_nao_repetem_nome():
             for alvo in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(alvo, ast.Name))
         nomes.update(n.name for n in arvore.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
         assert not [k for k, v in nomes.items() if v > 1], arq
+
+
+# ── avaliação 26: a senha pelo VALOR, a máscara que só esconde o valor, o fim pelo sinal, os sins que faltavam ─────
+
+
+class _MeuPlanoQueRevela:
+    """O assistente do meuPlano novo: a resposta e, junto, as senhas que o turno revelou (`segredos`)."""
+
+    def __init__(self, *respostas):
+        self.respostas, self.conversas = list(respostas), []
+
+    async def assistente_chat(self, token, mensagens):
+        self.conversas.append(mensagens)
+        return len(self.conversas)
+
+    async def assistente_run(self, token, run_id):
+        return {"status": "DONE", **self.respostas[min(run_id, len(self.respostas)) - 1]}
+
+
+def _ia_roteiro(monkeypatch, mp, roteiro):
+    """A IA de mentira: cada mensagem da pessoa vira ("ferramenta", pergunta ao meuPlano) ou ("texto", resposta)."""
+    import json as _json
+
+    from app.services import vinculos
+
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            return {"content": _json.loads(msgs[-1]["content"]).get("texto") or "Certo."}
+        tipo, valor = roteiro[msgs[-1]["content"]]
+        if tipo == "texto":
+            return {"content": valor}
+        return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
+            "name": "manutencao", "arguments": _json.dumps({"pergunta": valor})}}]}
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: mp)
+    monkeypatch.setattr(assistente.asyncio, "sleep", _nada)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(ger, "preparar", _nada)
+
+
+async def test_a_senha_que_o_meuplano_revelou_some_pelo_valor_e_a_conversa_fica_cifrada(db, bot_local, monkeypatch):
+    """O meuPlano conta as senhas que revelou: elas somem do log, da cópia do gateway e do turno seguinte (a IA a repete
+    da conversa: "manda de novo só ela"), escritas como estiverem — sem depender da palavra "senha" na pergunta nem no
+    formato da resposta. A pessoa recebe tudo; a conversa guardada fica CIFRADA (o turno seguinte precisa dela)."""
+    from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
+
+    resposta = "Acesse https://10.1.130.2 no navegador e entre com admin / changeme2."
+    p1, p2 = "Como eu entro no SmartLogger 1 de Pirapozinho?", "Manda de novo só ela, pra eu copiar"
+    _ia_roteiro(monkeypatch, _MeuPlanoQueRevela({"type": "message", "text": resposta, "segredos": ["changeme2"]}),
+                {p1: ("ferramenta", "Como entrar no SmartLogger 1 da UFV Pirapozinho?"), p2: ("texto", "changeme2")})
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, p1))
+    await assistente.atender(_ev(dono, 2, p2))
+    assert bot_local.enviados == [resposta, "changeme2"]                     # a pessoa recebe inteira
+    assert bot_local.guardados == ["Acesse https://10.1.130.2 no navegador e entre com admin / ••••.", "••••"]
+    assert [r.resposta for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
+        "Acesse https://10.1.130.2 no navegador e entre com admin / ••••.", "••••"]
+    conv = db.query(ConversaWhatsapp).one()
+    assert "changeme2" not in conv.mensagens and "changeme2" in _conversa_em_claro(db)
+    assert assistente._ler_conversa(conv)[1] == ["changeme2"]
+
+
+async def test_com_o_meuplano_que_conta_o_pedido_de_senha_fica_no_log_sem_ela(db, bot_local, monkeypatch):
+    from app.models.conversa_whatsapp import RegistroBot
+
+    p = "Qual a senha do Wi-Fi de Porto Ferreira?"
+    _ia_roteiro(monkeypatch, _MeuPlanoQueRevela({"type": "message", "text": "**Wi-Fi:** rede-ufv / Wifi2026",
+                                                 "segredos": ["Wifi2026"]}), {p: ("ferramenta", p)})
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, p))
+    assert db.query(RegistroBot).one().resposta == "**Wi-Fi:** rede-ufv / ••••"   # não mais "[resposta fora do log"
+
+
+async def test_a_senha_mandada_gravar_some_tambem_do_que_veio_antes_quando_a_proposta_nasce(db, bot_local, monkeypatch):
+    """"grava aí: SL2…, usuário admin, changeme" — sem a palavra "senha" e só de letras, nenhuma regra a reconhece. O
+    meuPlano pergunta o nível; com "L1", a proposta nasce com o valor: ele some do log de antes, do gateway (das 24 h do
+    número) e da resposta — e a conversa guardada o mantém, cifrada, para o meuPlano gravar o certo."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    p1, p2 = "grava aí: SmartLogger 2 de Pereiras, usuário admin, changeme", "L1"
+    proposta = {"type": "proposal", "action": "cadastrar_acesso",
+                "args": {"categoria": "Login Web", "rotulo": "Admin", "nivel": 1,
+                         "campos": [{"chave": "usuario", "valor": "admin", "is_segredo": False},
+                                    {"chave": "senha", "valor": "changeme", "is_segredo": True}]},
+                "preview": {"summary": "Gravar acesso 'Admin' em 1 equipamento(s) de UFV Pereiras",
+                            "lines": [{"text": "usuario: admin"}, {"text": "senha: ••••••"}], "warnings": []}}
+    mp = _MeuPlanoQueRevela({"type": "message", "text": "Qual o nível do acesso (L1–L5)?", "segredos": []}, proposta)
+    _ia_roteiro(monkeypatch, mp, {p1: ("ferramenta", p1), p2: ("ferramenta", "O nível é L1.")})
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, p1))
+    assert "changeme" in db.query(RegistroBot).one().pergunta          # ainda não se sabe que é a senha
+    await assistente.atender(_ev(dono, 2, p2))
+    assert [r.pergunta for r in db.query(RegistroBot).order_by(RegistroBot.id)] == [
+        "grava aí: SmartLogger 2 de Pereiras, usuário admin, ••••", "L1"]
+    assert bot_local.mascarados == [(dono.telefone, ["changeme"])]
+    assert "changeme" in str(mp.conversas[-1])                         # o meuPlano recebeu a conversa inteira
+    assert "admin" in db.query(RegistroBot).order_by(RegistroBot.id.desc()).first().resposta  # o usuário não é senha
+
+
+def test_os_valores_da_proposta_de_acesso_sao_as_senhas():
+    assert assistente._valores_secretos({"campos": [
+        {"chave": "usuario", "valor": "admin"}, {"chave": "senha", "valor": "Solar#2026x", "is_segredo": True},
+        {"chave": "Chave do Wi-Fi", "valor": "wifi1234"}, {"chave": "SSID", "valor": "rede-ufv"}]}) == [
+        "Solar#2026x", "wifi1234"]
+    assert assistente._valores_secretos({"os_id": 1638}) == [] and assistente._valores_secretos(None) == []
+    assert assistente._sem_valores("PIN 123 na OS 1234; Huawei@123", ["123", "Huawei@123", "ab"]) == (
+        "PIN •••• na OS 1234; ••••")
+    assert assistente._sem_valores("a OS 12 e o 12", ["12"]) == "a OS 12 e o 12"    # curto demais para ser a senha
+
+
+def test_o_texto_fixo_do_bot_nunca_e_mascarado():
+    """Toda frase fixa dos módulos do bot que fala de senha sai do log como foi escrita (avaliação 26: a máscara comia a
+    explicação do próprio bot)."""
+    import ast
+    import pathlib
+
+    import app.services.assistente as modulo
+
+    frases = set()
+    for nome in ("assistente.py", "assistente_helper.py", "assistente_geracao.py"):
+        arvore = ast.parse(pathlib.Path(modulo.__file__).with_name(nome).read_text())
+        documentacao = {id(c.body[0].value) for c in ast.walk(arvore)              # a docstring não vai à pessoa
+                        if isinstance(c, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                        and c.body and isinstance(c.body[0], ast.Expr)}
+        for no in ast.walk(arvore):
+            if (isinstance(no, ast.Constant) and isinstance(no.value, str) and len(no.value) > 20
+                    and id(no) not in documentacao
+                    and assistente._CREDENCIAL.search(no.value)
+                    and not any(m in no.value for m in ("(?", "\\b", "\\s", "[^", "|", "{", "%s"))):
+                frases.add(no.value)
+    assert len(frases) >= 10
+    for frase in sorted(frases):
+        assert assistente._sem_segredos(frase) == frase, frase
+
+
+def test_a_mascara_esconde_so_o_valor_e_deixa_a_prosa():
+    """Avaliação 26: a máscara comia a linha inteira depois de "senha …:" (10 de 10 prosas) e deixava a senha de um
+    pedido de gravar (6 de 8). Agora some só o VALOR — até a primeira palavra comum."""
+    from app.services.assistente import _sem_segredos
+
+    for texto, guardado in (
+        ("salve a senha do Wi-Fi da UFV Porto Ferreira: rede-ufv / Solar#2026x",
+         "salve a senha do Wi-Fi da UFV Porto Ferreira: •••• / ••••"),
+        ("Salva o Wi-Fi de Porto Ferreira: rede-ufv / Solar#2026x", "Salva o Wi-Fi de Porto Ferreira: rede-ufv / ••••"),
+        ("troca a senha do cadeado do portão de Tietê: agora é Solar#2026x",
+         "troca a senha do cadeado do portão de Tietê: agora é ••••"),
+        ("troca a senha do cadeado do portão de Tietê: agora é changeme",
+         "troca a senha do cadeado do portão de Tietê: agora é ••••"),
+        ("A senha do SmartLogger é changeme para o usuário admin.", "A senha do SmartLogger é •••• para o usuário admin."),
+        ("salve a senha do Wi-Fi: rede-ufv / changeme", "salve a senha do Wi-Fi: •••• / ••••"),
+        ("a senha é 4821x e o usuário é admin", "a senha é •••• e o usuário é admin"),
+        ("| senha | Huawei@123 |", "| senha | •••• |"),
+        ("Roteador — IP 192.168.1.1 · usuário admin · Solar#2026x", "Roteador — IP 192.168.1.1 · usuário admin · ••••"),
+        ("Senha: X9y8z7. Kewyn tem acesso.", "Senha: ••••. Kewyn tem acesso."),     # o fim da frase fecha o valor
+    ):
+        assert _sem_segredos(texto) == guardado, texto
+    for prosa in (
+        "Antes eu falei de senha por engano — ação no meuPlano se confirma com SIM.",
+        "Sobre a senha: o meuPlano não pede senha para criar OS.",
+        "Senha: você não tem nível para ver; peça ao gerente da O&M.",
+        "Senha do SmartLogger: acima do seu nível (L2) — peça a quem tem acesso.",
+        "Senha do SmartLogger: consulte a ficha do equipamento no meuPlano.",
+        "Credenciais: ficam no cofre do meuPlano, aba Acessos.",
+        "PIN do cadeado: cadastre na ficha do equipamento.",
+        "A senha do Wi-Fi: o cliente troca toda semana, confirme com ele.",
+        "Senhas:\n- Wi-Fi: ninguém cadastrou\n- SmartLogger: só o admin vê",
+        "Senha — fale com o Kewyn, ele tem acesso.",
+        "O inversor SUN2000-100KTL da OS 1638 (INV-13) mandou o e-mail para renan@splendoroem.com.br às 14:32.",
+        "Veja https://meuplano.solar/os/1638?aba=2&x=1 e R$1.500,00 do contrato #665.",
+    ):
+        assert _sem_segredos(prosa) == prosa, prosa
+
+
+def test_o_fim_pelo_sinal_e_a_pendencia_dita_de_qualquer_jeito():
+    """Avaliação 26: com o sinal de fim ("Não há próximo passo") depois, o texto completo dito com palavra comum virava
+    alarme (14 de 18); a pendência sem a palavra da lista saía como informação (13 de 14)."""
+    for completo in ("OS 1638 fechada com sucesso.", "A OS 1638 foi fechada. Segue o resumo: 1 tarefa concluída.",
+                     "A OS 1638 foi fechada. O próximo cronograma de roçagem está previsto para 23/11.",
+                     "A OS 1638 foi fechada depois de conferir que a tarefa 8873 estava concluída.",
+                     "A OS 1638 foi fechada. Lembrando: o relatório fica disponível na aba Relatórios.",
+                     "Fechei a OS 1638: todas as tarefas estavam concluídas.", "A OS 1638 está com status FECHADA.",
+                     "A OS 1638 já consta como fechada no meuPlano.", "Concluído: a OS 1638 foi encerrada.",
+                     "Criei a OS 1844 em Ibitinga, programada para 23/10.", "A OS 1638 foi fechada; não houve problemas.",
+                     "A OS 1638 foi fechada sem pendências.", "A OS 1638 foi fechada e o relatório segue disponível.",
+                     "A OS 1638 foi fechada sem observações.", "A OS 1638 foi fechada sem ressalvas.",
+                     "Não, a OS 1638 já foi fechada.", "Fechei a OS 1638.", "Encerrei a OS 1638 agora.",
+                     "A OS 1638 foi fechada. O relatório fica para consulta na aba Relatórios."):
+        assert assistente._afirma_o_fim(completo) and not assistente._tem_pendencia(completo), completo
+    for pendente in ("A tarefa 8873 foi concluída, mas a OS 1638 não está fechada.", "A tarefa 8873 foi concluída. "
+                     "Não fechei a OS 1638.", "A OS 1843 foi criada. Não lancei o dia do Michel nela.",
+                     "A OS 1843 foi criada; o fechamento da 1638 foi recusado.", "A OS 1843 foi criada. O meuPlano "
+                     "recusou fechar a 1638.", "A ficha foi concluída. A OS 1638 ficou sem fechar.",
+                     "A OS 1843 foi criada; a conclusão da 1638 não aconteceu.", "A OS 1843 foi registrada. O "
+                     "fechamento da 1638 ficou de fora.", "A OS 1843 foi criada. A 1638 está bloqueada para fechamento.",
+                     "A OS 1843 foi criada. A 1638 tem 1 tarefa sem data de término.", "A OS 1843 foi criada. Faltou "
+                     "a data de término para a 1638.", "NÃO DÁ: a OS 1638 tem tarefa sem data de término.",
+                     "A OS 1638 continua aberta.", "Depois eu fecho a 1638.", "O próximo é fechar a OS 1638.",
+                     "A 1638 segue em execução.", "A OS 1638 permanece aberta.", "A 1843 fica para amanhã.",
+                     "A OS 1638 está aberta.", "A ficha foi concluída; a OS 1638 pode ser fechada agora."):
+        assert assistente._tem_pendencia(pendente) and not assistente._afirma_o_fim(pendente), pendente
+
+
+async def test_o_sinal_de_fim_depois_do_texto_completo_e_informacao(db, bot_local, monkeypatch):
+    """"Feche a OS 1638" → Sim → ✅; o meuPlano diz que fechou com outras palavras e, pedido de novo, "Não há próximo
+    passo.": é o fim — informação, sem ⚠️, log verde (avaliação 26: virava alarme e erro). O que não foi feito, dito duas
+    vezes ("Não fechei a OS 1638."), continua aviso."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    for n, (primeira, segunda, aviso) in enumerate((("OS 1638 fechada com sucesso.", "Não há próximo passo.", False),
+                                                    # sem palavra de feito: o sinal de fim é que diz que acabou
+                                                    ("Segue o resumo da OS 1638: 1 tarefa (#8873 Roçagem).",
+                                                     "Não há próximo passo.", False),
+                                                    ("Não fechei a OS 1638.", "Não fechei a OS 1638.", True))):
+        _ia_que_pede_ao_meuplano(monkeypatch, _MeuPlanoQueEscreve(primeira, segunda), [])
+        dono = _conta(db, f"dono{n}", f"+55179973771{n:02d}")
+        await assistente.atender(_ev(dono, 10 * n + 1, PEDIDO_DOIS_PASSOS))
+        antes = len(bot_local.enviados)
+        await assistente.atender(_toque(dono, 10 * n + 2))
+        depois = bot_local.enviados[antes:]
+        log = db.query(RegistroBot).filter_by(gs_user_id=dono.id).order_by(RegistroBot.id.desc()).first()
+        assert depois[0].startswith("✅") and depois[-1].startswith("⚠️") == aviso, depois
+        assert (log.resultado == "erro") == aviso
+
+
+def test_os_sins_que_faltavam_e_as_recusas_que_nao_executam():
+    from app.services import assistente_helper as h
+
+    fechar = "Fechar a OS 1638 (Roçagem): as 1 tarefa(s) estão concluídas."
+    for sim in ("Sim, 100%", "100%", "Procede", "Pode proceder", "Pode efetuar", "Pode realizar", "Pode dar andamento",
+                "Ok, pode dar sequência", "Sim, pode encerrar", "Encerra", "Liberado", "Pode liberar", "Valido",
+                "Sim, valido", "Sim, cem por cento"):
+        assert h._resposta_ao_resumo(sim, fechar) == "sim", sim
+    for nao in ("Pode fechar quando o Michel voltar", "Sim, mas não agora", "Fecha amanhã cedo", "Pode, só que não",
+                "Sim kkk brincadeira", "Ok, pode desconsiderar", "Pode encerrar a 1640"):
+        assert h._resposta_ao_resumo(nao, fechar) != "sim", nao
