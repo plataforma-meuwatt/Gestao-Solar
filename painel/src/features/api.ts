@@ -786,6 +786,8 @@ export const botOuvindo = () =>
       helper_alcancavel: boolean | null
       helper_resumo: string | null
       helper_rotulo: string | null
+      /** A última mensagem das pessoas da empresa que recebeu resposta (também a que respondeu com aviso). */
+      ultima_resposta_em: string | null
     }>(
       '/bot/saude',
     )

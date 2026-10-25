@@ -1407,6 +1407,12 @@ def test_o_log_esconde_o_numero_do_segredo_em_qualquer_forma():
         # o trecho "do …" com número ("do inversor 13", "do IP …") passava em claro (avaliação 22)
         ("senha do inversor 13 é 4821", "senha do inversor 13 é ••••"),
         ("a senha do IP 10.1.130.2 é admin123", "a senha do IP 10.1.130.2 é ••••"),
+        # o ":" depois do número do equipamento (avaliação 23: passavam em claro)
+        ("Senha do inversor 13: 4821", "Senha do inversor 13: ••••"),
+        ("Senha do SmartLogger 2: Huawei@123", "Senha do SmartLogger 2: ••••"),
+        ("PIN do ABS 3: 1234", "PIN do ABS 3: ••••"),
+        ("senha do cadeado do portão 2: 3262", "senha do cadeado do portão 2: ••••"),
+        ("a senha é morango e o usuário é admin", "a senha é •••• e o usuário é admin"),
     ]:
         assert _sem_segredos(texto) == guardado
     for texto in ["código de erro 2043 no inversor 3", "o código da OS 1639", "Senha não confere (2 de 5). Nada foi feito.",
@@ -1414,7 +1420,13 @@ def test_o_log_esconde_o_numero_do_segredo_em_qualquer_forma():
                   "Para executar, responda só com a senha até as 14:32. Qualquer outra mensagem cancela.",
                   "🔒 *Ação esperando a sua senha de atuação*\n• Desligar o inversor 3", "[senha oculta]",
                   # o número do IDENTIFICADOR e a data não são o segredo (avaliação 22: sumiam do log)
-                  "a senha da OS 1638 é a mesma de ontem", "nova senha 24/10", "senha do IP 10.1.130.2"]:
+                  "a senha da OS 1638 é a mesma de ontem", "nova senha 24/10", "senha do IP 10.1.130.2",
+                  # a prosa — inclusive o aviso do próprio bot — fica inteira (avaliação 23: saía comida)
+                  "Vence em 24/10/2026, a senha de atuação é definida no oem-gs",
+                  "(Escondi a sua senha de atuação desta mensagem: ela é só para equipamento — ação do meuPlano se "
+                  "confirma com Sim. Nada foi executado.)",
+                  "(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa mensagem só dela.)",
+                  "Sua senha de atuação é pessoal, não a passe a ninguém.", "a senha é comparada com a hora da Meta"]:
         assert _sem_segredos(texto) == texto
 
 
@@ -2081,8 +2093,33 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
              (_MeuPlanoQueEscreve("Pronto, não falta nada."), None, "respondeu", 2),
              (_MeuPlanoQueEscreve("Seu pedido está completo."), None, "respondeu", 2),
              (_MeuPlanoQueEscreve("Pronto! Posso ajudar em algo mais?"), None, "respondeu", 2),
-             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano disse:\n\n" + pergunta, "respondeu", 3),
-             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano disse:\n\n" + falta, "respondeu", 3),   # pergunta
+             (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, pergunta), "O meuPlano perguntou:\n\n" + pergunta, "respondeu", 3),
+             (_MeuPlanoQueEscreve(falta, "Pronto."), "O meuPlano perguntou:\n\n" + falta, "respondeu", 3),
+             # o resto do pedido dito em TEXTO com "não há mais", "tudo ok", "isso é tudo", "pronto" no meio — e,
+             # pedido de novo, "Não há próximo passo.": a pessoa fica sabendo (avaliação 23: o bot calava)
+             (_MeuPlanoQueEscreve("A OS 1843 foi criada. Não há outro passo automático: a conclusão da 1638 depende da "
+                                  "data de término.", "Não há próximo passo."), "depende da data de término", "erro", 3),
+             (_MeuPlanoQueEscreve("A ficha da tarefa 8873 foi concluída. Não há mais tarefas pendentes na OS 1638, que já "
+                                  "pode ser fechada.", "Não há próximo passo."), "já pode ser fechada", "erro", 3),
+             (_MeuPlanoQueEscreve("A ficha foi concluída e está tudo ok para o fechamento da OS 1638. Vou propor o "
+                                  "fechamento.", "Não há próximo passo."), "Vou propor o fechamento", "erro", 3),
+             (_MeuPlanoQueEscreve("Isso é tudo que consigo pelo WhatsApp: o fechamento da OS 1638 precisa ser feito na "
+                                  "web.", "Não há próximo passo."), "precisa ser feito na web", "erro", 3),
+             (_MeuPlanoQueEscreve("Pronto! Quer que eu feche a OS 1638 também ou algo mais?", "Não há próximo passo."),
+              "O meuPlano perguntou:\n\nPronto! Quer que eu feche", "respondeu", 3),
+             (_MeuPlanoQueEscreve("Registrei o dia do Michel. A OS 1843 está pronta para receber a conclusão; "
+                                  "confirme e eu concluo.", "Não há próximo passo."), "confirme e eu concluo", "erro", 3),
+             (_MeuPlanoQueEscreve("OS criada. Tudo certo para seguir com a conclusão da 1638 — mande a data de "
+                                  "término.", "Não há próximo passo."), "mande a data de término", "erro", 3),
+             (_MeuPlanoQueEscreve("A ficha foi concluída; a OS 1638 está pronta para ser fechada.", "Não há próximo "
+                                  "passo."), "pronta para ser fechada", "erro", 3),
+             # nada por fazer no que ele disse: vai como informação, sem aviso (avaliação 22: era alarme falso) —
+             # calar, só quando a resposta é SÓ o fim
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada. Seu pedido está completo.", "Não há próximo passo."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
+             (_MeuPlanoQueEscreve("Não há próximo passo: o pedido era só fechar a OS 1638.", "Não há próximo passo."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
+             (_MeuPlanoQueEscreve("Tudo concluído."), None, "respondeu", 2),
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro", 3),   # vale o de antes
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro", 3),       # o passo já feito
              # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
@@ -2904,6 +2941,13 @@ def test_o_plural_de_um_tipo_numa_lista_mista_e_a_pergunta_com_emoji_nao_confirm
         assert r(t, resumo, inversores) == "outra" and r(t, "Fechar a OS 1638") == "outra", t
     for t in ("Apagar 🤔", "Sim 🤔", "Pode apagar 😬", "Fecha 😳"):
         assert r(t, resumo, inversores) == "duvida" and r(t, "Fechar a OS 1638") == "duvida", t
+    # a lista fechada é a do SIM: qualquer outro emoji é dúvida (avaliação 23: "Apaga ❌" e "Sim 👎" apagavam)
+    for t in ("Apaga ❌", "Sim 👎", "Pode apagar ✋", "Sim 🛑", "Apaga ⛔", "Apaga 🤷", "Sim 🙄", "🙏", "Sim 🙏"):
+        assert r(t, resumo, inversores) == "duvida" and r(t, "Fechar a OS 1638") == "duvida", t
+    for t in ("Sim 👍🏽", "Pode apagar ✅", "Sim ❤️", "Sim 😊", "Sim, obg", "Sim vlw", "Sim, pfv", "Pode, obg", "Sim, tmj",
+              "Sim pf", "Sí", "Yep", "Simbora"):
+        assert r(t, resumo, inversores) == "sim", t                  # o agradecimento abreviado é neutro
+    assert r("Apaga‽", resumo, inversores) == "outra"
 
 
 async def test_a_pergunta_de_novo_diz_que_o_sim_vale_para_tudo(db, bot_local, monkeypatch):
@@ -3025,6 +3069,9 @@ async def test_o_feito_diz_o_resultado_real_do_meuplano(db, bot_local, monkeypat
     recusa = {"erro": "Não dá para apagar 'Huawei': está em uso por 3 equipamento(s)/modelo(s).", "total": 3}
     inteiro = {"removidos": 2, "resumo": "2 equipamento(s) removido(s); 0 vazio(s); 0 bloqueado(s)."}
     sem_resumo = {"criadas": 1, "erros": [{"source": 1}, {"source": 2}]}           # sem o motivo de cada um
+    # todos falharam: nada foi feito — "EM PARTE" mentia (avaliação 23, o ensaio de lá com o nó 6539)
+    nada = {"removidos": 0, "pulados_vazios": 1, "resumo": "0 equipamento(s) removido(s); 1 vazio(s); 1 bloqueado(s).",
+            "erros": [{"node_id": 6539, "detail": "Inversor 1 tem 9 ensaios: não dá para desinstalar."}]}
     casos = ((bloqueado, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 1 "
                          "equipamento(s) removido(s); 0 vazio(s); 1 bloqueado(s).\n• Inversor 1 tem 9 ensaios", "erro", 1),
              (recusa, "❌ O meuPlano recusou: Não dá para apagar 'Huawei': está em uso por 3 equipamento(s)/modelo(s). "
@@ -3032,7 +3079,10 @@ async def test_o_feito_diz_o_resultado_real_do_meuplano(db, bot_local, monkeypat
              (inteiro, "✅ Feito no meuPlano: Desinstalar o equipamento de 2 ponto(s) — resultado: 2 equipamento(s) "
                        "removido(s); 0 vazio(s); 0 bloqueado(s).", "respondeu", 2),
              (sem_resumo, "⚠️ Feito EM PARTE no meuPlano: Desinstalar o equipamento de 2 ponto(s) — 2 item(ns) com "
-                          "falha.\n\n", "erro", 1))
+                          "falha.\n\n", "erro", 1),
+             (nada, "❌ O meuPlano recusou: Desinstalar o equipamento de 2 ponto(s) — resultado: 0 equipamento(s) "
+                    "removido(s); 1 vazio(s); 1 bloqueado(s).\n• Inversor 1 tem 9 ensaios: não dá para desinstalar."
+                    "\n\nNada foi feito.", "erro", 1))
     for n, (dados, comeca, resultado, perguntas) in enumerate(casos):
         falso = _MeuPlanoQueDevolve(dados)
         _ia_que_pede_ao_meuplano(monkeypatch, falso, [])

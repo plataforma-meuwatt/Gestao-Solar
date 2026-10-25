@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot, saude_atual
+from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot, saude_atual, ultima_respondida
 from app.core.db import get_db
 from app.core.security import gerar_hash_senha, gestor_empresa_atual
 from app.core.telefone import exibir as exibir_telefone
@@ -1712,18 +1712,22 @@ class BotOuvindoOut(BaseModel):
     helper_resumo: str | None = None
     #: A causa, curta ("VPN das usinas parada" / "helper fora do ar"), para o selo e cada pessoa.
     helper_rotulo: str | None = None
+    #: A última mensagem das pessoas DESTA empresa que recebeu resposta (a mesma conta do adm-gs, com o recorte;
+    #: avaliação 23: o oem contava só as "respondeu" e dizia 18:05 com a das 18:13 respondida).
+    ultima_resposta_em: datetime | None = None
 
 
 @router.get("/bot/saude", response_model=BotOuvindoOut)
 async def bot_ouvindo(
-    db: Session = Depends(get_db), _gerente: User = Depends(gestor_empresa_atual)
+    db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
 ) -> BotOuvindoOut:
     """Se o bot está recebendo as mensagens. O número é da plataforma, e o conserto também:
     ao gerente basta saber que a falta de resposta NÃO é o cadastro dele (o detalhe técnico
     fica no Log do bot do adm-gs)."""
     s = await saude_atual(db)
     helper = {"helper_alcancavel": s.helper_alcancavel, "helper_resumo": s.helper_resumo,
-              "helper_rotulo": s.helper_rotulo}
+              "helper_rotulo": s.helper_rotulo,
+              "ultima_resposta_em": ultima_respondida(db, svc.empresa_exigida(gerente))}
     if s.ouvindo:
         return BotOuvindoOut(ouvindo=True, resumo="O bot está recebendo as mensagens.", **helper)
     return BotOuvindoOut(

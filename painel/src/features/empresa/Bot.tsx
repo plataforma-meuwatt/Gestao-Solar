@@ -88,7 +88,7 @@ export function BotDaEmpresa() {
       {log?.length ? (
         <p className="text-xs text-fraco mb-3">
           Última mensagem respondida (enviada em):{' '}
-          {quando(log.find((r) => r.resultado === 'respondeu')?.em ?? null)} · última mensagem recebida:{' '}
+          {quando(canal?.ultima_resposta_em ?? null)} · última mensagem recebida:{' '}
           {quando(log[0].em)}
         </p>
       ) : null}

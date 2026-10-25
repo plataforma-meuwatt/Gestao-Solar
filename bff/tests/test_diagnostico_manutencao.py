@@ -159,7 +159,7 @@ async def test_o_diagnostico_diz_o_numero_em_ptbr_e_o_nome_da_os(db, cliente, us
 
     class _MP:
         async def ordens_servico(self, usina_id):
-            return [{"id": 1843, "name": "Roçagem"}, {"id": 969, "objetivo": None}]
+            return [{"id": 1843, "name": "Roçagem"}, {"id": 969, "objetivo": None}, {"id": 1721, "objetivo": "x" * 900}]
 
     monkeypatch.setattr("app.api.v1.painel_clientes.vinculos.cliente_meuwatt", lambda _db, _id=None: _MW())
     monkeypatch.setattr("app.api.v1.painel_clientes.vinculos.cliente_meuplano", lambda _db, _id=None: _MP())
@@ -169,8 +169,9 @@ async def test_o_diagnostico_diz_o_numero_em_ptbr_e_o_nome_da_os(db, cliente, us
     assert mw["Ribeirão Bonito"]["campos"] == [{"rotulo": "Energia hoje", "valor": "0,00 kWh"},
                                               {"rotulo": "Disponibilidade", "valor": None}]
     mp = _por_usina(await _diagnostico_meuplano(db, cliente, [porto]))
-    assert mp["Porto Ferreira"]["campos"] == [{"rotulo": "Ordens de serviço", "valor": "2"},
-                                             {"rotulo": "Mais recentes", "valor": "OS 1843 · Roçagem; OS 969"}]
+    assert mp["Porto Ferreira"]["campos"] == [{"rotulo": "Ordens de serviço", "valor": "3"},
+                                             {"rotulo": "Mais recentes",
+                                              "valor": f"OS 1843 · Roçagem; OS 969; OS 1721 · {'x' * 59}…"}]
     _fantasia(monkeypatch, ClienteFalso({1: [{"id": 20, "numero": 200, "title": "O&M 2026", "vigente": True,
                                               "versao_consolidada": None}]}))
     item = _por_usina(await _diagnostico_manutencao(db, cliente, [porto]))["Porto Ferreira"]

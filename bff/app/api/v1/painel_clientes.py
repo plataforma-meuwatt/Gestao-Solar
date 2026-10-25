@@ -398,7 +398,9 @@ async def _diagnostico_meuplano(db: Session, cliente_gs: User, usinas: list[Plan
         recentes = []
         for o in ordens[:3]:
             saida = _para_saida(o, u)
-            recentes.append(saida.objetivo if saida.objetivo == f"OS {saida.id}" else f"OS {saida.id} · {saida.objetivo}")
+            # o nome, não a descrição inteira (avaliação 23: a OS 1721 despejava ~900 caracteres)
+            nome = saida.objetivo if len(saida.objetivo) <= 60 else saida.objetivo[:59].rstrip() + "…"
+            recentes.append(nome if saida.objetivo == f"OS {saida.id}" else f"OS {saida.id} · {nome}")
         itens.append({
             "usina": u.nome,
             "origem": f"GET /meuacesso/service-orders?plant_id={u.mp_usina_id}",

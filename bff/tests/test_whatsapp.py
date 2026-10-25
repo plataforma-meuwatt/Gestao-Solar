@@ -13,6 +13,8 @@ o que sobra do lado de cá, e cada item é uma falha silenciosa:
 """
 
 import httpx
+import types
+
 import pytest
 import respx
 from fastapi.testclient import TestClient
@@ -279,7 +281,7 @@ async def test_o_gerente_ve_se_o_bot_esta_ouvindo_sem_o_detalhe_tecnico(db, conf
 
     respx.get(f"{GW}/interno/saude").mock(return_value=httpx.Response(200, json={
         "eventos_parados": 2, "eventos_com_erro": 2, "mensagens_sem_aviso": 0, "ultimo_erro": "StringDataRightTruncation"}))
-    r = await bot_ouvindo(db=db, _gerente=None)
+    r = await bot_ouvindo(db=db, gerente=types.SimpleNamespace(empresa_id=1))
     assert r.ouvindo is False and "não o cadastro" in r.resumo and "StringData" not in r.resumo
 
 
@@ -297,8 +299,30 @@ async def test_o_selo_do_helper_diz_a_causa_e_nao_so_que_esta_fora(db, configura
         return False, "Helper responde, mas a rede até as usinas (VPN) está sem contato há 24 h: leitura…"
 
     monkeypatch.setattr(assistente_helper, "alcancavel", _vpn)
-    r = await bot_ouvindo(db=db, _gerente=None)
+    r = await bot_ouvindo(db=db, gerente=types.SimpleNamespace(empresa_id=1))
     assert (r.helper_alcancavel, r.helper_rotulo) == (False, "VPN das usinas parada")
+
+
+@respx.mock
+async def test_a_ultima_respondida_do_oem_e_a_da_empresa_e_conta_a_que_respondeu_com_aviso(db, configurado):
+    """O oem contava no front só as "respondeu" e dizia 18:05 com a das 18:13 respondida (avaliação 23). A hora vem
+    da API — a mesma conta do adm —, com o recorte da empresa da sessão."""
+    from datetime import UTC, datetime
+
+    from app.api.v1.empresa import bot_ouvindo
+    from app.models.conversa_whatsapp import RegistroBot
+
+    respx.get(f"{GW}/interno/saude").mock(return_value=httpx.Response(200, json={
+        "eventos_parados": 0, "eventos_com_erro": 0, "mensagens_sem_aviso": 0}))
+    db.add_all([RegistroBot(telefone="+5517997377626", empresa_id=1, resultado="respondeu", resposta="ok",
+                            em=datetime(2026, 10, 24, 21, 5, tzinfo=UTC)),
+                RegistroBot(telefone="+5517997377626", empresa_id=1, resultado="erro", resposta="✅ … ⚠️ …",
+                            em=datetime(2026, 10, 24, 21, 13, tzinfo=UTC)),
+                RegistroBot(telefone="+5516999990000", empresa_id=2, resultado="respondeu", resposta="ok",
+                            em=datetime(2026, 10, 24, 22, 0, tzinfo=UTC))])          # de OUTRA empresa: não conta
+    db.commit()
+    r = await bot_ouvindo(db=db, gerente=types.SimpleNamespace(empresa_id=1))
+    assert r.ultima_resposta_em.replace(tzinfo=None) == datetime(2026, 10, 24, 21, 13)
 
 
 @respx.mock

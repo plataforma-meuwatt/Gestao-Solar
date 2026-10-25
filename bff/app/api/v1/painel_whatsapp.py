@@ -375,12 +375,15 @@ async def saude_atual(db: Session) -> SaudeDoCanalOut:
     return saida
 
 
+def ultima_respondida(db: Session, empresa_id: int | None = None) -> datetime | None:
+    """A última mensagem que RECEBEU resposta — também a marcada como erro, que respondeu com o aviso (avaliação 22:
+    o selo dizia 18:05, e a das 18:13 tinha sido respondida). Com `empresa_id`, só as pessoas dela (o oem-gs)."""
+    filtro = [RegistroBot.resposta.isnot(None)] + ([RegistroBot.empresa_id == empresa_id] if empresa_id else [])
+    return db.scalar(select(func.max(RegistroBot.em)).where(*filtro))
+
+
 async def _saude_do_canal(db: Session) -> SaudeDoCanalOut:
-    # a última mensagem que RECEBEU resposta — também a marcada como erro, que respondeu com o aviso
-    # (avaliação 22: o selo dizia 18:05, e a das 18:13 tinha sido respondida)
-    ultima_resposta = db.scalar(
-        select(func.max(RegistroBot.em)).where(RegistroBot.resposta.isnot(None))
-    )
+    ultima_resposta = ultima_respondida(db)
     try:
         g = await gateway.saude()
     except gateway.GatewayIndisponivel as exc:

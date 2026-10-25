@@ -371,7 +371,9 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "aprovada", "aprovo", "autorizo", "autorizado", "autorizada", "acordo", "fechou",
            "uhum", "aham", "exatamente", "joia", "jóia", "certeza", "ótimo", "otimo", "ótima", "otima",
            "afirmativo", "tranquilo", "top", "massa", "boa", "yes", "si", "concordo", "concordamos", "tá", "ta",
-           "certinho", "combinado", "feito", "demorou", "firmeza"}
+           "certinho", "combinado", "feito", "demorou", "firmeza",
+           # avaliação 23: "Sí", "Yep", "Simbora" cancelavam
+           "sí", "yep", "yup", "yeah", "simbora", "partiu"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo
@@ -394,7 +396,10 @@ _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "t
                       "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "seguir", "prosseguir", "ir", "ai",
                       "aí", "agora", "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo",
                       "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue", "pra", "assim",
-                      "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa", "esse", "já", "ja"}
+                      "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa", "esse", "já", "ja",
+                      # o agradecimento abreviado ("Sim, obg", "Sim vlw" — avaliação 23: cancelavam)
+                      "vlw", "valew", "obg", "obgd", "obgda", "brigado", "brigada", "grato", "grata", "pfv", "pfvr",
+                      "pf", "tmj"}
 def _formas(infinitivo: str) -> set[str]:
     """As formas que se digitam de um verbo regular: o infinitivo, a 3ª pessoa e o imperativo
     ("apagar" → apaga, apague; "concluir" → conclui, conclua; "mover" → move, mova)."""
@@ -446,13 +451,19 @@ _CIENCIA = {"valeu", "vlw", "obrigado", "obrigada", "obg", "brigado", "brigada",
             "combinado", "joia", "jóia", "tá", "ta", "bom", "muito", "fico", "no", "e"}
 #: Só o gesto — com o tom de pele que muita gente deixa como padrão (👍🏽 cancelava, avaliação 14).
 _SO_OK = re.compile(r"^[\s👍✅👌✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
-#: As mãos juntas são "por favor" ou "obrigado" tanto quanto "sim": pergunta de novo (avaliação 19).
-_SO_MAOS = re.compile(r"^[\s🙏\U0001F3FB-\U0001F3FF]+$")
-#: Pergunta, escrita com qualquer sinal: o "?" e o de largura cheia, o espanhol, os de emoji (avaliação 22:
-#: "Apaga❓", "Apaga⁉️", "Apaga？", "¿Apaga" apagavam).
-_PERGUNTA = re.compile(r"[?？¿❓❔⁉⁈⁇]")
-#: Emoji de dúvida, espanto ou receio: o sistema pergunta de novo ("Apagar 🤔" e "Sim 🤔" confirmavam).
-_EMOJI_DE_DUVIDA = re.compile(r"[🤔🧐🤨😕🫤😟🙁☹😬😳😱😨😰😮😯😲🫣😶]")
+#: Pergunta, escrita com qualquer sinal: o "?" e o de largura cheia, o espanhol, os de emoji, a interrogobang
+#: (avaliações 22 e 23: "Apaga❓", "Apaga⁉️", "Apaga？", "¿Apaga", "Apaga‽" apagavam).
+_PERGUNTA = re.compile(r"[?？¿❓❔⁉⁈⁇‽⸮]")
+#: Emoji que é "sim". Qualquer OUTRO — ❌ 👎 ✋ 🛑 ⛔ 🤷 🙄 🤔 😬 🙏… — é dúvida: o sistema pergunta de novo
+#: (avaliação 23: a lista FECHADA dos de dúvida deixava "Apaga ❌" e "Sim 👎" apagarem; agora a fechada é a do sim).
+_EMOJI_DE_SIM = set("👍👌✅✔☑🆗🙂😊😀😃😄😁😉👏🙌💪🤝✌🫡💯🚀❤💚💙")
+#: O que acompanha o emoji sem mudar o sentido: o tom de pele, o seletor de variação, a junção.
+_ENFEITE_DE_EMOJI = {"\ufe0f", "\u200d", *map(chr, range(0x1F3FB, 0x1F400))}
+
+
+def _emoji_que_nao_e_sim(texto: str) -> bool:
+    return any(unicodedata.category(c) in ("So", "Sk") and c not in _EMOJI_DE_SIM and c not in _ENFEITE_DE_EMOJI
+               for c in texto)
 
 
 def _palavras(texto: str) -> list[str]:
@@ -547,11 +558,9 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
     t = (texto or "").strip()
     if t and _SO_OK.match(t):
         return "sim"
-    if t and _SO_MAOS.match(t):
-        return "duvida"
     if _PERGUNTA.search(t):                            # "Apaga? 🤔", "Fecha?!", "Apaga❓" (avaliações 21 e 22)
         return "outra"
-    if _EMOJI_DE_DUVIDA.search(t):
+    if _emoji_que_nao_e_sim(t):
         return "duvida"
     palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
     da_acao = set(_palavras(acao)) | set(_palavras(" ".join(itens)))

@@ -822,7 +822,10 @@ qualquer pontuação ou "do cadeado" no meio ("senha,482913", "pin 482 913", "se
 3262"; "código" e "combinação" só de portão/porta/cadeado/cofre — "código de erro 2043",
 "PIN 3 do conector" e "combinação de strings 12" ficam; o número do IDENTIFICADOR — "senha da OS 1638", "senha do
 IP 10.1.130.2" —, data e IP também ficam, e o trecho "do inversor 13" não esconde mais o segredo que vem depois:
-"senha do inversor 13 é 4821" passava em claro — avaliação 22). Os marcadores do bot ("[senha oculta]")
+"senha do inversor 13 é 4821" passava em claro — avaliação 22; o ":" depois do número do equipamento, com espaço,
+também: "Senha do inversor 13: 4821", "PIN do ABS 3: 1234" — avaliação 23. A prosa fica: a palavra minúscula que
+continua a frase — "é definida no oem-gs", "desta mensagem: ela é só para equipamento", o aviso do próprio bot que
+saía comido — e as de `_PROSA`, "é pessoal, não a passe" — `_e_prosa`). Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -913,9 +916,10 @@ junto (avaliação 21, a prévia real de Ibitinga) e agora é dúvida (`_quantid
 número depois de "os" que não é a contagem segue como alvo: "a OS 1639" é a ordem. Palavra
 neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "Sim, é isso", "Aprovado" e
 "s" viravam dúvida na proposta real). Mensagem com sinal de pergunta em qualquer lugar nunca confirma —
-"?", "？", "¿", "❓", "❔", "⁉️" (`_PERGUNTA`; "Apaga?!", "Fecha?...", "Apaga❓", "¿Apaga" confirmavam —
-avaliações 21 e 22) —, e emoji de dúvida, espanto ou receio ("Sim 🤔", "Apaga 😳" — `_EMOJI_DE_DUVIDA`) é
-dúvida. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
+"?", "？", "¿", "❓", "❔", "⁉️", "‽" (`_PERGUNTA`; "Apaga?!", "Fecha?...", "Apaga❓", "¿Apaga" confirmavam —
+avaliações 21 a 23) —, e emoji: a lista FECHADA é a do sim (`_EMOJI_DE_SIM`: 👍 ✅ 👌 🙂 😊 ❤️…); qualquer outro —
+❌ 👎 ✋ 🛑 🤷 🙄 🤔 😳 🙏 — é dúvida (avaliação 23: com a lista fechada dos de dúvida, "Apaga ❌" e "Sim 👎"
+apagavam). O agradecimento abreviado ("Sim, obg", "Sim vlw", "pfv", "tmj") é palavra neutra. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
 botões (`de_novo_para_reacao`; avaliação 22: era ignorada em silêncio e a ação vencia sem aviso). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
 (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
@@ -944,10 +948,15 @@ trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 
 passo depois do pedido de novo, a pessoa SEMPRE fica sabendo — "Faltam 2 passos" seguido de "Pronto" repassa o
 que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️). O sinal de fim que o bot PEDE é "Não
 há próximo passo" — a regra 7 do `IA.MD` do meuPlano proíbe o modelo de lá de escrever "pronto" e "feito" —, e o
-fim é reconhecido em qualquer parte da resposta e de vários jeitos ("Não há próximo passo", "Pronto, não falta
-nada", "Seu pedido está completo"); a negação ("não falta nada") e a pergunta de cortesia ("Posso ajudar em algo
-mais?") não contam como "falta" (`_NEGA_FALTA`, `_CORTESIA`; avaliação 22: viravam ⚠️ e erro no log). O passo
-feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
+bot só CALA quando a resposta é SÓ o fim (`_so_o_fim`: "Não há próximo passo.", "Pronto, não falta nada.", "Seu
+pedido está completo.", "Pronto! Posso ajudar em algo mais?" — a cortesia sozinha não conta). Qualquer coisa além
+disso é pedida de novo e, sem o passo, DITA à pessoa: como pergunta, sem ⚠️, se o meuPlano pergunta; com ⚠️ e o log
+em erro se o texto diz que algo ficou por fazer (`_PENDENCIA`: "falta", "pendente", "pode ser fechada", "depende",
+"precisa", "vou propor", "confirme", "mande a data"…; a negação — "não há mais tarefas pendentes" — não conta); e
+como informação, sem ⚠️, se não diz ("Não há próximo passo: o pedido era só fechar a OS 1638."). A lista de palavras
+decide só o TOM do aviso, nunca se a pessoa fica sabendo (avaliação 23: procurar o fim em qualquer parte do texto
+calava "Não há mais tarefas pendentes na OS 1638, que já pode ser fechada"; avaliação 22: tomar só o começo era
+alarme falso). O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o
 pedido inteiro da pessoa vai junto: a IA pode ter mandado só uma parte, e o resto sumia calado —
 avaliação 15; a proposta seguinte com a MESMA ação e os mesmos argumentos da que acabou de rodar
 não é oferecida, é o fim do pedido — `Pendente.acao`, avaliação 16), com o
@@ -956,8 +965,10 @@ uma ação confirmada sempre chega:** falhar ao gravar a conversa não derruba o
 erro depois de a ação rodar nunca vira "Tente de novo" (repetir criaria a OS em dobro) — vai o
 desfecho dela, que é o RESULTADO que o meuPlano devolveu (`_desfecho_do_meuplano`: o `data.resumo` dele, como a
 web mostra; `erros` → "⚠️ Feito EM PARTE…" com os motivos e o log em erro, sem seguir para o próximo passo; `erro`
-com 200 — o handler recusou sem gravar — → "❌ O meuPlano recusou… Nada foi feito"; avaliação 22: "1 removido; 1
-bloqueado" virava "✅ Feito… Desinstalar 2 pontos"), ou "PODE ter sido feita — confira" se a execução estourou no meio
+com 200 — o handler recusou sem gravar — → "❌ O meuPlano recusou… Nada foi feito"; `erros` com todo contador do
+que deu certo em zero ("0 removido(s)…") → também ❌ (avaliação 23: "EM PARTE" com nada feito); avaliação 22: "1
+removido; 1 bloqueado" virava "✅ Feito… Desinstalar 2 pontos"; e no meuPlano `2e3c6132` apagar ligação de rede
+passou a devolver `erros`, como criar ligação e desinstalar — engolia a falha sem dizer), ou "PODE ter sido feita — confira" se a execução estourou no meio
 (`Pendente.desfecho`, avaliação 15). A proposta guarda o
 pedido nas palavras da PESSOA e o que dele já foi feito (`Pendente.pedido`/`feitos`): passo que falha
 diz "Do seu pedido «…», antes disso já foi feito: …. O resto não foi feito" — nunca a instrução que o bot mandou
@@ -987,7 +998,9 @@ caindo no token da empresa; o bot, não. **Cada mensagem vira uma linha em `gs_b
 sem cadastro): adm-gs → Log do bot, e o recorte da empresa no oem-gs → Bot do WhatsApp. A
 conversa é da CONTA: se o número muda de conta, o histórico anterior não entra. **"Bot ouvindo"**
 (`GET /interno/saude` do gateway → `/api/painel/whatsapp/saude` e `/api/empresa/bot/saude`):
-entregas da Meta paradas há mais de 2 min e mensagens que o BFF não recebeu — em 10/2026 a
+entregas da Meta paradas há mais de 2 min e mensagens que o BFF não recebeu; a "última mensagem respondida" vem
+da API nas duas telas (`painel_whatsapp.ultima_respondida`, com o recorte da empresa no oem — conta também a que
+respondeu com aviso; avaliação 23: o oem contava no front só as "respondeu") — em 10/2026 a
 configuração estava toda verde e o bot surdo havia um dia. Mensagem com mais de 2 h fica no log
 como `atrasada`, sem resposta. ⛔ **A suíte do BFF não pode abrir o `.env`:** ele aponta para a
 produção, e o `conftest.py` troca o `DATABASE_URL` antes de importar o app (um teste deixava
