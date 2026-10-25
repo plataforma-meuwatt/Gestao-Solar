@@ -407,17 +407,18 @@ class OcultarIn(BaseModel):
 @router.post("/mensagens/{mensagem_id}/ocultar", status_code=status.HTTP_204_NO_CONTENT,
              dependencies=[Depends(_porta)])
 def ocultar_texto(mensagem_id: int, corpo: OcultarIn | None = None, db: Session = Depends(get_db)) -> None:
-    """Tira a senha de atuação de uma mensagem RECEBIDA — da linha e da entrega crua da Meta. O
-    BFF chama logo depois de achar a senha (pedido do dono, 24/10/2026: o bot pede senha para
-    atuar); guardada aqui, ela ficaria em claro no banco. Fica o texto sem a senha."""
+    """Tira a senha de uma mensagem — da linha e, se RECEBIDA, da entrega crua da Meta. O BFF chama logo
+    depois de achar a senha de atuação (pedido do dono, 24/10/2026) ou a de equipamento; guardada aqui,
+    ela ficaria em claro no banco. Fica o texto sem a senha. A mensagem que SAIU também (a limpeza das
+    antigas — avaliação 27)."""
     from sqlalchemy import Text, cast
 
     m = db.get(Mensagem, mensagem_id)
-    if m is None or m.direcao != "entrada":
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mensagem recebida não encontrada.")
+    if m is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mensagem não encontrada.")
     texto = (corpo.texto if corpo and corpo.texto else None) or OCULTO
     m.texto = texto
-    if m.wamid:
+    if m.wamid and m.direcao == "entrada":
         desde = datetime.now(UTC) - timedelta(days=2)
         for ev in db.scalars(select(WebhookEvento).where(
             WebhookEvento.recebido_em >= desde, cast(WebhookEvento.corpo, Text).contains(m.wamid)

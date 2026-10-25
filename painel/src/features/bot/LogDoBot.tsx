@@ -18,6 +18,8 @@ import { mensagemDeErro } from '@/lib/api'
 
 const RESULTADO: Record<RegistroBot['resultado'], { tom: Tom; rotulo: string }> = {
   respondeu: { tom: 'ok', rotulo: 'Respondeu' },
+  // o pedido de vários passos sem o status do meuPlano (FEITO / FALTA / PERGUNTA): o bot disse que não confirmou o fim
+  a_conferir: { tom: 'alerta', rotulo: 'Respondeu — conferir o fim do pedido' },
   sem_conta: { tom: 'alerta', rotulo: 'Número sem cadastro' },
   nao_liberado: { tom: 'alerta', rotulo: 'Bot não liberado' },
   sem_texto: { tom: 'sem-dados', rotulo: 'Não era texto' },

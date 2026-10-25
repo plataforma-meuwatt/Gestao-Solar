@@ -376,7 +376,10 @@ _AFIRMA = {"sim", "s", "ss", "pode", "confirmo", "confirma", "confirmar", "confi
            "sí", "yep", "yup", "yeah", "simbora", "partiu",
            # avaliação 26: "Procede", "Liberado", "Valido" derrubavam a ação
            "procede", "proceda", "efetue", "efetua", "realize", "realiza", "liberado", "liberada", "libera", "libere",
-           "valido", "válido", "validado", "validada", "valide"}
+           "valido", "válido", "validado", "validada", "valide",
+           # avaliação 27: "Executa", "Lógico", "Excelente" derrubavam a ação
+           "executa", "execute", "lógico", "logico", "excelente", "maravilha", "perfeitamente", "certamente",
+           "obviamente"}
 #: As afirmativas de mais de uma palavra, como se fala — lista FECHADA. Viram "sim" antes de olhar as
 #: palavras, sem depender do resumo (avaliação 16: "Sim, com certeza", "Sim, sem problema", "Claro que
 #: sim" e "Sim senhor" cancelavam; "Sim, com certeza" confirmava "Criar OS… com…" só porque o resumo

@@ -489,3 +489,20 @@ def test_os_valores_somem_das_mensagens_recentes_do_numero(cliente, db):
     assert textos == {"grava aí: SL2, usuário admin, ••••", "Gravar •••• no SL2?", "changemeX não é o valor", "ab de abril",
                       "changeme de outro número", "changeme de três dias atrás"}
     assert "changeme" not in str(db.scalars(select(WebhookEvento)).one().corpo)
+
+
+def test_a_mensagem_que_saiu_tambem_perde_a_senha(cliente, db):
+    """A limpeza das mensagens antigas (avaliação 27: o número do cadeado de 22/10 seguia aqui) passa também pelas que
+    o bot MANDOU."""
+    from datetime import UTC, datetime
+
+    m = Mensagem(direcao="saida", wa_id="5517997377626", telefone="+5517997377626", tipo="text",
+                 texto="Senha do cadeado: 3262", ocorrida_em=datetime.now(UTC))
+    db.add(m)
+    db.commit()
+    h = {"X-Chave-Interna": "chave-interna-de-teste"}
+    assert cliente.post(f"/interno/mensagens/{m.id}/ocultar", headers=h,
+                        json={"texto": "Senha do cadeado: ••••"}).status_code == 204
+    db.expire_all()
+    assert db.get(Mensagem, m.id).texto == "Senha do cadeado: ••••"
+    assert cliente.post("/interno/mensagens/999999/ocultar", headers=h).status_code == 404

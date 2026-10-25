@@ -62,13 +62,12 @@ class Contexto:
     #: a mensagem desta vez, como a IA a vê (sem a senha) — o pedido de documento ASSINADO é
     #: reconhecido nela também, não só na pergunta que a IA monta
     pedido: str = ""
-    #: o bot perguntou ao meuPlano por SENHA ou ACESSO de equipamento
+    #: o bot perguntou ao meuPlano sobre ACESSO de equipamento (senha, PIN, Wi-Fi, cadeado, login…)
     credencial: bool = False
-    #: as senhas que este turno conheceu pelo VALOR — as que o meuPlano revelou (`segredos` do run) e as que a pessoa
-    #: mandou gravar (os campos da proposta de acesso): somem do log, do gateway e do que foi guardado antes
+    #: as senhas que este turno conheceu pelo VALOR — as que o meuPlano REVELOU (`segredos` do run) e as que a pessoa
+    #: mandou gravar (os campos da proposta de acesso, `digitados`): somem do log, do gateway e do que foi guardado antes
     segredos: list = field(default_factory=list)
-    #: o meuPlano entregou a lista `segredos` (a versão que conta o que revela); sem ela, o pedido de senha fica fora do log
-    meuplano_conta_segredos: bool = False
+    digitados: list = field(default_factory=list)
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

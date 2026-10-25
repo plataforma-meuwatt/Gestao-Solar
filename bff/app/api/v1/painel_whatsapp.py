@@ -264,7 +264,8 @@ class RegistroBotOut(BaseModel):
     usuario: str | None = None
     apelido: str | None = None
     empresa: str | None = None
-    #: `respondeu` · `sem_conta` · `nao_liberado` · `sem_texto` · `zerou` · `erro`
+    #: `respondeu` · `a_conferir` (o meuPlano não confirmou o fim do pedido) · `sem_conta` · `nao_liberado` ·
+    #: `sem_texto` · `zerou` · `atrasada` · `erro`
     resultado: str
     ferramentas: list[str] = []
     pergunta: str | None = None
