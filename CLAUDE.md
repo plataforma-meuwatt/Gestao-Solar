@@ -840,8 +840,11 @@ ocultar` — também para a que SAIU — e `/interno/mensagens/mascarar`) e do h
 seguintes (`_para_fora` — só as REVELADAS; as digitadas seguem, porque "é L2" refaz a proposta com elas). A conversa
 guardada fica com todas, CIFRADA (`_ler_conversa`/`_gravar_conversa`, com as listas "s" e "d"). (2) O turno que TRATA de
 acesso (`_e_de_credencial` na mensagem da pessoa, na pergunta da IA ao meuPlano ou na resposta: senha, PIN, credencial,
-login, cadeado, Wi-Fi, "chave do/da rede|portão…", "entre com", "usuário X,", "dados de acesso" — sem o "senha de
-atuação" do bot) deixa o texto LIVRE (da IA ou do meuPlano) fora do log e da cópia do gateway (`RESPOSTA_OMITIDA`),
+login, cadeado, Wi-Fi, "chave do/da rede|portão…", "dados de acesso", "acesso" como rótulo ("Acessos:") ou com o que
+se acessa com senha — SmartLogger, roteador, sistema, web, SSH… (`_SISTEMA`) —, "entre com" usuário/login/"admin /",
+"entrar no <equipamento>", "usuário <nome>," — sem o "senha de atuação" do bot; NÃO contam os "Acessos" da ficha de
+roçagem — a estrada: "tempo por local (Corredores, Perímetro, Acessos)" —, "usuário 92, técnico", "entra na fila",
+"entra com a equipe", "by-pass") deixa o texto LIVRE (da IA ou do meuPlano) fora do log e da cópia do gateway (`RESPOSTA_OMITIDA`),
 com ou sem a lista do meuPlano — a senha de texto livre (wiki, OS, relato: "o cadeado abre com 3262") não está nela; os
 blocos do sistema (✅, o resumo da ação) ficam. A mensagem da pessoa, nesse turno, passa toda pela máscara do assunto.
 (3) A máscara do assunto (`_sem_credencial`, na linha que fala de acesso): depois de CADA separador (":", "=", "→", "—",
