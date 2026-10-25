@@ -570,10 +570,21 @@ _NUMERO_QUE_NAO_E_SEGREDO = re.compile(r"\d{1,2}[:h]\d{2}(?::\d{2})?|(?:19|20)\d
                                        r"\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+,\d+|\d+(?:\.\d+){2}|#\d+|\d+(?:[.,]\d+)?[ºª°%]")
 
 
+#: O equipamento ou a marca logo antes do código: é o MODELO, escrito em minúscula no WhatsApp ("o relé pextron urp6000",
+#: "inversor sun2000-100ktl"), não a senha. Também lista de legibilidade.
+_EQUIPAMENTO_ANTES = {"relé", "rele", "relés", "reles", "inversor", "inversores", "modelo", "modelos", "smartlogger",
+                      "datalogger", "logger", "medidor", "trafo", "transformador", "string", "caixa", "abs", "placa",
+                      "módulo", "modulo", "módulos", "modulos", "pextron", "huawei", "sungrow", "sma", "fronius",
+                      "growatt", "weg", "abb", "schneider", "siemens", "canadian", "solis", "tsun", "goodwe", "deye",
+                      "chint", "jinko", "trina", "risen", "byd"}
+
+
 def _numero_secreto(nucleo: str, antes: str, depois: str, publicos: Collection[str]) -> bool:
     if re.search(r"[^\W\d_]", nucleo):                     # letra e número: a de senha tem minúscula e é longa
+        anterior = re.split(r"[./]", (antes.split() or [""])[-1].strip(_BORDA).lower())[-1]
         return not (len(nucleo) < 6 or not re.search(r"[a-zß-ÿ]", nucleo) or _COLADO_A_UNIDADE.fullmatch(nucleo)
-                    or _NAO_E_SENHA.match(nucleo) or re.fullmatch(r"(?i)v?\d+(?:\.\d+)+[a-z]?", nucleo))
+                    or _NAO_E_SENHA.match(nucleo) or re.fullmatch(r"(?i)v?\d+(?:\.\d+)+[a-z]?", nucleo)
+                    or (anterior in _EQUIPAMENTO_ANTES and re.fullmatch(r"[a-z]+\d[a-z0-9-]*", nucleo)))
     digitos = re.sub(r"\D", "", nucleo)
     proxima = re.match(r"[ \t]*(\S+)", depois)
     return not (len(digitos) < 3 or digitos in publicos or helper._data_ou_ip(nucleo)

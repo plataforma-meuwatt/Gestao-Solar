@@ -3800,12 +3800,14 @@ def test_o_numero_com_cara_de_segredo_some_da_mensagem_da_pessoa():
         ("o usuário do SmartLogger 2 é instalador e a chave sungrow88", "o usuário do SmartLogger 2 é instalador e a "
                                                                         "chave ••••"),
         ("token=9f8e7d6c5b4a e admin/Huawei2024", "token=•••• e admin/••••"),
+        ("a senha do inversor sungrow88", "a senha do inversor ••••"),          # o modelo pela marca, a senha não
     ):
         assert _sem_segredos(texto) == guardado, texto
     for tecnico in ("Feche a OS 1638 hoje às 14:30", "Inversor 13: 4821 W, PR 82,5%, 4,2kWh/kWp em 09/2026",
                     "S3=139,5 °C, MPPT1+MPPT2, 2043@INV-13, CB-03#2, SUN2000-100KTL", "código de erro 2043 no inversor 13",
                     "A usina tem 5670 módulos e gerou 12.345 kWh em 2025", "R$ 1.500,00 no contrato #657, a UC é 1234567",
                     "a troca custou R$ 1500 e a placa saiu por R$1800",
+                    "Quais os parametros que o rele.pextron urp6000 tem", "o inversor sun2000-100ktl de Pereiras",
                     "helper 2.17.0, IP 10.1.130.2:502, dia 24/10/2026", "5 ruas em 2 horas, ele levou 2hr",
                     "Produtividade: kWh/kWp=4,21 no dia.", "CNPJ 60.096.696/0001-23", "[senha oculta] e [número oculto]"):
         assert _sem_segredos(tecnico) == tecnico, tecnico
