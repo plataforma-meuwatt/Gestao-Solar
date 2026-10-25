@@ -226,6 +226,17 @@ def _parados(monitoramento: Any) -> list[dict[str, Any]]:
     return saida
 
 
+def _leitores(db: Session, pessoas: list[User], escopos: dict[int, list[PlantLink]]) -> dict[int, int]:
+    """Quem lê cada usina: a primeira pessoa com o meuWatt conectado que a enxerga (`paradas_por_usuario` diz por quê)."""
+    leitor_da_usina: dict[int, int] = {}
+    for pessoa in pessoas:
+        if vinculos.obter(db, pessoa.id, Produto.MEUWATT) is None:
+            continue
+        for u in escopos.get(pessoa.id, []):
+            leitor_da_usina.setdefault(u.id, pessoa.id)
+    return leitor_da_usina
+
+
 async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
     """Todos os avisos que caberiam agora, um por (pessoa, inversor parado).
 
@@ -258,12 +269,7 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
     #
     # Usina cujos donos ainda não conectaram o meuWatt fica de fora, sem aviso. É o certo:
     # não temos como saber o estado dela, e calar é melhor do que inventar.
-    leitor_da_usina: dict[int, int] = {}
-    for pessoa in pessoas:
-        if vinculos.obter(db, pessoa.id, Produto.MEUWATT) is None:
-            continue
-        for u in escopos.get(pessoa.id, []):
-            leitor_da_usina.setdefault(u.id, pessoa.id)
+    leitor_da_usina = _leitores(db, pessoas, escopos)
 
     clientes: dict[int, Any] = {}
     estado: dict[int, list[dict[str, Any]]] = {}
@@ -340,6 +346,79 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
                     )
                 )
     return avisos
+
+
+# ── usina sem comunicação ───────────────────────────────────────────────────────────────────
+#
+# Parada é o que o detector afirma (`down`); sem DADO ele não afirma nada, e a usina inteira calada não avisava ninguém
+# (Pereiras, 25/10/2026: sem dado desde as 02:28, com sol e os 12 inversores em "erro de comunicação", e nenhum app
+# tocou). Pode ser a comunicação ou a usina sem energia: o aviso diz as duas. A PRÓPRIA pessoa liga, no aplicativo, se
+# o gestor já lhe deu o aviso de usina parada (`permissoes.AUTOATENDIMENTO`).
+
+SUBCATEGORIA_SEM_DADO = "usina_sem_comunicacao"
+#: Com sol, a usina que passa disto sem mandar dado está sem comunicação. O meuWatt lê as usinas também à noite (em
+#: 25/10/2026 as outras cinco tinham dado de 1 a 3 minutos), então o amanhecer não dispara o aviso sozinho.
+SEM_DADO_MINUTOS = 30
+
+
+@dataclass
+class AvisoSemComunicacao:
+    usuario: User
+    usina: PlantLink
+    #: O último dado da usina (o `data_at` do meuWatt). Entra na chave: a mesma queda avisa uma vez só, e a próxima,
+    #: depois de o dado voltar, avisa de novo.
+    desde: str
+    chave: str
+
+
+def sem_dado_desde(monitoramento: Any, agora: datetime | None = None) -> str | None:
+    """O último dado da usina quando, com sol, ela está há `SEM_DADO_MINUTOS` ou mais sem mandar dado; `None` se está
+    mandando, se é noite, se o meuWatt não diz, ou se a queda é mais velha que `JANELA_HORAS` (histórico, não notícia)."""
+    if not isinstance(monitoramento, dict) or monitoramento.get("in_solar_window") is not True:
+        return None
+    quando = monitoramento.get("data_at")
+    try:
+        inicio = datetime.fromisoformat(str(quando).replace("Z", "+00:00")) if quando else None
+    except ValueError:
+        return None
+    if inicio is None:
+        return None
+    inicio = inicio if inicio.tzinfo else inicio.replace(tzinfo=UTC)
+    idade = (agora or datetime.now(UTC)) - inicio
+    return str(quando) if timedelta(minutes=SEM_DADO_MINUTOS) <= idade <= timedelta(hours=JANELA_HORAS) else None
+
+
+async def sem_comunicacao_por_usuario(db: Session) -> list[AvisoSemComunicacao]:
+    """Os avisos de usina sem comunicação que cabem agora, um por (pessoa, usina). Só para quem ligou a escolha E tem
+    o aviso de parada do gestor; a usina é lida uma vez, com o token de alguém que a enxerga."""
+    pessoas = [p for p in permissoes.usuarios_com_permissao(db, CATEGORIA, SUBCATEGORIA_SEM_DADO)
+               if permissoes.tem_permissao(db, p, CATEGORIA, SUBCATEGORIA)]
+    escopos = {p.id: [u for u in usinas_do_usuario(db, p) if u.mw_plant_slug] for p in pessoas}
+    leitor_da_usina = _leitores(db, pessoas, escopos)
+    alvos = {u.id: u for lista in escopos.values() for u in lista}
+    clientes: dict[int, Any] = {}
+    desde: dict[int, str] = {}
+    for link in alvos.values():
+        dono = leitor_da_usina.get(link.id)
+        if dono is None:
+            continue
+        try:
+            if dono not in clientes:
+                clientes[dono] = vinculos.cliente_meuwatt(db, dono)
+            quando = sem_dado_desde(await clientes[dono].monitoramento_atual(link.mw_plant_slug))
+        except Exception:  # noqa: BLE001 (meuWatt fora não é usina sem comunicação)
+            continue
+        if quando:
+            desde[link.id] = quando
+    return [AvisoSemComunicacao(usuario=p, usina=link, desde=desde[link.id],
+                                chave=f"{link.id}:sem_dado:{desde[link.id]}")
+            for p in pessoas for link in escopos[p.id] if link.id in desde]
+
+
+def texto_sem_comunicacao(aviso: AvisoSemComunicacao) -> tuple[str, str, dict[str, Any]]:
+    return (f"{aviso.usina.nome} · sem comunicação",
+            f"Sem dado desde {hora_brt(aviso.desde)}. Pode ser a comunicação ou falta de energia na usina.",
+            {"tipo": SUBCATEGORIA_SEM_DADO, "usina_id": aviso.usina.id})
 
 
 def tokens_do_usuario(db: Session, usuario: User) -> list[str]:

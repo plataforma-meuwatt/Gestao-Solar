@@ -64,11 +64,16 @@ async def disparar_avisos_de_parada(
     conferir a régua antes de acordar alguém às três da manhã.
     """
     saida = DisparoOut()
+    await _paradas(db, simular, saida)
+    await _sem_comunicacao(db, simular, saida)
+    return saida
 
+
+async def _paradas(db: Session, simular: bool, saida: DisparoOut) -> None:
     candidatos = await avisos.paradas_por_usuario(db)
     saida.candidatos = len(candidatos)
     if not candidatos:
-        return saida
+        return
 
     # Uma consulta para todas as chaves, em vez de uma por aviso: numa usina com
     # dez inversores parados e cinco clientes, seriam cinquenta idas ao banco.
@@ -83,7 +88,7 @@ async def disparar_avisos_de_parada(
     novos = [c for c in candidatos if (c.usuario.id, c.chave) not in ja_enviados]
     saida.repetidos = len(candidatos) - len(novos)
     if not novos:
-        return saida
+        return
 
     # Agrupado por PESSOA e por USINA, nesta ordem, e as duas agrupam por motivos
     # diferentes:
@@ -140,4 +145,30 @@ async def disparar_avisos_de_parada(
         saida.dispositivos_removidos = len(mortos)
         db.commit()
 
-    return saida
+
+async def _sem_comunicacao(db: Session, simular: bool, saida: DisparoOut) -> None:
+    """Usina sem comunicação (`avisos.sem_comunicacao_por_usuario`): um toque por pessoa e por queda, com a mesma trava
+    de repetição (`AvisoEnviado`, a chave leva o último dado da usina)."""
+    candidatos = await avisos.sem_comunicacao_por_usuario(db)
+    saida.candidatos += len(candidatos)
+    ja = set(db.execute(select(AvisoEnviado.user_id, AvisoEnviado.chave).where(
+        AvisoEnviado.chave.in_([c.chave for c in candidatos]))).all()) if candidatos else set()
+    novos = [c for c in candidatos if (c.usuario.id, c.chave) not in ja]
+    saida.repetidos += len(candidatos) - len(novos)
+    for aviso in novos:
+        tokens = avisos.tokens_do_usuario(db, aviso.usuario)
+        if not tokens:
+            saida.sem_destino += 1                       # sem aparelho: avisa quando ele registrar
+            continue
+        if simular:
+            saida.enviados += 1
+            continue
+        resultado = await push.enviar(tokens, *avisos.texto_sem_comunicacao(aviso))
+        saida.enviados += resultado.enviados
+        saida.erros.extend(resultado.erros)
+        db.add(AvisoEnviado(user_id=aviso.usuario.id, chave=aviso.chave))
+        for token in resultado.invalidos:
+            db.execute(Dispositivo.__table__.delete().where(Dispositivo.token == token))
+        saida.dispositivos_removidos += len(resultado.invalidos)
+    if not simular:
+        db.commit()

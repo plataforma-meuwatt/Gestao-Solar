@@ -11,22 +11,24 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Linking, StyleSheet, Text, View } from 'react-native'
+import { Linking, StyleSheet, Switch, Text, View } from 'react-native'
 
 import { Botao, Card, CabecalhoCard, Esqueleto, StatusChip } from '@/components/base'
 import {
+  escolherAviso,
   estadoNoSistema,
   pedirERegistrar,
   registrarAparelho,
   temPermissao,
   usePermissoes,
+  PERMISSAO_SEM_COMUNICACAO,
   PERMISSAO_USINA_PARADA,
   type EstadoDoSistema,
 } from '@/features/permissoes'
 import { cores, espaco, fontes, tipo } from '@/theme/tokens'
 
 export function Notificacoes() {
-  const { dados, carregando } = usePermissoes()
+  const { dados, carregando, recarregar } = usePermissoes()
   const [sistema, setSistema] = useState<EstadoDoSistema | null>(null)
   const [pedindo, setPedindo] = useState(false)
   /*
@@ -41,6 +43,26 @@ export function Notificacoes() {
   const [registrado, setRegistrado] = useState<boolean | null>(null)
 
   const concedidaPeloGestor = temPermissao(dados, PERMISSAO_USINA_PARADA)
+  /* A escolha da pessoa, e a que está indo ao servidor (o interruptor responde na hora, e volta se o servidor recusar). */
+  const semComunicacao = temPermissao(dados, PERMISSAO_SEM_COMUNICACAO)
+  const [escolhendo, setEscolhendo] = useState<boolean | null>(null)
+  const [erroDaEscolha, setErroDaEscolha] = useState<string | null>(null)
+
+  const escolher = useCallback(
+    async (ativo: boolean) => {
+      setEscolhendo(ativo)
+      setErroDaEscolha(null)
+      try {
+        await escolherAviso(PERMISSAO_SEM_COMUNICACAO, ativo)
+        recarregar()
+      } catch {
+        setErroDaEscolha('Não foi possível salvar agora. Tente de novo.')
+      } finally {
+        setEscolhendo(null)
+      }
+    },
+    [recarregar],
+  )
 
   useEffect(() => {
     let vivo = true
@@ -109,6 +131,25 @@ export function Notificacoes() {
             liberado={concedidaPeloGestor}
             pendente="Ainda não liberado para você. Peça ao gestor da plataforma."
           />
+
+          {concedidaPeloGestor ? (
+            <View style={estilos.escolha}>
+              <View style={estilos.itemTexto}>
+                <Text style={estilos.itemTitulo}>Usina sem comunicação</Text>
+                <Text style={tipo.fraco}>
+                  {erroDaEscolha ??
+                    'Aviso quando, com sol, a usina passa 30 minutos sem mandar dado. Pode ser a comunicação ou falta de energia.'}
+                </Text>
+              </View>
+              <Switch
+                accessibilityLabel="Avisar quando a usina ficar sem comunicação"
+                value={escolhendo ?? semComunicacao}
+                disabled={escolhendo !== null}
+                onValueChange={(v) => void escolher(v)}
+                trackColor={{ true: cores.ambar, false: cores.bordaFraca }}
+              />
+            </View>
+          ) : null}
 
           <Item
             titulo="Permissão do aparelho"
@@ -193,6 +234,7 @@ const estilos = StyleSheet.create({
   miolo: { marginTop: espaco.sm, gap: espaco.sm },
 
   item: { flexDirection: 'row', gap: espaco.xs, alignItems: 'flex-start' },
+  escolha: { flexDirection: 'row', gap: espaco.sm, alignItems: 'center', paddingLeft: 16 },
   marca: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
   marcaOk: { backgroundColor: cores.ambar },
   marcaFalta: { backgroundColor: cores.bordaFraca },

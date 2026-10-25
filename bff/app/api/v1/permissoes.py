@@ -74,6 +74,36 @@ def minhas_permissoes(
     return MinhasPermissoesOut(permissoes=sorted(f"{c}.{s}" for c, s in pares))
 
 
+class EscolhaIn(BaseModel):
+    ativo: bool
+
+
+@router.put("/api/v1/me/permissoes/{chave}", status_code=204)
+def escolher(
+    chave: str,
+    corpo: EscolhaIn,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(usuario_atual),
+) -> None:
+    """Liga ou desliga um aviso que a própria pessoa escolhe (`AUTOATENDIMENTO`): o de usina sem comunicação, só para
+    quem o gestor já deu o aviso de usina parada."""
+    categoria, _, subcategoria = chave.partition(".")
+    precisa = catalogo.AUTOATENDIMENTO.get((categoria, subcategoria))
+    if precisa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Esse aviso não se liga pelo aplicativo.")
+    if corpo.ativo and not catalogo.tem_permissao(db, usuario, *precisa):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Primeiro o gestor precisa liberar para você o aviso de usina parada.")
+    tem = catalogo.tem_permissao(db, usuario, categoria, subcategoria)
+    if corpo.ativo and not tem:
+        db.add(Permissao(user_id=usuario.id, categoria=categoria, subcategoria=subcategoria,
+                         concedida_por=usuario.id))
+    elif not corpo.ativo and tem:
+        db.execute(delete(Permissao).where(Permissao.user_id == usuario.id, Permissao.categoria == categoria,
+                                           Permissao.subcategoria == subcategoria))
+    db.commit()
+
+
 @router.post("/api/v1/me/dispositivos", status_code=204)
 def registrar_dispositivo(
     corpo: DispositivoIn,
@@ -199,7 +229,8 @@ def definir_permissoes(
             )
         desejadas.add((categoria, subcategoria))
 
-    atuais = catalogo.permissoes_do_usuario(db, cliente)
+    # Só o que é do catálogo: o que a pessoa escolheu no aplicativo (`AUTOATENDIMENTO`) não é do gestor apagar aqui.
+    atuais = {p for p in catalogo.permissoes_do_usuario(db, cliente) if catalogo.item(*p) is not None}
 
     for categoria, subcategoria in atuais - desejadas:
         db.execute(

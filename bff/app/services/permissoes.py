@@ -53,6 +53,13 @@ CATALOGO: list[ItemDoCatalogo] = [
 ]
 
 
+#: O que a PRÓPRIA pessoa liga e desliga no aplicativo, e a permissão que o gestor precisa ter dado antes. Fica fora
+#: do catálogo do painel: é escolha dela, não concessão (e o painel não a apaga ao salvar as concessões).
+AUTOATENDIMENTO: dict[tuple[str, str], tuple[str, str]] = {
+    ("notificacao", "usina_sem_comunicacao"): ("notificacao", "usina_parada"),
+}
+
+
 def item(categoria: str, subcategoria: str) -> ItemDoCatalogo | None:
     return next(
         (

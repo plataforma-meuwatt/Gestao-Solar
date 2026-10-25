@@ -20,6 +20,18 @@ import { fetchWithCache, type Leitura } from '@/lib/cache'
 /** Chave canônica da permissão de aviso de usina parada. */
 export const PERMISSAO_USINA_PARADA = 'notificacao.usina_parada'
 
+/**
+ * O aviso de usina SEM COMUNICAÇÃO (com sol, 30 min sem dado). Este a própria pessoa liga e desliga aqui, se o gestor
+ * já liberou o de usina parada: Pereiras ficou sem dado em 25/10/2026 e nenhum app tocou, porque sem dado o
+ * detector não afirma parada.
+ */
+export const PERMISSAO_SEM_COMUNICACAO = 'notificacao.usina_sem_comunicacao'
+
+/** Liga ou desliga, para esta pessoa, um aviso que ela mesma escolhe. */
+export async function escolherAviso(chave: string, ativo: boolean): Promise<void> {
+  await api.put(`/api/v1/me/permissoes/${encodeURIComponent(chave)}`, { ativo })
+}
+
 export type MinhasPermissoes = { permissoes: string[] }
 
 export function usePermissoes(): Leitura<MinhasPermissoes> {
