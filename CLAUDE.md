@@ -825,7 +825,11 @@ IP 10.1.130.2" —, data e IP também ficam, e o trecho "do inversor 13" não es
 "senha do inversor 13 é 4821" passava em claro — avaliação 22; o ":" depois do número do equipamento, com espaço,
 também: "Senha do inversor 13: 4821", "PIN do ABS 3: 1234" — avaliação 23. A prosa fica: a palavra minúscula que
 continua a frase — "é definida no oem-gs", "desta mensagem: ela é só para equipamento", o aviso do próprio bot que
-saía comido — e as de `_PROSA`, "é pessoal, não a passe" — `_e_prosa`). Os marcadores do bot ("[senha oculta]")
+saía comido — e as de `_PROSA`, "é pessoal, não a passe" — `_e_prosa`; avaliação 24: adivinhar a prosa pela forma
+da palavra deixava em claro "a senha do SmartLogger é changeme para o usuário admin", e a prosa passou a ser uma lista
+POSITIVA — o resto some; também a seta e o travessão logo depois da palavra, "a senha nova ficou X", a lista de
+credenciais "admin / senha X" e o segundo segredo da frase "… e do 4 é Y"; "código" só de porta/cadeado: "Código do
+alarme: 2043" fica). Os marcadores do bot ("[senha oculta]")
 nunca são mascarados. Na hora da senha, a parte do bot da ação é conferida de novo. O
 bloco diz a hora-limite ("até as 14:32"). **A senha só vale DEPOIS de o resumo chegar**
 (avaliação 10: "desliga o 13" e a senha logo atrás executavam um resumo que a pessoa nunca
@@ -919,7 +923,11 @@ neutra e o "s" de "dia(s)" não contam como citação parcial (avaliação 20: "
 "?", "？", "¿", "❓", "❔", "⁉️", "‽" (`_PERGUNTA`; "Apaga?!", "Fecha?...", "Apaga❓", "¿Apaga" confirmavam —
 avaliações 21 a 23) —, e emoji: a lista FECHADA é a do sim (`_EMOJI_DE_SIM`: 👍 ✅ 👌 🙂 😊 ❤️…); qualquer outro —
 ❌ 👎 ✋ 🛑 🤷 🙄 🤔 😳 🙏 — é dúvida (avaliação 23: com a lista fechada dos de dúvida, "Apaga ❌" e "Sim 👎"
-apagavam). O agradecimento abreviado ("Sim, obg", "Sim vlw", "pfv", "tmj") é palavra neutra. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
+apagavam). O emoticon de texto de dúvida (":/", ":(", "-_-", "¬¬", "._.") também é dúvida; o alegre (":)", ":D") não
+atrapalha. O PRONOME no singular ("Pode apagar esse", "Apaga ele") numa ação de vários alvos é dúvida — qual? —, no
+plural ("Apaga esses") são todos, e numa ação de um alvo só é ele ("Pode fechar ela") — avaliação 24: o singular
+apagava os três. "Pode fechar mesmo" (a pergunta sem "?") é dúvida; "Isso mesmo" confirma. O agradecimento
+abreviado ("Sim, obg", "Sim vlw", "pfv", "tmj") é palavra neutra. A REAÇÃO (👍) ao resumo esperando o Sim não confirma, mas faz o sistema perguntar de novo, com os
 botões (`de_novo_para_reacao`; avaliação 22: era ignorada em silêncio e a ação vencia sem aviso). "Bem...", "Bom...", "Hmm" e 🙏 sozinhos também são dúvida
 (avaliação 19: confirmavam). A CURTA (até 4 palavras) que começa como
 afirmativa sem negação nem correção e SEM assunto novo, mas não é um SIM limpo ("Sim, pode deixar",
@@ -948,12 +956,14 @@ trouxe outro passo depois deste… Se faltava algo, peça de novo" (avaliação 
 passo depois do pedido de novo, a pessoa SEMPRE fica sabendo — "Faltam 2 passos" seguido de "Pronto" repassa o
 que o meuPlano disse antes, com ⚠️ e o log em erro (a pergunta, sem ⚠️). O sinal de fim que o bot PEDE é "Não
 há próximo passo" — a regra 7 do `IA.MD` do meuPlano proíbe o modelo de lá de escrever "pronto" e "feito" —, e o
-bot só CALA quando a resposta é SÓ o fim (`_so_o_fim`: "Não há próximo passo.", "Pronto, não falta nada.", "Seu
-pedido está completo.", "Pronto! Posso ajudar em algo mais?" — a cortesia sozinha não conta). Qualquer coisa além
+bot só CALA quando a resposta é SÓ o fim (`_so_o_fim`: "Não há próximo passo.", "Não há próximos passos.", "Nenhum
+próximo passo.", "Não há próximo passo a propor.", "Não, não há próximo passo.", "Pronto, não falta nada.", "Seu
+pedido está completo." — a cortesia sozinha não conta: "Posso ajudar em algo mais?", "Estou à disposição."). Qualquer coisa além
 disso é pedida de novo e, sem o passo, DITA à pessoa: como pergunta, sem ⚠️, se o meuPlano pergunta; com ⚠️ e o log
 em erro se o texto diz que algo ficou por fazer (`_PENDENCIA`: "falta", "pendente", "pode ser fechada", "depende",
-"precisa", "vou propor", "confirme", "mande a data"…; a negação — "não há mais tarefas pendentes" — não conta); e
-como informação, sem ⚠️, se não diz ("Não há próximo passo: o pedido era só fechar a OS 1638."). A lista de palavras
+"precisa", "vou propor", "confirme", "mande a data"…; a negação — "não há mais tarefas pendentes", "não precisa
+fazer mais nada" — não conta); e como informação, sem ⚠️, se não diz ("Não há próximo passo: o pedido era só fechar
+a OS 1638."; "A OS 1638 foi fechada." nas duas respostas — avaliação 24: era ⚠️ e erro no log). A lista de palavras
 decide só o TOM do aviso, nunca se a pessoa fica sabendo (avaliação 23: procurar o fim em qualquer parte do texto
 calava "Não há mais tarefas pendentes na OS 1638, que já pode ser fechada"; avaliação 22: tomar só o começo era
 alarme falso). O passo feito reproposto e, pedido de novo, o fim: é o fim, calado (o meuPlano confirmou) (`_seguir_no_meuplano` — "crie a OS e conclua a 1638" são dois SIM, e o

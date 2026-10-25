@@ -1645,6 +1645,33 @@ async def test_a_senha_soletrada_com_barra_ou_por_extenso_e_reconhecida(db, monk
         assert "\u20e3" not in visto, visto                               # nem o enfeite do último dígito
 
 
+def test_o_log_esconde_o_segredo_escrito_do_jeito_que_se_escreve():
+    """Avaliação 24 (regressão do 425fd06): a "prosa" era adivinhada pela forma da palavra e deixava em claro "a senha
+    do SmartLogger é changeme para o usuário admin"; e a seta, o travessão, o "ficou", a lista de credenciais e o
+    segundo segredo da frase passavam. A prosa agora é uma lista POSITIVA; o resto some."""
+    import re
+
+    from app.services.assistente import _sem_segredos
+
+    for texto in ["A senha do SmartLogger é <<changeme>> para o usuário admin.", "A senha do portão é <<morango>> desde ontem.",
+                  "Senha do wifi da usina: <<solarman>> (padrão de fábrica).",
+                  "A senha do datalogger é <<admin>> mesmo, nunca trocaram.", "senha: <<huawei>> no SmartLogger 2",
+                  "A senha do cadeado é <<girassol>> com G maiúsculo? Não, minúsculo.",
+                  "O PIN do ABS é <<abcd>> em todas as caixas.", "Senha – <<482913>>", "Senha → <<Huawei@123>>",
+                  "senha -> <<Changeme1>>", "A senha nova ficou <<Solar#2026>>", "Usuário admin / senha <<changeme>>",
+                  "Login: admin | Senha: <<Changeme>>", "a senha do SmartLogger 3 é <<sungrow>> e do 4 é <<sungrow4>>"]:
+        limpo, segredos = re.sub(r"<<|>>", "", texto), re.findall(r"<<(.+?)>>", texto)
+        assert not [v for v in segredos if v in _sem_segredos(limpo)], (texto, _sem_segredos(limpo))
+    for texto in ["Sua senha de atuação é pessoal, não a passe a ninguém.",
+                  "A senha de atuação é definida no oem-gs pelo gerente.",
+                  "(Escondi a sua senha de atuação desta mensagem: ela é só para equipamento — ação do meuPlano se "
+                  "confirma com Sim.)", "A senha é a mesma do meuPlano.",
+                  "Você ainda não tem senha de atuação — sem ela o bot não comanda equipamento pelo helper.",
+                  "Senha não confere (1 de 5). Nada foi feito.", "A ação esperava a sua resposta até as 14:32 e venceu.",
+                  "Código do alarme: 2043", "o código de erro é E-2043"]:          # "código" só de porta/cadeado
+        assert _sem_segredos(texto) == texto, (texto, _sem_segredos(texto))
+
+
 def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
     """"Senha:[senha oculta]" virava "Senha:•••• oculta]"; "PIN 3 do conector" e "strings 12"
     viravam "••••" (avaliação 11)."""
@@ -2120,6 +2147,18 @@ async def test_o_fim_a_pergunta_e_o_passo_repetido_depois_do_pedido_de_novo(db, 
              (_MeuPlanoQueEscreve("Não há próximo passo: o pedido era só fechar a OS 1638.", "Não há próximo passo."),
               "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
              (_MeuPlanoQueEscreve("Tudo concluído."), None, "respondeu", 2),
+             # o fim dito do jeito que se diz (avaliação 24: viravam pedido de novo e aviso)
+             (_MeuPlanoQueEscreve("Não há próximos passos."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Nenhum próximo passo."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Não há próximo passo a propor."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Não, não há próximo passo."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Não há próximo passo. Estou à disposição."), None, "respondeu", 2),
+             (_MeuPlanoQueEscreve("Não há próximo passo, posso ajudar em algo mais?"), None, "respondeu", 2),
+             # o fim com mais palavras nas DUAS respostas: informação, não aviso (avaliação 24: era ⚠️ e erro no log)
+             (_MeuPlanoQueEscreve("A OS 1638 foi fechada.", "A OS 1638 foi fechada."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
+             (_MeuPlanoQueEscreve("Não precisa fazer mais nada.", "Não precisa fazer mais nada."),
+              "O meuPlano não propôs outro passo do seu pedido", "respondeu", 3),
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, "Pronto."), "Faltam 2 passos", "erro", 3),   # vale o de antes
              (_MeuPlanoQueEscreve(TEXTO_DO_MEUPLANO, criar), "Faltam 2 passos", "erro", 3),       # o passo já feito
              # o passo já feito proposto de cara: pede de novo; o fim depois disso é o fim (avaliação 22: ⚠️ falso)
@@ -2948,6 +2987,19 @@ def test_o_plural_de_um_tipo_numa_lista_mista_e_a_pergunta_com_emoji_nao_confirm
               "Sim pf", "Sí", "Yep", "Simbora"):
         assert r(t, resumo, inversores) == "sim", t                  # o agradecimento abreviado é neutro
     assert r("Apaga‽", resumo, inversores) == "outra"
+    # o pronome: no singular é UM alvo — numa ação de vários, qual? —; no plural, todos (avaliação 24: "Pode apagar
+    # esse" apagava os três)
+    for t in ("Pode apagar esse", "Apaga ele", "Apaga ela", "Pode apagar essa", "Sim, esse", "Ok, apaga esse", "Apaga este"):
+        assert r(t, resumo, inversores) == "duvida", t
+    for t in ("Apaga esses", "Pode apagar eles", "Pode apagar esses aí"):
+        assert r(t, resumo, inversores) == "sim", t
+    assert r("Pode fechar ela", "Fechar a OS 1638") == "sim" and r("Fecha essa", "Fechar a OS 1638") == "sim"
+    # o emoticon de texto de dúvida pergunta de novo (confirmavam); o alegre não atrapalha
+    for t in ("Apaga :/", "Sim :(", "Pode apagar :-(", "Sim -_-", "Apaga :|", "Sim ¬¬", "Apaga ._.", "Sim :'(", "Apaga D:"):
+        assert r(t, resumo, inversores) == "duvida", t
+    for t in ("Sim :)", "Fecha :D", "Sim ;)", "Sim ✓", "Fechou 🤙", "É pra fechar", "Isso mesmo"):
+        assert r(t, "Fechar a OS 1638") == "sim", t
+    assert r("Pode fechar mesmo", "Fechar a OS 1638") == "duvida"     # a pergunta sem "?"
 
 
 async def test_a_pergunta_de_novo_diz_que_o_sim_vale_para_tudo(db, bot_local, monkeypatch):

@@ -389,14 +389,14 @@ _HESITACAO = {"bem", "bom", "hum", "hmm", "hmmm", "ah", "eh", "uhm", "pois", "en
 #: Palavras que podem vir ANTES da afirmativa ("tá certo", "de acordo", "tudo bem", "então pode",
 #: "Opa, pode", "Valeu, pode fazer").
 _ANTES = {"tá", "ta", "está", "esta", "de", "então", "entao", "ah", "é", "e", "tudo", "com", "opa", "valeu",
-          "obrigado", "obrigada"}
+          "obrigado", "obrigada", "pra"}
 #: O resto da frase só pode ter palavra NEUTRA — lista fechada. Nunca "para" (preposição e o
 #: imperativo de PARAR: "Ok, para tudo!" executava — avaliação 14), "não", "mas", "espera".
 _NEUTRAS = _AFIRMA | {"a", "o", "as", "os", "e", "de", "da", "do", "também", "tambem", "por", "favor", "obrigado",
                       "obrigada", "valeu", "mesmo", "ser", "bala", "ver", "fazer", "seguir", "prosseguir", "ir", "ai",
                       "aí", "agora", "então", "entao", "tá", "ta", "bom", "certinho", "ótimo", "otimo", "tudo",
                       "executar", "execute", "executa", "aprovar", "aprove", "continuar", "continue", "pra", "assim",
-                      "mandar", "mande", "lá", "la", "é", "está", "esta", "ela", "ele", "essa", "esse", "já", "ja",
+                      "mandar", "mande", "lá", "la", "é", "está", "esta", "já", "ja",
                       # o agradecimento abreviado ("Sim, obg", "Sim vlw" — avaliação 23: cancelavam)
                       "vlw", "valew", "obg", "obgd", "obgda", "brigado", "brigada", "grato", "grata", "pfv", "pfvr",
                       "pf", "tmj"}
@@ -456,9 +456,15 @@ _SO_OK = re.compile(r"^[\s👍✅👌✔️☑️🆗\U0001F3FB-\U0001F3FF]+$")
 _PERGUNTA = re.compile(r"[?？¿❓❔⁉⁈⁇‽⸮]")
 #: Emoji que é "sim". Qualquer OUTRO — ❌ 👎 ✋ 🛑 ⛔ 🤷 🙄 🤔 😬 🙏… — é dúvida: o sistema pergunta de novo
 #: (avaliação 23: a lista FECHADA dos de dúvida deixava "Apaga ❌" e "Sim 👎" apagarem; agora a fechada é a do sim).
-_EMOJI_DE_SIM = set("👍👌✅✔☑🆗🙂😊😀😃😄😁😉👏🙌💪🤝✌🫡💯🚀❤💚💙")
+_EMOJI_DE_SIM = set("👍👌✅✔✓☑🆗🙂😊☺😀😃😄😁😉👏🙌💪🤝✌🤙🫡💯🚀❤💚💙")
 #: O que acompanha o emoji sem mudar o sentido: o tom de pele, o seletor de variação, a junção.
 _ENFEITE_DE_EMOJI = {"\ufe0f", "\u200d", *map(chr, range(0x1F3FB, 0x1F400))}
+
+
+#: Emoticon de TEXTO de dúvida, desânimo ou susto (":/", ":(", ":|", "-_-", "¬¬", "._.", ":'(", "D:"): o mesmo que
+#: 😕 🙁 😑 — pergunta de novo (avaliação 24: confirmavam o APAGAR). O alegre (":)", ":D", ";)") sai antes das palavras.
+_EMOTICON_DE_DUVIDA = re.compile(r"(?<![\w:])(?:[:;=]['’]?-?[/\\(|\[{@$sSoO0]|D:|-_-|¬¬|\._\.|>_<|[oO]_[oO]|T_T|u_u)(?!\w)")
+_EMOTICON_ALEGRE = re.compile(r"(?<![\w:])(?:[:;=]['’]?-?[)\]DpP3*]+|\(:|\^_?\^|<3)(?!\w)")
 
 
 def _emoji_que_nao_e_sim(texto: str) -> bool:
@@ -494,6 +500,10 @@ def _pessoas_do_resumo(acao: str) -> list[set[str]]:
 #: inversores (avaliação 21). Nas outras, citar o alvo do resumo confirma ("Pode fechar a OS 1638", "Sim,
 #: pode criar a OS de Ibitinga").
 _DESTRUTIVOS = {"apagar", "remover", "desinstalar", "transferir"}
+#: O pronome: no SINGULAR é UM alvo — numa ação de vários (ou que apaga), qual? ("Pode apagar esse" apagava os três —
+#: avaliação 24); numa de um alvo só, é ele ("Pode fechar ela"). No PLURAL, são todos ("Apaga esses").
+_PRONOME_UM = {"esse", "essa", "este", "esta", "ele", "ela", "aquele", "aquela", "isto", "aquilo"}
+_PRONOME_TODOS = {"esses", "essas", "estes", "estas", "eles", "elas", "aqueles", "aquelas"}
 _NUMERAIS = {"dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
              "oito": 8, "nove": 9, "dez": 10}
 
@@ -560,8 +570,9 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "sim"
     if _PERGUNTA.search(t):                            # "Apaga? 🤔", "Fecha?!", "Apaga❓" (avaliações 21 e 22)
         return "outra"
-    if _emoji_que_nao_e_sim(t):
+    if _emoji_que_nao_e_sim(t) or _EMOTICON_DE_DUVIDA.search(t):
         return "duvida"
+    t = _EMOTICON_ALEGRE.sub(" ", t)
     palavras = _palavras(_EXPRESSOES_SIM.sub(" sim ", t.lower()))
     da_acao = set(_palavras(acao)) | set(_palavras(" ".join(itens)))
     if palavras and all(p in _HESITACAO for p in palavras):
@@ -589,6 +600,13 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
     # Verbo de OUTRA ação nunca confirma: "Pode criar" confirmava "APAGAR 3 itens" (avaliação 18).
     outro_verbo, parcial, alvos, novos = False, False, [], []
     for i, p in enumerate(palavras[1:], start=1):
+        if p in _PRONOME_UM:
+            parcial = parcial or varios or bool(pessoas)
+            continue
+        if p in _PRONOME_TODOS:
+            if not (varios or pessoas):
+                novos.append(p)                        # "elas" numa ação de um alvo só não é ela
+            continue
         if _tem(_NEUTRAS, p) or mesmo_verbo(p):
             continue
         quantidade = _quantidade(p, palavras[i - 1], quantos)
@@ -611,6 +629,8 @@ def _resposta_ao_resumo(texto: str, acao: str = "", itens: Sequence[str] = ()) -
         return "outra"                                 # assunto novo: vai à IA
     if outro_verbo or novos:
         return "duvida" if len(palavras) <= 4 else "outra"
+    if palavras[-1] in ("mesmo", "mesma") and palavras[-2] not in ("isso", "é", "sim", "certo", "exatamente"):
+        return "duvida"
     if parcial or (alvos and varios and not _cobre_todos(set(alvos), itens)):
         return "duvida" if len(palavras) <= 8 else "outra"
     citadas = [g for g in pessoas if g & set(palavras)]

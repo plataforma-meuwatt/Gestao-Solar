@@ -295,14 +295,19 @@ def _atrasada(ocorrida_em: str | None) -> bool:
 #: marcadores do bot ("Senha:[senha oculta]") ficam inteiros (avaliação 11). E tem 3 caracteres
 #: ou mais, sem o trecho atravessar o fim da frase: "a senha é a mesma" e "senha de atuação. Quem
 #: define isso é o gerente" ficam inteiros (avaliação 13).
-_SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
+_DE_ACESSO = r"(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acesso|cofre|guarita|cerca))"
+#: O verbo que liga a senha ao valor ("é", "ficou", "será") e o adjetivo que pode vir antes ("a senha NOVA ficou X" —
+#: avaliação 24).
+_LIGA = r"(?:\b(?:é|eh|ficou|fica|ser[áa]|virou|era)\b)"
+_ADJ = r"(?:\s+(?:nova|antiga|atual|padr[ãa]o|certa|correta|tempor[áa]ria|provis[óo]ria))?"
+_SEGREDO = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo" + _DE_ACESSO + r")\b"
                       # "do inversor 13", "do IP 10.1.130.2": dígito pode, ponto só entre dígitos — o fim da frase
                       # não ("senha de atuação. Quem define é Marcos" fica inteiro — avaliação 13; "senha do
                       # inversor 13 é 4821" passava em claro)
                       # O ":" depois de número só com espaço em seguida ("Senha do inversor 13: 4821" passava em
                       # claro — avaliação 23); a hora ("até as 14:32") não tem espaço e fica inteira.
-                      r"((?:\s+d[eoa]s?\s+(?:[^\n:=.!?;]|(?<=\d)\.(?=\d)){1,40}?)?\s*"
-                      r"(?:(?:\bé\b|\beh\b)\s*[:=]?|(?<!\d)[:=]|:(?=\s))\s*)"
+                      r"((?:\s+d[eoa]s?\s+(?:[^\n:=.!?;]|(?<=\d)\.(?=\d)){1,40}?)?" + _ADJ + r"\s*"
+                      r"(?:" + _LIGA + r"\s*[:=]?|(?<!\d)[:=]|:(?=\s))\s*)"
                       r"(?![\[:=])"
                       r"([^\s,;]{3,}?)"
                       r"(?=[.!?]*(?:\s|$|[,;]))")
@@ -312,7 +317,7 @@ _SEGREDO_NUM = re.compile(r"(?i)\b(senha|password|pin)(\s+)(?!\[)(?=[^\s,;]{3})(
                           r"(?=[.!?]*(?:\s|$|[,;]))")
 #: "Altere a senha do cadeado de pirapozinho para 3262" (estava em claro no log de produção,
 #: avaliação 9). Com "para/pra" o valor precisa ter dígito: "senha para o gerente" é prosa.
-_SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
+_SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo" + _DE_ACESSO + r")\b"
                            r"((?:\s+d[eoa]s?\s+[^\n:=]{1,40}?)?\s+(?:para|pra)\s+)"
                            r"(?!\[)([^\s,;]*?\d[^\s,;]*?)(?=[.!?]*(?:\s|$|[,;]))")
 #: O NÚMERO inteiro, com qualquer pontuação antes e com os grupos ("senha,482913",
@@ -320,7 +325,6 @@ _SEGREDO_PARA = re.compile(r"(?i)\b(senha|password|pin|segredo|c[óo]digo)\b"
 #: no log até a avaliação 10), de 3 dígitos ou mais. "código" e "combinação" só de
 #: porta/portão/cadeado/cofre: "código de erro 2043" e "combinação de strings 12" são dado útil.
 #: Hora ("até as 14:32") não é segredo.
-_DE_ACESSO = r"(?=[ \t]+d[eoa]s?[ \t]+(?:port[ãa]o|porteira|cadeado|porta|acesso|cofre|guarita|cerca))"
 _SEGREDO_NUMERO = re.compile(
     r"(?i)\b(senha|password|pin|segredo|combina[çc][ãa]o" + _DE_ACESSO + r"|c[óo]digo" + _DE_ACESSO + r")\b"
     r"((?:[ \t]+d[eoa]s?[ \t]+(?:[^\W\d_][\w\-]*[ \t]+){0,3}?[^\W\d_][\w\-]*)?[ \t]*"
@@ -330,27 +334,39 @@ _SEGREDO_NUMERO = re.compile(
     r"(" + helper.NUMERO.pattern + r")(?!\d|[:h]\d)")
 
 
+#: A seta ou o travessão LOGO depois da palavra ("Senha – 482913", "Senha → Huawei@123", "senha -> Changeme1") e a
+#: palavra no meio de uma lista de credenciais ("Usuário admin / senha changeme", "admin | senha x") — avaliação 24.
+#: O travessão depois de "senha de atuação — sem ela…" é prosa (não vem logo depois da palavra).
+_SEGREDO_SETA = re.compile(r"(?i)\b(senha|password|pin)(\s*(?:->|=>|→|–|—)\s*)(?!\[)([^\s,;]{3,}?)"
+                           r"(?=[.!?]*(?:\s|$|[,;]))")
+_SEGREDO_LISTA = re.compile(r"(?i)(?:(?<=[/|·•]\s)|(?<=[/|·•]))(senha|password|pin)(\s+)(?!(?:d[eoa]s?)\b)(?!\[)"
+                            r"([^\s,;]{3,}?)(?=[.!?]*(?:\s|$|[,;]))")
+#: O segundo segredo da mesma frase ("a senha do 3 é •••• e do 4 é sungrow4").
+_SEGREDO_EM_SEGUIDA = re.compile(r"(••••)(\s+e\s+d[eoa]s?\s+[^\n:=.!?;]{1,40}?\s*(?:\bé\b|:)\s*)(?!\[)"
+                                 r"([^\s,;]{3,}?)(?=[.!?]*(?:\s|$|[,;]))")
 #: O número logo depois de "senha da OS", "senha do IP"… é o IDENTIFICADOR, não o segredo; e data e IP nunca
 #: são o segredo (avaliação 22: "senha da OS ••••" e datas sumiam do log).
 _IDENTIFICADOR = re.compile(r"\b(?:os|ip|uc|usina|inversor|tarefa|ponto|string|n[óo]|protocolo|contrato|chamado|item)"
                             r"[ \t]*$", re.IGNORECASE)
 
 
-#: A palavra comum que vem depois de "senha … é" e fecha a frase sem ser o segredo ("é pessoal, não a passe").
+#: A PROSA que vem depois de "senha … é/:" e não é o segredo — lista POSITIVA (avaliação 24: adivinhar a prosa pela
+#: forma da palavra deixava passar "a senha do SmartLogger é changeme para o usuário admin"): o resto é escondido.
 _PROSA = {"definida", "definido", "pessoal", "secreta", "individual", "única", "unica", "numérica", "numerica", "nova",
           "novo", "outra", "outro", "mesma", "mesmo", "igual", "diferente", "errada", "certa", "correta", "válida",
           "valida", "inválida", "invalida", "pedida", "necessária", "necessaria", "obrigatória", "obrigatoria", "sua",
-          "seu", "minha", "meu", "ela", "ele", "essa", "esse", "esta", "este", "isso", "isto", "apenas", "somente"}
+          "seu", "minha", "meu", "ela", "ele", "essa", "esse", "esta", "este", "isso", "isto", "apenas", "somente",
+          "aquela", "aquele", "dela", "dele", "sem", "com", "que", "não", "nao", "por", "para", "pra", "quem", "como",
+          "mas", "uma", "dos", "das", "nos", "nas", "ser", "foi", "está", "são", "sao", "vale", "padrão", "padrao",
+          "comparada", "conferida", "enviada", "mandada", "escondida", "guardada", "cifrada", "criptografada",
+          "trocada", "alterada", "usada", "exigida", "solicitada", "cadastrada", "configurada", "digitada", "dita",
+          "temporária", "temporaria", "provisória", "provisoria"}
 
 
 def _e_prosa(m: re.Match) -> bool:
-    """O que vem depois de "senha … é/:" é PROSA, não o segredo (avaliação 23: o aviso do próprio bot saía comido —
-    "desta mensagem: •••• é só para equipamento"): a palavra de `_PROSA`, ou a palavra só de letras minúsculas que
-    CONTINUA a frase ("é definida no oem-gs", "é comparada com a hora"). O segredo tem número, maiúscula ou símbolo,
-    ou fecha a frase ("senha: morango.", "a senha é morango e o usuário é admin")."""
-    valor = m.group(3).lower()
-    continua = re.match(r"\s+(?!(?:e|ou)\b)[a-zà-ú]", m.string[m.end():]) is not None
-    return valor in _PROSA or (m.group(3).isalpha() and m.group(3).islower() and continua)
+    """O que vem depois de "senha … é/:" é PROSA, não o segredo: a palavra de `_PROSA` ("é definida no oem-gs", "é
+    pessoal", "desta mensagem: ela é só para equipamento" — o aviso do próprio bot, que saía comido na avaliação 23)."""
+    return m.group(3).lower() in _PROSA
 
 
 def _sem_segredos(texto: str) -> str:
@@ -358,8 +374,9 @@ def _sem_segredos(texto: str) -> str:
     texto = _SEGREDO_NUMERO.sub(
         lambda m: m.group(0) if (len(helper._so_digitos(m.group(3))) < 3 or helper._data_ou_ip(m.group(3))
                                  or _IDENTIFICADOR.search(m.group(2))) else m.group(1) + m.group(2) + "••••", texto)
-    texto = _SEGREDO.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) or _e_prosa(m)
-                         else m.group(1) + m.group(2) + "••••", texto)
+    for padrao in (_SEGREDO, _SEGREDO_SETA, _SEGREDO_LISTA, _SEGREDO_EM_SEGUIDA):
+        texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) or _e_prosa(m)
+                           else m.group(1) + m.group(2) + "••••", texto)
     for padrao in (_SEGREDO_PARA, _SEGREDO_NUM):
         texto = padrao.sub(lambda m: m.group(0) if helper._data_ou_ip(m.group(3)) else m.group(1) + m.group(2) + "••••",
                            texto)
@@ -640,21 +657,30 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
 #: (avaliação 23: procurar o fim em qualquer parte do texto calava o resto do pedido; avaliação 22: tomar só o
 #: começo virava alarme falso). O sinal que o bot PEDE é "Não há próximo passo": a regra 7 do IA.MD do meuPlano
 #: proíbe o modelo de lá de escrever "pronto" e "feito".
-_FRASE_FIM = (r"(?:n[ãa]o h[áa] (?:mais |outro |pr[óo]ximo )?passos?|n[ãa]o h[áa] mais nada(?: a fazer)?|pronto|"
-              r"nada mais(?: a fazer)?|tudo (?:feito|pronto|certo|conclu[ií]do|ok)|n[ãa]o falta (?:mais )?nada|"
-              r"(?:o )?(?:seu )?pedido (?:est[áa] )?(?:completo|conclu[ií]do|finalizado|atendido)|era s[óo] isso|"
-              r"isso [ée] tudo|sem mais passos|fim)")
+#: (avaliação 24: as variações naturais — "Não há próximos passos.", "Nenhum próximo passo.", "Sem próximo passo.",
+#: "Não há próximo passo a propor.", "Não, não há próximo passo." — viravam pedido de novo e aviso.)
+_PASSO = (r"(?:mais |outros? |pr[óo]xim[oa]s? )?passos?(?: (?:pendentes?|a (?:propor|seguir|fazer)|restantes?|"
+          r"(?:para|n)[oe]?s?t?[ea]? (?:seu |este |esse |o )?pedido|no seu pedido))?")
+_FRASE_FIM = (r"(?:n[ãa]o (?:h[áa]|existe|tem|resta) " + _PASSO + r"|(?:nenhum|sem) " + _PASSO + r"|"
+              r"n[ãa]o h[áa] mais nada(?: a fazer)?|pronto|n[ãa]o|nada mais(?: a fazer)?|"
+              r"tudo (?:feito|pronto|certo|conclu[ií]do|ok|resolvido|finalizado)|n[ãa]o falta (?:mais )?nada|"
+              r"(?:o )?(?:seu )?pedido (?:est[áa] |foi )?(?:completo|conclu[ií]do|finalizado|atendido)|era s[óo] isso|"
+              r"isso [ée] tudo|fim)")
 _SO_O_FIM = re.compile(rf"^\W*{_FRASE_FIM}(?:\W+{_FRASE_FIM})*\W*$", re.IGNORECASE)
 #: A pergunta de cortesia SOZINHA ("Posso ajudar em algo mais?") não muda o fim — "Quer que eu feche a 1638 também
 #: ou algo mais?" não é cortesia.
-_CORTESIA = re.compile(r"(?:^|(?<=[.!?\n]))\s*(?:(?:posso|consigo) (?:te )?ajudar (?:em|com) (?:algo|mais alguma coisa)"
-                       r"(?: mais)?|(?:precisa|quer|deseja|gostaria)(?: de)? (?:algo|mais alguma coisa)(?: mais)?|"
-                       r"(?:mais )?alguma coisa(?: mais)?|algo mais)\s*\?+", re.IGNORECASE)
+_CORTESIA = re.compile(r"(?:^|(?<=[.!?,;\n—–]))\s*(?:(?:(?:posso|consigo) (?:te )?ajudar (?:em|com) (?:algo|mais alguma "
+                       r"coisa)(?: mais)?|(?:precisa|quer|deseja|gostaria)(?: de)? (?:algo|mais alguma coisa)(?: mais)?|"
+                       r"(?:mais )?alguma coisa(?: mais)?|algo mais)\s*\?+|"
+                       # a cortesia afirmada ("Estou à disposição.", "Se precisar de algo mais, é só pedir.")
+                       r"(?:estou|fico|sigo) (?:à|a) disposi[çc][ãa]o[.!]*|(?:se precisar de (?:algo|mais alguma coisa)"
+                       r"(?: mais)?|qualquer (?:coisa|d[úu]vida)),? (?:é só|basta) (?:pedir|chamar|falar|mandar)[.!]*)",
+                       re.IGNORECASE)
 #: O que o meuPlano disse e que deixa algo do pedido por fazer ("falta", "pendente", "pode ser fechada", "depende",
 #: "precisa", "vou propor"): sem o passo, a pessoa é AVISADA (⚠️, erro no log); sem nada disso, a fala dele vai a ela
 #: como informação. Decide só o tom do aviso — calar, nunca. A negação ("não há mais tarefas pendentes") não conta.
 _NEGA_FALTA = re.compile(r"\b(?:n[ãa]o|nada|sem|nenhum[a]?)\b[^.!?\n]{0,30}?\b(?:falta(?:m|ndo)?|pr[óo]ximo passo|outro "
-                         r"passo|pendentes?|pend[êe]ncias?)\b", re.IGNORECASE)
+                         r"passo|pendentes?|pend[êe]ncias?|precisa|vou)\b", re.IGNORECASE)
 _PENDENCIA = re.compile(r"\bfalta(?:m|ndo)?\b|\bpendentes?\b|\bpend[êe]ncias?\b|\bpode ser (?:fechad|conclu|finalizad|"
                         r"registrad|feit)|\bdepende\b|\bprecisa\b|\bpr[óo]ximo passo\b|\bconfirmando\b|"
                         r"\bpropo(?:r|nho|sta)\b|\bquer que eu\b|\bainda n[ãa]o\b|\bpront[ao]s? para\b|"
@@ -744,7 +770,9 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     if re.search(rf"{helper._PERGUNTA.pattern}\W*$", final):
         return (f"O próximo passo do seu pedido precisa de uma resposta sua — nada está esperando o seu Sim. {de}, já "
                 f"foi feito: {'; '.join(feitos)}. O meuPlano perguntou:\n\n{final}")
-    if terminou and not _PENDENCIA.search(_NEGA_FALTA.sub("", final)):
+    # o texto sem nada por fazer é informação — também quando ele veio igual nas duas respostas (avaliação 24: "A OS
+    # 1638 foi fechada." duas vezes virava ⚠️ e erro no log; a lista decide o tom em TODO caminho)
+    if not _PENDENCIA.search(_NEGA_FALTA.sub("", final)):
         return f"O meuPlano não propôs outro passo do seu pedido — nada está esperando o seu Sim — e disse:\n\n{final}"
     return (f"⚠️ O próximo passo do seu pedido ainda não ficou pronto para confirmar — nada está esperando o seu Sim. "
             f"{de}, já foi feito: {'; '.join(feitos)}. O meuPlano disse:\n\n{final}")
