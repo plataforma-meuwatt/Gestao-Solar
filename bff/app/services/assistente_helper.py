@@ -41,20 +41,22 @@ from app.services import assistente_geracao as ger
 #:   uma lista, "as UCs 1234, 5678", e não grupos de um número);
 #: - dígito a dígito, com qualquer separador curto — o ditado por voz: "4 8 2 9 1 3",
 #:   "4, 8, 2, 9, 1, 3";
-#: - por extenso: "quatro oito dois nove um três".
+#: - por extenso, ou misturado com dígitos: "quatro oito dois nove um três", "quatro 8 dois 9 um 3";
+#: - com parênteses: "(482) 913" (avaliação 20).
 #: Data (24/10/2026, 2026-10-24) e IP nunca são a senha e ficam como estão.
-_GRUPOS = r"\d+(?:(?:\s{1,2}|,|\s?[._\-/–—]\s?)\d+)*"
+_GRUPOS = r"\d+(?:(?:\s{1,2}|,|\s?[._\-/–—()]\s?)\d+)*"
 _SOLETRADO = r"\d(?:(?:\s|[.,_\-/–—]){1,3}\d(?!\d)){5,7}"
 _DIGITO_POR_EXTENSO = {"zero": "0", "um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "três": "3",
                        "quatro": "4", "cinco": "5", "seis": "6", "meia": "6", "sete": "7", "oito": "8", "nove": "9"}
 _PALAVRA_DIGITO = r"\b(?:" + "|".join(sorted(_DIGITO_POR_EXTENSO, key=len, reverse=True)) + r")\b"
-_POR_EXTENSO = _PALAVRA_DIGITO + r"(?:[\s,.\-]+" + _PALAVRA_DIGITO + r"){5,7}"
+_UM_DIGITO = rf"(?:{_PALAVRA_DIGITO}|\d(?!\d))"
+_POR_EXTENSO = _UM_DIGITO + r"(?:[\s,.\-]+" + _UM_DIGITO + r"){5,7}"
 #: Um número, na ordem de preferência: soletrado, por extenso, em grupos.
 NUMERO = re.compile(rf"{_SOLETRADO}|{_POR_EXTENSO}|{_GRUPOS}", re.IGNORECASE)
 #: A mensagem INTEIRA é a senha: o número, com ou sem "senha"/"confirmo"/"pin" e pontuação na
 #: frente ("Senha:482913", "senha/482913", "*482913*", "482913?").
-PURA = re.compile(r"^\s*[*_~\"'“”«»]*\s*(?:(?:confirmo|senha|pin)\s*)?[:=,./\-–—#]?\s*[\"'“”«»]?\s*(.+?)"
-                  r"\s*[\"'“”«»]?\s*[.!?*_~]*\s*$", re.IGNORECASE | re.DOTALL)
+PURA = re.compile(r"^\s*[*_~\"'“”«»]*\s*(?:(?:confirmo|senha|pin)\s*)?[:=,./\-–—#(]?\s*[\"'“”«»]?\s*(.+?)"
+                  r"\s*[\"'“”«»]?\s*[.!?*_~)]*\s*$", re.IGNORECASE | re.DOTALL)
 COM_PALAVRA = re.compile(r"^\s*(?:confirmo|senha|pin)\b", re.IGNORECASE)
 #: "senha", "confirmo", "pin" e o que vem até o número (o número logo depois é conferido PRIMEIRO).
 PALAVRA = re.compile(r"(?i)\b(?:senha|confirmo|pin)\b[^\d\n]{0,20}?(?=\d|" + _PALAVRA_DIGITO + ")")
@@ -64,10 +66,9 @@ _IP = re.compile(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})")
 
 
 def _so_digitos(trecho: str) -> str:
-    """Os dígitos de um número escrito de qualquer jeito (grupos, soletrado, por extenso)."""
-    if re.search(r"\d", trecho):
-        return re.sub(r"\D", "", trecho)
-    return "".join(_DIGITO_POR_EXTENSO[w.lower()] for w in re.findall(_PALAVRA_DIGITO, trecho, re.IGNORECASE))
+    """Os dígitos de um número escrito de qualquer jeito (grupos, soletrado, por extenso, misturado)."""
+    return "".join(_DIGITO_POR_EXTENSO.get(t.lower(), t)
+                   for t in re.findall(r"\d|" + _PALAVRA_DIGITO, trecho, re.IGNORECASE))
 
 
 def _data_ou_ip(trecho: str) -> bool:

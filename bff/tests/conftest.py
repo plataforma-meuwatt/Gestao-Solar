@@ -16,6 +16,13 @@ os.environ["DATABASE_URL"] = "sqlite://"
 from cryptography.fernet import Fernet  # noqa: E402
 
 os.environ["GS_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+# E o resto do que o `.env` traz de produção (avaliação 20): a chave que assina as sessões — a de
+# lá, com que um token de teste valeria na API real — e os endereços do meuWatt e do meuPlano: um
+# teste que esqueça de substituir o cliente bate numa porta fechada desta máquina, não na produção.
+import secrets  # noqa: E402
+
+os.environ["GS_JWT_SECRET"] = secrets.token_urlsafe(32)
+os.environ["MEUWATT_API_URL"] = os.environ["MEUPLANO_API_URL"] = "http://127.0.0.1:9"
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -25,6 +32,9 @@ from app.core.db import Base  # noqa: E402
 from app.core.db import engine as _engine  # noqa: E402
 
 assert _engine.url.get_backend_name() == "sqlite", "a suíte abriria o banco do .env (produção)"
+from app.core.config import get_settings  # noqa: E402
+
+assert get_settings().meuplano_api_url == "http://127.0.0.1:9", "a suíte leria o .env (produção)"
 from app.core.security import gerar_hash_senha  # noqa: E402
 from app.models.plant import PlantLink  # noqa: E402
 from app.models.user import Perfil, User  # noqa: E402

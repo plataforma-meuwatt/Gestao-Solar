@@ -1367,7 +1367,7 @@ async def test_a_senha_em_frase_some_com_qualquer_pontuacao_e_alem_do_limite(db,
     monkeypatch.setattr(h, "conferir_senha", lambda d, guardado: d == "482913")
     dono = _dono_com_usina(db)
     for frase in ["Senha:482913 pode executar", "ok senha:482913", "senha,482913 vai", "minha senha/482913",
-                  "ok:482913", "(482913)", "pode executar 482 913", "pode ir 482.913", "executa 4829-13",
+                  "ok:482913", "veja (482913)", "pode executar 482 913", "pode ir 482.913", "executa 4829-13",
                   "PIN 482913 agora", "a senha é 482913, 123 é a UC", "Senha:482913, 123",
                   "UCs 1234567, 2345678, 3456789 e a senha 482913",
                   "UCs 1234567, 2345678, 3456789, 4567890 e 482913",
@@ -1592,12 +1592,14 @@ async def test_a_senha_soletrada_com_barra_ou_por_extenso_e_reconhecida(db, monk
     monkeypatch.setattr(h, "conferir_senha", lambda d, guardado: d == "482913")
     dono = _dono_com_usina(db)
     for so_ela in ["4 8 2 9 1 3", "4, 8, 2, 9, 1, 3", "senha 482/913", "senha: 482 9 13", "482 913",
-                   "*482913*", "482913?", "４８２９１３", "quatro oito dois nove um três"]:
+                   "*482913*", "482913?", "４８２９１３", "quatro oito dois nove um três",
+                   "quatro 8 dois 9 um 3", "(482) 913", "(482913)"]:              # avaliação 20
         assert h.digitos_da_senha(so_ela) == "482913", so_ela
     for nao in ["24/10/2026", "2026-10-24", "10.1.130.2", "12, 13, 14", "123456", "111111", "2026"]:
         assert h.digitos_da_senha(nao) is None, nao
     for frase in ["a senha é quatro oito dois nove um três", "pode ir 4 8 2 9 1 3", "minha senha 482/913 ok",
-                  "vai 482 913 ok", "tenta ４８２９１３ aí"]:
+                  "vai 482 913 ok", "tenta ４８２９１３ aí",
+                  "a senha é quatro 8 dois 9 um 3", "liga (482) 913 aí"]:
         h._CONFERENCIAS.clear()
         visto = h.mascarar(frase, await h.analisar(dono, frase))
         assert "482913" not in re.sub(r"\D", "", visto) and "quatro" not in visto, (frase, visto)
