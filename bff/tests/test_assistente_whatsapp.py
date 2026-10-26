@@ -323,6 +323,19 @@ async def test_cada_mensagem_vira_uma_linha_no_log_do_bot(db, monkeypatch):
 # ── o helper pelo bot: ação só com CONFIRMO <código>, conferido pelo Gestão Solar ──────
 
 
+@pytest.fixture(autouse=True)
+def _sem_portao_do_catalogo(request, monkeypatch):
+    """O portão "nunca chutar" (driver/comando fora do catálogo) tem os testes dele, marcados com
+    `portao`; nos outros os pedidos falsos não trazem driver."""
+    from app.services import assistente_helper
+
+    monkeypatch.setattr(assistente_helper, "_drivers", None)
+    if "portao" not in request.keywords:
+        async def livre(*_a, **_k):
+            return None
+        monkeypatch.setattr(assistente_helper, "_comando_inexistente", livre)
+
+
 class _HelperFalso:
     def __init__(self):
         self.confirmadas = []
@@ -3930,5 +3943,61 @@ async def test_leitura_recusada_traz_o_motivo_de_dentro_da_resposta(db, helper_c
     monkeypatch.setattr(helper_com_get, "chamar", chamar)
     dono = _dono_com_usina(db)
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
-    r = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {"plant_id": "pirapozinho", "device_id": "Relé Geral"}})
+    r = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {"plant_id": "pirapozinho", "device_id": "x"}})
     assert r["erro"] == "dispositivo desconhecido"
+
+
+async def test_catalogo_de_drivers_mantem_as_leituras_e_o_detalhe_vem_pelo_id(db, helper_com_get, monkeypatch):
+    """26/10/2026: o `/api/devices` (~34 mil caracteres) passava pelo corte e perdia `read_commands`;
+    o bot chutou "status" e não leu as bandeirolas do relé (é "status_trips")."""
+    from app.services import assistente_helper as h
+
+    acao = {"id": "reset_bandeirolas", "label": "Reset", "args": [], "danger": "high", "texto": "x" * 3000}
+    drivers = [{"id": f"d{i}", "label": f"D{i}", "notes": "n" * 2000, "actions": [acao],
+                "read_commands": [{"id": "status_trips", "label": "Ler bandeirolas"}]} for i in range(15)]
+
+    async def chamar(rota, corpo, origem, metodo="POST"):
+        return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": drivers}
+
+    monkeypatch.setattr(helper_com_get, "chamar", chamar)
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    todos = await h.usina_helper(ctx, {"rota": "/api/devices", "metodo": "GET"})
+    assert todos["resposta"][14]["leituras"] == {"status_trips": "Ler bandeirolas"}
+    assert "reset_bandeirolas" in todos["resposta"][14]["acoes"]
+    um = await h.usina_helper(ctx, {"rota": "/api/devices?id=d3", "metodo": "GET"})
+    assert um["resposta"]["actions"][0]["danger"] == "high"
+
+
+
+_CATALOGO = [{"id": "pextron_urp6000", "read_commands": [{"id": "telemetria"}, {"id": "status_trips"}],
+              "actions": [{"id": "reset_bandeirolas"}]}]
+
+
+@pytest.mark.portao
+async def test_nunca_chutar_driver_leitura_ou_acao_fora_do_catalogo_nao_chega_ao_helper(db, helper_com_get, monkeypatch):
+    """Regra do Renan (26/10/2026): NUNCA CHUTAR. O bot mandou o nome "Relé Geral" como driver e
+    o comando "status" (é "status_trips"): o pedido nem sai, e o bot recebe o que existe."""
+    from app.services import assistente_helper as h
+
+    chamadas = []
+
+    async def chamar(rota, corpo, origem, metodo="POST"):
+        chamadas.append(rota)
+        if rota == "/api/devices":
+            return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": _CATALOGO}
+        return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": {"ok": True}}
+
+    monkeypatch.setattr(helper_com_get, "chamar", chamar)
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    base = {"plant_id": "pirapozinho", "host": "10.1.130.2", "port": 5020, "slave": 1}
+    nome = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {**base, "device_id": "Relé Geral", "read_cmd": "telemetria"}})
+    assert "não existe" in nome["erro"] and "pextron_urp6000" in nome["erro"]
+    cmd = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {**base, "device_id": "pextron_urp6000", "read_cmd": "status"}})
+    assert "status_trips" in cmd["erro"]
+    acao = await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {**base, "device_id": "pextron_urp6000", "action_id": "desligar"}})
+    assert "reset_bandeirolas" in acao["erro"]
+    assert chamadas == ["/api/devices"]                    # nenhum pedido chutado saiu
+    ok = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {**base, "device_id": "pextron_urp6000", "read_cmd": "status_trips"}})
+    assert ok["status_http"] == 200 and chamadas == ["/api/devices", "/api/read"]

@@ -1036,6 +1036,55 @@ def _enxuga(v: Any) -> Any:
     return v
 
 
+#: (quando, {driver: ({leituras}, {ações})}) do `GET /api/devices`: muda só com versão nova do helper.
+_drivers: tuple[float, dict[str, tuple[set, set]]] | None = None
+
+
+async def _comando_inexistente(cliente, rota: str, corpo: dict, telefone: str) -> dict | None:
+    """Regra do Renan (26/10/2026): NUNCA CHUTAR. Driver, leitura ou ação fora do catálogo do
+    helper não sai daqui: o bot recebe o que existe e escolhe de novo. Sem catálogo, não chama."""
+    global _drivers
+    rota_base = rota.split("?")[0]
+    if rota_base not in ("/api/read", "/api/act"):
+        return None
+    campo = "read_cmd" if rota_base == "/api/read" else "action_id"
+    if _drivers is None or monotonic() - _drivers[0] > 600:
+        d = await cliente.chamar("/api/devices", {}, origem=f"whatsapp {telefone}", metodo="GET")
+        if not d.get("ok") or not isinstance(d.get("resposta"), list):
+            return {"erro": "Não consegui o catálogo de drivers do helper para conferir o pedido. Nada foi pedido."}
+        _drivers = (monotonic(), {x["id"]: ({r.get("id") for r in x.get("read_commands") or []},
+                                            {a.get("id") for a in x.get("actions") or []})
+                                  for x in d["resposta"] if isinstance(x, dict) and x.get("id")})
+    drv = str(corpo.get("device_id") or "")
+    if drv not in _drivers[1]:
+        return {"erro": (f"device_id {drv!r} não existe. Use o campo `driver` do /api/registry/devices "
+                         f"(drivers: {', '.join(sorted(_drivers[1]))}). Nada foi pedido.")}
+    validos = _drivers[1][drv][0 if campo == "read_cmd" else 1]
+    if str(corpo.get(campo) or "") not in validos:
+        return {"erro": (f"{campo} {corpo.get(campo)!r} não existe no {drv}. Os que existem: "
+                         f"{', '.join(sorted(validos)) or 'nenhum'}. Nada foi pedido.")}
+    return None
+
+
+def _catalogo_drivers(drivers: list, rota: str) -> dict:
+    """O `/api/devices` inteiro tem ~34 mil caracteres: passado pelo `_corta`, cada driver perdia
+    `read_commands` e `actions`, e o bot chutava o comando ("status" no lugar de "status_trips",
+    26/10/2026 — bandeirolas do relé de Pirapozinho). Sem `?id=`: só ids e rótulos de cada um;
+    com `?id=<driver>`: aquele driver completo (argumentos, faixas e perigo das ações)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    alvo = (parse_qs(urlsplit(rota).query).get("id") or [""])[0]
+    if alvo:
+        um = [x for x in drivers if isinstance(x, dict) and x.get("id") == alvo]
+        return {"status_http": 200, "resposta": um[0]} if um else {"erro": f"Driver desconhecido: {alvo}."}
+    return {"status_http": 200, "como_usar": ("read_cmd do /api/read = uma chave de `leituras`; ação = uma chave de "
+                                              "`acoes`. Argumentos da ação: GET /api/devices?id=<driver>."),
+            "resposta": [{"id": x.get("id"), "label": x.get("label"),
+                          "leituras": {r.get("id"): r.get("label") for r in x.get("read_commands") or []},
+                          "acoes": {a.get("id"): a.get("label") for a in x.get("actions") or []}}
+                         for x in drivers if isinstance(x, dict)]}
+
+
 def _corta(dados: Any) -> Any:
     """Cabe no modelo. O `/api/registry/plants` tem ~18 mil caracteres por 6 usinas (gateways,
     alvos): cortado no meio, o bot perdia as últimas usinas e o status. Grande, as listas
@@ -1137,6 +1186,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     if not rota.startswith(_ROTAS_LOCAIS) and (parada := await _vpn_parada(cliente)):
         return {"erro": parada, "motivo": "vpn_parada"}
     ctx.db.commit()                                       # solta a conexão enquanto o helper lê
+    if erro := await _comando_inexistente(cliente, rota, corpo, ctx.telefone):
+        return erro
     d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):
         # leitura que falhou traz o motivo DENTRO de `resposta` ("dispositivo desconhecido"): sem
@@ -1144,6 +1195,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
         r = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
         return {"erro": d.get("error") or r.get("error") or d.get("reason") or r.get("reason") or "O helper recusou.",
                 "motivo": d.get("reason") or r.get("reason")}
+    if d.get("tipo") == "leitura" and rota.split("?")[0] == "/api/devices" and isinstance(d.get("resposta"), list):
+        return _catalogo_drivers(d["resposta"], rota)
     if d.get("tipo") == "leitura":
         # Leitura que não nomeia a usina (`/api/alarms/feed`, a lista de usinas…) volta com o
         # que o TOKEN enxerga: os itens de usina fora do recorte do Gestão Solar saem aqui.
@@ -1301,7 +1354,9 @@ FERRAMENTAS = {
                         "vira UMA ação para o lote; /api/massa/state {job} dá o andamento. "
                         "Pedido com IP/host de equipamento leva SEMPRE o slug da usina junto. "
                         "/api/read: device_id é o campo `driver` do /api/registry/devices (ex.: pextron_urp6000), "
-                        "NUNCA o nome do equipamento; host/port/slave são o ip/port/slave da mesma linha. "
+                        "NUNCA o nome do equipamento; host/port/slave são o ip/port/slave da mesma linha; read_cmd "
+                        "é uma das `leituras` daquele driver no GET /api/devices (nunca invente: relé de proteção "
+                        "tem a leitura de bandeirolas/trips à parte da telemetria). "
                         "AÇÃO (ajustar, ligar, desligar, resetar, comandar, gravar) NÃO é executada: volta uma "
                         "proposta, e só roda com a SENHA DE ATUAÇÃO que a pessoa manda."),
         "parameters": {"type": "object", "properties": {
