@@ -1139,7 +1139,11 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     ctx.db.commit()                                       # solta a conexão enquanto o helper lê
     d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):
-        return {"erro": d.get("error") or d.get("reason") or "O helper recusou.", "motivo": d.get("reason")}
+        # leitura que falhou traz o motivo DENTRO de `resposta` ("dispositivo desconhecido"): sem
+        # isso o bot dizia "recusado sem motivo" e repetia o mesmo pedido errado (26/10/2026)
+        r = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
+        return {"erro": d.get("error") or r.get("error") or d.get("reason") or r.get("reason") or "O helper recusou.",
+                "motivo": d.get("reason") or r.get("reason")}
     if d.get("tipo") == "leitura":
         # Leitura que não nomeia a usina (`/api/alarms/feed`, a lista de usinas…) volta com o
         # que o TOKEN enxerga: os itens de usina fora do recorte do Gestão Solar saem aqui.
@@ -1296,6 +1300,8 @@ FERRAMENTAS = {
                         "com valores e selecionados devolve o plano (mostre-o); /api/massa/start com o MESMO corpo "
                         "vira UMA ação para o lote; /api/massa/state {job} dá o andamento. "
                         "Pedido com IP/host de equipamento leva SEMPRE o slug da usina junto. "
+                        "/api/read: device_id é o campo `driver` do /api/registry/devices (ex.: pextron_urp6000), "
+                        "NUNCA o nome do equipamento; host/port/slave são o ip/port/slave da mesma linha. "
                         "AÇÃO (ajustar, ligar, desligar, resetar, comandar, gravar) NÃO é executada: volta uma "
                         "proposta, e só roda com a SENHA DE ATUAÇÃO que a pessoa manda."),
         "parameters": {"type": "object", "properties": {

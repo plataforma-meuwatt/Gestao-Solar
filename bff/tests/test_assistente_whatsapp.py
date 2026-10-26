@@ -3916,3 +3916,19 @@ async def test_quando_as_consultas_acabam_a_ia_responde_com_o_que_leu(db, monkey
 
     monkeypatch.setattr(assistente, "_llm", _quebra)
     assert (await assistente.responder(ctx, [{"role": "user", "content": "e agora?"}])).startswith("A pergunta ficou")
+
+
+async def test_leitura_recusada_traz_o_motivo_de_dentro_da_resposta(db, helper_com_get, monkeypatch):
+    """26/10/2026: o bot mandou o NOME ("Relé Geral") como device_id; o helper respondeu
+    "dispositivo desconhecido" dentro de `resposta`, e o bot disse "recusado sem motivo"."""
+    from app.services import assistente_helper as h
+
+    async def chamar(rota, corpo, origem, metodo="POST"):
+        return {"ok": False, "tipo": "leitura", "status_http": 400,
+                "resposta": {"ok": False, "error": "dispositivo desconhecido"}}
+
+    monkeypatch.setattr(helper_com_get, "chamar", chamar)
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {"plant_id": "pirapozinho", "device_id": "Relé Geral"}})
+    assert r["erro"] == "dispositivo desconhecido"
