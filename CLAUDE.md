@@ -794,7 +794,12 @@ leitura final; a confirmação espera até 190 s, e sem resposta é "PODE ter ch
 "falhou"; comando único volta com o MOTIVO da falha e a releitura do equipamento. A ferramenta
 `usina_helper` tem `metodo` (GET é leitura no helper: `/api/devices`, `/api/healthcheck/state?id=`
 — POST ali virava "escrita", pedia senha e dava 404) e respeita o recorte de usinas do GS
-(`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. Com ação esperando, a senha
+(`usinas_do_usuario`), inclusive filtrando o `/api/registry/plants`. **Com a VPN das usinas parada** (mais de 5 min sem
+contato, conferido no filtro do túnel uma vez por minuto, `_vpn_parada`), `usina_helper` responde na hora "VPN das
+usinas sem contato desde …", sem ir ao equipamento (menos `/api/registry/` e `/api/audit/`, que o helper guarda): em
+26/10/2026, com a VPN parada desde 23/10, a IA tentou 18 rotas em 4 minutos e a pessoa leu "a pergunta ficou grande
+demais". E, esgotadas as `MAX_RODADAS`, uma última volta SEM ferramenta (`tool_choice="none"`) responde com o que a IA
+já leu; a frase antiga só sai se essa volta falhar. Com ação esperando, a senha
 escrita numa frase também é tentativa. **Desde a 8ª avaliação: SÓ a mensagem que é APENAS a
 senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dígitos são juntados
 antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem

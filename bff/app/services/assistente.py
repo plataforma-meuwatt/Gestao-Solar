@@ -834,16 +834,20 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   primeiro, depois 2 a 4 linhas de contexto. Sem bastidor de dados, sem menu de opções no fim. Nunca use
   travessão (—): use vírgula, dois-pontos ou ponto.
 - Arquivo/gráfico com `enviado_no_chat: true` já chegou: só confirme, não repita link.
+- Se uma ferramenta disser que a VPN das usinas está parada (ou que o helper está fora), não tente outra rota: diga
+  isso à pessoa, com desde quando.
 - Fora dessas áreas, diga com gentileza que não consegue ajudar."""
 
 
-async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool = False) -> dict:
+async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool = False,
+               nenhuma: bool = False) -> dict:
     """`obrigatoria`: a resposta TEM de ser uma chamada de ferramenta (a decisão do resto do pedido). No DeepSeek isso
-    exige o modo sem raciocínio: com ele, `tool_choice="required"` volta 400 (conferido em 25/10/2026)."""
+    exige o modo sem raciocínio: com ele, `tool_choice="required"` volta 400 (conferido em 25/10/2026). `nenhuma`: a
+    resposta TEM de ser texto (as rodadas acabaram)."""
     s = get_settings()
     corpo: dict[str, Any] = {"model": s.llm_model, "messages": mensagens, "temperature": 0.2}
     if ferramentas:
-        corpo.update(tools=ferramentas, tool_choice="required" if obrigatoria else "auto")
+        corpo.update(tools=ferramentas, tool_choice="none" if nenhuma else "required" if obrigatoria else "auto")
     if obrigatoria:
         corpo["thinking"] = {"type": "disabled"}
     async with httpx.AsyncClient(timeout=90) as c:
@@ -896,7 +900,18 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
         for c, res in zip(chamadas, resultados):
             msgs.append({"role": "tool", "tool_call_id": c["id"],
                          "content": json.dumps(res, ensure_ascii=False, default=str)[:TETO_RESULTADO]})
-    return "A pergunta ficou grande demais para uma resposta só. Pode dividir em partes?"
+    # As rodadas acabaram: a IA responde com o que já leu, sem ferramenta. Antes a resposta era "a pergunta ficou
+    # grande demais" e o que ela tinha lido ia fora (26/10/2026: VPN parada, 18 chamadas ao helper, e "resuma por
+    # favor" repetia tudo).
+    msgs.append({"role": "user", "content": "[sistema] Acabaram as consultas desta mensagem. Responda AGORA à pessoa "
+                                            "com o que você já leu acima, curto, e diga o que não conseguiu ler e por "
+                                            "quê. Não chame ferramenta."})
+    try:
+        texto = ((await _llm(msgs, ferramentas, nenhuma=True)).get("content") or "").strip()
+    except Exception:                                      # noqa: BLE001 (sem a última volta, a frase de sempre)
+        log.warning("assistente: a última volta sem ferramenta falhou", exc_info=True)
+        texto = ""
+    return texto or "A pergunta ficou grande demais para uma resposta só. Pode dividir em partes?"
 
 
 # --------------------------------------------------------------------------- transporte

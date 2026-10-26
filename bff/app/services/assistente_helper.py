@@ -31,7 +31,7 @@ from typing import Any
 
 from app.clients.helper_bot import HelperBot
 from app.core.config import get_settings
-from app.core.datas import BRT
+from app.core.datas import BRT, hora_brt
 from app.core.security import conferir_senha
 from app.services import assistente_geracao as ger
 
@@ -986,6 +986,34 @@ def _duracao(segundos: int) -> str:
     return f"{segundos // 3600} h" if segundos >= 3600 else f"{max(1, segundos // 60)} min"
 
 
+#: O último contato da VPN das usinas conferido (instante da conferência, contato em UTC ou None se não deu para
+#: conferir): uma ida ao filtro do túnel por minuto, não uma por chamada.
+_VPN: tuple[float, datetime | None] | None = None
+#: As rotas do helper que não vão ao equipamento (o cadastro e a trilha guardados nele): valem com a VPN parada.
+_ROTAS_LOCAIS = ("/api/registry/", "/api/audit/")
+
+
+async def _vpn_parada(cliente: HelperBot) -> str | None:
+    """A frase para a IA quando a VPN das usinas está parada (`VPN_PARADA_S`); None se está no ar ou se não deu para
+    conferir (aí a chamada segue e o helper diz o que houve). 26/10/2026: com a VPN parada desde 23/10, a IA tentou 18
+    rotas do helper em 4 minutos, uma por vez, e a pessoa leu "a pergunta ficou grande demais"."""
+    global _VPN
+    if _VPN is None or monotonic() - _VPN[0] > 60:
+        try:
+            r = await cliente.rede()
+        except Exception:  # noqa: BLE001 (sem a conferência, a chamada segue)
+            r = {}
+        idade = r.get("vpn_ultimo_contato_s") if r.get("ok") else None
+        _VPN = (monotonic(), datetime.now(UTC) - timedelta(seconds=idade) if isinstance(idade, (int, float)) else None)
+    contato = _VPN[1]
+    if contato is None or (datetime.now(UTC) - contato).total_seconds() <= VPN_PARADA_S:
+        return None
+    idade = int((datetime.now(UTC) - contato).total_seconds())
+    return (f"A VPN das usinas está sem contato desde {hora_brt(contato.isoformat())} (há {_duracao(idade)}): o helper "
+            "não alcança os equipamentos agora, nem para ler. Diga isso à pessoa e não tente outra rota do helper; "
+            "geração e paradas seguem pelo monitoramento do meuWatt.")
+
+
 def _cliente(ctx_ou_db, user) -> HelperBot:
     from app.models.integracao import Produto
     from app.services.vinculos import token_do_cliente
@@ -1106,6 +1134,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
         cliente = _cliente(ctx, ctx.user)
     except SemConexao as e:
         return {"erro": f"Helper indisponível: {e}"}
+    if not rota.startswith(_ROTAS_LOCAIS) and (parada := await _vpn_parada(cliente)):
+        return {"erro": parada, "motivo": "vpn_parada"}
     ctx.db.commit()                                       # solta a conexão enquanto o helper lê
     d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):

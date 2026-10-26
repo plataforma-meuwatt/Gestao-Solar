@@ -2366,9 +2366,11 @@ async def test_a_decisao_do_resto_exige_ferramenta_e_o_modo_sem_raciocinio():
     try:
         await assistente._decidir_o_resto([{"role": "user", "content": "x"}])
         await assistente._llm([{"role": "user", "content": "x"}], [assistente._MANUTENCAO])
+        await assistente._llm([{"role": "user", "content": "x"}], [assistente._MANUTENCAO], nenhuma=True)
     finally:
         httpx.AsyncClient = original
-    resto, comum = corpos
+    resto, comum, sem_ferramenta = corpos
+    assert sem_ferramenta["tool_choice"] == "none"                     # as consultas acabaram: só texto
     assert resto["tool_choice"] == "required" and resto["thinking"] == {"type": "disabled"}
     assert [f["function"]["name"] for f in resto["tools"]] == ["proximo_passo", "fim_do_pedido"]
     assert comum["tool_choice"] == "auto" and "thinking" not in comum
@@ -3847,3 +3849,70 @@ async def test_a_copia_do_gateway_sai_sem_o_numero_ja_na_chegada(db, bot_local, 
     await assistente.atender({"id": 7, "telefone": "+5511900000001", "wa_id": "9", "tipo": "text",
                               "texto": "o portão de Tietê abre com 4455"})
     assert bot_local.ocultadas == [7] and bot_local.textos_ocultados == ["o portão de Tietê abre com ••••"]
+
+
+# ── 26/10/2026: VPN das usinas parada, 18 chamadas ao helper e "a pergunta ficou grande demais" ────────────────────
+async def test_com_a_vpn_parada_o_helper_responde_na_hora_sem_ir_ao_equipamento(db, helper_com_get):
+    from app.services import assistente_helper as h
+
+    contato = {"idade": 250_000}
+
+    async def _rede():
+        contato["vezes"] = contato.get("vezes", 0) + 1
+        return {"ok": True, "vpn_ultimo_contato_s": contato["idade"]}
+
+    helper_com_get.rede = _rede
+    dono = _dono_com_usina(db)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await h.usina_helper(ctx, {"rota": "/api/healthcheck/run", "corpo": {"slug": "pirapozinho"}})
+    assert r["motivo"] == "vpn_parada" and "VPN das usinas está sem contato desde" in r["erro"]
+    assert "não tente outra rota" in r["erro"] and helper_com_get.chamadas == []           # nem foi ao helper
+    await h.usina_helper(ctx, {"rota": "/api/healthcheck/run", "corpo": {"slug": "pirapozinho"}})
+    assert contato["vezes"] == 1                                                             # 1 ida ao filtro por minuto
+    await h.usina_helper(ctx, {"rota": "/api/registry/plants"})                              # o cadastro vale
+    assert helper_com_get.chamadas == [("POST", "/api/registry/plants")]
+    h._VPN, contato["idade"] = None, 30                                                      # a VPN no ar: segue
+    await h.usina_helper(ctx, {"rota": "/api/devices", "metodo": "GET"})
+    assert helper_com_get.chamadas[-1] == ("GET", "/api/devices")
+
+    async def _fora():
+        raise RuntimeError("filtro fora")
+
+    h._VPN, helper_com_get.rede = None, _fora                                                # sem conferir: segue
+    await h.usina_helper(ctx, {"rota": "/api/devices", "metodo": "GET"})
+    assert len(helper_com_get.chamadas) == 3
+
+
+async def test_quando_as_consultas_acabam_a_ia_responde_com_o_que_leu(db, monkeypatch):
+    """Esgotadas as rodadas, uma última volta SEM ferramenta (`tool_choice="none"`) responde com o que a IA já leu; só
+    se ela falhar vai a frase de sempre."""
+    import json as _json
+
+    vistos = []
+
+    async def _llm(msgs, ferramentas=None, obrigatoria=False, nenhuma=False):
+        vistos.append(nenhuma)
+        if nenhuma:
+            return {"content": "Não consegui ler os relés: a VPN das usinas está parada."}
+        return {"content": "", "tool_calls": [{"id": f"c{len(vistos)}", "type": "function", "function": {
+            "name": "usina_helper", "arguments": _json.dumps({"rota": "/api/healthcheck/run"})}}]}
+
+    async def _helper(ctx, a):
+        return {"erro": "A VPN das usinas está sem contato."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "usina_helper", (_helper, assistente.FERRAMENTAS["usina_helper"][1]))
+    monkeypatch.setattr(assistente, "permitidas", lambda user: ["usina_helper"])
+    dono = _conta(db, "dono", "+5517997377626")
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    texto = await assistente.responder(ctx, [{"role": "user", "content": "status dos relés de Ouro Fino?"}])
+    assert texto == "Não consegui ler os relés: a VPN das usinas está parada."
+    assert vistos == [False] * assistente.MAX_RODADAS + [True]
+
+    async def _quebra(msgs, ferramentas=None, obrigatoria=False, nenhuma=False):
+        if nenhuma:
+            raise RuntimeError("fora")
+        return await _llm(msgs, ferramentas)
+
+    monkeypatch.setattr(assistente, "_llm", _quebra)
+    assert (await assistente.responder(ctx, [{"role": "user", "content": "e agora?"}])).startswith("A pergunta ficou")
