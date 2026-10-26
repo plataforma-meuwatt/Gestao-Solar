@@ -891,7 +891,7 @@ não respondem nem cancelam a ação. **Áudio:** a nota de voz é baixada pelo 
 (`GET /interno/mensagens/{id}/midia`, a coluna `wa_mensagens.midia` guarda o id da Meta) e
 transcrita pelo meuPlano (`/assistant/transcribe`, o Whisper do app de campo) com o token do
 meuPlano DA PESSOA; o bot devolve "🎙️ _o que entendeu_" e segue como texto — a senha dita em voz
-alta vale e nunca volta em claro. Arquivo e imagem ainda não são lidos (a resposta diz o nome).
+alta vale e nunca volta em claro. **Foto** (26/10/2026, pedido do dono): uma ou mais fotos vão para uma TAREFA do meuPlano (`assistente_fotos.py`). O álbum chega como uma mensagem por foto: cada uma é guardada na CHEGADA, antes da fila do número, e só a última responde (`e_a_ultima`); a IA lê «[📷 N foto(s) recebida(s)…] legenda» (não vê a imagem) e chama `anexar_fotos` com a tarefa ou a OS (OS com mais de uma tarefa possível: pergunta qual). O sistema propõe "Anexar N foto(s) na tarefa #X" com o Sim; confirmada, cada foto sai do gateway e entra em `POST /tasks/{id}/attachments` (a rota do app de campo) com o token DA PESSOA. Regra do dono: técnico só em tarefa EM ABERTO (prevista, planejada, programada, em andamento); o gestor da O&M (`gestor_empresa`) também em análise (REALIZADA) e concluída (APROVADA); cancelada nunca. A situação é conferida de novo no Sim. As fotos ficam 30 min em memória (no máximo 20). Arquivo que não é imagem ainda não é lido (a resposta diz o nome).
 Pedido ao meuPlano que fale em ASSINATURA/certificado digital vira ação (SIM) ANTES de sair
 (lá a ferramenta de PDF assina dentro de uma leitura, sem proposta). A pergunta sobre o ESTADO
 ("a OS 1638 já foi assinada?") é leitura; o pedido com "?" ("pode assinar a OS?", "me manda o

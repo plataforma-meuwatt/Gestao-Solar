@@ -708,6 +708,14 @@ class MeuPlanoClient:
                             files={"file": ("audio.ogg", conteudo, tipo or "audio/ogg")})
         return (r.json().get("text") or "").strip()
 
+    async def anexar_na_tarefa(self, task_id: int, nome: str, conteudo: bytes, tipo: str | None,
+                               descricao: str, autor: str) -> dict[str, Any]:
+        """Um arquivo na tarefa, pela rota do app de campo (`TaskAnexosCard`), com o token de quem manda."""
+        r = await self._req("POST", f"/api/v1/meuacesso/tasks/{task_id}/attachments", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "image/jpeg")},
+                            data={"description": descricao, "uploaded_by": autor})
+        return r.json()
+
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
 

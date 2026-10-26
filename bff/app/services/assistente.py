@@ -37,6 +37,7 @@ from app.core.telefone import normalizar
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 from app.models.user import User
 from app.services import assistente_geracao as ger
+from app.services import assistente_fotos as fotos
 from app.services import assistente_helper as helper
 
 log = logging.getLogger("gs.assistente")
@@ -283,7 +284,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
     return proposta
 
 
-FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO), **helper.FERRAMENTAS}
+FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
+               "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA), **helper.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -790,7 +792,7 @@ def permitidas(user) -> list[str]:
     if "bot_meuwatt" in ativo:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
-        nomes.append("manutencao")
+        nomes += ["manutencao", "anexar_fotos"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     return nomes
@@ -826,6 +828,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   confirma com SIM — NÃO fale de senha. Só ação no EQUIPAMENTO pelo helper (ligar, desligar, gravar parâmetro)
   pede a SENHA DE ATUAÇÃO; fale dela só nesse caso. Nunca peça a senha de login, nunca escreva uma senha,
   nunca diga que fez. Ler não pede nada.
+- «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
+  anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa); sem saber onde,
+  pergunte em qual tarefa ou OS. Ela confirma com Sim.
 - Pedido de vários passos no meuPlano ("crie a OS e conclua a OS 1638"): mande o pedido INTEIRO numa chamada de
   `manutencao`; o meuPlano propõe um passo por vez e, a cada SIM, o sistema segue para o próximo.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
@@ -1021,6 +1026,8 @@ async def atender(evento: dict) -> None:
         while len(_ATENDIDAS) > 2000:
             _ATENDIDAS.popitem(last=False)
     chave = evento.get("wa_id") or evento.get("telefone") or ""
+    if fotos.e_foto(evento):                               # na chegada: a foto anterior do álbum sabe que veio outra
+        fotos.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     evento = {**evento, "_chegou": monotonic()}
     async with _TRAVAS.setdefault(chave, asyncio.Lock()):
@@ -1428,6 +1435,12 @@ async def _atender(evento: dict) -> None:
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
+        if not texto and fotos.e_foto(evento):
+            if not await fotos.e_a_ultima(telefone, evento.get("id")):
+                _registrar(db, telefone, user, "respondeu", pergunta="[📷 foto]", resposta="[junto com as fotos seguintes]",
+                           inicio=inicio, em=enviada)
+                return
+            texto = seguro = pergunta = fotos.mensagem(telefone)  # a IA decide onde anexar (ou pergunta)
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
