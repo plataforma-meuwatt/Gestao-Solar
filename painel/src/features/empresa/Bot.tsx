@@ -263,6 +263,13 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
   const qc = useQueryClient()
   const [senha, setSenha] = useState('')
   const [repetida, setRepetida] = useState('')
+  // O campo só guarda número; a letra digitada some, e sem aviso parecia que o campo não aceitava nada.
+  const [soNumeros, setSoNumeros] = useState(false)
+  const SO_NUMEROS = 'Só números (6 a 8). Não é a senha de login.'
+  const numeros = (v: string) => {
+    setSoNumeros(/\D/.test(v))
+    return v.replace(/\D/g, '')
+  }
   const diferentes = repetida.length > 0 && senha !== repetida
   const salvar = useMutation({
     mutationFn: () => editarContaDaEmpresa(usuario.id, { senha_atuacao: senha }),
@@ -287,7 +294,8 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
           autoComplete="new-password"
           maxLength={8}
           value={senha}
-          onChange={(e) => setSenha(e.target.value.replace(/\D/g, ''))}
+          onChange={(e) => setSenha(numeros(e.target.value))}
+          erro={soNumeros ? SO_NUMEROS : undefined}
           autoFocus
         />
         <Campo
@@ -297,7 +305,7 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
           autoComplete="new-password"
           maxLength={8}
           value={repetida}
-          onChange={(e) => setRepetida(e.target.value.replace(/\D/g, ''))}
+          onChange={(e) => setRepetida(numeros(e.target.value))}
           nota={diferentes ? 'As duas não batem.' : undefined}
         />
         {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
