@@ -480,6 +480,8 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
             value={telefone}
             onChange={(e) => setTelefone(e.target.value)}
           />
+          {/* o login da pessoa: sem ele aqui, quem entrega a senha tinha de adivinhar com que nome ela entra */}
+          <Campo rotulo="Apelido (é com ele que a pessoa entra)" value={usuario.apelido} readOnly className="mono" />
         </div>
 
         <CaixasDoBot
