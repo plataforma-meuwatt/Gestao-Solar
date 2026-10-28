@@ -74,8 +74,9 @@ class Settings(BaseSettings):
     meuwatt_api_url: str = "https://api.meuwatt.com.br"
     meuwatt_web_url: str = "https://app.meuwatt.com.br"
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
-    #: direto para lá, já logado, a partir do portal.
-    meuplano_web_url: str = "https://meuplano.meuwatt.com.br"
+    #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
+    #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").
+    meuplano_web_url: str = "https://app.meuplano.solar"
     # `api.meuplano.com.br` não resolve — o domínio nunca foi apontado. O host real é o do
     # Railway, e deixar o padrão errado fazia a primeira conexão falhar com "não foi
     # possível alcançar o endereço" antes mesmo de o gestor ter chance de suspeitar da URL.
