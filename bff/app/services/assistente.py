@@ -85,8 +85,9 @@ _MANUTENCAO = {"type": "function", "function": {
     "name": "manutencao",
     "description": ("Pergunta ao meuPlano (manutenção/O&M): ordens de serviço, cronograma, pendências, estoque, "
                     "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
-                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período. Também contratos, "
-                    "diária e dia de trabalho de prestador (conta a pagar)."),
+                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período. Também o "
+                    "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
+                    "contratos, diária e dia de trabalho de prestador."),
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 
@@ -847,6 +848,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - Geração, inversores, PR, produtividade, irradiação, PVsyst, paradas de inversor, relatório/gráfico do
   monitoramento → ferramentas de geração. Manutenção (OS, cronograma, pendências, estoque, documentos,
   projetos) → `manutencao`. Pergunta que mistura → chame as duas.
+- FINANCEIRO (contas a pagar e a receber, saldo das contas, o que vence, receita, despesa, DRE, fluxo de caixa,
+  margem de contrato, diárias, pagar ou dar baixa) → `manutencao`: o financeiro da empresa mora no meuPlano, e ele
+  responde e faz (com o Sim). Nunca responda financeiro sem perguntar a ele.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo e já confirmado pela pessoa.

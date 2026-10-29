@@ -62,5 +62,9 @@
 {"frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan", "espera": ["manutencao"], "origem": "log #119"},
 {"frase": "quero cadastrar uma pessoa", "espera": ["formulario_de_cadastro"], "ou_sem_ferramenta": true, "origem": "29/10 (cadastro abre o formulário)"},
 {"frase": "o Michel tem conta no meuWatt?", "espera": ["procurar_pessoa"], "origem": "29/10 (consulta de conta não é cadastro)"},
-{"frase": "muda o centro de custo da OS 1846 para roçagem", "espera": ["manutencao"], "origem": "29/10 (centro de custo da OS)"}
+{"frase": "muda o centro de custo da OS 1846 para roçagem", "espera": ["manutencao"], "origem": "29/10 (centro de custo da OS)"},
+{"frase": "o que tenho a pagar essa semana?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
+{"frase": "qual o saldo das contas?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
+{"frase": "paga a diária do Thiago de hoje pela conta Espresso", "espera": ["manutencao"], "origem": "29/10 (pagar pelo meuPlano, com Sim)"},
+{"frase": "quanto entrou de receita em outubro?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"}
 ]
