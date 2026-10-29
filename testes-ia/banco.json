@@ -66,5 +66,9 @@
 {"frase": "o que tenho a pagar essa semana?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
 {"frase": "qual o saldo das contas?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
 {"frase": "paga a diária do Thiago de hoje pela conta Espresso", "espera": ["manutencao"], "origem": "29/10 (pagar pelo meuPlano, com Sim)"},
-{"frase": "quanto entrou de receita em outubro?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"}
+{"frase": "quanto entrou de receita em outubro?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
+{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log (29/10, faltava a ferramenta)"},
+{"frase": "dá play na roçagem de tiete", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"},
+{"frase": "comenta na OS 1846 que choveu e paramos às 15h", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"},
+{"frase": "inicia a OS 1846", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"}
 ]
