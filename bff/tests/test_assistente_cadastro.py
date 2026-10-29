@@ -348,3 +348,96 @@ def test_procura_pelo_nome_como_se_fala():
     assert not cad._casa(welinton, "Thiago Marquezini", "", "") and not cad._casa(welinton, "Thiago", "", "")
     assert cad._casa(welinton, "Welinton", "", "") and cad._casa(welinton, "gordo", "", "")
     assert cad._casa(thiago, "Thiago Marquezini", "", "") and not cad._casa(thiago, "Thiago Lopes", "", "")
+
+
+# --------------------------------------------------------------------------- o formulário de cadastro
+from app.services import assistente_formulario as formulario  # noqa: E402
+
+
+@pytest.fixture
+def formularios(cenario, monkeypatch):
+    """A IA de mentira abre o formulário no pedido de cadastro; o gateway de mentira guarda o que sairia."""
+    import json
+    saidos, chamadas, gateway = [], [], {"ok": True}
+    enviar = assistente.whatsapp.enviar_conteudo
+
+    async def _enviar(**k):
+        if k.get("tipo") == "formulario":
+            saidos.append(k)
+            return {"ok": gateway["ok"]}
+        return await enviar(**k)
+
+    async def _llm(msgs, ferramentas=None):
+        chamadas.append(msgs[-1]["content"])
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Preencha o formulário."}
+        return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "formulario_de_cadastro", "arguments": json.dumps({"nome": "Thiago Marquezini",
+                                                                        "meuplano": "prestador"})}}]}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    formulario._ABERTOS.clear()
+    formulario._CADASTROS.clear()
+    return saidos, chamadas, gateway
+
+
+def _evento(cenario, n, **campos):
+    if "flow_token" not in campos:
+        return {"id": n, "telefone": cenario.gerente.telefone, "wa_id": "1", "tipo": "text", "texto": campos["texto"]}
+    return {"id": n, "telefone": cenario.gerente.telefone, "wa_id": "1", "tipo": "interactive", "texto": None,
+            "midia": {"formulario": campos}}
+
+
+async def test_pedido_de_cadastro_abre_o_formulario_e_a_resposta_vira_o_resumo_sem_a_ia(db, cenario, formularios):
+    """Dono (29/10/2026): "quando eu pedir cadastro, abrir um formulário com os campos necessários" — e a IA
+    perguntava de novo o que já estava dito. A resposta do formulário vai ao sistema: procura nos três e propõe."""
+    saidos, chamadas, _ = formularios
+    await assistente.atender(_evento(cenario, 1, texto="cadastre o thiago marquezini no meuplano como prestador"))
+    assert cenario.bot.enviados[-1] == "Preencha o formulário."        # a resposta, e depois o formulário
+    c = saidos[0]["cadastro"]
+    assert (c["nome"], c["escolhidos"]) == ("Thiago Marquezini", {"meuplano": "prestador"})
+    assert [p["id"] for p in c["papeis"]["meuplano"]][:2] == ["nao", "prestador"]
+    n = len(chamadas)
+    await assistente.atender(_evento(cenario, 2, flow_token=c["token"], nome="Thiago Marquezini",
+                                     email="thiago@x.com", celular="35 99931-8670", meuplano="prestador",
+                                     meuwatt="nao", gs="nao"))
+    assert len(chamadas) == n                                         # a IA não entra
+    pend = h.PENDENTES[cenario.gerente.id]
+    assert pend.resumo == "Cadastrar Thiago Marquezini (thiago@x.com)"
+    assert pend.detalhes[0].startswith("meuPlano: conta nova (thiago@x.com) como prestador de serviço (terceiro)")
+    assert "não há conta de Thiago Marquezini" in "\n".join(cenario.bot.enviados[-2:])
+    assert cenario.mp.gravou == []                                    # nada antes do Sim
+    await _sim(cenario)
+    assert ("vinculo", 3, 1500, {"member_role": "terceiro", "tipo_vinculo": "PJ"}) in cenario.mp.gravou
+    # o mesmo formulário de novo não vale
+    await assistente.atender(_evento(cenario, 3, flow_token=c["token"], nome="X", meuplano="prestador"))
+    assert cenario.bot.enviados[-1] == formulario.VENCIDO
+
+
+async def test_conta_parecida_pergunta_e_tudo_nao_cadastrar_nao_propoe(db, cenario, formularios):
+    saidos, _, _ = formularios
+    await assistente.atender(_evento(cenario, 1, texto="quero cadastrar uma pessoa"))
+    await assistente.atender(_evento(cenario, 2, flow_token=saidos[0]["cadastro"]["token"], nome="Marcos Vinicus",
+                                     email="marcos@splendoroem.com.br", meuplano="tecnico_campo", meuwatt="nao", gs="nao"))
+    assert "já existe parecido" in cenario.bot.enviados[-1] and "conta 587" in cenario.bot.enviados[-1]
+    assert cenario.gerente.id not in h.PENDENTES
+    await assistente.atender(_evento(cenario, 3, texto="cadastra outra"))
+    await assistente.atender(_evento(cenario, 4, flow_token=saidos[-1]["cadastro"]["token"], nome="Ana",
+                                     meuplano="nao", meuwatt="nao", gs="nao"))
+    assert "Nada a cadastrar" in cenario.bot.enviados[-1] and cenario.gerente.id not in h.PENDENTES
+
+
+async def test_sem_o_formulario_pede_os_dados_em_texto(db, cenario, formularios):
+    _, _, gateway = formularios
+    gateway["ok"] = False
+    await assistente.atender(_evento(cenario, 1, texto="cadastre o thiago"))
+    assert cenario.bot.enviados[-1] == cad.FORMULARIO_FALHOU
+
+
+def test_o_formulario_so_oferece_papeis_que_o_cadastro_conhece():
+    for sistema, papeis in (("meuplano", cad.PAPEIS_MP), ("meuwatt", cad.PAPEIS_MW), ("gs", cad.PERFIS_GS)):
+        ids = [i for i, _ in cad.OPCOES_DO_FORMULARIO[sistema]]
+        assert ids[0] == "nao" and set(ids[1:]) <= set(papeis)
+        assert all(len(t) <= 20 for _, t in cad.OPCOES_DO_FORMULARIO[sistema])     # o título que cabe na lista
+    assert "admin_sistema" not in dict(cad.OPCOES_DO_FORMULARIO["meuplano"])

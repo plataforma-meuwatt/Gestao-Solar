@@ -36,12 +36,12 @@
 {"frase": "qual a leitura de corrente do rele geral de pirapozinho?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #80"},
 {"frase": "qual os ta em aberto hoje", "espera": ["manutencao"], "origem": "log #85"},
 {"frase": "Qual a leitura do relé de proteção geral de porto ferreira agora?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #86"},
-{"frase": "Crie a conta de: Marcos cunha no meuwatt, meuplano, gs. Vincule os tokens do meuwatt e do meuplano no gestao solar. Libere o bot", "espera": ["procurar_pessoa"], "origem": "log #87"},
+{"frase": "Crie a conta de: Marcos cunha no meuwatt, meuplano, gs. Vincule os tokens do meuwatt e do meuplano no gestao solar. Libere o bot", "espera": ["formulario_de_cadastro"], "origem": "log #87"},
 {"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #88"},
 {"frase": "Qual a senha do roteador de pirapozinho", "espera": ["manutencao"], "origem": "log #89"},
 {"frase": "qual o código do portão de pirapozinho?", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
 {"frase": "senha do wifi de pereiras", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
-{"frase": "cadastra o michel no meuwatt como técnico", "espera": ["procurar_pessoa"], "origem": "teste 29/10 (contato × conta)"},
+{"frase": "cadastra o michel no meuwatt como técnico", "espera": ["formulario_de_cadastro"], "origem": "teste 29/10 (contato × conta)"},
 {"frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]", "espera": ["listar_usinas"], "origem": "teste 29/10 (localização: pergunta a usina)", "ou_sem_ferramenta": true},
 {"frase": "[📍 localização recebida, ainda não gravada] essa é a usina de ibitinga", "espera": ["gravar_coordenada"], "origem": "teste 29/10 (localização)"},
 {"frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina", "espera": ["manutencao"], "origem": "29/10 (virou assinatura digital)"},
@@ -51,7 +51,7 @@
 {"frase": "Crie um contrato de comissionamento para usina de mairinque", "espera": ["manutencao"], "origem": "log #91"},
 {"frase": "🎙️ Eu preciso da senha do cadeado da entrada de Tietê.", "espera": ["manutencao"], "origem": "log #96"},
 {"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"},
-{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["procurar_pessoa"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"},
+{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["formulario_de_cadastro"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"},
 {"frase": "Marcar dia de trabalho do Thiago, valor 200. Ontem ele trabalhou na construção do barracão", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho com valor: diário e conta a pagar)"},
 {"frase": "marca o dia do thiago hoje, 180 reais, na OS 1638", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho na OS)"},
 {"frase": "Acrescente diaria de 150 para o tiago marquezini com custo para a OS", "espera": ["manutencao"], "origem": "29/10 (diária de prestador atrelada à OS)"},
@@ -59,5 +59,7 @@
 {"frase": "o Welinton também é chamado de Gordo", "espera": ["manutencao"], "origem": "29/10 (apelido da equipe, no meuPlano)"},
 {"frase": "guarda o apelido Gordo pro Welinton", "espera": ["manutencao"], "origem": "29/10 (apelido da equipe não é o login do GS)"},
 {"frase": "Quantas diárias tem em aberto do tiago marquezini", "espera": ["manutencao"], "origem": "log #118"},
-{"frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan", "espera": ["manutencao"], "origem": "log #119"}
+{"frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan", "espera": ["manutencao"], "origem": "log #119"},
+{"frase": "quero cadastrar uma pessoa", "espera": ["formulario_de_cadastro"], "ou_sem_ferramenta": true, "origem": "29/10 (cadastro abre o formulário)"},
+{"frase": "o Michel tem conta no meuWatt?", "espera": ["procurar_pessoa"], "origem": "29/10 (consulta de conta não é cadastro)"}
 ]

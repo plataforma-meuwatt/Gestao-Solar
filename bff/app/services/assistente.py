@@ -874,9 +874,11 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   tarefas das OS no meuPlano (papel `prestador`).
 - Como a equipe CHAMA alguém ("o Welinton é o Gordo", "guarda o apelido Gordo pro Welinton") → `manutencao`: o
   meuPlano guarda o apelido para achar a pessoa pelo nome. Não é o login do GS, nem cadastro.
-- Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): PRIMEIRO
-  `procurar_pessoa`; diga, sistema por sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil
-  em cada um, e-mail, celular). Só depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
+- Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): chame
+  `formulario_de_cadastro` com o que a pessoa já disse (nome, e-mail, celular, o papel em cada sistema) e diga numa
+  frase que é para preencher. Não pergunte dado por dado: a resposta do formulário o sistema confere nos três sistemas
+  e propõe o cadastro com o Sim. Se a pessoa responder sobre conta parecida ("é a mesma", "criar nova"), aí
+  `cadastrar_pessoa` com o que o formulário trouxe. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
 - Pedido de vários passos no meuPlano ("crie a OS e conclua a OS 1638"): mande o pedido INTEIRO numa chamada de
   `manutencao`; o meuPlano propõe um passo por vez e, a cada SIM, o sistema segue para o próximo.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
@@ -1485,6 +1487,7 @@ async def _atender(evento: dict) -> None:
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
+        cadastro_dados = None
         if not texto and formulario.e_resposta(evento):
             texto = seguro = pergunta = formulario.texto_da_resposta(telefone, evento)   # o que marcou, em palavras
             if texto is None:
@@ -1492,6 +1495,7 @@ async def _atender(evento: dict) -> None:
                 _registrar(db, telefone, user, "respondeu", pergunta="[formulário]", resposta=formulario.VENCIDO,
                            inicio=inicio, em=enviada)
                 return
+            cadastro_dados = formulario.cadastro_respondido(telefone)  # o de cadastro vai ao sistema, não à IA
         if not texto and fotos.e_foto(evento):
             if not await fotos.e_a_ultima(telefone, evento.get("id")):
                 _registrar(db, telefone, user, "respondeu", pergunta="[📷 foto]", resposta="[junto com as fotos seguintes]",
@@ -1554,7 +1558,9 @@ async def _atender(evento: dict) -> None:
             ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=_para_fora(historico[:-1], revelados),
                                pedido=seguro)
             await ger.preparar(ctx)
-            if not get_settings().deepseek_api_key:
+            if cadastro_dados is not None:
+                resposta = await cad.pelo_formulario(ctx, cadastro_dados)
+            elif not get_settings().deepseek_api_key:
                 resposta = "O bot está desligado neste ambiente (falta a chave da IA)."
             else:
                 livre = resposta = await responder(
@@ -1599,6 +1605,9 @@ async def _atender(evento: dict) -> None:
             if ctx is not None and ctx.escolha is not None and ctx.proposta is None \
                     and not await formulario.mandar(telefone, ctx.escolha):
                 await _texto(telefone, formulario.em_texto(ctx.escolha), valores)
+            if ctx is not None and ctx.cadastro is not None and ctx.proposta is None \
+                    and not await formulario.mandar_cadastro(telefone, ctx.cadastro):
+                await _texto(telefone, cad.FORMULARIO_FALHOU, valores)
         respondeu = True
         _resumo_saiu(db, user, saiu)
         if (executada is not None and executada.conversa is not None and resposta.startswith("✅")

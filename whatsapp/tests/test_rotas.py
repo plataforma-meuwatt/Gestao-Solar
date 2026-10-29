@@ -551,3 +551,41 @@ def test_a_mensagem_que_saiu_tambem_perde_a_senha(cliente, db):
     db.expire_all()
     assert db.get(Mensagem, m.id).texto == "Senha do cadeado: ••••"
     assert cliente.post("/interno/mensagens/999999/ocultar", headers=h).status_code == 404
+
+
+def test_formulario_de_cadastro_sai_com_os_campos_e_os_papeis(cliente, credencial, monkeypatch, db):
+    """Dono (29/10/2026): "quando eu pedir cadastro, abrir um formulário com os campos necessários". O formulário
+    `gs_cadastro_pessoa` vai com o que já se sabe preenchido; papel pedido que não está na lista vira o primeiro."""
+    from gateway.meta import graph
+
+    enviados, pedidos = [], []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid="wamid.C1")
+
+    async def _id(**k):
+        pedidos.append(k["nome"])
+        return "899377699826118", None
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    monkeypatch.setattr(graph, "id_do_flow", _id)
+    nao = {"id": "nao", "titulo": "Não cadastrar"}
+    r = cliente.post("/interno/conteudo", headers={CABECALHO_CHAVE_INTERNA: CHAVE}, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "Preencha o cadastro",
+        "cadastro": {"token": "tok-cad-1234", "nome": "Thiago Marquezini", "celular": "35 99931-8670",
+                     "papeis": {"meuplano": [nao, {"id": "prestador", "titulo": "Prestador (terceiro)"}],
+                                "meuwatt": [nao], "gs": [nao, {"id": "tecnico", "titulo": "Técnico"}]},
+                     "escolhidos": {"meuplano": "prestador", "gs": "admin_sistema"}}})
+    assert r.status_code == 200 and r.json()["ok"] and pedidos == ["gs_cadastro_pessoa"]
+    p = enviados[0]["conteudo"]["action"]["parameters"]
+    assert (p["flow_cta"], p["flow_token"]) == ("Preencher", "tok-cad-1234")
+    assert p["flow_action_payload"] == {"screen": "CADASTRO", "data": {
+        "nome": "Thiago Marquezini", "email": "", "celular": "35 99931-8670",
+        "papeis_mp": [{"id": "nao", "title": "Não cadastrar"}, {"id": "prestador", "title": "Prestador (terceiro)"}],
+        "mp": "prestador", "papeis_mw": [{"id": "nao", "title": "Não cadastrar"}], "mw": "nao",
+        "papeis_gs": [{"id": "nao", "title": "Não cadastrar"}, {"id": "tecnico", "title": "Técnico"}], "gs": "nao"}}
+    r = cliente.post("/interno/conteudo", headers={CABECALHO_CHAVE_INTERNA: CHAVE}, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
+        "cadastro": {"token": "tok-cad-1234", "papeis": {"meuplano": [nao]}}})
+    assert r.status_code == 400 and "papéis de meuwatt" in r.json()["detail"]

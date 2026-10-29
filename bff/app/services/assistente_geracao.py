@@ -70,6 +70,8 @@ class Contexto:
     digitados: list = field(default_factory=list)
     #: as opções que o meuPlano ofereceu para MARCAR (`escolha` do run): vão num formulário depois da resposta
     escolha: dict | None = None
+    #: o formulário de CADASTRO pedido neste turno (o que já se sabe, para vir preenchido): vai depois da resposta
+    cadastro: dict | None = None
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

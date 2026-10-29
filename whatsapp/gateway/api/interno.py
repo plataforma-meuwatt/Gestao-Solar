@@ -206,6 +206,24 @@ class FormularioIn(BaseModel):
 FLOW_ESCOLHA = "gs_escolha_multipla"
 
 
+class CadastroIn(BaseModel):
+    """O formulário de CADASTRO de pessoa (`gs_cadastro_pessoa`, tela CADASTRO; pedido do dono, 29/10/2026: "quando
+    eu pedir cadastro, abrir um formulário com os campos necessários"): nome, e-mail, celular e o papel em cada
+    sistema. As listas de papéis vêm do BFF (lá mora o cadastro), por sistema (`meuplano`, `meuwatt`, `gs`), e o que
+    volta é `midia.formulario` = `{nome, email, celular, meuplano, meuwatt, gs, flow_token}`."""
+    token: str = Field(min_length=8, max_length=64)
+    nome: str = Field(default="", max_length=150)
+    email: str = Field(default="", max_length=150)
+    celular: str = Field(default="", max_length=30)
+    papeis: dict[str, list[BotaoIn]]
+    escolhidos: dict[str, str] = Field(default_factory=dict)
+
+
+#: O formulário de cadastro, publicado na conta da Meta (29/10/2026).
+FLOW_CADASTRO = "gs_cadastro_pessoa"
+_SISTEMAS = {"meuplano": "mp", "meuwatt": "mw", "gs": "gs"}            # campo do formulário → nome no Flow
+
+
 class ConteudoIn(BaseModel):
     """A RESPOSTA do assistente: texto, um arquivo (documento/imagem) em base64, ou um texto com
     até 3 BOTÕES de resposta ("Sim"/"Não" para confirmar uma ação — o toque volta como mensagem
@@ -219,6 +237,7 @@ class ConteudoIn(BaseModel):
     origem: str | None = None
     botoes: list[BotaoIn] | None = Field(default=None, max_length=3)
     formulario: FormularioIn | None = None
+    cadastro: CadastroIn | None = None
     #: O que fica GUARDADO aqui no lugar do `texto`, que vai inteiro à Meta: a resposta sem as senhas que ela
     #: revela (o bot pede ao meuPlano a senha de um equipamento; a pessoa recebe, o banco daqui não guarda).
     guardar: str | None = Field(default=None, max_length=4096)
@@ -244,22 +263,33 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
             conteudo = {"type": "button", "body": {"text": corpo.texto}, "action": {"buttons": [
                 {"type": "reply", "reply": {"id": b.id, "title": b.titulo}} for b in corpo.botoes]}}
         elif corpo.tipo == "formulario":
-            f = corpo.formulario
-            if f is None or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
-                raise ValueError("Formulário pede as opções e o texto (até 1024 caracteres).")
+            f, c = corpo.formulario, corpo.cadastro
+            if (f is None) == (c is None) or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
+                raise ValueError("Formulário pede as opções (ou o cadastro) e o texto (até 1024 caracteres).")
+            if f is not None:
+                nome, tela, cta, token = FLOW_ESCOLHA, "ESCOLHA", "Marcar", f.token
+                dados = {"titulo": f.titulo, "aviso": f.aviso or " ",
+                         # o título de cada opção vai até 30 caracteres; o que volta é o índice
+                         "opcoes": [{"id": str(i), "title": o[:30]} for i, o in enumerate(f.opcoes)],
+                         "marcados": [str(f.opcoes.index(m)) for m in f.marcados if m in f.opcoes]}
+            else:
+                nome, tela, cta, token = FLOW_CADASTRO, "CADASTRO", "Preencher", c.token
+                dados = {"nome": c.nome, "email": c.email, "celular": c.celular}
+                for campo, curto in _SISTEMAS.items():
+                    lista = [{"id": o.id, "title": o.titulo} for o in c.papeis.get(campo) or []]
+                    if not lista:
+                        raise ValueError(f"Faltam os papéis de {campo}.")
+                    ids = {o["id"] for o in lista}
+                    dados[f"papeis_{curto}"] = lista
+                    dados[curto] = c.escolhidos.get(campo) if c.escolhidos.get(campo) in ids else lista[0]["id"]
             cred = svc_envio.credencial_de_envio(db)
-            flow_id, erro = await graph.id_do_flow(token=cred.token or "", waba_id=cred.waba_id or "",
-                                                   nome=FLOW_ESCOLHA)
+            flow_id, erro = await graph.id_do_flow(token=cred.token or "", waba_id=cred.waba_id or "", nome=nome)
             if not flow_id:
                 return EnvioOut(id=0, ok=False, status="falhou", erro=erro)
             tipo = "interactive"
             conteudo = {"type": "flow", "body": {"text": corpo.texto}, "action": {"name": "flow", "parameters": {
-                "flow_message_version": "3", "flow_token": f.token, "flow_id": flow_id, "flow_cta": "Marcar",
-                "flow_action": "navigate", "flow_action_payload": {"screen": "ESCOLHA", "data": {
-                    "titulo": f.titulo, "aviso": f.aviso or " ",
-                    # o título de cada opção vai até 30 caracteres; o que volta é o índice
-                    "opcoes": [{"id": str(i), "title": o[:30]} for i, o in enumerate(f.opcoes)],
-                    "marcados": [str(f.opcoes.index(m)) for m in f.marcados if m in f.opcoes]}}}}}
+                "flow_message_version": "3", "flow_token": token, "flow_id": flow_id, "flow_cta": cta,
+                "flow_action": "navigate", "flow_action_payload": {"screen": tela, "data": dados}}}}
         else:
             if not corpo.arquivo_b64:
                 raise ValueError("Falta o arquivo.")

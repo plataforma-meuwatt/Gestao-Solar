@@ -51,6 +51,20 @@ PRESTADOR = {"member_role": "terceiro", "tipo_vinculo": "PJ"}
 PARTES = {"meuwatt": "bot_meuwatt", "meuplano": "bot_meuplano", "helper": "bot_helper"}
 SENHA_DO_GS = ("A senha de entrar no GS não vai por aqui: defina em oem-gs → Usuários → Senha. "
                "O bot já reconhece a pessoa pelo celular.")
+#: O FORMULÁRIO de cadastro (WhatsApp Flow `gs_cadastro_pessoa`): o papel em cada sistema, com o título que cabe na
+#: lista (até 20 letras). "Não cadastrar" primeiro. Admin do sistema do meuPlano fica fora: é da plataforma.
+OPCOES_DO_FORMULARIO = {
+    "meuplano": [("nao", "Não cadastrar"), ("prestador", "Prestador (terceiro)"), ("tecnico_campo", "Técnico de campo"),
+                 ("operador", "Operador"), ("leitura", "Só leitura"), ("admin_tenant", "Admin da empresa"),
+                 ("cliente", "Cliente")],
+    "meuwatt": [("nao", "Não cadastrar"), ("field_employee", "Técnico de campo"), ("operator", "Operador"),
+                ("system_admin", "Admin O&M"), ("plant_owner", "Dono")],
+    "gs": [("nao", "Não cadastrar"), ("tecnico", "Técnico"), ("gestor_empresa", "Gerente da O&M"),
+           ("cliente", "Dono de usina")],
+}
+NOMES_DOS_SISTEMAS = {"meuplano": "meuPlano", "meuwatt": "meuWatt", "gs": "Gestão Solar"}
+FORMULARIO_FALHOU = ("Não consegui abrir o formulário de cadastro. Me diga o nome, o e-mail, o celular e o papel em "
+                     "cada sistema (meuPlano, meuWatt, Gestão Solar).")
 SENHA_DO_MP = ("Para entrar no meuPlano (site ou app), a pessoa cria a senha em «Esqueci a senha», com o código que "
                "chega no e-mail dela.")
 
@@ -130,9 +144,9 @@ PROCURAR = {"type": "function", "function": {
     "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano, inclusive o "
                     "prestador que vai executar tarefas das OS lá). Contato de usina (eletricista, prestador, quem "
                     "atende ou socorre, telefone de alguém) NÃO é conta: é do meuPlano (`manutencao`). "
-                    "ANTES de cadastrar alguém: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo "
-                    "e-mail, pelo celular e pelo primeiro nome) e devolve o que já existe em cada sistema, com o "
-                    "id de cada conta. Use o que voltar para dizer à pessoa o que achou e perguntar o que falta."),
+                    "CONSULTA: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo e-mail, pelo celular "
+                    "e pelo nome) e devolve o que já existe em cada sistema, com o id de cada conta ('o Fulano tem "
+                    "conta?'). Para CADASTRAR não use esta: `formulario_de_cadastro` já procura."),
     "parameters": {"type": "object", "properties": {
         "nome": {"type": "string"}, "email": {"type": "string"}, "telefone": {"type": "string"}}}}}
 
@@ -482,4 +496,61 @@ async def _meuwatt(db, quem, conta, mw_: dict, p: dict) -> str:
     return f"✅ meuWatt: {qual} como {PAPEIS_MW[papel]}{nota}, {ligado}"
 
 
-FERRAMENTAS = {"procurar_pessoa": (procurar_pessoa, PROCURAR), "cadastrar_pessoa": (cadastrar_pessoa, CADASTRAR)}
+# --------------------------------------------------------------------------- formulário de cadastro
+FORMULARIO = {"type": "function", "function": {
+    "name": "formulario_de_cadastro",
+    "description": ("Para CADASTRAR alguém (conta de acesso, prestador): manda um FORMULÁRIO do WhatsApp com os campos "
+                    "(nome, e-mail, celular e o papel no meuPlano, no meuWatt e no Gestão Solar), já com o que a pessoa "
+                    "disse. Use no lugar de perguntar dado por dado. A resposta do formulário o sistema confere nos três "
+                    "sistemas e já propõe o cadastro com o Sim."),
+    "parameters": {"type": "object", "properties": {
+        "nome": {"type": "string"}, "email": {"type": "string"}, "telefone": {"type": "string"},
+        **{s: {"type": "string", "enum": [i for i, _ in ops], "description": f"o papel no {NOMES_DOS_SISTEMAS[s]}"}
+           for s, ops in OPCOES_DO_FORMULARIO.items()}}}}}
+
+
+async def formulario_de_cadastro(ctx, a: dict) -> dict:
+    if erro := _so_gerente(ctx.user):
+        return {"erro": erro}
+    ctx.cadastro = {"nome": a.get("nome"), "email": a.get("email"), "celular": a.get("telefone"),
+                    **{s: a[s] for s, ops in OPCOES_DO_FORMULARIO.items() if a.get(s) in dict(ops)}}
+    return {"ok": ("O formulário vai logo depois da sua resposta. Diga em UMA frase curta que é para preencher e tocar "
+                   "em Enviar; não peça os dados nem liste os campos.")}
+
+
+async def pelo_formulario(ctx, d: dict) -> str:
+    """O formulário de cadastro respondido: o SISTEMA procura nos três e, sem conta parecida, já propõe o cadastro (o
+    Sim confirma). Sem a IA no meio (dono, 29/10/2026: ela perguntava de novo o que o formulário já dizia)."""
+    papel = {s: (d.get(s) if d.get(s) in dict(ops) and d.get(s) != "nao" else None)
+             for s, ops in OPCOES_DO_FORMULARIO.items()}
+    if not any(papel.values()):
+        return "Nada a cadastrar: no formulário, os três sistemas ficaram em «Não cadastrar»."
+    ctx.ferramentas.append("procurar_pessoa")
+    achado = await procurar_pessoa(ctx, {"nome": d.get("nome"), "email": d.get("email"), "telefone": d.get("celular")})
+    if "erro" in achado:
+        return f"❌ {achado['erro']}"
+    existe = []
+    for s, chave in (("gs", "gestao_solar"), ("meuplano", "meuplano"), ("meuwatt", "meuwatt")):
+        if not papel[s]:
+            continue
+        lido = achado[chave]
+        if "erro" in lido:
+            return f"❌ {NOMES_DOS_SISTEMAS[s]}: {lido['erro']}."
+        contas = lido.get("na_sua_empresa") if s == "gs" else lido.get("contas")
+        existe += [f"{NOMES_DOS_SISTEMAS[s]}: {c.get('nome')} ({c.get('email') or 'sem e-mail'}, conta {c['conta']})"
+                   for c in contas or []]
+        existe += [f"{NOMES_DOS_SISTEMAS[s]}: {x}" for x in lido.get("fora_da_sua_empresa") or []]
+    if existe:
+        return (f"Antes de cadastrar {d.get('nome')}, já existe parecido:\n" + "\n".join(f"• {x}" for x in existe)
+                + "\nÉ a mesma pessoa? Diga qual conta aproveitar ou «criar nova».")
+    ctx.ferramentas.append("cadastrar_pessoa")
+    r = await cadastrar_pessoa(ctx, {k: v for k, v in {
+        "nome": d.get("nome"), "email": d.get("email"), "telefone": d.get("celular"), "gs_perfil": papel["gs"],
+        "mp_papel": papel["meuplano"], "mw_papel": papel["meuwatt"]}.items() if v})
+    if "erro" in r:
+        return f"❌ Não deu para propor o cadastro: {r['erro']}"
+    return f"Conferi no Gestão Solar, no meuWatt e no meuPlano: não há conta de {d.get('nome')}. Confira e toque em Sim."
+
+
+FERRAMENTAS = {"procurar_pessoa": (procurar_pessoa, PROCURAR), "cadastrar_pessoa": (cadastrar_pessoa, CADASTRAR),
+               "formulario_de_cadastro": (formulario_de_cadastro, FORMULARIO)}
