@@ -222,6 +222,24 @@ async def _ler(token: str, caminho: str, params: dict[str, Any]) -> tuple[list[d
     return (itens if isinstance(itens, list) else []), None
 
 
+#: O id de cada formulário (WhatsApp Flow) publicado, pelo nome. ponytail: em memória; um formulário novo com o mesmo
+#: nome só vale depois de reiniciar o gateway.
+_FLOWS: dict[tuple[str, str], str] = {}
+
+
+async def id_do_flow(*, token: str, waba_id: str, nome: str) -> tuple[str | None, str | None]:
+    """O formulário PUBLICADO com este nome, criado uma vez na conta (CLAUDE.md da raiz, "Formulário de marcar")."""
+    if (waba_id, nome) not in _FLOWS:
+        itens, erro = await _ler(token, f"{waba_id}/flows", {"fields": "id,name,status", "limit": 100})
+        if erro:
+            return None, erro
+        achado = next((f["id"] for f in itens if f.get("name") == nome and f.get("status") == "PUBLISHED"), None)
+        if achado is None:
+            return None, f"O formulário «{nome}» não está publicado na conta do WhatsApp."
+        _FLOWS[(waba_id, nome)] = achado
+    return _FLOWS[(waba_id, nome)], None
+
+
 async def listar_numeros(*, token: str, waba_id: str) -> tuple[list[dict], str | None]:
     """Os números da conta, com o id que vai no campo `Phone Number ID`.
 

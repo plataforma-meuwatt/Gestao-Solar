@@ -124,7 +124,7 @@ class MeuPlanoClient:
         r = await c.request(
             metodo,
             f"{self.base_url}{path}",
-            headers={"Authorization": f"Bearer {jwt}"},
+            headers={"Authorization": f"Bearer {jwt}", **kwargs.pop("headers", {})},
             timeout=timeout or self._timeout,
             **kwargs,
         )
@@ -724,6 +724,8 @@ class MeuPlanoClient:
             "/api/v1/meuacesso/assistant/chat",
             token=token,
             json={"messages": mensagens},
+            # as opções que o turno oferecer para marcar voltam em `escolha` (o bot manda o formulário)
+            headers={"X-Formulario": "1"},
         )
         return r.json()["run_id"]
 

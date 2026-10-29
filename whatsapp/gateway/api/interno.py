@@ -192,18 +192,33 @@ class BotaoIn(BaseModel):
     titulo: str = Field(min_length=1, max_length=20)
 
 
+class FormularioIn(BaseModel):
+    """Opções para MARCAR (caixas de seleção), no formulário publicado `gs_escolha_multipla` (WhatsApp Flow, tela
+    ESCOLHA). O que a pessoa marca volta como `midia.formulario` = `{escolhidos: [índices], flow_token}`."""
+    token: str = Field(min_length=8, max_length=64)
+    titulo: str = Field(min_length=1, max_length=300)
+    opcoes: list[str] = Field(min_length=1, max_length=20)
+    marcados: list[str] = Field(default_factory=list)
+    aviso: str = Field(default="", max_length=300)
+
+
+#: O formulário de marcar, criado e publicado uma vez na conta da Meta (29/10/2026).
+FLOW_ESCOLHA = "gs_escolha_multipla"
+
+
 class ConteudoIn(BaseModel):
     """A RESPOSTA do assistente: texto, um arquivo (documento/imagem) em base64, ou um texto com
     até 3 BOTÕES de resposta ("Sim"/"Não" para confirmar uma ação — o toque volta como mensagem
     com o título do botão)."""
     telefone: str
-    tipo: str = Field(pattern="^(text|document|image|botoes)$")
+    tipo: str = Field(pattern="^(text|document|image|botoes|formulario)$")
     texto: str | None = Field(default=None, max_length=4096)
     arquivo_b64: str | None = None
     filename: str | None = None
     mime: str | None = None
     origem: str | None = None
     botoes: list[BotaoIn] | None = Field(default=None, max_length=3)
+    formulario: FormularioIn | None = None
     #: O que fica GUARDADO aqui no lugar do `texto`, que vai inteiro à Meta: a resposta sem as senhas que ela
     #: revela (o bot pede ao meuPlano a senha de um equipamento; a pessoa recebe, o banco daqui não guarda).
     guardar: str | None = Field(default=None, max_length=4096)
@@ -228,6 +243,23 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
             tipo = "interactive"
             conteudo = {"type": "button", "body": {"text": corpo.texto}, "action": {"buttons": [
                 {"type": "reply", "reply": {"id": b.id, "title": b.titulo}} for b in corpo.botoes]}}
+        elif corpo.tipo == "formulario":
+            f = corpo.formulario
+            if f is None or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
+                raise ValueError("Formulário pede as opções e o texto (até 1024 caracteres).")
+            cred = svc_envio.credencial_de_envio(db)
+            flow_id, erro = await graph.id_do_flow(token=cred.token or "", waba_id=cred.waba_id or "",
+                                                   nome=FLOW_ESCOLHA)
+            if not flow_id:
+                return EnvioOut(id=0, ok=False, status="falhou", erro=erro)
+            tipo = "interactive"
+            conteudo = {"type": "flow", "body": {"text": corpo.texto}, "action": {"name": "flow", "parameters": {
+                "flow_message_version": "3", "flow_token": f.token, "flow_id": flow_id, "flow_cta": "Marcar",
+                "flow_action": "navigate", "flow_action_payload": {"screen": "ESCOLHA", "data": {
+                    "titulo": f.titulo, "aviso": f.aviso or " ",
+                    # o título de cada opção vai até 30 caracteres; o que volta é o índice
+                    "opcoes": [{"id": str(i), "title": o[:30]} for i, o in enumerate(f.opcoes)],
+                    "marcados": [str(f.opcoes.index(m)) for m in f.marcados if m in f.opcoes]}}}}}
         else:
             if not corpo.arquivo_b64:
                 raise ValueError("Falta o arquivo.")
@@ -245,7 +277,7 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
                 conteudo["caption"] = corpo.texto[:1024]
         r = await svc_envio.enviar_conteudo(
             db, telefone=corpo.telefone, tipo=tipo, conteudo=conteudo,
-            texto=(corpo.guardar or corpo.texto) if corpo.tipo in ("text", "botoes")
+            texto=(corpo.guardar or corpo.texto) if corpo.tipo in ("text", "botoes", "formulario")
             else (corpo.filename or corpo.guardar or corpo.texto),
             origem=corpo.origem)
     except svc_envio.EnvioIndisponivel as exc:

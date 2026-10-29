@@ -153,9 +153,22 @@ def _local(m: dict[str, Any]) -> dict[str, Any] | None:
     return {"lat": lat, "lng": lng, "nome": corpo.get("name"), "endereco": corpo.get("address")}
 
 
+def _formulario(m: dict[str, Any]) -> dict[str, Any] | None:
+    """O que a pessoa marcou num formulário (WhatsApp Flow): `interactive.nfm_reply.response_json`, texto com JSON."""
+    import json
+    corpo = (m.get("interactive") or {}).get("nfm_reply")
+    try:
+        r = json.loads(corpo["response_json"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    return {"formulario": r} if isinstance(r, dict) else None
+
+
 def _midia(m: dict[str, Any], tipo: str) -> dict[str, Any] | None:
     if tipo == "location":
         return _local(m)
+    if tipo == "interactive":
+        return _formulario(m)
     corpo = m.get(tipo) if tipo in TIPOS_COM_ARQUIVO else None
     if not isinstance(corpo, dict) or not corpo.get("id"):
         return None

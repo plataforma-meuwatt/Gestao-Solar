@@ -40,6 +40,7 @@ from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
 from app.services import assistente_local as local
+from app.services import assistente_formulario as formulario
 from app.services import assistente_helper as helper
 
 log = logging.getLogger("gs.assistente")
@@ -145,6 +146,10 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     r = await _perguntar_ao_meuplano(mp, mensagens)
     ctx.segredos.extend(str(v) for v in r.pop("segredos", None) or [] if v)
+    if formulario.valida(r.get("escolha")):
+        ctx.escolha = r.pop("escolha")
+        r["formulario"] = formulario.PARA_A_IA
+    r.pop("escolha", None)
     return _proposta_do_meuplano(ctx, r, mensagens) if r.get("type") == "proposal" else r
 
 
@@ -158,7 +163,8 @@ async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
             if r.get("type") == "proposal":
                 return r
             # as senhas que o turno revelou (o meuPlano novo as entrega): somem daqui pelo VALOR
-            return {"texto": r.get("text") or "", **({"segredos": r["segredos"]} if "segredos" in r else {})}
+            return {"texto": r.get("text") or "", **({"segredos": r["segredos"]} if "segredos" in r else {}),
+                    **({"escolha": r["escolha"]} if r.get("escolha") else {})}
         if r.get("status") == "ERROR":
             return {"erro": r.get("error") or "O meuPlano não conseguiu responder."}
     return {"erro": "O meuPlano demorou demais para responder."}
@@ -1447,8 +1453,8 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
-        aviso_do_botao = (helper.resposta_ao_botao(user.id, evento.get("botao"))
-                          if evento.get("tipo") == "interactive" else None)
+        aviso_do_botao = (helper.resposta_ao_botao(user.id, evento.get("botao"))       # o formulário não é botão
+                          if evento.get("tipo") == "interactive" and not formulario.e_resposta(evento) else None)
         if aviso_do_botao is not None:
             # O Sim/Não que não é do resumo de agora (antigo, vencido, ou a ação se perdeu num
             # deploy): não confirma, não cancela e não vai à IA (avaliações 13 e 14).
@@ -1474,6 +1480,13 @@ async def _atender(evento: dict) -> None:
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
+        if not texto and formulario.e_resposta(evento):
+            texto = seguro = pergunta = formulario.texto_da_resposta(telefone, evento)   # o que marcou, em palavras
+            if texto is None:
+                await _texto(telefone, formulario.VENCIDO + nota)
+                _registrar(db, telefone, user, "respondeu", pergunta="[formulário]", resposta=formulario.VENCIDO,
+                           inicio=inicio, em=enviada)
+                return
         if not texto and fotos.e_foto(evento):
             if not await fotos.e_a_ultima(telefone, evento.get("id")):
                 _registrar(db, telefone, user, "respondeu", pergunta="[📷 foto]", resposta="[junto com as fotos seguintes]",
@@ -1578,6 +1591,9 @@ async def _atender(evento: dict) -> None:
             saiu = await _botoes(telefone, bloco_sim, ctx.proposta.codigo, valores) and saiu
         else:
             saiu = await _texto(telefone, para_whatsapp(resposta), valores, como=resposta_log if omitir else None)
+            if ctx is not None and ctx.escolha is not None and ctx.proposta is None \
+                    and not await formulario.mandar(telefone, ctx.escolha):
+                await _texto(telefone, formulario.em_texto(ctx.escolha), valores)
         respondeu = True
         _resumo_saiu(db, user, saiu)
         if (executada is not None and executada.conversa is not None and resposta.startswith("✅")

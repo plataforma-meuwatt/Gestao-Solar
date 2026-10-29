@@ -193,8 +193,9 @@ async def enviar_conteudo(
     *, telefone: str, tipo: str, texto: str | None = None, arquivo: bytes | None = None,
     filename: str | None = None, mime: str | None = None, origem: str = "assistente",
     botoes: list[dict[str, str]] | None = None, guardar: str | None = None,
+    formulario: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """`tipo`: text | document | image | botoes. Arquivo vai em base64 para o gateway subir na
+    """`tipo`: text | document | image | botoes | formulario (`{token, titulo, opcoes, marcados, aviso}`). Arquivo vai em base64 para o gateway subir na
     Meta; `botoes` (até 3, `{id, titulo}`) vão com o `texto` numa mensagem interativa. `guardar`: o que
     o gateway guarda no lugar do `texto` (a resposta sem as senhas; a Meta recebe a inteira)."""
     import base64
@@ -202,6 +203,7 @@ async def enviar_conteudo(
         "telefone": telefone, "tipo": tipo, "texto": texto, "filename": filename, "mime": mime,
         "arquivo_b64": base64.b64encode(arquivo).decode() if arquivo else None, "origem": origem,
         **({"botoes": botoes} if botoes else {}), **({"guardar": guardar} if guardar else {}),
+        **({"formulario": formulario} if formulario else {}),
     })
 
 

@@ -68,6 +68,8 @@ class Contexto:
     #: mandou gravar (os campos da proposta de acesso, `digitados`): somem do log, do gateway e do que foi guardado antes
     segredos: list = field(default_factory=list)
     digitados: list = field(default_factory=list)
+    #: as opções que o meuPlano ofereceu para MARCAR (`escolha` do run): vão num formulário depois da resposta
+    escolha: dict | None = None
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

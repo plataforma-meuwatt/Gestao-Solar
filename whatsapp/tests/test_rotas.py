@@ -419,6 +419,51 @@ def test_resposta_com_botoes_sai_como_interativa_da_meta(cliente, credencial, mo
     assert len(enviados) == 1
 
 
+
+def test_formulario_de_marcar_sai_como_flow_da_meta(cliente, credencial, monkeypatch, db):
+    """Dono (29/10/2026): "não tem como ele enviar a lista e eu clico só nas que quero?" — as opções vão no formulário
+    publicado (`gs_escolha_multipla`), com as já marcadas pré-marcadas; o que volta é o índice."""
+    from gateway.meta import graph
+
+    enviados, pedidos = [], []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid="wamid.F1")
+
+    async def _id(**k):
+        pedidos.append(k["nome"])
+        return "1487572283291378", None
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    monkeypatch.setattr(graph, "id_do_flow", _id)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "Marque os centros de custo",
+        "formulario": {"token": "tok-123456", "titulo": "Centros de custo do #1736", "aviso": "Nenhum = todos.",
+                       "opcoes": ["Roçagem", "Lavagem", "Receitas de Serviços Eventuais (Avulsos)"],
+                       "marcados": ["Lavagem", "Não existe"]}})
+    assert r.status_code == 200 and r.json()["ok"] and pedidos == ["gs_escolha_multipla"]
+    c = enviados[0]["conteudo"]
+    assert enviados[0]["tipo"] == "interactive" and c["type"] == "flow"
+    p = c["action"]["parameters"]
+    assert (p["flow_id"], p["flow_token"], p["flow_action"]) == ("1487572283291378", "tok-123456", "navigate")
+    assert p["flow_action_payload"] == {"screen": "ESCOLHA", "data": {
+        "titulo": "Centros de custo do #1736", "aviso": "Nenhum = todos.",
+        "opcoes": [{"id": "0", "title": "Roçagem"}, {"id": "1", "title": "Lavagem"},
+                   {"id": "2", "title": "Receitas de Serviços Eventuais"}], "marcados": ["1"]}}
+    assert db.query(Mensagem).filter_by(wamid="wamid.F1").one().texto == "Marque os centros de custo"
+
+    async def _sem(**k):
+        return None, "O formulário «gs_escolha_multipla» não está publicado na conta do WhatsApp."
+
+    monkeypatch.setattr(graph, "id_do_flow", _sem)            # sem o formulário na conta: ok falso, nada sai
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
+        "formulario": {"token": "tok-123456", "titulo": "t", "opcoes": ["a"]}})
+    assert r.status_code == 200 and not r.json()["ok"] and "não está publicado" in r.json()["erro"]
+    assert len(enviados) == 1
+
 def test_o_toque_no_botao_chega_ao_bot_com_o_id_do_resumo(cliente, credencial, db, monkeypatch):
     """O título ("Sim") não diz de QUAL resumo era o botão; o id diz — e vai guardado, para a
     varredura também repassá-lo (avaliação 13: o Sim de um resumo antigo confirmava o de agora)."""

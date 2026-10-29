@@ -126,6 +126,20 @@ def test_localizacao_vem_com_os_numeros_e_a_torta_fica_sem():
     assert torta.midia is None and fora.midia is None
 
 
+
+def test_formulario_respondido_vem_com_o_que_foi_marcado():
+    corpo = _entrega({"messages": [
+        {"from": "5516999998888", "id": "wamid.F1", "timestamp": "1789000000", "type": "interactive",
+         "interactive": {"type": "nfm_reply", "nfm_reply": {"name": "flow", "body": "Sent",
+                         "response_json": '{"escolhidos": ["0", "2"], "flow_token": "tok-123456"}'}}},
+        {"from": "5516999998888", "id": "wamid.F2", "timestamp": "1789000001", "type": "interactive",
+         "interactive": {"type": "nfm_reply", "nfm_reply": {"response_json": "não é json"}}},
+    ]})
+    bom, torto = payload.ler(corpo).mensagens
+    assert bom.texto is None and bom.botao is None
+    assert bom.midia == {"formulario": {"escolhidos": ["0", "2"], "flow_token": "tok-123456"}}
+    assert torto.midia is None
+
 def test_resposta_de_botao_vira_texto():
     corpo = _entrega(
         {
