@@ -153,7 +153,7 @@ class Pendente:
     avisos: list[str] = field(default_factory=list)
     #: A parte do bot que a ação usa (`bot_helper`, `bot_meuplano`): conferida de novo na
     #: hora da senha — o gerente pode desligá-la no meio.
-    parte: str = "bot_helper"
+    parte: str | None = "bot_helper"
     #: Quando o resumo (o bloco 🔒) saiu para a pessoa — relógio daqui e hora UTC. `None` =
     #: ainda não saiu: senha nenhuma vale antes (`mostrada`).
     mostrada_em: tuple[float, datetime] | None = None
@@ -795,7 +795,7 @@ def _lembrar(guardadas: OrderedDict, chave: tuple[int, str], valor: str) -> None
 async def _rodar(p: Pendente, db, user, telefone: str) -> str:
     """Executa a ação confirmada — quem chama já a tirou de PENDENTES: uma vez só — e guarda o
     desfecho pelo código do resumo."""
-    if p.parte not in user.bot_ativo:
+    if p.parte and p.parte not in user.bot_ativo:      # sem parte: a ação confere quem pode (o cadastro)
         return PARTE_DESLIGADA
     chave = (user.id, p.codigo)
     p.desfecho = INCERTA.format(resumo=p.resumo)
@@ -844,7 +844,7 @@ def espera_sim(user_id: int) -> bool:
     return p is not None and p.confirmacao == "sim"
 
 
-def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str = "bot_helper",
+def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str | None = "bot_helper",
            confirmacao: str = "senha", conversa: list[dict] | None = None, feitos: tuple[str, ...] = (),
            acao: tuple[str, dict] | None = None) -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.

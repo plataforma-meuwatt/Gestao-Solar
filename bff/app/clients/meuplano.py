@@ -187,6 +187,31 @@ class MeuPlanoClient:
         r = await self._req("PATCH", f"/api/v1/meuacesso/admin/users/{int(user_id)}", json=dados)
         return r.json()
 
+    # ------------------------------------------- cadastro de pessoa pelo bot (escrita)
+    # Com o token de QUEM PEDE (o meuPlano confere "Gerenciar usuários" e a empresa) ou com a
+    # sessão da pessoa cadastrada, só para emitir o token dela.
+
+    async def criar_usuario_admin(self, dados: dict[str, Any]) -> dict[str, Any]:
+        return (await self._req("POST", "/api/v1/meuacesso/admin/users", json=dados)).json()
+
+    async def provisionar_identidade(self, user_id: int, assercao: str) -> dict[str, Any]:
+        """Liga a conta do Gestão Solar (a da asserção) à pessoa `user_id` daqui."""
+        return (await self._req("POST", "/api/v1/meuacesso/auth/external/provision",
+                                json={"user_id": int(user_id), "assertion": assercao})).json()
+
+    async def entrar_pelo_gs(self, assercao: str) -> str:
+        c = sessao(self.base_url, self._timeout, follow_redirects=True)
+        r = await c.post(f"{self.base_url}/api/v1/meuacesso/auth/external/gestao-solar", json={"assertion": assercao})
+        r.raise_for_status()
+        return r.json()["token"]
+
+    async def emitir_token(self, sessao_da_pessoa: str, nome: str) -> dict[str, Any]:
+        return (await self._req("POST", "/api/v1/meuacesso/auth/tokens", token=sessao_da_pessoa,
+                                json={"nome": nome})).json()
+
+    async def revogar_token(self, sessao_da_pessoa: str, token_id: int) -> None:
+        await self._req("DELETE", f"/api/v1/meuacesso/auth/tokens/{int(token_id)}", token=sessao_da_pessoa)
+
     async def procurar_usuario_por_email(self, email: str) -> dict[str, Any] | None:
         """Busca exata. Este sistema tem o endpoint de lookup; o meuWatt não."""
         try:

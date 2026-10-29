@@ -154,6 +154,54 @@ class MeuWattClient:
         filtra do lado de cá."""
         return await self._get("/admin/users", only_active=apenas_ativos)
 
+    # ------------------------------------------- cadastro de pessoa pelo bot (escrita)
+    # Sempre com o token de QUEM PEDE (o meuWatt aplica o papel dele: admin da plataforma ou
+    # admin O&M da empresa) ou com a sessão da pessoa cadastrada, só para emitir o token dela.
+
+    async def _enviar(self, metodo: str, path: str, token: str | None = None, **kwargs: Any) -> Any:
+        jwt = token or await self._token_servico()
+        c = sessao(self.base_url, self._timeout)
+        r = await c.request(metodo, f"{self.base_url}{path}", headers={"Authorization": f"Bearer {jwt}"},
+                            timeout=self._timeout, **kwargs)
+        r.raise_for_status()
+        return r.json() if r.content else None
+
+    async def funcionarios(self, empresa_id: int) -> list[dict[str, Any]]:
+        return await self._get(f"/enterprises/{int(empresa_id)}/employees")
+
+    async def provisionar(self, subject: str, email: str, nome: str, vincular_existente: bool) -> dict[str, Any]:
+        """Liga a conta `subject` do Gestão Solar a uma conta daqui: cria INERTE (entra só pelo GS) ou, com
+        `vincular_existente`, a que já tem este e-mail. Exige admin da plataforma ou admin O&M."""
+        return await self._enviar("POST", "/auth/external/provision", json={
+            "subject": subject, "email": email, "name": nome, "vincular_existente": vincular_existente})
+
+    async def por_na_empresa(self, empresa_id: int, user_id: int, papel: str) -> dict[str, Any]:
+        return await self._enviar("POST", f"/enterprises/{int(empresa_id)}/employees",
+                                  json={"user_id": int(user_id), "role": papel})
+
+    async def conceder_usinas(self, empresa_id: int, funcionario_id: int, plant_ids: list[int]) -> dict[str, Any]:
+        """Substitui as usinas do funcionário nesta O&M (técnico, operador e dono só veem por concessão)."""
+        return await self._enviar("PUT", f"/enterprises/{int(empresa_id)}/employees/{int(funcionario_id)}/plants",
+                                  json={"plant_ids": plant_ids})
+
+    async def entrar_pelo_gs(self, assercao: str) -> str:
+        """A sessão da pessoa, pela asserção do Gestão Solar (a conta precisa estar provisionada)."""
+        c = sessao(self.base_url, self._timeout)
+        r = await c.post(f"{self.base_url}/auth/gestao-solar", json={"assertion": assercao})
+        r.raise_for_status()
+        if not (sessao_da_pessoa := r.json().get("access_token")):
+            raise MeuWattError("a conta tem o autenticador ligado: o token tem de ser gerado no próprio meuWatt")
+        return sessao_da_pessoa
+
+    async def emitir_token(self, sessao_da_pessoa: str, nome: str) -> dict[str, Any]:
+        return await self._enviar("POST", "/auth/tokens", token=sessao_da_pessoa, json={"name": nome})
+
+    async def revogar_token(self, sessao_da_pessoa: str, token_id: int) -> None:
+        await self._enviar("DELETE", f"/auth/tokens/{int(token_id)}", token=sessao_da_pessoa)
+
+    async def sair(self, sessao_da_pessoa: str) -> None:
+        await self._enviar("POST", "/auth/logout", token=sessao_da_pessoa)
+
     async def plantas_do_usuario(self, user_id: str | int) -> list[str]:
         """Os slugs das plantas que aquele usuário enxerga.
 

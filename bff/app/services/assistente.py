@@ -35,8 +35,9 @@ from app.core.datas import hora_brt
 from app.core.db import SessionLocal
 from app.core.telefone import normalizar
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
-from app.models.user import User
+from app.models.user import Perfil, User
 from app.services import assistente_geracao as ger
+from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
 from app.services import assistente_helper as helper
 
@@ -285,7 +286,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
 
 
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
-               "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA), **helper.FERRAMENTAS}
+               "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -795,6 +796,8 @@ def permitidas(user) -> list[str]:
         nomes += ["manutencao", "anexar_fotos"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
+    if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
+        nomes += list(cad.FERRAMENTAS)
     return nomes
 
 
@@ -831,6 +834,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
   anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa); sem saber onde,
   pergunte em qual tarefa ou OS. Ela confirma com Sim.
+- Cadastrar alguém (conta no GS, no meuWatt, no meuPlano, tokens): PRIMEIRO `procurar_pessoa`; diga, sistema por
+  sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil em cada um, e-mail, celular). Só
+  depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
 - Pedido de vários passos no meuPlano ("crie a OS e conclua a OS 1638"): mande o pedido INTEIRO numa chamada de
   `manutencao`; o meuPlano propõe um passo por vez e, a cada SIM, o sistema segue para o próximo.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
