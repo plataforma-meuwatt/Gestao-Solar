@@ -872,6 +872,8 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
   meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
   tarefas das OS no meuPlano (papel `prestador`).
+- Como a equipe CHAMA alguém ("o Welinton é o Gordo", "guarda o apelido Gordo pro Welinton") → `manutencao`: o
+  meuPlano guarda o apelido para achar a pessoa pelo nome. Não é o login do GS, nem cadastro.
 - Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): PRIMEIRO
   `procurar_pessoa`; diga, sistema por sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil
   em cada um, e-mail, celular). Só depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
