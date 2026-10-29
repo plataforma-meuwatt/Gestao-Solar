@@ -70,17 +70,24 @@ def _digitos(t: str | None) -> str:
 
 
 def _casa(conta: dict, nome: str, email: str, telefone: str) -> bool:
-    """Mesmo e-mail, mesmo celular (os 8 últimos dígitos: o DDD e o 9 mudam de um cadastro para outro)
-    ou o primeiro nome no nome ou no começo do e-mail."""
+    """Mesmo e-mail, mesmo celular (os 8 últimos dígitos: o DDD e o 9 mudam de um cadastro para outro) ou o NOME:
+    um nome só casa com o PRIMEIRO nome da conta (ou o começo do e-mail); nome completo, com todas as palavras.
+    ⛔ 29/10/2026: "Thiago Marquezini" (sem conta em lugar nenhum) casava com o Welinton THIAGO Jaques pelo nome do
+    meio, e o bot perguntava se era a mesma pessoa."""
     e = (conta.get("email") or "").lower()
     if email and e == email:
         return True
     d = _digitos(telefone)[-8:]
     if len(d) == 8 and _digitos(conta.get("telefone"))[-8:] == d:
         return True
-    primeiro = (_falado(nome).split() or [""])[0]
-    return len(primeiro) >= 3 and (primeiro in _falado(conta.get("nome")).split()
-                                   or _falado(e.split("@")[0]).startswith(primeiro))
+    palavras = _falado(nome).split()
+    if not palavras or len(palavras[0]) < 3:
+        return False
+    da_conta = _falado(conta.get("nome")).split()
+    do_email = set(re.split(r"[^a-z0-9]+", _falado(e.split("@")[0])))
+    if len(palavras) == 1:
+        return palavras[0] in da_conta[:1] or palavras[0] in do_email
+    return all(p in da_conta or p in do_email for p in palavras)
 
 
 def _falado(t: str | None) -> str:

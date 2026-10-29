@@ -343,3 +343,8 @@ def test_procura_pelo_nome_como_se_fala():
     assert cad._casa(thiago, "tiago marquezini", "", "")
     assert cad._casa({"nome": "Matheus", "email": "m@x.com"}, "Mateus", "", "")
     assert not cad._casa(thiago, "Tiburcio", "", "")
+    # nome do meio não é a pessoa: "Thiago Marquezini" não é o Welinton Thiago Jaques, nem "Thiago" sozinho
+    welinton = {"nome": "Welinton Thiago Jaques", "email": "gordo@splendoroem.com.br"}
+    assert not cad._casa(welinton, "Thiago Marquezini", "", "") and not cad._casa(welinton, "Thiago", "", "")
+    assert cad._casa(welinton, "Welinton", "", "") and cad._casa(welinton, "gordo", "", "")
+    assert cad._casa(thiago, "Thiago Marquezini", "", "") and not cad._casa(thiago, "Thiago Lopes", "", "")
