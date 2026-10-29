@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
+from urllib.parse import quote, unquote
 
 import httpx
 from pydantic import BaseModel
@@ -572,6 +573,27 @@ class MeuWattClient:
         )
         r.raise_for_status()
         return r.content
+
+    async def energia_diaria(self, slug: str, inicio: date, fim: date) -> tuple[bytes, dict[str, str]]:
+        """O Excel de energia diária por inversor (abas por skid + Geral + Validação) e o veredito
+        da validação contra a plataforma do inversor, dos cabeçalhos `X-Validacao*` da mw-api
+        (`exports/energia_diaria.py`): `validacao` ok | revisar | sem_plataforma | indisponivel,
+        `erro_pct` e `mensagem`. Quando a usina tem a Huawei, a mw-api a consulta antes de
+        responder: 120 s de leitura, como `export_raw`."""
+        jwt = await self._token_servico()
+        c = sessao(self.base_url, self._timeout)
+        r = await c.get(
+            f"{self.base_url}/plants/{quote(slug, safe='')}/exports/energia-diaria",
+            headers={"Authorization": f"Bearer {jwt}"},
+            params={"inicio": inicio.isoformat(), "fim": fim.isoformat()},
+            timeout=httpx.Timeout(120.0, connect=5.0),
+        )
+        r.raise_for_status()
+        return r.content, {
+            "validacao": r.headers.get("X-Validacao", "indisponivel"),
+            "erro_pct": r.headers.get("X-Validacao-Erro-Pct", ""),
+            "mensagem": unquote(r.headers.get("X-Validacao-Mensagem", "")),
+        }
 
     # ------------------------------------------------- exportação de dados brutos
 

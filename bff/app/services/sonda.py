@@ -209,6 +209,12 @@ MEUWATT: list[Rota] = [
              "limites.max_celulas",
              "retencao.snapshots_desde",
          )),
+    Rota("mw.energia_diaria", "GET", "/plants/{slug}/exports/energia-diaria",
+         "O Excel de energia diária por inversor que o bot manda no WhatsApp", essencial=False,
+         sonda=False,
+         nao_sondada_porque="Cada chamada consulta a Huawei (cota por conta, compartilhada "
+                            "com a correção mensal) e gasta uma das 10 vagas por minuto do "
+                            "meuWatt. O bot exercita sob demanda, com o pedido real."),
     Rota("mw.export_raw", "POST", "/plants/{slug}/exports/raw",
          "O .xlsx com os dados brutos da usina, na aba Baixar dados", essencial=False,
          sonda=False,

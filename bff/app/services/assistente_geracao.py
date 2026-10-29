@@ -447,6 +447,28 @@ async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
     return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro")}
 
 
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+async def excel_energia_diaria(ctx: Contexto, a: dict) -> dict:
+    """O Excel do meuWatt (dia × inversor, aba por skid, Geral e Validação) como ARQUIVO no chat,
+    com o veredito da validação contra a plataforma do inversor — o mesmo que a aba Relatório mostra."""
+    from app.clients import whatsapp
+    u = _usina(ctx, a.get("usina"))
+    ini, fim = _periodo(a.get("inicio") or hoje().replace(day=1).isoformat(), a.get("fim") or hoje().isoformat())
+    raw, val = await ctx.mw.energia_diaria(u["slug"], ini, fim)
+    nome = f"energia-diaria-{u['slug']}-{ini}-{fim}.xlsx"
+    r = await whatsapp.enviar_conteudo(telefone=ctx.telefone, tipo="document", arquivo=raw, filename=nome,
+                                       mime=_XLSX, texto=nome)
+    ok = bool(r and r.get("ok"))
+    if ok:
+        ctx.enviados.append(nome)
+    return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro"),
+            "validacao": val["validacao"], "mensagem_da_validacao": val["mensagem"],
+            "nota": "Repasse a mensagem_da_validacao. Se validacao = revisar, diga com destaque que os dados "
+                    "PRECISAM SER REVISADOS antes de usar (diferença acima de 0,5% com a plataforma do inversor)."}
+
+
 async def resumo_executivo(ctx: Contexto, a: dict) -> dict:
     u = _usina(ctx, a.get("usina"))
     ex = await ctx.mw.resumo_executivo(u["slug"], a["mes"])
@@ -543,6 +565,9 @@ FERRAMENTAS = {
     "relatorio_pdf": (relatorio_pdf, _f("relatorio_pdf", "Manda como ARQUIVO o PDF do relatório MENSAL do monitoramento "
         "(geracao | paradas | resumo executivo).", {"usina": _USINA, "mes": _MES, "tipo": {"type": "string",
         "enum": ["geracao", "paradas", "resumo"]}}, ["mes"])),
+    "excel_energia_diaria": (excel_energia_diaria, _f("excel_energia_diaria", "Manda como ARQUIVO o Excel da "
+        "energia por DIA e por INVERSOR (uma aba por skid, aba Geral e aba Validação que confere com a plataforma do "
+        "inversor). Sem datas = mês atual até hoje.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "resumo_executivo": (resumo_executivo, _f("resumo_executivo", "Texto do resumo executivo do mês (veredito, "
         "destaques, perdas, ações e a observação da O&M).", {"usina": _USINA, "mes": _MES}, ["mes"])),
     "grafico": (grafico, _f("grafico", "Desenha e manda como IMAGEM: geracao_diaria, inversores, pr_diario, irradiacao "
