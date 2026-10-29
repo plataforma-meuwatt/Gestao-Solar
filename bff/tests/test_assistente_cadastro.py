@@ -282,3 +282,12 @@ async def test_conta_do_gs_ja_ligada_a_outra_do_meuwatt_nao_vira_a_que_se_pediu(
     desfecho = await _sim(cenario)
     assert "❌ meuWatt: a conta do GS já estava ligada a outra conta do meuWatt (#29); nada mudou lá" in desfecho
     assert not [g for g in cenario.mw.gravou if g[0] in ("na_empresa", "entrar")]
+
+
+def test_senha_de_cadeado_vai_ao_meuplano_e_a_ia_nao_recusa_sozinha(db, cenario):
+    """29/10/2026: "Qual a senha do cadeado de tiete" ouvia "não passo credencial de acesso físico" sem o bot perguntar
+    ao meuPlano (0 ferramentas, 3 de 3 na IA real). A frase "nunca escreva uma senha", escrita para a senha de atuação
+    e a de login, era lida como proibição de qualquer senha. Quem decide é o meuPlano, pelo nível da pessoa."""
+    s = assistente._sistema(cenario.ctx)
+    assert "nunca escreva uma senha" not in s
+    assert "cadeado, portão, cofre, Wi-Fi" in s and "SEMPRE `manutencao`" in s and "Nunca recuse por conta própria" in s
