@@ -50,5 +50,6 @@
 {"frase": "Abre um serviço de comissionamento para mairinque", "espera": ["manutencao"], "origem": "log #90"},
 {"frase": "Crie um contrato de comissionamento para usina de mairinque", "espera": ["manutencao"], "origem": "log #91"},
 {"frase": "🎙️ Eu preciso da senha do cadeado da entrada de Tietê.", "espera": ["manutencao"], "origem": "log #96"},
-{"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"}
+{"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"},
+{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["procurar_pessoa"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"}
 ]

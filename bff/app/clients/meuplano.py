@@ -194,6 +194,11 @@ class MeuPlanoClient:
     async def criar_usuario_admin(self, dados: dict[str, Any]) -> dict[str, Any]:
         return (await self._req("POST", "/api/v1/meuacesso/admin/users", json=dados)).json()
 
+    async def vinculo_na_organizacao(self, organizacao: int, user_id: int, dados: dict[str, Any]) -> dict[str, Any]:
+        """O papel da pessoa DENTRO da organização (admin | membro | terceiro) e a natureza do vínculo (CLT | PJ)."""
+        return (await self._req("PATCH", f"/api/v1/meuacesso/owners/{int(organizacao)}/users/{int(user_id)}/member-role",
+                                json=dados)).json()
+
     async def provisionar_identidade(self, user_id: int, assercao: str) -> dict[str, Any]:
         """Liga a conta do Gestão Solar (a da asserção) à pessoa `user_id` daqui."""
         return (await self._req("POST", "/api/v1/meuacesso/auth/external/provision",

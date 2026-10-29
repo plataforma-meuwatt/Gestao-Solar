@@ -27,7 +27,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.core import apelido as apelidos
-from app.core.telefone import exibir
+from app.core.telefone import TelefoneInvalido, exibir, normalizar
 from app.models.integracao import Produto
 from app.models.user import Perfil, User
 from app.services import assistente_helper as helper
@@ -41,10 +41,18 @@ PERFIS_GS = {"gestor_empresa": (Perfil.GESTOR_EMPRESA, "gerente"), "tecnico": (P
 PAPEIS_MW = {"system_admin": "admin O&M", "operator": "operador", "field_employee": "técnico de campo",
              "plant_owner": "dono"}
 PAPEIS_MP = {"admin_sistema": "admin do sistema (todas as empresas)", "admin_tenant": "admin da empresa",
-             "tecnico_campo": "técnico de campo", "operador": "operador", "leitura": "só leitura", "cliente": "cliente"}
+             "tecnico_campo": "técnico de campo", "operador": "operador", "leitura": "só leitura", "cliente": "cliente",
+             "prestador": "prestador de serviço (terceiro)"}
+#: Prestador de serviço (pedido do Renan, 29/10/2026: "prestador para a Splendor, que possa assumir tarefas dentro das
+#: OS"): no meuPlano é o vínculo `terceiro` na organização, que dá a Permissão "Prestador (terceiro)" (executa as
+#: tarefas das OS, sem financeiro, equipe, estoque e cadastro da empresa), com o vínculo PJ ("prestador" lá). O papel
+#: global é o que o meuPlano dá a quem entra numa O&M sem papel da casa (`owners._default_global_role`).
+PRESTADOR = {"member_role": "terceiro", "tipo_vinculo": "PJ"}
 PARTES = {"meuwatt": "bot_meuwatt", "meuplano": "bot_meuplano", "helper": "bot_helper"}
 SENHA_DO_GS = ("A senha de entrar no GS não vai por aqui: defina em oem-gs → Usuários → Senha. "
                "O bot já reconhece a pessoa pelo celular.")
+SENHA_DO_MP = ("Para entrar no meuPlano (site ou app), a pessoa cria a senha em «Esqueci a senha», com o código que "
+               "chega no e-mail dela.")
 
 
 def _so_gerente(user) -> str | None:
@@ -106,8 +114,9 @@ def _clientes(db, user):
 # --------------------------------------------------------------------------- procurar
 PROCURAR = {"type": "function", "function": {
     "name": "procurar_pessoa",
-    "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano). Contato de "
-                    "usina (eletricista, prestador, quem atende) NÃO é conta: é do meuPlano (`manutencao`). "
+    "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; também o "
+                    "prestador de serviço que vai ASSUMIR tarefas das OS). Contato de usina (eletricista, quem atende, "
+                    "telefone de alguém) NÃO é conta: é do meuPlano (`manutencao`). "
                     "ANTES de cadastrar alguém: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo "
                     "e-mail, pelo celular e pelo primeiro nome) e devolve o que já existe em cada sistema, com o "
                     "id de cada conta. Use o que voltar para dizer à pessoa o que achou e perguntar o que falta."),
@@ -195,18 +204,22 @@ CADASTRAR = {"type": "function", "function": {
     "description": ("Cadastra uma pessoa nos sistemas que a pessoa pediu, depois de procurar_pessoa e de ela ter dito "
                     "o que fazer em cada um. Vira uma ação que ela confirma com Sim. Em cada sistema: passe o id da "
                     "conta a APROVEITAR ou deixe sem id para criar. Sistema sem papel = não mexer nele. Os tokens do "
-                    "meuWatt e do meuPlano da pessoa são gerados e ligados no GS sozinhos, sem aparecer."),
-    "parameters": {"type": "object", "required": ["nome", "gs_perfil"], "properties": {
+                    "meuWatt e do meuPlano da pessoa são gerados e ligados no GS sozinhos, sem aparecer. Só no "
+                    "meuPlano (sem gs_perfil) a pessoa não ganha conta no GS, token nem bot."),
+    "parameters": {"type": "object", "required": ["nome"], "properties": {
         "nome": {"type": "string"},
         "email": {"type": "string", "description": "obrigatório para criar conta no meuWatt ou no meuPlano"},
         "telefone": {"type": "string", "description": "celular (é por ele que o bot reconhece a pessoa)"},
         "apelido": {"type": "string", "description": "login no GS; sem ele, sai do nome"},
-        "gs_perfil": {"type": "string", "enum": list(PERFIS_GS)},
+        "gs_perfil": {"type": "string", "enum": list(PERFIS_GS),
+                      "description": "sem ele, o GS não é tocado (meuWatt e bot precisam dele)"},
         "gs_conta": {"type": "integer", "description": "aproveitar esta conta do GS da sua empresa"},
         "mw_papel": {"type": "string", "enum": list(PAPEIS_MW)},
         "mw_conta": {"type": "integer", "description": "aproveitar esta conta do meuWatt"},
         "mw_empresa": {"type": "integer", "description": "a empresa do meuWatt; sem ela, a da sua O&M"},
-        "mp_papel": {"type": "string", "enum": list(PAPEIS_MP)},
+        "mp_papel": {"type": "string", "enum": list(PAPEIS_MP),
+                     "description": ("prestador = prestador de serviço da sua empresa (terceiro): assume e executa "
+                                     "tarefas das OS, sem financeiro, equipe e estoque")},
         "mp_conta": {"type": "integer", "description": "aproveitar esta conta do meuPlano"},
         "bot": {"type": "array", "items": {"type": "string", "enum": list(PARTES)},
                 "description": "partes do bot a ligar para a pessoa (sem senha de atuação)"}}}}}
@@ -226,9 +239,12 @@ async def cadastrar_pessoa(ctx, a: dict) -> dict:
         return {"erro": "Falta o nome da pessoa."}
     if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return {"erro": f"O e-mail {email} não parece válido: confira com a pessoa."}
-    if (perfil := PERFIS_GS.get(a.get("gs_perfil") or "")) is None:
-        return {"erro": "Falta o perfil no GS: gerente, técnico ou dono de usina."}
-    p: dict[str, Any] = {"nome": nome, "email": email, "perfil": a["gs_perfil"], "empresa": empresa.id, "linhas": []}
+    perfil = PERFIS_GS.get(a.get("gs_perfil") or "")
+    if perfil is None and (a.get("gs_perfil") or a.get("gs_conta") or a.get("mw_papel") or a.get("bot")
+                           or not a.get("mp_papel")):
+        return {"erro": "Falta o perfil no GS: gerente, técnico ou dono de usina (só o cadastro no meuPlano dispensa)."}
+    p: dict[str, Any] = {"nome": nome, "email": email, "perfil": a.get("gs_perfil") if perfil else None,
+                         "empresa": empresa.id, "linhas": []}
 
     # GS: a conta aproveitada tem de ser da empresa e não da plataforma (a régua de `_conta_da_empresa`)
     conta = db.get(User, a["gs_conta"]) if a.get("gs_conta") else None
@@ -237,12 +253,15 @@ async def cadastrar_pessoa(ctx, a: dict) -> dict:
         return {"erro": f"A conta {a['gs_conta']} do GS não é da sua empresa: só a plataforma a põe nela. "
                         "Ofereça criar uma conta nova."}
     try:
-        tel = cadastro.celular_livre(db, a["telefone"], conta.id if conta else None) if a.get("telefone") else None
-    except HTTPException as e:
-        return {"erro": f"Celular: {e.detail}"}
+        if perfil is None:                                   # só meuPlano: o celular não vira conta do GS
+            tel = normalizar(a.get("telefone"))
+        else:
+            tel = cadastro.celular_livre(db, a["telefone"], conta.id if conta else None) if a.get("telefone") else None
+    except (HTTPException, TelefoneInvalido) as e:
+        return {"erro": f"Celular: {getattr(e, 'detail', e)}"}
     p["telefone"], p["gs_conta"] = tel, conta.id if conta else None
     celular = f", celular {exibir(tel)}" if tel else ""
-    if conta is None:
+    if perfil is not None and conta is None:
         try:
             p["apelido"] = apelidos.normalizar(a.get("apelido") or apelidos.sugerir(nome))
         except apelidos.ApelidoInvalido as e:
@@ -250,7 +269,7 @@ async def cadastrar_pessoa(ctx, a: dict) -> dict:
         if db.scalar(select(User.id).where(User.apelido == p["apelido"])):
             return {"erro": f"O apelido {p['apelido']} já existe no GS: pergunte outro."}
         p["linhas"].append(f"GS: conta nova «{p['apelido']}» ({perfil[1]}){celular}")
-    else:
+    elif perfil is not None:
         p["apelido"] = conta.apelido
         p["linhas"].append(f"GS: aproveitar «{conta.apelido}» como {perfil[1]}{celular}")
 
@@ -289,8 +308,9 @@ async def cadastrar_pessoa(ctx, a: dict) -> dict:
             return {"erro": "Sua empresa não está ligada à organização dela no meuPlano (oem-gs → Vínculos)."}
         p["mp"] = {"papel": papel, "conta": a.get("mp_conta"), "organizacao": empresa.mp_tenant_id}
         qual = f"aproveitar a conta #{a['mp_conta']}" if a.get("mp_conta") else f"conta nova ({email})"
-        p["linhas"].append(f"meuPlano: {qual} como {PAPEIS_MP[papel]}")
-    if "mw" in p or "mp" in p:
+        extra = " da sua empresa: assume e executa tarefas das OS" if papel == "prestador" else ""
+        p["linhas"].append(f"meuPlano: {qual} como {PAPEIS_MP[papel]}{extra}{celular if perfil is None else ''}")
+    if perfil is not None and ("mw" in p or "mp" in p):
         p["linhas"].append("Tokens: gerados e ligados no GS, sem aparecer")
     if partes := [x for x in a.get("bot") or [] if x in PARTES]:
         if not (tel or (conta and conta.telefone)):
@@ -302,7 +322,13 @@ async def cadastrar_pessoa(ctx, a: dict) -> dict:
         return await _executar(db, quem, p)
 
     resumo = f"Cadastrar {nome}" + (f" ({email})" if email else "")
-    return helper.propor(ctx, resumo, PRAZO_S, executar, p["linhas"], [SENHA_DO_GS], parte=None, confirmacao="sim")
+    return helper.propor(ctx, resumo, PRAZO_S, executar, p["linhas"], _senhas(p), parte=None, confirmacao="sim")
+
+
+def _senhas(p: dict) -> list[str]:
+    """Como a pessoa entra: a senha não sai por aqui, nem a do GS nem a do meuPlano."""
+    return ([SENHA_DO_GS] if p["perfil"] and not p["gs_conta"] else []) \
+        + ([SENHA_DO_MP] if "mp" in p and not p["mp"]["conta"] else [])
 
 
 # --------------------------------------------------------------------------- executar (depois do Sim)
@@ -311,15 +337,17 @@ async def _executar(db, quem, p: dict) -> str:
     from app.services import cadastro, empresas
     if _so_gerente(quem) or empresas.empresa_exigida(quem) != p["empresa"]:
         return "❌ Só o gerente da O&M cadastra pessoas pelo bot. Nada foi feito."
-    try:
-        # a senha provisória não sai daqui: quem entrega a de entrar é o gerente, no oem-gs
-        hash_ = None if p["gs_conta"] else await asyncio.to_thread(gerar_hash_senha, gerar_senha_provisoria())
-        conta = _conta_no_gs(db, quem, p, hash_)
-    except Exception as e:                                   # noqa: BLE001
-        db.rollback()
-        log.warning("cadastro: GS falhou: %s", type(e).__name__)
-        return f"❌ Não consegui criar a conta no GS: {_motivo(e)}. Nada foi feito."
-    feitas = [f"✅ GS: «{conta.apelido}» ({PERFIS_GS[p['perfil']][1]})"]
+    conta, feitas = None, []
+    if p["perfil"]:
+        try:
+            # a senha provisória não sai daqui: quem entrega a de entrar é o gerente, no oem-gs
+            hash_ = None if p["gs_conta"] else await asyncio.to_thread(gerar_hash_senha, gerar_senha_provisoria())
+            conta = _conta_no_gs(db, quem, p, hash_)
+        except Exception as e:                               # noqa: BLE001
+            db.rollback()
+            log.warning("cadastro: GS falhou: %s", type(e).__name__)
+            return f"❌ Não consegui criar a conta no GS: {_motivo(e)}. Nada foi feito."
+        feitas.append(f"✅ GS: «{conta.apelido}» ({PERFIS_GS[p['perfil']][1]})")
     falhou = False
     for chave, nome, passo in (("mp", "meuPlano", _meuplano), ("mw", "meuWatt", _meuwatt)):
         if chave in p:
@@ -343,7 +371,7 @@ async def _executar(db, quem, p: dict) -> str:
         if ligadas:
             feitas.append(f"✅ Bot ligado: {', '.join(ligadas)} (sem senha de atuação)")
     cabeca = f"⚠️ Cadastro de {p['nome']} feito EM PARTE:" if falhou else f"✅ Cadastro de {p['nome']} feito:"
-    return "\n".join([cabeca, *(f"• {f}" for f in feitas), *([] if p["gs_conta"] else [SENHA_DO_GS])])
+    return "\n".join([cabeca, *(f"• {f}" for f in feitas), *_senhas(p)])
 
 
 def _conta_no_gs(db, quem, p: dict, senha_hash: str | None) -> User:
@@ -379,22 +407,33 @@ async def _ligar_token(db, quem, conta, produto: Produto, cliente, sessao: str) 
 async def _meuplano(db, quem, conta, mp_: dict, p: dict) -> str:
     from app.services import login_externo
     _, mp = _clientes(db, quem)
+    prestador = mp_["papel"] == "prestador"
     if mp_["conta"]:
         alvo = mp_["conta"]
         atual = next((u for u in await mp.usuarios_admin() if u.get("id") == alvo), None)
         if atual is None:
             raise RuntimeError(f"a conta #{alvo} não está entre as que você administra lá")
-        mudar: dict[str, Any] = {"role": mp_["papel"],
-                                 "owner_ids": sorted({*(atual.get("owner_ids") or []), mp_["organizacao"]})}
+        mudar: dict[str, Any] = {"owner_ids": sorted({*(atual.get("owner_ids") or []), mp_["organizacao"]})}
+        if not prestador:                                    # o papel global de quem já existe fica (vale nas outras)
+            mudar["role"] = mp_["papel"]
         if p["telefone"]:
             mudar["phone"] = exibir(p["telefone"])
         await mp.atualizar_usuario_admin(alvo, mudar)
         feito = f"conta #{alvo} como {PAPEIS_MP[mp_['papel']]}"
     else:
-        novo = await mp.criar_usuario_admin({"email": p["email"], "name": p["nome"], "role": mp_["papel"],
+        novo = await mp.criar_usuario_admin({"email": p["email"], "name": p["nome"],
+                                             "role": "leitura" if prestador else mp_["papel"],
                                              "phone": exibir(p["telefone"]) if p["telefone"] else None,
                                              "owner_ids": [mp_["organizacao"]]})
         alvo, feito = novo["id"], f"conta nova #{novo['id']} como {PAPEIS_MP[mp_['papel']]}"
+    if prestador:
+        try:
+            await mp.vinculo_na_organizacao(mp_["organizacao"], alvo, PRESTADOR)
+        except Exception as e:                               # noqa: BLE001
+            raise RuntimeError(f"a conta #{alvo} está na sua empresa, mas o papel de prestador não entrou "
+                               f"({_motivo(e)}): troque em Minha Empresa → Equipe") from e
+    if conta is None:                                        # só meuPlano: sem conta no GS não há token a ligar
+        return f"✅ meuPlano: {feito}"
     await mp.provisionar_identidade(alvo, login_externo.assinar(conta, Produto.MEUPLANO))
     sessao = await mp.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUPLANO))
     return f"✅ meuPlano: {feito}, {await _ligar_token(db, quem, conta, Produto.MEUPLANO, mp, sessao)}"

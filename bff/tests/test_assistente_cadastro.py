@@ -90,7 +90,7 @@ class _MeuPlano:
     def __init__(self):
         self.contas = [{"id": 587, "email": "marcos@splendoroem.com.br", "name": "Marcos Vinicus", "phone": None,
                         "role": "cliente", "owner_ids": [8], "active": True}]
-        self.gravou = []
+        self.gravou, self.recusa_vinculo = [], None
 
     async def usuarios_admin(self):
         return self.contas
@@ -105,6 +105,12 @@ class _MeuPlano:
 
     async def provisionar_identidade(self, uid, assercao):
         self.gravou.append(("provisionar", uid, assercao))
+        return {}
+
+    async def vinculo_na_organizacao(self, org, uid, dados):
+        if self.recusa_vinculo:
+            raise _erro(400, self.recusa_vinculo)
+        self.gravou.append(("vinculo", org, uid, dados))
         return {}
 
     async def entrar_pelo_gs(self, assercao):
@@ -291,3 +297,41 @@ def test_senha_de_cadeado_vai_ao_meuplano_e_a_ia_nao_recusa_sozinha(db, cenario)
     s = assistente._sistema(cenario.ctx)
     assert "nunca escreva uma senha" not in s
     assert "cadeado, portão, cofre, Wi-Fi" in s and "SEMPRE `manutencao`" in s and "Nunca recuse por conta própria" in s
+
+
+async def test_prestador_so_no_meuplano_sem_conta_no_gs(db, cenario):
+    """29/10/2026: "cadastrar o Thiago Marquezini no meuPlano como prestador de serviço para a Splendor, que possa
+    assumir tarefas dentro das OS". Lá é o vínculo `terceiro` (Permissão "Prestador (terceiro)": executa as tarefas,
+    sem financeiro, equipe e estoque), PJ. Sem perfil no GS, o GS não é tocado: sem conta, token e bot."""
+    contas_gs = db.query(User).count()
+    r = await cad.cadastrar_pessoa(cenario.ctx, {"nome": "Thiago Marquezini", "email": "thiago@x.com",
+                                                 "telefone": "35 99931-8670", "mp_papel": "prestador"})
+    assert r["proposta_pendente"] == "Cadastrar Thiago Marquezini (thiago@x.com)"
+    assert h.PENDENTES[cenario.gerente.id].detalhes == [
+        "meuPlano: conta nova (thiago@x.com) como prestador de serviço (terceiro) da sua empresa: assume e executa "
+        "tarefas das OS, celular (35) 9 9931-8670"]
+    assert cenario.mp.gravou == []
+    desfecho = await _sim(cenario)
+    assert cenario.mp.gravou == [
+        ("criar", {"email": "thiago@x.com", "name": "Thiago Marquezini", "role": "leitura",
+                   "phone": "(35) 9 9931-8670", "owner_ids": [3]}),
+        ("vinculo", 3, 1500, {"member_role": "terceiro", "tipo_vinculo": "PJ"})]
+    assert desfecho == ("✅ Cadastro de Thiago Marquezini feito:\n• ✅ meuPlano: conta nova #1500 como prestador de "
+                        "serviço (terceiro)\n" + cad.SENHA_DO_MP)
+    assert db.query(User).count() == contas_gs and cenario.ligados == []
+
+
+async def test_prestador_aproveitado_guarda_o_papel_global_e_a_recusa_diz_o_que_ficou(db, cenario):
+    await cad.cadastrar_pessoa(cenario.ctx, {"nome": "Marcos", "mp_papel": "prestador", "mp_conta": 587})
+    cenario.mp.recusa_vinculo = "Sem permissão"
+    desfecho = await _sim(cenario)
+    assert cenario.mp.gravou == [("atualizar", 587, {"owner_ids": [3, 8]})]      # o papel global de lá fica
+    assert desfecho == ("⚠️ Cadastro de Marcos feito EM PARTE:\n• ❌ meuPlano: a conta #587 está na sua empresa, mas o "
+                        "papel de prestador não entrou (Sem permissão): troque em Minha Empresa → Equipe")
+
+
+@pytest.mark.parametrize("pedido", [{"mw_papel": "field_employee", "email": "a@x.com"}, {"bot": ["meuplano"]},
+                                    {"gs_conta": 1}, {}, {"gs_perfil": "chefe", "mp_papel": "prestador"}])
+async def test_sem_perfil_no_gs_so_o_meuplano_e_aceito(db, cenario, pedido):
+    r = await cad.cadastrar_pessoa(cenario.ctx, {"nome": "Ana", **pedido})
+    assert r["erro"].startswith("Falta o perfil no GS") and cenario.gerente.id not in h.PENDENTES
