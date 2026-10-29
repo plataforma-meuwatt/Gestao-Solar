@@ -85,8 +85,8 @@ _MANUTENCAO = {"type": "function", "function": {
     "name": "manutencao",
     "description": ("Pergunta ao meuPlano (manutenção/O&M): ordens de serviço, cronograma, pendências, estoque, "
                     "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
-                    "concessionária e de fornecedor, contratos e centros de custo, e o DIA DE TRABALHO com valor "
-                    "(diário e conta a pagar de prestador). Passe a pergunta COMPLETA, com usina e período."),
+                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período. Também contratos, "
+                    "diária e dia de trabalho de prestador (conta a pagar)."),
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 
@@ -869,9 +869,10 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   pergunte em qual tarefa ou OS. Ela confirma com Sim.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
   e chame `gravar_coordenada` com a usina; o sistema diz se grava ou substitui e pede o Sim. Nunca escreva coordenada.
-- Contato de usina (eletricista, quem atende, telefone de alguém) → `manutencao`: é do meuPlano, não é conta.
-- Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens; o prestador de serviço que
-  vai ASSUMIR tarefas das OS, papel `prestador` no meuPlano): PRIMEIRO
+- Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
+  meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
+  tarefas das OS no meuPlano (papel `prestador`).
+- Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): PRIMEIRO
   `procurar_pessoa`; diga, sistema por sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil
   em cada um, e-mail, celular). Só depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
 - Pedido de vários passos no meuPlano ("crie a OS e conclua a OS 1638"): mande o pedido INTEIRO numa chamada de

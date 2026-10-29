@@ -53,5 +53,7 @@
 {"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"},
 {"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["procurar_pessoa"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"},
 {"frase": "Marcar dia de trabalho do Thiago, valor 200. Ontem ele trabalhou na construção do barracão", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho com valor: diário e conta a pagar)"},
-{"frase": "marca o dia do thiago hoje, 180 reais, na OS 1638", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho na OS)"}
+{"frase": "marca o dia do thiago hoje, 180 reais, na OS 1638", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho na OS)"},
+{"frase": "Acrescente diaria de 150 para o tiago marquezini com custo para a OS", "espera": ["manutencao"], "origem": "29/10 (diária de prestador atrelada à OS)"},
+{"frase": "marca o dia do Thiago", "espera": ["manutencao"], "origem": "29/10 (dia sem valor nem lugar: diária e OS do dia)"}
 ]

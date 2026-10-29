@@ -78,9 +78,15 @@ def _casa(conta: dict, nome: str, email: str, telefone: str) -> bool:
     d = _digitos(telefone)[-8:]
     if len(d) == 8 and _digitos(conta.get("telefone"))[-8:] == d:
         return True
-    primeiro = (_sem_acento(nome).split() or [""])[0]
-    return len(primeiro) >= 3 and (primeiro in _sem_acento(conta.get("nome")).split()
-                                   or e.split("@")[0].startswith(primeiro))
+    primeiro = (_falado(nome).split() or [""])[0]
+    return len(primeiro) >= 3 and (primeiro in _falado(conta.get("nome")).split()
+                                   or _falado(e.split("@")[0]).startswith(primeiro))
+
+
+def _falado(t: str | None) -> str:
+    """O nome como se FALA: "tiago" acha o Thiago, "Mateus" o Matheus (sem isso o bot dizia que não existe e criava
+    outra conta). Sem h mudo, ph = f, y = i, sem letra dobrada."""
+    return re.sub(r"(.)\1", r"\1", _sem_acento(t).replace("ph", "f").replace("h", "").replace("y", "i"))
 
 
 def _procura(contas: list[dict], nome: str, email: str, telefone: str) -> list[dict]:
@@ -114,9 +120,9 @@ def _clientes(db, user):
 # --------------------------------------------------------------------------- procurar
 PROCURAR = {"type": "function", "function": {
     "name": "procurar_pessoa",
-    "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; também o "
-                    "prestador de serviço que vai ASSUMIR tarefas das OS). Contato de usina (eletricista, quem atende, "
-                    "telefone de alguém) NÃO é conta: é do meuPlano (`manutencao`). "
+    "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano, inclusive o "
+                    "prestador que vai executar tarefas das OS lá). Contato de usina (eletricista, prestador, quem "
+                    "atende ou socorre, telefone de alguém) NÃO é conta: é do meuPlano (`manutencao`). "
                     "ANTES de cadastrar alguém: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo "
                     "e-mail, pelo celular e pelo primeiro nome) e devolve o que já existe em cada sistema, com o "
                     "id de cada conta. Use o que voltar para dizer à pessoa o que achou e perguntar o que falta."),

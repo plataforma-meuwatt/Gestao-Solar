@@ -335,3 +335,11 @@ async def test_prestador_aproveitado_guarda_o_papel_global_e_a_recusa_diz_o_que_
 async def test_sem_perfil_no_gs_so_o_meuplano_e_aceito(db, cenario, pedido):
     r = await cad.cadastrar_pessoa(cenario.ctx, {"nome": "Ana", **pedido})
     assert r["erro"].startswith("Falta o perfil no GS") and cenario.gerente.id not in h.PENDENTES
+
+
+def test_procura_pelo_nome_como_se_fala():
+    """29/10/2026: o dono escreveu "tiago marquezini"; a conta é "Thiago Marquezini". Sem achar, o bot criaria outra."""
+    thiago = {"nome": "Thiago Marquezini", "email": "thiago@x.com"}
+    assert cad._casa(thiago, "tiago marquezini", "", "")
+    assert cad._casa({"nome": "Matheus", "email": "m@x.com"}, "Mateus", "", "")
+    assert not cad._casa(thiago, "Tiburcio", "", "")
