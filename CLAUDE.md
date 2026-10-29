@@ -472,6 +472,16 @@ Os testes de `tests/test_escalada_e_isolamento.py` são um por achado.
 - **Cliente criado pelo painel da plataforma nasce com a empresa que o atende.** Sem ela a
   conta é órfã: nenhum gerente a enxerga e as telas dela vêm vazias para sempre.
 
+### Mudança no prompt ou nas ferramentas do bot passa pelo banco de perguntas
+
+A IA escolhe a ferramenta lendo texto (o prompt `_sistema` e a descrição de cada ferramenta), e a suíte usa uma IA de
+mentira: ela não vê a escolha. Em 29/10/2026, "nunca escreva uma senha" fez a IA recusar a senha do cadeado sem
+perguntar ao meuPlano, e o cadastro de pessoas levou "Cadastre o eletricista Thiago" para conta de acesso. Por isso,
+antes de publicar mudança em `assistente*.py`: `testes-ia/testar.sh --banco` (IA REAL e banco da produção, com o
+código desta pasta; nada vai ao WhatsApp nem ao Log do bot) tem de dar tudo certo. O banco (`testes-ia/banco.json`) é
+feito dos casos REAIS do Log do bot; o terminal `testes` (Haiku, pasta `Gestao Solar/Testes`) colhe os novos todo
+dia (`--colher`) e roda o banco contra o que está no ar.
+
 ### Nada de "chips" para selecionar opção
 
 Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tudo é lista

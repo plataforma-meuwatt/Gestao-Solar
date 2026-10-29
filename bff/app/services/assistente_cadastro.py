@@ -106,7 +106,9 @@ def _clientes(db, user):
 # --------------------------------------------------------------------------- procurar
 PROCURAR = {"type": "function", "function": {
     "name": "procurar_pessoa",
-    "description": ("ANTES de cadastrar alguém: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo "
+    "description": ("Só para CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano). Contato de "
+                    "usina (eletricista, prestador, quem atende) NÃO é conta: é do meuPlano (`manutencao`). "
+                    "ANTES de cadastrar alguém: procura a pessoa no Gestão Solar, no meuWatt e no meuPlano (pelo "
                     "e-mail, pelo celular e pelo primeiro nome) e devolve o que já existe em cada sistema, com o "
                     "id de cada conta. Use o que voltar para dizer à pessoa o que achou e perguntar o que falta."),
     "parameters": {"type": "object", "properties": {

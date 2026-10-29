@@ -1889,7 +1889,7 @@ async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
     assert "NADA foi executado" in r["instrucao"] and pedidos == []
     h.mostrada(dono.id)
     feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim")
-    assert feito.startswith("PDF da OS 1639 assinado") and pedidos == ["PDF da OS 1639\n\n(Resposta para WhatsApp: curta, sem tabela.)"]
+    assert feito.startswith("PDF da OS 1639 assinado") and pedidos == ["PDF da OS 1639" + assistente.PARA_O_WHATSAPP]
     # Leitura comum continua sem senha.
     r = await assistente.manutencao(ger.Contexto(db=db, user=dono, telefone=dono.telefone), {"pergunta": "OS abertas?"})
     assert r == {"texto": "PDF da OS 1639 assinado: https://x/pdf"} and len(pedidos) == 2

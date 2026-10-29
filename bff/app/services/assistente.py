@@ -82,7 +82,8 @@ def conta_do_telefone(db: Session, telefone: str) -> User | None:
 _MANUTENCAO = {"type": "function", "function": {
     "name": "manutencao",
     "description": ("Pergunta ao meuPlano (manutenção/O&M): ordens de serviço, cronograma, pendências, estoque, "
-                    "spare parts, documentos e projetos da usina. Passe a pergunta COMPLETA, com usina e período."),
+                    "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
+                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período."),
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 
@@ -107,6 +108,13 @@ def _pede_assinatura(texto: str) -> bool:
     return bool(ASSINATURA.search(t)) and not (_ESTADO.search(t) and not _PEDIDO.search(t))
 
 
+#: O que vai junto de cada pergunta ao meuPlano: a resposta de lá chega inteira à pessoa (o atalho de `responder`), e
+#: "curta" só não bastava (29/10/2026: 14 linhas para "crie um contrato", com os dados pedidos todos de uma vez).
+PARA_O_WHATSAPP = ("\n\n(Resposta para WhatsApp: no máximo 4 linhas, só o que foi pedido, sem bastidor nem tabela. "
+                   "Faltando dado para fazer, pergunte UMA coisa por vez, a mais importante, e liste as opções quando "
+                   "houver.)")
+
+
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     from app.services.vinculos import SemConexao, cliente_meuplano
     try:
@@ -115,7 +123,7 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
         return {"erro": f"Manutenção indisponível: {e}"}
     pedido = a.get("pergunta") or ""
     ctx.credencial = ctx.credencial or _e_de_credencial(pedido)
-    pergunta = pedido + "\n\n(Resposta para WhatsApp: curta, sem tabela.)"
+    pergunta = pedido + PARA_O_WHATSAPP
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
     mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
@@ -838,9 +846,10 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
   anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa); sem saber onde,
   pergunte em qual tarefa ou OS. Ela confirma com Sim.
-- Cadastrar alguém (conta no GS, no meuWatt, no meuPlano, tokens): PRIMEIRO `procurar_pessoa`; diga, sistema por
-  sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil em cada um, e-mail, celular). Só
-  depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
+- Contato de usina (eletricista, prestador, quem atende, telefone de alguém) → `manutencao`: é do meuPlano, não é conta.
+- Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): PRIMEIRO
+  `procurar_pessoa`; diga, sistema por sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil
+  em cada um, e-mail, celular). Só depois `cadastrar_pessoa`, que vira ação com Sim. Os tokens são gerados e ligados sozinhos: nunca peça nem mostre.
 - Pedido de vários passos no meuPlano ("crie a OS e conclua a OS 1638"): mande o pedido INTEIRO numa chamada de
   `manutencao`; o meuPlano propõe um passo por vez e, a cada SIM, o sistema segue para o próximo.
 - Números SÓ das ferramentas; `None` = sem dados (diga isso), nunca zero. Nunca invente usina nem valor.
@@ -853,7 +862,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - Arquivo/gráfico com `enviado_no_chat: true` já chegou: só confirme, não repita link.
 - Se uma ferramenta disser que a VPN das usinas está parada (ou que o helper está fora), não tente outra rota: diga
   isso à pessoa, com desde quando.
-- Fora dessas áreas, diga com gentileza que não consegue ajudar."""
+- Fora dessas áreas, diga com gentileza que não consegue ajudar. Assunto de usina ou de O&M (procedimento, manual,
+  configuração, contato, e-mail de concessionária) que a geração e o helper não respondem vai ao meuPlano
+  (`manutencao`) ANTES de você dizer que não sabe."""
 
 
 async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool = False,
