@@ -61,5 +61,6 @@
 {"frase": "Quantas diárias tem em aberto do tiago marquezini", "espera": ["manutencao"], "origem": "log #118"},
 {"frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan", "espera": ["manutencao"], "origem": "log #119"},
 {"frase": "quero cadastrar uma pessoa", "espera": ["formulario_de_cadastro"], "ou_sem_ferramenta": true, "origem": "29/10 (cadastro abre o formulário)"},
-{"frase": "o Michel tem conta no meuWatt?", "espera": ["procurar_pessoa"], "origem": "29/10 (consulta de conta não é cadastro)"}
+{"frase": "o Michel tem conta no meuWatt?", "espera": ["procurar_pessoa"], "origem": "29/10 (consulta de conta não é cadastro)"},
+{"frase": "muda o centro de custo da OS 1846 para roçagem", "espera": ["manutencao"], "origem": "29/10 (centro de custo da OS)"}
 ]
