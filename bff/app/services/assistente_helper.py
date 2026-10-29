@@ -435,7 +435,7 @@ _FAMILIAS = {
     # "abrir a OS" é criá-la (jargão da O&M): "Pode criar" confirma "Abrir a OS…", e vice-versa
     "editar": ("editar", "edicao"), "criar": ("criar", "criacao", "abrir", "abertura"),
     "cadastrar": ("cadastrar", "cadastro"),
-    "adicionar": ("adicionar",), "remover": ("remover",), "gravar": ("gravar",),
+    "adicionar": ("adicionar",), "remover": ("remover",), "gravar": ("gravar",), "substituir": ("substituir", "substituicao"),
     "registrar": ("registrar", "registro"), "gerar": ("gerar",), "concluir": ("concluir", "conclusao"),
     "ajustar": ("ajustar", "ajuste"), "clonar": ("clonar",), "trocar": ("trocar",),
     "desinstalar": ("desinstalar", "desinstalacao"), "instalar": ("instalar", "instalacao"),

@@ -741,6 +741,17 @@ class MeuPlanoClient:
                             data={"description": descricao, "uploaded_by": autor})
         return r.json()
 
+    async def permissoes(self) -> set[str]:
+        """As permissões do dono do token (`/auth/me`): o bot avisa ANTES do Sim o que o papel dele não faz."""
+        return set((await self._get("/api/v1/meuacesso/auth/me")).get("permissions") or [])
+
+    async def marcar_coordenada(self, usina_id: int, lat: float, lng: float, substituir: bool) -> dict[str, Any]:
+        """A coordenada da usina pela rota do app de campo ("estou na usina"), com o token de quem manda. Sem
+        `substituir`, lá não sobrescreve: a mais de 300 m da gravada é 409, perto mantém a de antes."""
+        r = await self._req("POST", f"/api/v1/meuacesso/usinas/{usina_id}/coordenada",
+                            json={"lat": lat, "lng": lng, "substituir": substituir})
+        return r.json()
+
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
 

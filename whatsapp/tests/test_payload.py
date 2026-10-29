@@ -111,6 +111,21 @@ def test_documento_guarda_nome_e_legenda_e_reacao_nao_tem_arquivo():
     assert reacao.tipo == "reaction" and reacao.midia is None
 
 
+def test_localizacao_vem_com_os_numeros_e_a_torta_fica_sem():
+    corpo = _entrega({"messages": [
+        {"from": "5516999998888", "id": "wamid.LOC", "timestamp": "1789000000", "type": "location",
+         "location": {"latitude": -21.7654321, "longitude": -48.8123456, "name": "UFV Ibitinga", "address": "Rod. SP-304"}},
+        {"from": "5516999998888", "id": "wamid.LOC2", "timestamp": "1789000001", "type": "location",
+         "location": {"latitude": "abc", "longitude": -48.8}},
+        {"from": "5516999998888", "id": "wamid.LOC3", "timestamp": "1789000002", "type": "location",
+         "location": {"latitude": 123.0, "longitude": -48.8}},
+    ]})
+    boa, torta, fora = payload.ler(corpo).mensagens
+    assert boa.tipo == "location" and boa.texto is None
+    assert boa.midia == {"lat": -21.7654321, "lng": -48.8123456, "nome": "UFV Ibitinga", "endereco": "Rod. SP-304"}
+    assert torta.midia is None and fora.midia is None
+
+
 def test_resposta_de_botao_vira_texto():
     corpo = _entrega(
         {

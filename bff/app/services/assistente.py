@@ -39,6 +39,7 @@ from app.models.user import Perfil, User
 from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
+from app.services import assistente_local as local
 from app.services import assistente_helper as helper
 
 log = logging.getLogger("gs.assistente")
@@ -100,11 +101,16 @@ _PEDIDO = re.compile(r"(?i)\b(?:pode|podem|poderia|consegue|conseguiria|d[áa]\s
                      r"envia|envie|gera|gere|gerar|faz|fa[çc]a|quero|queria|preciso|assina|assine|assinem)\b")
 
 
+#: Quem assina um CONTRATO (o signatário) não é pedido de assinar com o certificado: "falta o valor e quem
+#: assina/gerencia" virou "Assinar com o seu certificado… Criar um contrato" (29/10/2026).
+_SIGNATARIO = re.compile(r"(?i)\bquem\s+(?:\w+\s+){0,2}?assin\w*|\bdatas?\s+d[ae]\s+assinatura\b|\bsignat[áa]ri[oa]s?\b")
+
+
 def _pede_assinatura(texto: str) -> bool:
     """Pedido de documento ASSINADO ("me manda o PDF da OS assinado", "pode assinar a OS?"), e não
     pergunta sobre o estado da assinatura ("a OS 1638 já foi assinada?" — avaliação 12). Na dúvida,
     é pedido: o que custa é um SIM a mais, e não um documento assinado sem a pessoa saber."""
-    t = texto or ""
+    t = _SIGNATARIO.sub(" ", texto or "")
     return bool(ASSINATURA.search(t)) and not (_ESTADO.search(t) and not _PEDIDO.search(t))
 
 
@@ -294,7 +300,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
 
 
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
-               "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
+               "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
+               "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -801,7 +808,7 @@ def permitidas(user) -> list[str]:
     if "bot_meuwatt" in ativo:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
-        nomes += ["manutencao", "anexar_fotos"]
+        nomes += ["manutencao", "anexar_fotos", "gravar_coordenada"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
@@ -846,6 +853,8 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
   anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa); sem saber onde,
   pergunte em qual tarefa ou OS. Ela confirma com Sim.
+- «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
+  e chame `gravar_coordenada` com a usina; o sistema diz se grava ou substitui e pede o Sim. Nunca escreva coordenada.
 - Contato de usina (eletricista, prestador, quem atende, telefone de alguém) → `manutencao`: é do meuPlano, não é conta.
 - Criar CONTA DE ACESSO (alguém que vai entrar no GS, no meuWatt ou no meuPlano; tokens): PRIMEIRO
   `procurar_pessoa`; diga, sistema por sistema, o que já existe e pergunte o que falta (aproveitar ou criar, o perfil
@@ -1464,6 +1473,9 @@ async def _atender(evento: dict) -> None:
                            inicio=inicio, em=enviada)
                 return
             texto = seguro = pergunta = fotos.mensagem(telefone)  # a IA decide onde anexar (ou pergunta)
+        if not texto and local.e_local(evento):
+            local.guardar(telefone, evento)                 # os números ficam aqui; a IA só pergunta a usina
+            texto = seguro = pergunta = local.mensagem(telefone)
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "

@@ -2120,7 +2120,10 @@ async def test_pergunta_sobre_a_assinatura_e_leitura_e_o_pedido_com_interrogacao
                    "assina a OS pra mim", "Já está assinada? Se não, assine", "Assinada?"):
         assert assistente._pede_assinatura(pedido), pedido
     for leitura in ("Foi assinada?", "Quem assinou a OS?", "As OS de ontem estão assinadas?", "Quais OS faltam assinar?",
-                    "Qual o status da assinatura da OS 1638?"):
+                    "Qual o status da assinatura da OS 1638?",
+                    # o signatário de um contrato (29/10/2026: virou "Assinar com o seu certificado… Criar um contrato")
+                    "Criar um contrato de comissionamento. Ainda não tenho: vigência, valor e quem assina/gerencia",
+                    "Quem vai assinar o contrato?", "Falta a data de assinatura e o signatário"):
         assert not assistente._pede_assinatura(leitura), leitura
 
 

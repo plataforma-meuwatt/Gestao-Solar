@@ -140,7 +140,22 @@ def _botao(m: dict[str, Any], tipo: str) -> str | None:
 TIPOS_COM_ARQUIVO = ("audio", "voice", "document", "image", "video")
 
 
+def _local(m: dict[str, Any]) -> dict[str, Any] | None:
+    """A localização (o 📎 → Localização do WhatsApp): o bot grava como coordenada da usina. Sem os dois números
+    válidos, nada: um ponto inventado no mapa é pior que nenhum."""
+    corpo = m.get("location")
+    try:
+        lat, lng = float(corpo["latitude"]), float(corpo["longitude"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return {"lat": lat, "lng": lng, "nome": corpo.get("name"), "endereco": corpo.get("address")}
+
+
 def _midia(m: dict[str, Any], tipo: str) -> dict[str, Any] | None:
+    if tipo == "location":
+        return _local(m)
     corpo = m.get(tipo) if tipo in TIPOS_COM_ARQUIVO else None
     if not isinstance(corpo, dict) or not corpo.get("id"):
         return None
