@@ -2117,13 +2117,17 @@ async def test_pergunta_sobre_a_assinatura_e_leitura_e_o_pedido_com_interrogacao
     r = await assistente.manutencao(ctx, {"pergunta": "A OS 1638 já foi assinada pelo cliente?"})
     assert r == {"texto": "Sim, assinada em 20/10."} and len(pedidos) == 1
     for pedido in ("Pode assinar a OS 1639?", "Consegue me mandar o PDF assinado?", "Tem como assinar a OS?",
-                   "assina a OS pra mim", "Já está assinada? Se não, assine", "Assinada?"):
+                   "assina a OS pra mim", "Já está assinada? Se não, assine", "Assinada?",
+                   "Manda o PDF assinado do contrato da OS 1639"):
         assert assistente._pede_assinatura(pedido), pedido
     for leitura in ("Foi assinada?", "Quem assinou a OS?", "As OS de ontem estão assinadas?", "Quais OS faltam assinar?",
                     "Qual o status da assinatura da OS 1638?",
                     # o signatário de um contrato (29/10/2026: virou "Assinar com o seu certificado… Criar um contrato")
                     "Criar um contrato de comissionamento. Ainda não tenho: vigência, valor e quem assina/gerencia",
-                    "Quem vai assinar o contrato?", "Falta a data de assinatura e o signatário"):
+                    "Quem vai assinar o contrato?", "Falta a data de assinatura e o signatário",
+                    # 29/10/2026 de novo (Mairinque): o resto do contrato "fica para o site"
+                    "Criar o contrato de COMISSIONAMENTO para a usina Mairinque. Centros de custo: todos. "
+                    "Vigência, valor, pagamento, documento e assinatura ficam pendentes"):
         assert not assistente._pede_assinatura(leitura), leitura
 
 

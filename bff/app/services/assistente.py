@@ -104,6 +104,11 @@ _PEDIDO = re.compile(r"(?i)\b(?:pode|podem|poderia|consegue|conseguiria|d[áa]\s
 #: Quem assina um CONTRATO (o signatário) não é pedido de assinar com o certificado: "falta o valor e quem
 #: assina/gerencia" virou "Assinar com o seu certificado… Criar um contrato" (29/10/2026).
 _SIGNATARIO = re.compile(r"(?i)\bquem\s+(?:\w+\s+){0,2}?assin\w*|\bdatas?\s+d[ae]\s+assinatura\b|\bsignat[áa]ri[oa]s?\b")
+#: O meuPlano só assina com o certificado o PDF de OS e de tarefa/ensaio (`tools_pdf.py` de lá). Contrato sem nenhum
+#: deles não é assinatura digital: "vigência, valor, documento e assinatura ficam pendentes" virou "Assinar com o
+#: seu certificado… Criar o contrato" de novo (29/10/2026, Mairinque).
+_CONTRATO = re.compile(r"(?i)\bcontratos?\b")
+_ASSINAVEL = re.compile(r"\bOS\b|(?i:\bpdf\b|\btarefas?\b|\bensaios?\b|\brelat[óo]rios?\b|\bordens?\s+de\s+servi[çc]o\b)")
 
 
 def _pede_assinatura(texto: str) -> bool:
@@ -111,6 +116,8 @@ def _pede_assinatura(texto: str) -> bool:
     pergunta sobre o estado da assinatura ("a OS 1638 já foi assinada?" — avaliação 12). Na dúvida,
     é pedido: o que custa é um SIM a mais, e não um documento assinado sem a pessoa saber."""
     t = _SIGNATARIO.sub(" ", texto or "")
+    if _CONTRATO.search(t) and not _ASSINAVEL.search(t):
+        return False
     return bool(ASSINATURA.search(t)) and not (_ESTADO.search(t) and not _PEDIDO.search(t))
 
 
