@@ -44,5 +44,6 @@
 {"frase": "cadastra o michel no meuwatt como técnico", "espera": ["procurar_pessoa"], "origem": "teste 29/10 (contato × conta)"},
 {"frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]", "espera": ["listar_usinas"], "origem": "teste 29/10 (localização: pergunta a usina)", "ou_sem_ferramenta": true},
 {"frase": "[📍 localização recebida, ainda não gravada] essa é a usina de ibitinga", "espera": ["gravar_coordenada"], "origem": "teste 29/10 (localização)"},
-{"frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina", "espera": ["manutencao"], "origem": "29/10 (virou assinatura digital)"}
+{"frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina", "espera": ["manutencao"], "origem": "29/10 (virou assinatura digital)"},
+{"frase": "Deixe só Roçagem nos centros de custo do comissionamento 1736", "espera": ["manutencao"], "origem": "29/10 (o meuPlano não tinha a ferramenta)"}
 ]
