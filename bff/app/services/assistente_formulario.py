@@ -5,6 +5,10 @@ O meuPlano devolve, no run, as opções que o turno ofereceu (`escolha`: título
 resposta). O bot manda a resposta e, logo depois, o formulário (WhatsApp Flow `gs_escolha_multipla`, caixas de marcar,
 as de hoje já marcadas). O que a pessoa marca volta como mensagem (`midia.formulario`) e vira o texto
 "<responda>: A, B", que segue como se ela tivesse digitado: a IA leva ao meuPlano, que propõe e pede o Sim.
+
+A escolha ÚNICA (`uma`, `gs_escolha_uma`: lista suspensa de até 200) vai junto de uma PROPOSTA, para trocar o que o
+assistente escolheu (dono, 29/10/2026: "um texto bem curto falando o que ele escolheu, e a lista para eu escolher caso
+não concorde"); a escolhida volta como "<responda>: X" e derruba a proposta de antes, como qualquer mensagem.
 """
 
 import secrets
@@ -16,20 +20,31 @@ from app.clients import whatsapp
 _ABERTOS: dict[str, dict] = {}
 VALIDADE_S = 30 * 60
 MAX_OPCOES = 20                                           # o limite das caixas de marcar do WhatsApp
+MAX_UMA = 200                                             # o da lista suspensa
 PARA_A_IA = ("O sistema manda, logo depois da sua resposta, um formulário com estas opções para a pessoa marcar: NÃO "
              "liste as opções, diga só que é para marcar no formulário.")
+PARA_A_IA_UMA = ("Junto do resumo vai uma lista para a pessoa TROCAR a escolha, se não concordar: diga em UMA linha o "
+                 "que foi escolhido; não explique nem liste opções.")
+SEM_LISTA = "Para trocar, diga qual quer."
 VENCIDO = "Esse formulário não vale mais (venceu ou veio outro depois). Peça de novo e eu mando outro."
 #: o formulário de cadastro respondido de cada número, até o turno o usar (`cadastro_respondido`)
 _CADASTROS: dict[str, dict] = {}
 
 
 def valida(escolha) -> bool:
-    return (isinstance(escolha, dict) and isinstance(escolha.get("opcoes"), list)
-            and 0 < len(escolha["opcoes"]) <= MAX_OPCOES and bool(escolha.get("responda")))
+    return (isinstance(escolha, dict) and isinstance(escolha.get("opcoes"), list) and bool(escolha.get("responda"))
+            and 0 < len(escolha["opcoes"]) <= (MAX_UMA if escolha.get("uma") else MAX_OPCOES))
+
+
+def para_a_ia(escolha: dict) -> str:
+    return PARA_A_IA_UMA if escolha.get("uma") else PARA_A_IA
 
 
 def em_texto(escolha: dict) -> str:
-    """Sem o formulário (gateway ou Meta recusou), a lista para responder digitando."""
+    """Sem o formulário (gateway ou Meta recusou), a lista para responder digitando — a de uma escolha é longa demais
+    para texto: só a frase."""
+    if escolha.get("uma"):
+        return SEM_LISTA
     marcados = set(escolha.get("marcados") or [])
     return (f"{escolha.get('titulo') or 'Opções'} (✔ = marcado hoje):\n"
             + "\n".join(f"• {o}{' ✔' if o in marcados else ''}" for o in escolha["opcoes"])
@@ -58,10 +73,13 @@ async def _enviar(telefone: str, texto: str, **corpo) -> bool:
 
 async def mandar(telefone: str, escolha: dict) -> bool:
     token = _abrir(telefone, escolha=escolha)
-    return await _enviar(telefone, "Toque em Marcar e deixe marcados só os que ficam.", formulario={
+    uma = bool(escolha.get("uma"))
+    return await _enviar(telefone, "Não concorda? Toque em Escolher outra." if uma
+                         else "Toque em Marcar e deixe marcados só os que ficam.", formulario={
         "token": token, "titulo": str(escolha.get("titulo") or "Escolha")[:300],
         "opcoes": [str(o) for o in escolha["opcoes"]], "marcados": [str(m) for m in escolha.get("marcados") or []],
-        "aviso": str(escolha.get("aviso") or "")[:300]})
+        "aviso": str(escolha.get("aviso") or "")[:300],
+        **({"uma": True, "rotulos": [str(t) for t in escolha.get("rotulos") or []]} if uma else {})})
 
 
 async def mandar_cadastro(telefone: str, ja_sabe: dict) -> bool:
@@ -101,6 +119,9 @@ def texto_da_resposta(telefone: str, evento: dict) -> str | None:
              f"celular {dados['celular'] or 'nenhum'}"]
             + [f"{NOMES_DOS_SISTEMAS[s]}: {rotulo[s].get(dados[s], 'Não cadastrar')}" for s in OPCOES_DO_FORMULARIO]))
     opcoes = aberto["escolha"]["opcoes"]
+    if aberto["escolha"].get("uma"):
+        i = str(r.get("escolhido") or "")
+        return f"{aberto['escolha']['responda']}: {opcoes[int(i)]}" if i.isdigit() and int(i) < len(opcoes) else None
     ids = r.get("escolhidos") if isinstance(r.get("escolhidos"), list) else []
     nomes = [opcoes[i] for i in sorted({int(i) for i in map(str, ids) if i.isdigit() and int(i) < len(opcoes)})]
     return f"{aberto['escolha']['responda']}: " + (", ".join(nomes) if nomes else "todos liberados (nenhum marcado)")

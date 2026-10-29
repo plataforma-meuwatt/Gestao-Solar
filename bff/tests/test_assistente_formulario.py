@@ -104,3 +104,42 @@ async def test_escolha_torta_nao_vira_formulario(db, bot_local, cenario, ruim):
     p = _conta(db, "renan", "+5517997377626")
     await assistente.atender(_texto(p, 1, "centros de custo do 1736"))
     assert forms == [] and bot_local.enviados[-1] == "Marque no formulário."
+
+
+UMA = {"titulo": "Classificação do dia 28/10 de Thiago Marquezini", "uma": True,
+       "opcoes": ["Administrativo › Despesas Administrativas › Aluguel",
+                  "Administrativo › Despesas Administrativas › Manutenção Predial › Ferramenta"],
+       "rotulos": ["Aluguel", "Manutenção Predial › Ferramenta"],
+       "marcados": ["Administrativo › Despesas Administrativas › Manutenção Predial › Ferramenta"],
+       "responda": "Lance o dia 28/10 de Thiago Marquezini (R$ 150,00, na obra «Barracão») com a classificação"}
+
+
+async def test_a_proposta_vai_com_a_lista_para_trocar_e_a_escolhida_vira_o_pedido(db, bot_local, cenario, monkeypatch):
+    """Dono, 29/10/2026: "um texto bem curto falando o que ele escolheu, e a lista para eu escolher caso não concorde".
+    A proposta sai com os botões e, logo depois, a lista suspensa; a escolhida volta em palavras e vai ao meuPlano."""
+    forms, perguntas, escolha = cenario
+    escolha["valor"] = UMA
+    proposta = {"type": "proposal", "action": "marcar_dia_de_trabalho", "args": {"pessoa": "Thiago Marquezini"},
+                "preview": {"summary": "Marcar o dia 28/10 de Thiago Marquezini: R$ 150,00 na obra «Barracão».",
+                            "lines": [{"text": "Classificação: Administrativo › Despesas Administrativas › "
+                                               "Manutenção Predial › Ferramenta"}]}}
+
+    async def _perguntar(mp, mensagens):
+        perguntas.append(mensagens[-1]["content"].split("\n\n(Resposta para WhatsApp")[0])
+        return {**proposta, **({"escolha": UMA} if len(perguntas) == 1 else {})}
+
+    monkeypatch.setattr(assistente, "_perguntar_ao_meuplano", _perguntar)
+    p = _conta(db, "renan", "+5517997377626")
+    await assistente.atender(_texto(p, 1, "Lance diária do Thiago de ontem, barracão, gasto administrativo"))
+    f = forms[0]["formulario"]
+    assert f["uma"] and f["rotulos"] == UMA["rotulos"] and f["marcados"] == UMA["marcados"]
+    assert forms[0]["texto"] == "Não concorda? Toque em Escolher outra."
+    await assistente.atender({**_marcou(p, 2, f["token"]), "midia": {"formulario": {"escolhido": "0",
+                                                                                    "flow_token": f["token"]}}})
+    assert perguntas[-1] == UMA["responda"] + ": Administrativo › Despesas Administrativas › Aluguel"
+
+
+def test_a_lista_de_uma_escolha_vai_ate_200_e_sem_ela_e_uma_frase():
+    assert formulario.valida({**UMA, "opcoes": ["a"] * 200}) and not formulario.valida({**UMA, "opcoes": ["a"] * 201})
+    assert not formulario.valida({**ESCOLHA, "opcoes": ["a"] * 21})              # caixas de marcar: até 20
+    assert formulario.em_texto(UMA) == formulario.SEM_LISTA

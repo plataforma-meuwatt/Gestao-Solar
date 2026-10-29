@@ -464,6 +464,43 @@ def test_formulario_de_marcar_sai_como_flow_da_meta(cliente, credencial, monkeyp
     assert r.status_code == 200 and not r.json()["ok"] and "não está publicado" in r.json()["erro"]
     assert len(enviados) == 1
 
+def test_a_escolha_unica_sai_como_lista_suspensa(cliente, credencial, monkeypatch, db):
+    """Dono (29/10/2026): "um texto bem curto falando o que ele escolheu, e a lista para eu escolher caso não
+    concorde" — `uma` vai no `gs_escolha_uma` (lista suspensa até 200), com a escolhida já selecionada; o rótulo curto
+    no título e a opção inteira embaixo. As caixas de marcar seguem até 20."""
+    from gateway.meta import graph
+
+    enviados, pedidos = [], []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid="wamid.U1")
+
+    async def _id(**k):
+        pedidos.append(k["nome"])
+        return "999", None
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    monkeypatch.setattr(graph, "id_do_flow", _id)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    opcoes = [f"Administrativo › Despesas Administrativas › Categoria {i}" for i in range(150)]
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "Não concorda? Toque em Escolher outra.",
+        "formulario": {"token": "tok-123456", "titulo": "Classificação do dia 28/10", "uma": True, "opcoes": opcoes,
+                       "rotulos": [f"Categoria {i} com nome bem comprido demais" for i in range(150)],
+                       "marcados": [opcoes[7]]}})
+    assert r.status_code == 200 and r.json()["ok"] and pedidos == ["gs_escolha_uma"]
+    p = enviados[0]["conteudo"]["action"]["parameters"]
+    assert p["flow_cta"] == "Escolher outra" and p["flow_action_payload"]["screen"] == "UMA"
+    d = p["flow_action_payload"]["data"]
+    assert d["atual"] == "7" and len(d["opcoes"]) == 150
+    assert d["opcoes"][7] == {"id": "7", "title": "Categoria 7 com nome bem compr", "description": opcoes[7]}
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
+        "formulario": {"token": "tok-123456", "titulo": "t", "opcoes": opcoes[:21]}})
+    assert r.status_code == 400 and "até 20" in r.json()["detail"] and len(enviados) == 1   # marcar: até 20
+
+
 def test_o_toque_no_botao_chega_ao_bot_com_o_id_do_resumo(cliente, credencial, db, monkeypatch):
     """O título ("Sim") não diz de QUAL resumo era o botão; o id diz — e vai guardado, para a
     varredura também repassá-lo (avaliação 13: o Sim de um resumo antigo confirmava o de agora)."""

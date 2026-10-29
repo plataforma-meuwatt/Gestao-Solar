@@ -197,13 +197,18 @@ class FormularioIn(BaseModel):
     ESCOLHA). O que a pessoa marca volta como `midia.formulario` = `{escolhidos: [índices], flow_token}`."""
     token: str = Field(min_length=8, max_length=64)
     titulo: str = Field(min_length=1, max_length=300)
-    opcoes: list[str] = Field(min_length=1, max_length=20)
+    opcoes: list[str] = Field(min_length=1, max_length=200)
     marcados: list[str] = Field(default_factory=list)
     aviso: str = Field(default="", max_length=300)
+    #: UMA escolha numa lista suspensa (`gs_escolha_uma`, tela UMA, até 200): o `rotulo` (até 30 letras) é o que a
+    #: lista mostra, a opção inteira vai embaixo; volta `{escolhido: índice}`. Sem `uma`, caixas de marcar (até 20).
+    uma: bool = False
+    rotulos: list[str] = Field(default_factory=list)
 
 
-#: O formulário de marcar, criado e publicado uma vez na conta da Meta (29/10/2026).
+#: Os formulários de escolha, criados e publicados uma vez na conta da Meta (29/10/2026).
 FLOW_ESCOLHA = "gs_escolha_multipla"
+FLOW_UMA = "gs_escolha_uma"
 
 
 class CadastroIn(BaseModel):
@@ -266,7 +271,17 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
             f, c = corpo.formulario, corpo.cadastro
             if (f is None) == (c is None) or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
                 raise ValueError("Formulário pede as opções (ou o cadastro) e o texto (até 1024 caracteres).")
-            if f is not None:
+            if f is not None and f.uma:
+                nome, tela, cta, token = FLOW_UMA, "UMA", "Escolher outra", f.token
+                rotulos = [(f.rotulos[i] if i < len(f.rotulos) else o) or o for i, o in enumerate(f.opcoes)]
+                dados = {"titulo": f.titulo,
+                         "opcoes": [{"id": str(i), "title": t[:30], "description": o[:300]}
+                                    for i, (t, o) in enumerate(zip(rotulos, f.opcoes))],
+                         "atual": str(f.opcoes.index(f.marcados[0])) if f.marcados and f.marcados[0] in f.opcoes
+                         else "0"}
+            elif f is not None:
+                if len(f.opcoes) > 20:
+                    raise ValueError("As caixas de marcar vão até 20 opções.")
                 nome, tela, cta, token = FLOW_ESCOLHA, "ESCOLHA", "Marcar", f.token
                 dados = {"titulo": f.titulo, "aviso": f.aviso or " ",
                          # o título de cada opção vai até 30 caracteres; o que volta é o índice

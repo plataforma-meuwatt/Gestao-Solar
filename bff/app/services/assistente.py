@@ -126,9 +126,10 @@ def _pede_assinatura(texto: str) -> bool:
 
 #: O que vai junto de cada pergunta ao meuPlano: a resposta de lá chega inteira à pessoa (o atalho de `responder`), e
 #: "curta" só não bastava (29/10/2026: 14 linhas para "crie um contrato", com os dados pedidos todos de uma vez).
-PARA_O_WHATSAPP = ("\n\n(Resposta para WhatsApp: no máximo 4 linhas, só o que foi pedido, sem bastidor nem tabela. "
-                   "Faltando dado para fazer, pergunte UMA coisa por vez, a mais importante, e liste as opções quando "
-                   "houver.)")
+PARA_O_WHATSAPP = ("\n\n(Resposta para WhatsApp: no máximo 3 linhas curtas, só o que foi pedido, sem bastidor, sem "
+                   "tabela e sem explicar o que não existe: ninguém lê textão. Dá para fazer com uma escolha sua? "
+                   "Proponha já e diga em uma linha o que escolheu. Faltando dado, pergunte UMA coisa por vez e "
+                   "liste as opções quando houver.)")
 
 
 async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
@@ -150,9 +151,12 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     ctx.segredos.extend(str(v) for v in r.pop("segredos", None) or [] if v)
     if formulario.valida(r.get("escolha")):
         ctx.escolha = r.pop("escolha")
-        r["formulario"] = formulario.PARA_A_IA
+        r["formulario"] = formulario.para_a_ia(ctx.escolha)
     r.pop("escolha", None)
-    return _proposta_do_meuplano(ctx, r, mensagens) if r.get("type") == "proposal" else r
+    if r.get("type") != "proposal":
+        return r
+    proposta = _proposta_do_meuplano(ctx, r, mensagens)
+    return {**proposta, "formulario": r["formulario"]} if "formulario" in r else proposta
 
 
 async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
@@ -863,7 +867,8 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   de confirmação ao pé da sua resposta. No meuPlano (criar ou concluir OS, lançar o dia, lembrete) a pessoa
   confirma com SIM — NÃO fale de senha. Só ação no EQUIPAMENTO pelo helper (ligar, desligar, gravar parâmetro)
   pede a SENHA DE ATUAÇÃO; fale dela só nesse caso. Nunca peça a senha de login nem escreva a senha de atuação.
-  Nunca diga que fez. Ler não pede nada.
+  Nunca diga que fez. Ler não pede nada. Com a proposta, escreva no máximo UMA linha e não repita o resumo nem
+  peça o SIM: o sistema já mostra os dois.
 - Senha, código ou acesso de cadeado, portão, cofre, Wi-Fi, SmartLogger, roteador, inversor ou sistema da usina →
   SEMPRE `manutencao`, com a pergunta inteira: é o meuPlano que decide se a pessoa pode ver (pelo nível de acesso
   dela) e registra cada senha que mostra. Nunca recuse por conta própria, nem diga que não passa credencial: pergunte
@@ -1604,6 +1609,8 @@ async def _atender(evento: dict) -> None:
             saiu = (await _texto(telefone, para_whatsapp(texto_da_ia), valores, omitir=omitir)
                     if texto_da_ia.strip() else True)
             saiu = await _botoes(telefone, bloco_sim, ctx.proposta.codigo, valores) and saiu
+            if ctx.escolha is not None and not await formulario.mandar(telefone, ctx.escolha):
+                await _texto(telefone, formulario.em_texto(ctx.escolha), valores)   # a lista para TROCAR a escolha
         else:
             saiu = await _texto(telefone, para_whatsapp(resposta), valores, como=resposta_log if omitir else None)
             if ctx is not None and ctx.escolha is not None and ctx.proposta is None \
