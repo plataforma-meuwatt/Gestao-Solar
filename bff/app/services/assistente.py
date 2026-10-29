@@ -85,7 +85,8 @@ _MANUTENCAO = {"type": "function", "function": {
     "name": "manutencao",
     "description": ("Pergunta ao meuPlano (manutenção/O&M): ordens de serviço, cronograma, pendências, estoque, "
                     "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
-                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período."),
+                    "concessionária e de fornecedor, contratos e centros de custo, e o DIA DE TRABALHO com valor "
+                    "(diário e conta a pagar de prestador). Passe a pergunta COMPLETA, com usina e período."),
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 

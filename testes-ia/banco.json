@@ -51,5 +51,7 @@
 {"frase": "Crie um contrato de comissionamento para usina de mairinque", "espera": ["manutencao"], "origem": "log #91"},
 {"frase": "🎙️ Eu preciso da senha do cadeado da entrada de Tietê.", "espera": ["manutencao"], "origem": "log #96"},
 {"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"},
-{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["procurar_pessoa"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"}
+{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["procurar_pessoa"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"},
+{"frase": "Marcar dia de trabalho do Thiago, valor 200. Ontem ele trabalhou na construção do barracão", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho com valor: diário e conta a pagar)"},
+{"frase": "marca o dia do thiago hoje, 180 reais, na OS 1638", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho na OS)"}
 ]
