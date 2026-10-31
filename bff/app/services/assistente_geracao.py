@@ -424,6 +424,49 @@ async def paradas(ctx: Contexto, a: dict) -> dict:
                      "parada o detector não fez a conta (sem par para comparar): diga isso, não some zero.")}
 
 
+def _trips(bruto: Any, desde: datetime) -> list[dict]:
+    itens = bruto.get("events") if isinstance(bruto, dict) else bruto
+    saida = []
+    for e in itens if isinstance(itens, list) else []:
+        try:
+            quando = datetime.fromisoformat(str(e.get("timestamp")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if quando >= desde:
+            saida.append({"quando": quando.astimezone(_TZ).strftime("%d/%m %H:%M"), "funcao": e.get("trip_code"),
+                          "evento": {"TRIPPED": "disparou", "CLEARED": "limpou"}.get(e.get("event"), e.get("event"))})
+    return saida
+
+
+async def reles(ctx: Contexto, a: dict) -> dict:
+    """Os relés de PROTEÇÃO da usina agora (comunica? tensão, corrente) e os trips que o meuWatt registrou (dono,
+    31/10/2026: "Pirapozinho está parado… o skid 2 tá parado" — o bot leu só a lista de trips ATIVOS, que não traz o
+    trip que já limpou nem o relé sem comunicação, e respondeu "não há trip ativo")."""
+    u = _usina(ctx, a.get("usina"))
+    dias = max(1, min(int(a.get("dias") or 2), 30))
+    agora = await ctx.mw.monitoramento_atual(u["slug"])
+    protecao = [r for r in agora.get("relays") or []
+                if not r.get("is_temperature_relay") and not str(r.get("model") or "").startswith("abs")]
+    desde = datetime.now(_TZ) - timedelta(days=dias)
+
+    async def um(r: dict) -> dict:
+        try:
+            trips = _trips(await ctx.mw.eventos_de_trip(u["slug"], int(r["relay_db_id"]), 50), desde)
+        except Exception:                                 # noqa: BLE001
+            trips = None
+        fases = lambda k: [_r(r.get(f"{k}_{f}")) for f in "abc"]
+        return {"rele": r.get("name"), "skid": r.get("transformer_name"), "comunica": r.get("comm"),
+                "tensao_v": fases("voltage"), "corrente_a": fases("current"), "potencia_kw": _r(r.get("total_active_power")),
+                "trips": trips}
+
+    return {"usina": u["nome"], "lido_em": agora.get("data_at"), "dias": dias,
+            "noite": agora.get("plant_sleeping"),         # corrente 0 à noite é normal, não é skid parado
+            "reles": await asyncio.gather(*(um(r) for r in protecao)),
+            "nota": ("comunica=false: o meuWatt não lê o relé agora, o estado dele é DESCONHECIDO (não diga que está "
+                     "ligado, desligado ou sem trip). Tensão perto de zero = sem tensão. 'disparou' e depois 'limpou' = "
+                     "a bandeirola sumiu; confira na geração se o skid parou. trips nulo = não consegui ler o histórico. "
+                     "Funções pelo código ANSI do relé (86, 27, 47…).")}
+
 async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
     from app.clients import whatsapp
     tipo = {"executivo": "resumo", "resumo_executivo": "resumo"}.get((a.get("tipo") or "geracao").lower(),
@@ -562,6 +605,11 @@ FERRAMENTAS = {
     "paradas": (paradas, _f("paradas", "Paradas de inversor no período, pela mesma régua da tela de Paradas: total, "
         "em aberto, fechadas, tempo parado, perda, por causa, por inversor, maiores perdas.",
         {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
+    "reles": (reles, _f("reles", "TRIPS dos relés de proteção de uma usina pelo MONITORAMENTO (meuWatt): o histórico "
+        "(disparou/limpou, a função e a hora) e se o relé comunica, para skid ou usina PARADA, trip, desarme ou antes "
+        "de religar. Leitura AO VIVO de um relé (corrente, comunicação agora) é `usina_helper`.",
+        {"usina": _USINA, "dias": {"type": "integer",
+        "description": "Quantos dias de histórico de trip (padrão 2)."}})),
     "relatorio_pdf": (relatorio_pdf, _f("relatorio_pdf", "Manda como ARQUIVO o PDF do relatório MENSAL do monitoramento "
         "(geracao | paradas | resumo executivo).", {"usina": _USINA, "mes": _MES, "tipo": {"type": "string",
         "enum": ["geracao", "paradas", "resumo"]}}, ["mes"])),

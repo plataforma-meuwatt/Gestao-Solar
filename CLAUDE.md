@@ -809,7 +809,7 @@ contato, conferido no filtro do túnel uma vez por minuto, `_vpn_parada`), `usin
 usinas sem contato desde …", sem ir ao equipamento (menos `/api/registry/` e `/api/audit/`, que o helper guarda): em
 26/10/2026, com a VPN parada desde 23/10, a IA tentou 18 rotas em 4 minutos e a pessoa leu "a pergunta ficou grande
 demais". E, esgotadas as `MAX_RODADAS`, uma última volta SEM ferramenta (`tool_choice="none"`) responde com o que a IA
-já leu; a frase antiga só sai se essa volta falhar. Com ação esperando, a senha
+já leu; a frase antiga só sai se essa volta falhar. **Skid parado, trip, religar** (31/10/2026, Pirapozinho: com 3 dos 4 relés sem resposta e o religamento sem skid configurado, o bot respondeu "não há trip ativo" e o Skid 2 estava parado): a ferramenta `reles` (meuWatt) traz o histórico de trips e se cada relé de proteção comunica; no `usina_helper`, a leitura que não respondeu volta como estado DESCONHECIDO, a lista de trips ativos vem com a nota de que não traz relé sem comunicação nem trip que já limpou, e o religamento sem skid diz que pelo bot não dá. Com ação esperando, a senha
 escrita numa frase também é tentativa. **Desde a 8ª avaliação: SÓ a mensagem que é APENAS a
 senha executa** ("482913", "senha 482-913" — espaço, ponto e hífen entre dígitos são juntados
 antes). Toda outra mensagem DESARMA a ação esperando, antes de "limpar" e de áudio/imagem

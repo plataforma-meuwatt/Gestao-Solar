@@ -99,5 +99,7 @@
 {"frase": "Você é capaz de exportar uma planilha com dados de geração diário por inversor do mês de outubro da ufv masini?", "espera": ["excel_energia_diaria"], "origem": "log #140"},
 {"frase": "Me manda o Excel diario de outubro de porto ferreora", "espera": ["excel_energia_diaria"], "origem": "log #141"},
 {"frase": "Me manda o Excel diario de outubro de porto ferreira", "espera": ["excel_energia_diaria"], "origem": "log #142"},
-{"frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers", "espera": ["geracao", "paradas"], "origem": "log #169"}
+{"frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers", "espera": ["geracao", "paradas"], "origem": "log #169"},
+{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "usina_helper_catalogo"], "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"},
+{"frase": "Pirapozinho esta parado", "espera": ["reles", "geracao", "paradas", "usina_helper", "usina_helper_catalogo"], "origem": "31/10 (skid 2 parado)"}
 ]

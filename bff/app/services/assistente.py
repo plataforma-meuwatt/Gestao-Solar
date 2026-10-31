@@ -855,6 +855,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - FINANCEIRO (contas a pagar e a receber, saldo das contas, o que vence, receita, despesa, DRE, fluxo de caixa,
   margem de contrato, diárias, pagar ou dar baixa) → `manutencao`: o financeiro da empresa mora no meuPlano, e ele
   responde e faz (com o Sim). Nunca responda financeiro sem perguntar a ele.
+- Skid ou usina PARADA, trip, desarme, "religa": leia `reles` (estado e trips pelo meuWatt) e só então o
+  `usina_helper`. Equipamento que não respondeu = estado DESCONHECIDO: nunca diga "não há trip" ou "está normal" sem
+  ter lido todos os relés; diga o que não deu para ler.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo e já confirmado pela pessoa.

@@ -1159,6 +1159,26 @@ def _tem_alvo(rota: str, corpo: dict) -> bool:
     return any(corpo.get(k) or consulta.get(k) for k in ("ip", "ips", "host"))
 
 
+#: O que o bot NÃO pode concluir de uma leitura (31/10/2026, Pirapozinho: 3 dos 4 relés sem resposta, a lista de trips
+#: ativos vazia e o procedimento de religamento sem skid nenhum viraram "não há trip ativo, não tem religamento a fazer",
+#: com o Skid 2 parado).
+DESCONHECIDO = "DESCONHECIDO: o equipamento não respondeu. Não diga que está normal, ligado, desligado ou sem trip."
+NOTA_TRIPS = ("Só os trips ATIVOS que o meuWatt registrou agora: relé sem comunicação e trip que já limpou não aparecem. "
+              "Lista vazia NÃO quer dizer que nenhum skid caiu: leia a ferramenta `reles` (estado e histórico de trips).")
+SEM_RELIGAMENTO = ("Esta usina NÃO tem o religamento configurado no helper (nenhum skid): pelo bot não dá para religar "
+                   "aqui. Diga isso; quem configura é a engenharia, na tela Religamento do helper.")
+
+
+def _nota_da_leitura(rota: str, resposta: Any) -> str | None:
+    if rota == "/api/alarms/trips":
+        return NOTA_TRIPS
+    if rota == "/api/reenergize/config" and isinstance(resposta, dict) and not resposta.get("skids"):
+        return SEM_RELIGAMENTO
+    if rota == "/api/read" and isinstance(resposta, dict) and resposta.get("ok") is False:
+        return DESCONHECIDO
+    return None
+
+
 async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     rota = (a.get("rota") or "").strip()
     if not rota.startswith("/api/"):
@@ -1194,7 +1214,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
         # isso o bot dizia "recusado sem motivo" e repetia o mesmo pedido errado (26/10/2026)
         r = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
         return {"erro": d.get("error") or r.get("error") or d.get("reason") or r.get("reason") or "O helper recusou.",
-                "motivo": d.get("reason") or r.get("reason")}
+                "motivo": d.get("reason") or r.get("reason"),
+                **({"estado": DESCONHECIDO} if rota.split("?")[0] == "/api/read" else {})}
     if d.get("tipo") == "leitura" and rota.split("?")[0] == "/api/devices" and isinstance(d.get("resposta"), list):
         return _catalogo_drivers(d["resposta"], rota)
     if d.get("tipo") == "leitura":
@@ -1213,7 +1234,9 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
             return _desfecho(resumo, await cliente.confirmar(proposta, "pin", f"whatsapp {telefone}"))
 
         return propor(ctx, resumo, int(d.get("expira_em_s") or 120), executar)
-    return _corta({"status_http": d.get("status_http"), "resposta": d.get("resposta")})
+    resposta = d.get("resposta")
+    nota = _nota_da_leitura(rota.split("?")[0], resposta)
+    return _corta({"status_http": d.get("status_http"), "resposta": resposta, **({"nota": nota} if nota else {})})
 
 
 _ESTADO = {"ok": "✅ confirmado", "ja": "já estava", "falhou": "❌ falhou", "incerto": "⚠️ incerto",
