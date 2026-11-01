@@ -18,7 +18,9 @@ O 200 sai ANTES do processamento, que roda em `BackgroundTasks` com sessão pró
 reenvia o que demora, e reenvio é mensagem repetida no celular de alguém.
 """
 
+import asyncio
 import logging
+import time
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response, status
@@ -27,6 +29,7 @@ from sqlalchemy.orm import Session
 from gateway.core.config import get_settings
 from gateway.core.db import SessionLocal, get_db
 from gateway.core.seguranca import CABECALHO_ASSINATURA, assinatura_confere
+from gateway.meta import graph
 from gateway.models.mensagem import WebhookEvento
 from gateway.services import credenciais, notificacao_bff, recebimento
 
@@ -68,6 +71,41 @@ async def _encaminhar(corpo: bytes, assinatura: str) -> None:
             log.warning("webhook: encaminhar para %s falhou", url, exc_info=True)
 
 
+#: O que o bot não responde (a lista do BFF, `assistente.IGNORADOS`): para esses não sai "digitando…".
+SEM_RESPOSTA = {"reaction", "sticker", "system", "ephemeral", "request_welcome", "unsupported"}
+#: Entrega mais velha que isto é fila atrasada (deploy, Meta reenviando): o BFF decide se responde.
+RECENTE_S = 120
+
+
+def _a_responder(dados: dict) -> list[str]:
+    """Os wamids das mensagens novas desta entrega que o bot vai responder (status de envio não contam)."""
+    agora, wamids = time.time(), []
+    for e in dados.get("entry") or []:
+        for c in e.get("changes") or []:
+            for m in (c.get("value") or {}).get("messages") or []:
+                try:
+                    recente = agora - int(m.get("timestamp") or 0) < RECENTE_S
+                except (TypeError, ValueError):
+                    recente = False
+                if m.get("id") and m.get("type") not in SEM_RESPOSTA and recente:
+                    wamids.append(m["id"])
+    return wamids
+
+
+async def _digitando_ja(cred, dados: dict) -> None:
+    """"Digitando…" no instante em que a Meta entrega, antes de qualquer ida ao banco. Antes ele só saía depois de o
+    gateway gravar e avisar e de a API ler a conta e a conversa: ~20 idas ao banco dos EUA (185 ms cada, 3 s para
+    reabrir a conexão), de 4 a 21 s de tela parada (medido em 01/11/2026). Melhor esforço, no máximo 3 s."""
+    if not cred.envio_pronto:
+        return
+    for wamid in _a_responder(dados):
+        try:
+            await asyncio.wait_for(graph.digitando(token=cred.token, phone_number_id=cred.phone_number_id,
+                                                   wamid=wamid), 3)
+        except TimeoutError:
+            log.warning("webhook: o digitando de %s passou de 3 s", wamid)
+
+
 def _processar_depois(evento_id: int) -> None:
     """Roda fora da requisição: a sessão da rota já foi fechada quando isto começa."""
     db = SessionLocal()
@@ -102,7 +140,8 @@ async def receber(
     db: Session = Depends(get_db),
     assinatura: str | None = Header(default=None, alias=CABECALHO_ASSINATURA),
 ) -> dict[str, bool]:
-    segredo = credenciais.em_uso(db).app_secret
+    cred = credenciais.em_uso(db)
+    segredo = cred.app_secret
     if not segredo:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -119,6 +158,7 @@ async def receber(
     except ValueError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Corpo não é JSON.") from None
 
+    await _digitando_ja(cred, dados)
     evento = recebimento.guardar(db, dados)
     tarefas.add_task(_processar_depois, evento.id)
     tarefas.add_task(_avisar_o_bff)

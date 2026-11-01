@@ -626,3 +626,28 @@ def test_formulario_de_cadastro_sai_com_os_campos_e_os_papeis(cliente, credencia
         "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
         "cadastro": {"token": "tok-cad-1234", "papeis": {"meuplano": [nao]}}})
     assert r.status_code == 400 and "papéis de meuwatt" in r.json()["detail"]
+
+
+def test_o_digitando_sai_na_chegada_antes_de_gravar(cliente, credencial, db, monkeypatch):
+    """O "digitando…" só saía depois de ~20 idas ao banco dos EUA (gateway e API): de 4 a 21 s de tela parada
+    (01/11/2026). Agora sai quando a Meta entrega, antes de gravar; status, reação e entrega atrasada não o recebem."""
+    import time
+
+    chamadas = []
+
+    async def _digitando(*, token, phone_number_id, wamid):
+        chamadas.append((wamid, db.query(WebhookEvento).count()))
+
+    monkeypatch.setattr(webhook.graph, "digitando", _digitando)
+    agora = str(int(time.time()))
+    msgs = [{"from": "5516999998888", "id": "wamid.NOVA", "timestamp": agora, "type": "text", "text": {"body": "oi"}},
+            {"from": "5516999998888", "id": "wamid.REA", "timestamp": agora, "type": "reaction",
+             "reaction": {"message_id": "wamid.X", "emoji": "👍"}},
+            {"from": "5516999998888", "id": "wamid.VELHA", "timestamp": "1789000000", "type": "text",
+             "text": {"body": "oi"}}]
+    corpo = json.dumps({"entry": [{"changes": [{"value": {"messages": msgs, "statuses": [
+        {"id": "wamid.S", "status": "read", "timestamp": agora}]}}]}]}).encode()
+    r = cliente.post("/webhook", content=corpo, headers={CABECALHO_ASSINATURA: assinatura_da_meta(APP_SECRET, corpo)})
+    assert r.status_code == 200
+    assert chamadas == [("wamid.NOVA", 0)]                 # 0: o evento ainda não estava gravado
+    assert db.query(WebhookEvento).count() == 1
