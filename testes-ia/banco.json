@@ -108,5 +108,8 @@
 {"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles"], "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)", "ou_sem_ferramenta": true},
 {"frase": "cadastre estas diarias no contrato de instalação de CFTV de pereiras, do Diogo Dardani\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10", "espera": ["manutencao"], "origem": "log #155"},
 {"frase": "Me de o relatorio de geracao de ibitinga", "espera": ["geracao"], "origem": "log #182"},
-{"frase": "ligue o rele geral de tiete", "espera": ["reles", "usina_helper"], "origem": "log #183"}
+{"frase": "ligue o rele geral de tiete", "espera": ["reles", "usina_helper"], "origem": "log #183"},
+{"frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.br · celular +55 41 •••• · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Técnico", "espera": ["formulario_de_cadastro"], "origem": "log #124"},
+{"frase": "📝 Cadastro pelo formulário: Gabriel · e-mail gabriel@meuwatt.com.br · celular 16 •••• · meuPlano: Operador · meuWatt: Admin O&M · Gestão Solar: Gerente da O&M", "espera": ["formulario_de_cadastro"], "origem": "log #146"},
+{"frase": "Como estão as usinas hoje?", "espera": ["geracao"], "origem": "log #184"}
 ]
