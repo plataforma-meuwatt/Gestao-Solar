@@ -111,5 +111,17 @@
 {"frase": "ligue o rele geral de tiete", "espera": ["reles", "usina_helper"], "origem": "log #183"},
 {"frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.br · celular +55 41 •••• · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Técnico", "espera": ["formulario_de_cadastro"], "origem": "log #124"},
 {"frase": "📝 Cadastro pelo formulário: Gabriel · e-mail gabriel@meuwatt.com.br · celular 16 •••• · meuPlano: Operador · meuWatt: Admin O&M · Gestão Solar: Gerente da O&M", "espera": ["formulario_de_cadastro"], "origem": "log #146"},
-{"frase": "Como estão as usinas hoje?", "espera": ["geracao"], "origem": "log #184"}
+{"frase": "Como estão as usinas hoje?", "espera": ["geracao"], "origem": "log #184"},
+{"frase": "Oi", "espera": [], "origem": "log #48"},
+{"frase": "Tem algum tecnico para atender urgencia?", "espera": ["manutencao"], "origem": "log #35"},
+{"frase": "Abra uma os de rocagem para pereiras para terça feira agora", "espera": ["manutencao"], "origem": "log #62"},
+{"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #93"},
+{"frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.combr · celular nenhum · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Não cadastrar", "espera": ["formulario_de_cadastro"], "origem": "log #122"},
+{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #128"},
+{"frase": "Pausa a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #130"},
+{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #136"},
+{"frase": "Me de quais classificações tem em administrativo", "espera": ["manutencao"], "origem": "log #138"},
+{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper"], "origem": "log #178"},
+{"frase": "Quero acrescentar mais tarefas na os 1874", "espera": ["manutencao"], "origem": "log #202"},
+{"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"}
 ]
