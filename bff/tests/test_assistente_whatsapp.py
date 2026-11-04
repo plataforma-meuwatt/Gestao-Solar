@@ -647,7 +647,8 @@ def test_resposta_grande_do_helper_perde_o_aninhado_e_nao_as_usinas():
 
 async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch):
     """24/10/2026: "Serviço novo" e, 8 s depois, "amanhã ele volta para terminar" rodaram
-    juntas — duas respostas que se contradiziam, e a conversa ficou sem uma das trocas."""
+    juntas — duas respostas que se contradiziam, e a conversa ficou sem uma das trocas. Desde
+    04/11/2026 a que chegou enquanto a outra esperava a vez é o MESMO pedido: uma resposta só, às duas."""
     import asyncio
 
     rodando, sobreposicao = [], []
@@ -678,7 +679,59 @@ async def test_mensagens_seguidas_do_mesmo_numero_esperam_a_vez(db, monkeypatch)
     )
     assert sobreposicao == []
     conversa = [m["content"] for m in __import__("json").loads(_conversa_em_claro(db))]
-    assert conversa == ["Serviço novo", "resposta a Serviço novo", "amanhã ele volta", "resposta a amanhã ele volta"]
+    assert conversa == ["Serviço novo", "amanhã ele volta", "resposta a amanhã ele volta"]
+    from app.models.conversa_whatsapp import RegistroBot
+    log = [(r.pergunta, r.resposta, r.ferramentas) for r in db.query(RegistroBot).order_by(RegistroBot.id)]
+    assert log[0] == ("Serviço novo", assistente.JUNTADA, "junto")
+
+
+async def test_a_acao_montada_enquanto_a_pessoa_escrevia_nao_sai_e_a_seguinte_responde_tudo(db, bot_local, monkeypatch):
+    """04/11/2026: "roçagem de Tietê" virou um resumo com o Sim, mas a pessoa já tinha mandado "é TIETE" de novo, e
+    essa mensagem derrubou o resumo certo assim que ele saiu ("cancelada pela sua mensagem «DESGRAÇA EU FALEI
+    TIETE»"). O resumo montado com mensagem nova na fila não sai: a seguinte responde tudo, e a ação é proposta uma vez."""
+    import asyncio
+
+    from app.services import assistente_helper as h
+
+    dono = _conta(db, "dono", "+5517997377626")
+    vistas, chegou = [], asyncio.Event()
+
+    async def _executar(db_, user, telefone):
+        return "✅ feito"
+
+    async def _llm(msgs, ferramentas=None, **k):
+        vistas.append([m["content"] for m in msgs if m["role"] == "user"])
+        if msgs[-1]["role"] == "tool":
+            return {"content": "Preparei."}
+        if len(vistas) == 1:
+            await chegou.wait()                            # a 2ª mensagem chega enquanto a IA monta a 1ª ação
+        return {"content": "", "tool_calls": [{"id": "c1", "type": "function",
+                                               "function": {"name": "acao_teste", "arguments": "{}"}}]}
+
+    async def _acao(ctx, a):
+        return h.propor(ctx, "Anexar 2 foto(s) na tarefa #9332", 600, _executar, confirmacao="sim")
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "acao_teste", (_acao, {"type": "function", "function": {
+        "name": "acao_teste", "parameters": {"type": "object", "properties": {}}}}))
+    monkeypatch.setattr(assistente, "permitidas", lambda u: ["acao_teste"])
+    monkeypatch.setattr(ger, "preparar", lambda ctx: asyncio.sleep(0))
+
+    async def _segunda():
+        await asyncio.sleep(0.05)
+        t = asyncio.create_task(assistente.atender({"id": 2, "telefone": dono.telefone, "wa_id": "5517997377626",
+                                                    "tipo": "text", "texto": "é TIETE"}))
+        await asyncio.sleep(0.05)
+        chegou.set()
+        await t
+
+    await asyncio.gather(assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "5517997377626",
+                                             "tipo": "text", "texto": "roçagem de tiete"}), _segunda())
+    assert vistas[-2][-2:] == ["roçagem de tiete", "é TIETE"]              # a 2ª volta viu as duas
+    resumos = [t for t in bot_local.enviados if t and "Anexar 2 foto(s)" in t]
+    assert len(resumos) == 1 and h.PENDENTES[dono.id].resumo == "Anexar 2 foto(s) na tarefa #9332"
+    assert not any("cancelada" in (t or "") for t in bot_local.enviados)
+    assert h.PENDENTES[dono.id].pedido == "roçagem de tiete\né TIETE"
 
 
 # ── avaliação de 24/10/2026: empresa desligada, meuWatt fora, a senha fora do log ──────
@@ -721,6 +774,8 @@ def bot_local(db, monkeypatch):
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(assistente, "_llm", _llm)
     monkeypatch.setattr(assistente.get_settings(), "deepseek_api_key", "x")
+    monkeypatch.setattr(assistente, "ESPERA_TEXTO_S", 0)      # a espera pela mensagem seguinte: só quem testa a junta
+    monkeypatch.setattr(assistente, "ESPERA_FOTO_S", 0)
     return estado
 
 
@@ -2669,7 +2724,8 @@ async def test_o_toque_depois_do_deploy_e_o_nao_vencido_dizem_o_que_houve(db, bo
 async def test_correcao_mandada_antes_do_resumo_derruba_a_acao(db, bot_local, helper_com_get, monkeypatch):
     """"desliga o inversor 13" e, com a IA ainda pensando, "não, espera! é o 12": a correção não
     derrubava a ação (toda mensagem de antes do resumo era poupada), e a senha seguinte desligava o 13.
-    Só a CIÊNCIA ("valeu", "ok, aguardo") mandada antes do resumo é poupada."""
+    Só a CIÊNCIA ("valeu", "ok, aguardo") mandada antes do resumo é poupada. Desde 04/11/2026 o resumo montado
+    com a correção já na fila nem sai: a correção responde as duas mensagens."""
     import asyncio as aio
 
     from app.services import assistente_helper as h
@@ -2684,8 +2740,8 @@ async def test_correcao_mandada_antes_do_resumo_derruba_a_acao(db, bot_local, he
         await aio.sleep(0)                                 # a correção entra na fila do número
     pensando.set()
     await aio.gather(pedido, correcao)
-    assert "Ação esperando a sua senha" in bot_local.enviados[0]
-    assert dono.id not in h.PENDENTES and bot_local.enviados[1].endswith(h.ACAO_CANCELADA)
+    assert not any("Ação esperando a sua senha" in (t or "") for t in bot_local.enviados)   # o resumo do 13 não saiu
+    assert dono.id not in h.PENDENTES and bot_local.enviados == ["Entendi."]
     await assistente.atender(_ev(dono, 3, "482913"))
     assert helper_com_get.confirmadas == [] and bot_local.enviados[-1] == h.NADA_ESPERANDO
     for ciencia in ("valeu", "Obrigado!", "ok, aguardo", "Fico no aguardo", "👍", "valeuuu", "muito obrigada"):

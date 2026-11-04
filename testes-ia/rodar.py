@@ -95,7 +95,9 @@ def _colher(banco: list[dict]) -> None:
         db.close()
     novos = 0
     for r, apelido in linhas:
-        if f"log #{r.id}" in ja or not r.pergunta or (r.ferramentas or "") == "confirmacao":
+        # a mensagem respondida junto com a seguinte ("junto") não é caso: sozinha, ela perde o contexto
+        if f"log #{r.id}" in ja or not r.pergunta or (r.ferramentas or "") == "confirmacao" \
+                or "junto" in (r.ferramentas or "").split(","):
             continue
         novos += 1
         print(json.dumps({"origem": f"log #{r.id}", "em": f"{r.em:%d/%m %H:%M}", "como": apelido,

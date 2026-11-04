@@ -3,7 +3,8 @@
 A pessoa manda uma ou mais fotos (a legenda vale como texto). O álbum do WhatsApp chega como uma mensagem por foto, e o
 bot responde uma vez só, na última (`e_a_ultima`). A IA chama `anexar_fotos` com a tarefa (ou a OS); o sistema confere a
 situação da tarefa e o papel da pessoa e propõe "Anexar N foto(s) na tarefa #X", que ela confirma com Sim. Confirmada,
-cada foto sai do gateway e entra em `POST /tasks/{id}/attachments` do meuPlano, a rota do app de campo, com o token DELA.
+cada foto sai do gateway e entra na FICHA da tarefa (Fotos e anexos, a rota do app de campo), com o token DELA; tarefa
+sem ficha recebe nos Anexos dela (`POST /tasks/{id}/attachments`).
 
 Regra do dono: o técnico anexa só em tarefa EM ABERTO (prevista, planejada, programada, em andamento); o gestor da O&M
 também na EM ANÁLISE (realizada, esperando a verificação) e na CONCLUÍDA (aprovada). Cancelada não recebe foto.
@@ -33,6 +34,8 @@ PRAZO_S = 600
 
 ABERTA = {"PREVISTA", "PLANEJADA", "PROGRAMADA", "EM_ANDAMENTO"}
 DO_GESTOR = {"REALIZADA": "em análise", "APROVADA": "concluída"}
+#: A ficha que recebe anexo (a rota de lá recusa as outras com 409: emitida, aprovada, reprovada).
+FICHA_RECEBE = {"IN_PROGRESS", "DRAFT"}
 
 
 def e_foto(evento: dict) -> bool:
@@ -87,9 +90,11 @@ def recusa(user, status: str | None) -> str | None:
 
 FERRAMENTA = {"type": "function", "function": {
     "name": "anexar_fotos",
-    "description": ("Anexa numa TAREFA do meuPlano as fotos que a pessoa mandou por aqui e ainda não foram anexadas "
-                    "(a mensagem dela aparece como «[📷 N foto(s) recebida(s)…]»). Vira uma ação que ela confirma com "
-                    "Sim. Passe a tarefa (o número dela) ou, se a pessoa só disse a OS, a OS. Sem saber onde, pergunte "
+    "description": ("Anexa na FICHA de uma tarefa do meuPlano (Fotos e anexos) as fotos que a pessoa mandou por aqui e "
+                    "ainda não foram anexadas (a mensagem dela aparece como «[📷 N foto(s) recebida(s)…]»). Vira uma "
+                    "ação que ela confirma no botão Sim. Passe a tarefa (o número dela) ou, se a pessoa só disse a OS, "
+                    "a OS. Se ela disse a usina e o serviço (\"a roçagem de Tietê\"), ache a tarefa com `manutencao` e "
+                    "chame esta ferramenta NA MESMA mensagem, sem perguntar Sim/Não em texto. Sem saber onde, pergunte "
                     "em qual tarefa ou OS: não escolha por ela."),
     "parameters": {"type": "object", "properties": {
         "tarefa": {"type": "integer", "description": "número da tarefa"},
@@ -127,8 +132,8 @@ async def anexar_fotos(ctx, a: dict) -> dict:
     if motivo := recusa(ctx.user, t.get("status")):
         return {"erro": f"A tarefa #{t['id']} {motivo}. Nada foi anexado."}
     tid, n = int(t["id"]), len(fotos)
-    resumo = f"Anexar {n} foto(s) na tarefa #{tid} «{t.get('name') or 'sem nome'}»"
-    onde = " · ".join(x for x in (f"OS {t['os_id']}" if t.get("os_id") else "", t.get("plant_name") or "") if x)
+    resumo = f"Anexar {n} foto(s) na ficha da tarefa #{tid} «{t.get('name') or 'sem nome'}»"
+    lugar = " · ".join(x for x in (f"OS {t['os_id']}" if t.get("os_id") else "", t.get("plant_name") or "") if x)
 
     async def executar(db, user, telefone: str) -> str:
         from app.services.integracoes import detalhe_do_upstream
@@ -142,12 +147,25 @@ async def anexar_fotos(ctx, a: dict) -> dict:
             return f"❌ Não consegui conferir a tarefa #{tid} no meuPlano agora. Nenhuma foto foi anexada."
         if motivo := recusa(user, situacao):
             return f"❌ A tarefa #{tid} {motivo}. Nenhuma foto foi anexada."
+        # A foto de campo vai à FICHA (Fotos e anexos), onde a equipe a procura: nos Anexos da tarefa, que é outra
+        # janela, ela parecia perdida (04/11/2026). Tarefa sem ficha (coletiva, sem equipamento) ou com a ficha
+        # travada (emitida ao cliente) recebe nos Anexos, e o fim diz onde ficou.
+        try:
+            ficha = await mp.abrir_ficha(tid, user.nome)
+        except httpx.HTTPError:
+            ficha = None
+        if ficha is not None and ficha.get("session_status") not in FICHA_RECEBE:
+            ficha = None
+        onde = (f"na ficha da tarefa #{tid} (Fotos e anexos)" if ficha is not None
+                else f"nos Anexos da tarefa #{tid}, não na ficha")
         feitas, falhas = 0, []
         for i, f in enumerate(fotos, 1):
             try:
                 conteudo, tipo = await whatsapp.baixar_midia(f["id"])
-                await mp.anexar_na_tarefa(tid, f"whatsapp-{i}.{(tipo or 'image/jpeg').split('/')[-1].split(';')[0]}",
-                                          conteudo, tipo, f["legenda"] or "Foto enviada pelo WhatsApp", user.nome)
+                nome = f"whatsapp-{i}.{(tipo or 'image/jpeg').split('/')[-1].split(';')[0]}"
+                descricao = f["legenda"] or "Foto enviada pelo WhatsApp"
+                await (mp.anexar_na_ficha(ficha, nome, conteudo, tipo, descricao, user.nome) if ficha is not None
+                       else mp.anexar_na_tarefa(tid, nome, conteudo, tipo, descricao, user.nome))
             except whatsapp.GatewayIndisponivel:
                 falhas.append(f"foto {i}: não consegui baixar do WhatsApp")
                 continue
@@ -166,8 +184,10 @@ async def anexar_fotos(ctx, a: dict) -> dict:
         if not feitas:
             return f"❌ Nenhuma foto foi anexada na tarefa #{tid}:{motivos}"
         if falhas:
-            return f"⚠️ Anexei {feitas} de {n} foto(s) na tarefa #{tid}:{motivos}"
-        return f"✅ {feitas} foto(s) anexada(s) na tarefa #{tid} no meuPlano."
+            return f"⚠️ Anexei {feitas} de {n} foto(s) {onde}:{motivos}"
+        return f"✅ {feitas} foto(s) anexada(s) {onde}."
 
-    return helper.propor(ctx, resumo, PRAZO_S, executar, [onde], parte="bot_meuplano",
-                         confirmacao="sim")
+    from app.services.assistente import HISTORICO_MEUPLANO
+    # `conversa`: depois do Sim, o resto do pedido ("…e lança ontem e hoje para o Thiago") segue no meuPlano
+    return helper.propor(ctx, resumo, PRAZO_S, executar, [lugar], parte="bot_meuplano", confirmacao="sim",
+                         conversa=[*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": ctx.pedido}])

@@ -860,7 +860,10 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   ter lido todos os relés; diga o que não deu para ler.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
-  completo e já confirmado pela pessoa.
+  completo. Nunca pergunte "posso fazer? (Sim/Não)" em texto: chame a ferramenta, e o sistema mostra o resumo com o
+  botão Sim.
+- Mensagens seguidas da pessoa, sem resposta sua no meio, são UM pedido: responda todas juntas, e a última corrige as
+  de antes ("ibitinga" e depois "é Tietê" = Tietê).
 - "[senha oculta]" numa mensagem = a pessoa escreveu a senha de atuação no meio da frase: ela foi escondida e
   NÃO confirma nada (a senha só vale sozinha, numa mensagem só dela). "[número oculto]" = número que o sistema
   escondeu sem conferir (a frase tinha mais de 3 números longos, ou a pessoa passou do limite da hora): peça
@@ -877,8 +880,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   dela) e registra cada senha que mostra. Nunca recuse por conta própria, nem diga que não passa credencial: pergunte
   ao meuPlano e repasse o que ele responder.
 - «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
-  anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa); sem saber onde,
-  pergunte em qual tarefa ou OS. Ela confirma com Sim.
+  anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa). Disse a usina e o
+  serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
+  onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
   e chame `gravar_coordenada` com a usina; o sistema diz se grava ou substitui e pede o Sim. Nunca escreva coordenada.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
@@ -964,7 +968,9 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
         msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": chamadas})
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
         # Atalho de velocidade: só o meuPlano foi chamado e respondeu → a resposta dele É a resposta.
-        if len(chamadas) == 1 and chamadas[0]["function"]["name"] == "manutencao" and resultados[0].get("texto"):
+        # Menos com foto esperando: só a IA daqui anexa, e o "(Sim/Não)" de lá ia à pessoa no lugar do anexo (04/11/2026).
+        if len(chamadas) == 1 and chamadas[0]["function"]["name"] == "manutencao" and resultados[0].get("texto") \
+                and not fotos.recebidas(ctx.telefone):
             return resultados[0]["texto"]
         for c, res in zip(chamadas, resultados):
             msgs.append({"role": "tool", "tool_call_id": c["id"],
@@ -1076,6 +1082,17 @@ IGNORADOS = {"reaction", "sticker", "system", "ephemeral", "request_welcome"}
 #: As mensagens já atendidas (id do gateway): o aviso imediato e a varredura de lá podem repetir
 #: uma entrega, e a mesma mensagem não pode ser respondida (nem confirmada) duas vezes.
 _ATENDIDAS: OrderedDict[Any, None] = OrderedDict()
+#: As mensagens de cada número esperando a vez (e a que está sendo atendida), na ordem de chegada. A mensagem que vai à
+#: IA com outra JUNTÁVEL (texto ou foto) já na fila atrás dela não é respondida: vai ao histórico, e a seguinte responde
+#: as duas (04/11/2026: com 20 a 60 s por volta, o bot respondia 2 ou 3 mensagens atrás — "roçagem de Ibitinga"
+#: depois de a pessoa ter corrigido para Tietê duas vezes, e a correção ainda derrubava o resumo certo).
+_FILA: dict[str, list[dict]] = {}
+#: Quanto a mensagem espera a seguinte antes de ir à IA, contado da chegada: a frase que sai em duas ("anexe essas
+#: fotos na roçagem" + "das 8 às 17h", 4 s depois). A foto espera mais: o pedido costuma vir num texto logo depois.
+ESPERA_TEXTO_S = 4.0
+ESPERA_FOTO_S = 15.0
+#: O que fica no log da mensagem que foi respondida junto com a seguinte.
+JUNTADA = "[respondida junto com a mensagem seguinte]"
 
 
 async def atender(evento: dict) -> None:
@@ -1093,9 +1110,42 @@ async def atender(evento: dict) -> None:
     if fotos.e_foto(evento):                               # na chegada: a foto anterior do álbum sabe que veio outra
         fotos.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
-    evento = {**evento, "_chegou": monotonic()}
-    async with _TRAVAS.setdefault(chave, asyncio.Lock()):
-        await _atender(evento)
+    texto = (evento.get("texto") or "").strip()
+    item = {"juntavel": fotos.e_foto(evento) or (evento.get("tipo") == "text" and not evento.get("botao")
+                                                 and bool(texto) and not helper.parece_senha(texto))}
+    fila = _FILA.setdefault(chave, [])
+    fila.append(item)
+    evento = {**evento, "_chegou": monotonic(), "_fila": fila, "_item": item}
+    try:
+        async with _TRAVAS.setdefault(chave, asyncio.Lock()):
+            await _atender(evento)
+    finally:
+        fila.remove(item)
+        if not fila and _FILA.get(chave) is fila:
+            del _FILA[chave]
+
+
+def _vem_mais(evento: dict) -> bool:
+    """Já chegou, atrás desta, outra mensagem do número que vai à IA (texto ou foto)."""
+    fila, item = evento.get("_fila") or [], evento.get("_item")
+    pos = next((k for k, i in enumerate(fila) if i is item), len(fila))
+    return any(i["juntavel"] for i in fila[pos + 1:])
+
+
+async def _esperar_a_seguinte(evento: dict, espera_s: float) -> bool:
+    """Espera até `espera_s` desde a chegada (ou até vir a seguinte) e diz se veio."""
+    ate = (evento.get("_chegou") or monotonic()) + espera_s
+    while not _vem_mais(evento) and monotonic() < ate:
+        await asyncio.sleep(0.25)
+    return _vem_mais(evento)
+
+
+def _do_pedido(historico: list[dict]) -> int:
+    """Quantas mensagens da pessoa, seguidas e sem resposta no meio, fecham o histórico: são UM pedido."""
+    n = 0
+    while n < len(historico) and historico[-1 - n].get("role") == "user":
+        n += 1
+    return n
 
 
 def _empresa_fora(db: Session, user: User) -> str | None:
@@ -1567,8 +1617,29 @@ async def _atender(evento: dict) -> None:
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
-            ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=_para_fora(historico[:-1], revelados),
-                               pedido=seguro)
+            juntavel = (cadastro_dados is None and not esperava and not analise.escondeu_senha
+                        and user.id not in helper.PENDENTES)
+
+            async def juntar(*, ferramentas=None, mais_revelados=(), mais_digitados=()) -> None:
+                """Esta mensagem fica no histórico, sem resposta: a seguinte responde as duas."""
+                _gravar_conversa(conv, historico, [*revelados, *mais_revelados], [*digitados, *mais_digitados])
+                conv.gs_user_id = user.id
+                _guardar(db)
+                fim.set()
+                await tarefa
+                _registrar(db, telefone, user, "respondeu", pergunta=entrada["content"], resposta=JUNTADA,
+                           ferramentas=[*(ferramentas or []), "junto"], inicio=inicio, em=enviada,
+                           valores=valores, credencial=_e_de_credencial(seguro))
+
+            if juntavel:
+                db.commit()                               # solta a conexão durante a espera
+                # a foto sem legenda espera mais: o pedido costuma vir num texto logo depois
+                sem_legenda = fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone))
+                if await _esperar_a_seguinte(evento, ESPERA_FOTO_S if sem_legenda else ESPERA_TEXTO_S):
+                    return await juntar()
+            n = _do_pedido(historico)
+            ctx = ger.Contexto(db=db, user=user, telefone=telefone, historico=_para_fora(historico[:-n], revelados),
+                               pedido="\n".join(str(m.get("content") or "") for m in historico[-n:]))
             await ger.preparar(ctx)
             if cadastro_dados is not None:
                 resposta = await cad.pelo_formulario(ctx, cadastro_dados)
@@ -1578,6 +1649,13 @@ async def _atender(evento: dict) -> None:
                 livre = resposta = await responder(
                     ctx, [*_para_fora(historico[:-1], revelados), historico[-1]],
                     CANCELADA_PARA_A_IA.format(resumo=desarmada.resumo) if desarmada is not None else "")
+                if juntavel and ctx.proposta is not None and not ctx.enviados and _vem_mais(evento):
+                    # A pessoa escreveu enquanto a ação era montada: o resumo pode não ser o que ela pediu, e a
+                    # mensagem dela derrubaria o resumo logo que ele saísse. Nada sai; a seguinte responde tudo.
+                    if helper.PENDENTES.get(user.id) is ctx.proposta:
+                        del helper.PENDENTES[user.id]
+                    return await juntar(ferramentas=ctx.ferramentas, mais_revelados=ctx.segredos,
+                                        mais_digitados=ctx.digitados)
             resposta += nota
             if analise.escondeu_senha:
                 resposta += ("\n\n(Escondi a sua senha de atuação desta mensagem: ela é só para equipamento, e "

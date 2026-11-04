@@ -748,6 +748,22 @@ class MeuPlanoClient:
                             data={"description": descricao, "uploaded_by": autor})
         return r.json()
 
+    async def abrir_ficha(self, task_id: int, autor: str) -> dict[str, Any]:
+        """A ficha (sessão de execução) da tarefa, como o app de campo a abre: `review` não muda a situação de nada.
+        Devolve `test_asset_id`, `session_id` e `session_status`; tarefa coletiva ou sem equipamento dá 400."""
+        r = await self._req("POST", f"/api/v1/meuacesso/tasks/{task_id}/open-session",
+                            json={"changed_by": autor, "review": True})
+        return r.json()
+
+    async def anexar_na_ficha(self, ficha: dict, nome: str, conteudo: bytes, tipo: str | None,
+                              descricao: str, autor: str) -> dict[str, Any]:
+        """Um arquivo em "Fotos e anexos" da ficha (a rota do app de campo), com o token de quem manda."""
+        r = await self._req("POST", f"/api/v1/maintenance/test-assets/{ficha['test_asset_id']}/sessions/"
+                                    f"{ficha['session_id']}/attachments", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "image/jpeg")},
+                            data={"description": descricao, "uploaded_by": autor})
+        return r.json()
+
     async def permissoes(self) -> set[str]:
         """As permissões do dono do token (`/auth/me`): o bot avisa ANTES do Sim o que o papel dele não faz."""
         return set((await self._get("/api/v1/meuacesso/auth/me")).get("permissions") or [])
