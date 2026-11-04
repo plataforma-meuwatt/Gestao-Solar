@@ -779,7 +779,7 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 | `gestaosolar-whatsapp` | `whatsapp/` | `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io` (callback da Meta: `/webhook`) |
 
 Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM
-srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco continua o Supabase de antes.
+srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco é o Supabase BR (sa-east-1) desde 04/11/2026 (`/root/bin/gestaosolar-migra-banco.sh`; o de us-west-1 ficou só leitura).
 **O assistente do WhatsApp é do Gestão Solar (o guardião)** — `bff/app/services/assistente.py`.
 O número casa com UMA conta daqui (`gs_users.telefone`); sem conta, não há conversa. Um
 orquestrador (DeepSeek, `DEEPSEEK_API_KEY`) usa as ferramentas de GERAÇÃO
