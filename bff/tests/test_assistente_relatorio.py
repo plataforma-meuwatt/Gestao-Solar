@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from app.services import assistente_fotos as fotos
 from app.services import assistente_geracao as ger
 from app.services import assistente_relatorio as rel
 
@@ -43,6 +44,10 @@ class MP:
         st = self.estados.pop(0) if len(self.estados) > 1 else self.estados[0]
         return {"status": st, "etapa": "escrevendo", "doc_id": 71 if st == "pronto" else None,
                 "erro": "a IA caiu" if st == "erro" else None}
+
+    async def criar_fato_arquivo(self, os_id, nome, conteudo, tipo, texto):
+        self.pedidos.append(("fato", os_id, nome, conteudo, texto))
+        return {"id": 500 + len(self.pedidos)}
 
     async def publicar_relatorio(self, doc_id):
         self.pedidos.append(("publicar", doc_id))
@@ -138,3 +143,38 @@ def test_o_bot_conhece_a_ferramenta_e_so_quem_tem_o_meuplano_a_recebe():
     com = SimpleNamespace(bot_ativo={"bot_meuplano"}, perfil=None)
     sem = SimpleNamespace(bot_ativo={"bot_meuwatt"}, perfil=None)
     assert "relatorio_da_os" in assistente.permitidas(com) and "relatorio_da_os" not in assistente.permitidas(sem)
+
+
+async def test_prompt_e_imagens_de_apoio_viram_fatos_e_relatorio_novo(monkeypatch, chat):
+    """ "gere o relatório da OS com o prompt xxx, segue imagens de apoio": as fotos guardadas vão aos fatos relevantes
+    da OS (com a legenda), saem da espera, e o relatório é NOVO — mesmo com um salvo na OS."""
+    async def baixar(mid):
+        return f"jpeg-{mid}".encode(), "image/jpeg"
+
+    monkeypatch.setattr("app.clients.whatsapp.baixar_midia", baixar)
+    tel = "+5516999998888"
+    monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 11, "legenda": "oscilografia", "em": fotos.monotonic()},
+                                                {"id": 12, "legenda": "", "em": fotos.monotonic()}])
+    mp = MP(SALVOS)
+    r, _ = await _rodar(monkeypatch, mp, instrucao="foco na falta entre B e C", fotos_de_apoio=True)
+    fatos_criados = [p for p in mp.pedidos if p[0] == "fato"]
+    ok_fotos = [(p[1], p[3], p[4]) for p in fatos_criados] == [(1878, b"jpeg-11", "oscilografia"),
+                                                               (1878, b"jpeg-12", "Imagem de apoio enviada pelo WhatsApp")]
+    assert ok_fotos and r["fotos_de_apoio"] == 2 and fotos.recebidas(tel) == []
+    assert ("gerar", 1878, "foco na falta entre B e C") in mp.pedidos and r["relatorio"] == "novo"
+    # as fotos entram ANTES de gerar (a IA de lá as vê)
+    assert mp.pedidos.index(fatos_criados[-1]) < mp.pedidos.index(("gerar", 1878, "foco na falta entre B e C"))
+
+
+async def test_sem_pedir_as_fotos_elas_ficam_esperando(monkeypatch, chat):
+    tel = "+5516999998888"
+    monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 21, "legenda": "", "em": fotos.monotonic()}])
+    mp = MP([])
+    await _rodar(monkeypatch, mp, escolha="novo")
+    assert not [p for p in mp.pedidos if p[0] == "fato"] and len(fotos.recebidas(tel)) == 1
+
+
+async def test_auto_com_prompt_nao_pergunta_qual(monkeypatch, chat):
+    mp = MP(SALVOS)
+    r, _ = await _rodar(monkeypatch, mp, instrucao="para a diretoria")
+    assert r["relatorio"] == "novo" and "relatorios_salvos" not in r

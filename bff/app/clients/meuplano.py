@@ -795,6 +795,14 @@ class MeuPlanoClient:
         """`{status: rodando|pronto|erro, etapa, doc_id, erro}` — só de quem pediu."""
         return await self._get(f"/api/v1/meuacesso/word/relatorio-ia/{job}")
 
+    async def criar_fato_arquivo(self, os_id: int, nome: str, conteudo: bytes, tipo: str | None,
+                                 texto: str) -> dict[str, Any]:
+        """Uma imagem de apoio nos FATOS RELEVANTES da OS — a evidência que o relatório com IA de lá analisa."""
+        r = await self._req("POST", f"/api/v1/meuacesso/service-orders/{os_id}/fatos/arquivo", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "image/jpeg")},
+                            data={"texto": texto} if texto else None)
+        return r.json()
+
     async def publicar_relatorio(self, doc_id: int) -> dict[str, Any]:
         """O PDF do documento Word feito NO SERVIDOR de lá (o WordCraft) vira o relatório da OS dele."""
         r = await self._req("POST", f"/api/v1/meuacesso/word/documentos/{doc_id}/relatorio-pdf", timeout=120.0)

@@ -126,5 +126,7 @@
 {"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"},
 {"frase": "Me manda o relatório da OS 1878", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: o salvo ou um novo)"},
 {"frase": "gera um relatório novo da OS 1878 com IA e me manda o pdf", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: gerar na hora)"},
-{"frase": "me manda o pdf da OS 1638", "espera": ["manutencao"], "origem": "04/11 (o PDF da OS não é o relatório dela)"}
+{"frase": "me manda o pdf da OS 1638", "espera": ["manutencao"], "origem": "04/11 (o PDF da OS não é o relatório dela)"},
+{"frase": "Gere o relatório da OS 1878 com o prompt: relatório curto para a diretoria, foco na falta entre as fases B e C. Segue imagens de apoio\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot com o prompt e as imagens de apoio)"},
+{"frase": "Anexa essa foto na tarefa 9388\n[📷 1 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["anexar_fotos"], "origem": "04/11 (a foto para a ficha não é imagem de apoio do relatório)"}
 ]

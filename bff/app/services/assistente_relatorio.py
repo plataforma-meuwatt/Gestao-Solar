@@ -7,6 +7,11 @@ Relatórios da OS de lá (o PDF exportado de um rascunho Word). O NOVO é o "Nov
 as tarefas, as fichas e as fotos e monta o Word, e o PDF dele sai do WordCraft do servidor de lá — o mesmo motor do
 editor, nunca LibreOffice. O novo fica salvo na OS (o rascunho Word e o PDF na aba Relatórios). O arquivo vai como
 DOCUMENTO no WhatsApp; os bytes não passam pela IA.
+
+O PROMPT e as IMAGENS DE APOIO (dono, 04/11/2026: "gere o relatório da OS com o prompt xxx, segue imagens de apoio"):
+o prompt vai em `instrucao` e fica salvo na OS, na conversa do relatório com IA (a mesma do site); as fotos que a
+pessoa mandou por aqui entram nos FATOS RELEVANTES da OS antes de gerar — a IA de lá as analisa — e saem da espera
+(não vão também para a ficha de uma tarefa).
 """
 
 import asyncio
@@ -16,9 +21,11 @@ from time import monotonic
 import httpx
 
 from app.core.datas import hora_brt
+from app.services import assistente_fotos as fotos
 
-#: a IA de lá leva de 30 s a 2 min para montar o relatório (o turno inteiro segue com o "digitando…")
-PRAZO_GERAR_S = 240
+#: a IA de lá leva de 30 s a 2 min para montar o relatório, e o 1º link da Central gera os PDFs da OS e das tarefas
+#: antes: 6 min (o turno inteiro segue com o "digitando…"); passou disso, o bot diz para conferir a aba Relatórios
+PRAZO_GERAR_S = 360
 ESPERA_S = 3
 
 FERRAMENTA = {"type": "function", "function": {
@@ -30,13 +37,18 @@ FERRAMENTA = {"type": "function", "function": {
                     "quer o salvo (diga o título e a data) ou um novo — não mande nem gere antes da resposta; sem "
                     "salvo, o novo é gerado e enviado na hora. escolha=salvo manda o salvo (relatorio_id da lista, ou "
                     "o mais recente). escolha=novo gera AGORA com IA e manda (leva até 2 minutos): use quando a pessoa "
-                    "pediu um novo ('gera outro', 'refaz') ou respondeu que quer o novo. Como ela quer o novo (para "
-                    "quem, foco, tamanho) vai em `instrucao`; sem isso, o padrão é capa, contexto e o que foi feito."),
+                    "pediu um novo ('gera outro', 'refaz'), respondeu que quer o novo, ou mandou COMO quer o relatório "
+                    "(o prompt) ou imagens de apoio. O prompt dela (para quem, foco, tamanho — 'com o prompt …') vai em "
+                    "`instrucao`, inteiro, e fica salvo na OS; sem ele, vale o que já estiver salvo lá ou o padrão. "
+                    "Fotos que ela mandou para o relatório (a mensagem aparece como «[📷 N foto(s) recebida(s)…]»): "
+                    "fotos_de_apoio=true — entram nos fatos relevantes da OS e a IA as analisa (não é `anexar_fotos`, "
+                    "que é a ficha de uma tarefa)."),
     "parameters": {"type": "object", "properties": {
         "os": {"type": "integer", "description": "o número da OS"},
         "escolha": {"type": "string", "enum": ["auto", "salvo", "novo"]},
         "relatorio_id": {"type": "integer", "description": "qual relatório salvo (o id da lista); vazio = o mais recente"},
-        "instrucao": {"type": "string", "description": "como a pessoa quer o relatório NOVO; vazio = o padrão"}},
+        "instrucao": {"type": "string", "description": "como a pessoa quer o relatório NOVO (o prompt dela, inteiro); vazio = o salvo ou o padrão"},
+        "fotos_de_apoio": {"type": "boolean", "description": "as fotos que ela mandou por aqui vão aos fatos relevantes da OS antes de gerar"}},
         "required": ["os"]}}}
 
 
@@ -89,6 +101,30 @@ async def _gerar(mp, os_id: int, instrucao: str) -> dict:
     return await mp.publicar_relatorio(int(e["doc_id"]))
 
 
+async def _fotos_de_apoio(ctx, mp, os_id: int) -> dict:
+    """As fotos que a pessoa mandou por aqui entram nos FATOS RELEVANTES da OS (a legenda vira o texto do fato) e saem da
+    espera — a IA de lá as analisa ao gerar. Devolve o que contar à pessoa."""
+    from app.clients import whatsapp
+    recebidas = fotos.recebidas(ctx.telefone)
+    if not recebidas:
+        return {"fotos_de_apoio": 0, "nota_fotos": "Não havia foto recebida (cada uma fica guardada 30 min)."}
+    feitas, falhas = 0, []
+    for i, f in enumerate(recebidas, 1):
+        try:
+            conteudo, tipo = await whatsapp.baixar_midia(f["id"])
+            await mp.criar_fato_arquivo(os_id, f"whatsapp-{i}.{(tipo or 'image/jpeg').split('/')[-1].split(';')[0]}",
+                                        conteudo, tipo, f["legenda"] or "Imagem de apoio enviada pelo WhatsApp")
+        except Exception as e:  # noqa: BLE001 — uma foto que não sobe não derruba o relatório; vai dita
+            falhas.append(f"foto {i}: {type(e).__name__}")
+            continue
+        feitas += 1
+        fotos._tirar(ctx.telefone, f["id"])
+    out = {"fotos_de_apoio": feitas}
+    if falhas:
+        out["fotos_que_nao_entraram"] = falhas
+    return out
+
+
 async def relatorio_da_os(ctx, a: dict) -> dict:
     from app.services.vinculos import SemConexao, cliente_meuplano
     try:
@@ -96,6 +132,8 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
     except (TypeError, ValueError):
         return {"erro": "Falta o número da OS: pergunte qual é."}
     escolha = (a.get("escolha") or "auto").lower()
+    if escolha == "auto" and ((a.get("instrucao") or "").strip() or a.get("fotos_de_apoio")):
+        escolha = "novo"            # mandou o prompt ou imagens de apoio: é um relatório novo, não o salvo
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao as e:
@@ -126,6 +164,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
     if escolha == "salvo":
         return {"erro": f"A OS #{os_id} não tem relatório salvo. Ofereça gerar um novo agora."}
 
+    apoio = await _fotos_de_apoio(ctx, mp, os_id) if a.get("fotos_de_apoio") else {}
     try:
         rel = await _gerar(mp, os_id, (a.get("instrucao") or "").strip())
         raw = await mp.relatorio_pdf(rel["id"])
@@ -136,6 +175,6 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
                         "antes de pedir de novo: ele pode ter ficado pronto lá."}
     except RuntimeError as e:
         return {"erro": f"Não consegui gerar o relatório: {e}."}
-    return {"os": os_id, "relatorio": "novo", "titulo": rel.get("titulo"),
-            "salvo_na_os": "o rascunho Word e o PDF ficaram na aba Relatórios da OS",
+    return {"os": os_id, "relatorio": "novo", "titulo": rel.get("titulo"), **apoio,
+            "salvo_na_os": "o rascunho Word e o PDF ficaram na aba Relatórios da OS; o prompt, na conversa do relatório",
             **(await _mandar(ctx, raw, rel.get("titulo") or f"Relatório da OS #{os_id}"))}
