@@ -40,6 +40,7 @@ from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
 from app.services import assistente_local as local
+from app.services import assistente_relatorio as relatorio
 from app.services import assistente_formulario as formulario
 from app.services import assistente_helper as helper
 
@@ -87,7 +88,7 @@ _MANUTENCAO = {"type": "function", "function": {
                     "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
                     "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período. Também o "
                     "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
-                    "contratos, diária e dia de trabalho de prestador."),
+                    "contratos, diária e dia de trabalho de prestador. O RELATÓRIO da OS em PDF é `relatorio_da_os`."),
     "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
 
 
@@ -319,6 +320,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
 
 
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
+               "relatorio_da_os": (relatorio.relatorio_da_os, relatorio.FERRAMENTA),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
 
@@ -827,7 +829,7 @@ def permitidas(user) -> list[str]:
     if "bot_meuwatt" in ativo:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
-        nomes += ["manutencao", "anexar_fotos", "gravar_coordenada"]
+        nomes += ["manutencao", "relatorio_da_os", "anexar_fotos", "gravar_coordenada"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M

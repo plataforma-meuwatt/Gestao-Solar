@@ -123,5 +123,8 @@
 {"frase": "Me de quais classificações tem em administrativo", "espera": ["manutencao"], "origem": "log #138"},
 {"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper"], "origem": "log #178"},
 {"frase": "Quero acrescentar mais tarefas na os 1874", "espera": ["manutencao"], "origem": "log #202"},
-{"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"}
+{"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"},
+{"frase": "Me manda o relatório da OS 1878", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: o salvo ou um novo)"},
+{"frase": "gera um relatório novo da OS 1878 com IA e me manda o pdf", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: gerar na hora)"},
+{"frase": "me manda o pdf da OS 1638", "espera": ["manutencao"], "origem": "04/11 (o PDF da OS não é o relatório dela)"}
 ]

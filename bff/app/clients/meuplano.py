@@ -775,6 +775,31 @@ class MeuPlanoClient:
                             json={"lat": lat, "lng": lng, "substituir": substituir})
         return r.json()
 
+    # ------------------------------------------------------- relatório da OS (o Word meuPlano)
+
+    async def relatorios_da_os(self, os_id: int) -> list[dict[str, Any]]:
+        """Os relatórios SALVOS da OS — a aba Relatórios de lá (o PDF exportado de cada rascunho Word):
+        `[{id, titulo, criado_por, atualizado_em, …}]`, o mais recente primeiro."""
+        return await self._get("/api/v1/meuacesso/word/relatorios", dono_tipo="os", dono_id=os_id) or []
+
+    async def relatorio_pdf(self, rid: int) -> bytes:
+        r = await self._req("GET", f"/api/v1/meuacesso/word/relatorios/{rid}/arquivo", timeout=60.0)
+        return r.content
+
+    async def relatorio_ia(self, os_id: int, instrucao: str) -> str:
+        """Pede o "Novo relatório com IA" de lá; devolve o `job` (o andamento em `relatorio_ia_estado`)."""
+        r = await self._req("POST", "/api/v1/meuacesso/word/relatorio-ia", json={"os_id": os_id, "instrucao": instrucao})
+        return r.json()["job"]
+
+    async def relatorio_ia_estado(self, job: str) -> dict[str, Any]:
+        """`{status: rodando|pronto|erro, etapa, doc_id, erro}` — só de quem pediu."""
+        return await self._get(f"/api/v1/meuacesso/word/relatorio-ia/{job}")
+
+    async def publicar_relatorio(self, doc_id: int) -> dict[str, Any]:
+        """O PDF do documento Word feito NO SERVIDOR de lá (o WordCraft) vira o relatório da OS dele."""
+        r = await self._req("POST", f"/api/v1/meuacesso/word/documentos/{doc_id}/relatorio-pdf", timeout=120.0)
+        return r.json()
+
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
 
