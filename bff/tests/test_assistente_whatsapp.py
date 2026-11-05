@@ -104,6 +104,30 @@ async def test_pergunta_so_de_manutencao_volta_direto_do_meuplano(db, monkeypatc
     assert r == "Pereiras tem 2 OS abertas." and len(chamadas_llm) == 1
 
 
+async def test_consulta_que_e_o_primeiro_passo_nao_vira_a_resposta(db, monkeypatch):
+    """"Registra nas informações do relatório da OS do arco de Pereiras: …" — a consulta acha a OS (`continuar`) e a IA
+    daqui chama a ferramenta dela em seguida; o atalho respondia "É a OS 1878" e parava ali (05/11/2026)."""
+    rodadas = []
+
+    async def _llm(msgs, ferramentas=None):
+        rodadas.append(msgs)
+        if len(rodadas) == 1:
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "manutencao", "arguments": '{"pergunta": "a OS do arco de Pereiras", "continuar": true}'}}]}
+        assert "É a OS 1878" in msgs[-1]["content"]             # a resposta do meuPlano voltou para a IA
+        return {"content": "Vou registrar na OS 1878.", "tool_calls": []}
+
+    async def _manutencao(ctx, a):
+        return {"texto": "É a OS 1878 – Arco no trafo 1."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "manutencao", (_manutencao, assistente._MANUTENCAO))
+    ctx = ger.Contexto(db=db, user=_conta(db, "dono", "+5517997377626"), telefone="+5517997377626")
+    r = await assistente.responder(ctx, [{"role": "user", "content": "registra nas informações da OS do arco de Pereiras: x"}])
+    assert r == "Vou registrar na OS 1878." and len(rodadas) == 2
+    assert assistente._continua({"function": {"arguments": "{quebrado"}}) is False
+
+
 async def test_erro_de_uma_ferramenta_vira_frase_para_o_modelo(db, monkeypatch):
     rodadas = iter([
         {"content": "", "tool_calls": [{"id": "c1", "type": "function",

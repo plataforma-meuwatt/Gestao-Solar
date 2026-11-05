@@ -130,5 +130,6 @@
 {"frase": "Gere o relatório da OS 1878 com o prompt: relatório curto para a diretoria, foco na falta entre as fases B e C. Segue imagens de apoio\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot com o prompt e as imagens de apoio)"},
 {"frase": "Anexa essa foto na tarefa 9388\n[📷 1 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["anexar_fotos"], "origem": "04/11 (a foto para a ficha não é imagem de apoio do relatório)"},
 {"frase": "Registra nas informações do relatório da OS 1878: o relé marcou 12 kA na fase B no trip", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (texto para as informações do relatório, sem gerar)"},
-{"frase": "Coloca essas fotos nas informações do relatório da OS 1878\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (fotos para as informações do relatório, sem gerar)"}
+{"frase": "Coloca essas fotos nas informações do relatório da OS 1878\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (fotos para as informações do relatório, sem gerar)"},
+{"frase": "registra nas informações do relatório da OS do arco de Pereiras: a oscilografia indica arco entre duas fases", "espera": ["manutencao"], "origem": "05/11 (sem o número da OS: acha a OS com continuar=true e segue para o Sim)"}
 ]

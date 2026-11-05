@@ -90,7 +90,13 @@ _MANUTENCAO = {"type": "function", "function": {
                     "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
                     "contratos, diária e dia de trabalho de prestador. O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
                     "para as INFORMAÇÕES DO RELATÓRIO de uma OS são `informacoes_do_relatorio`."),
-    "parameters": {"type": "object", "properties": {"pergunta": {"type": "string"}}, "required": ["pergunta"]}}}
+    "parameters": {"type": "object", "properties": {
+        "pergunta": {"type": "string"},
+        "continuar": {"type": "boolean", "description": (
+            "true quando esta consulta é só o 1º passo de um pedido que segue AQUI, numa ferramenta deste bot — ex.: "
+            "achar o número da OS (pela usina e pelo assunto) para `informacoes_do_relatorio` ou `relatorio_da_os`. "
+            "A resposta do meuPlano volta para você, e você chama a próxima ferramenta.")}},
+        "required": ["pergunta"]}}}
 
 
 #: Documento ASSINADO com o certificado digital da pessoa é ação. No meuPlano, a ferramenta de
@@ -973,8 +979,10 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
         # Atalho de velocidade: só o meuPlano foi chamado e respondeu → a resposta dele É a resposta.
         # Menos com foto esperando: só a IA daqui anexa, e o "(Sim/Não)" de lá ia à pessoa no lugar do anexo (04/11/2026).
+        # Nem quando a consulta é o 1º passo de uma ferramenta daqui (`continuar`): "registra nas informações do relatório
+        # da OS do arco de Pereiras: …" achava a OS 1878 e parava ali, sem o resumo para o Sim (05/11/2026).
         if len(chamadas) == 1 and chamadas[0]["function"]["name"] == "manutencao" and resultados[0].get("texto") \
-                and not fotos.recebidas(ctx.telefone):
+                and not fotos.recebidas(ctx.telefone) and not _continua(chamadas[0]):
             return resultados[0]["texto"]
         for c, res in zip(chamadas, resultados):
             msgs.append({"role": "tool", "tool_call_id": c["id"],
@@ -991,6 +999,14 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
         log.warning("assistente: a última volta sem ferramenta falhou", exc_info=True)
         texto = ""
     return texto or "A pergunta ficou grande demais para uma resposta só. Pode dividir em partes?"
+
+
+def _continua(chamada: dict) -> bool:
+    """A consulta ao meuPlano marcada como 1º passo de outra ferramenta daqui (`continuar`)."""
+    try:
+        return bool(json.loads(chamada["function"].get("arguments") or "{}").get("continuar"))
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 
 # --------------------------------------------------------------------------- transporte

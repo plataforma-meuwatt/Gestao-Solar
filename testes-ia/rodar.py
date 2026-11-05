@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
 
 from sqlalchemy import select
@@ -46,6 +47,12 @@ async def _turno(apelido: str, frase: str, inteira: bool) -> dict:
         user = _conta(db, apelido)
         ctx = ger.Contexto(db=db, user=user, telefone=user.telefone or "", pedido=frase)
         await ger.preparar(ctx)
+        if m := re.search(r"\[📷 (\d+) foto\(s\) recebida\(s\)", frase):
+            # a foto ESPERANDO, como no bot (só neste processo; nada baixa antes do Sim): sem ela, o caminho é outro — o
+            # atalho do meuPlano respondia no lugar da ferramenta daqui (05/11/2026)
+            from app.services import assistente_fotos as fotos
+            fotos._RECEBIDAS[ctx.telefone] = [{"id": f"teste-{i}", "legenda": "", "em": fotos.monotonic()}
+                                              for i in range(int(m.group(1)))]
         if inteira:
             texto = await a.responder(ctx, [{"role": "user", "content": frase}])
             if ctx.proposta is not None:

@@ -245,7 +245,9 @@ FERRAMENTA_INFO = {"type": "function", "function": {
                     "relatório: o print da oscilografia, a foto do dano, uma observação, um valor medido) o TEXTO que a "
                     "pessoa mandou e/ou as FOTOS que ela mandou por aqui (a mensagem aparece como «[📷 N foto(s) "
                     "recebida(s)…]»). Vira uma ação que ela confirma no botão Sim. Não gera o relatório (isso é "
-                    "`relatorio_da_os`) nem é a ficha de uma tarefa (`anexar_fotos`). Sem saber a OS, pergunte qual."),
+                    "`relatorio_da_os`) nem é a ficha de uma tarefa (`anexar_fotos`). Sem o NÚMERO da OS (ela disse a "
+                    "usina e o assunto — 'a OS do arco de Pereiras'): ache-o com `manutencao` (continuar=true) e chame "
+                    "esta em seguida, na mesma mensagem; só pergunte qual se a busca não achar uma OS só."),
     "parameters": {"type": "object", "properties": {
         "os": {"type": "integer", "description": "o número da OS"},
         "texto": {"type": "string", "description": "a informação em texto, como a pessoa disse (vazio se ela só mandou fotos)"},
