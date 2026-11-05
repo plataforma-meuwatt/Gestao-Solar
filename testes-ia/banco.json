@@ -131,5 +131,11 @@
 {"frase": "Anexa essa foto na tarefa 9388\n[📷 1 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["anexar_fotos"], "origem": "04/11 (a foto para a ficha não é imagem de apoio do relatório)"},
 {"frase": "Registra nas informações do relatório da OS 1878: o relé marcou 12 kA na fase B no trip", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (texto para as informações do relatório, sem gerar)"},
 {"frase": "Coloca essas fotos nas informações do relatório da OS 1878\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (fotos para as informações do relatório, sem gerar)"},
-{"frase": "registra nas informações do relatório da OS do arco de Pereiras: a oscilografia indica arco entre duas fases", "espera": ["manutencao"], "origem": "05/11 (sem o número da OS: acha a OS com continuar=true e segue para o Sim)"}
+{"frase": "registra nas informações do relatório da OS do arco de Pereiras: a oscilografia indica arco entre duas fases", "espera": ["manutencao"], "origem": "05/11 (sem o número da OS: acha a OS com continuar=true e segue para o Sim)"},
+{"frase": "Tem os de troca de bobina do trafo 2 de ouro fino?", "espera": ["manutencao"], "origem": "log #218 (rotina 05/11)"},
+{"frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?", "espera": ["usina_helper"], "origem": "log #223 (rotina 05/11)"},
+{"frase": "Qual o número de série do transformador do skid 1 de ouro fino?", "espera": ["manutencao"], "origem": "log #224 (rotina 05/11)"},
+{"frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto", "espera": ["manutencao"], "origem": "log #225 (rotina 05/11)"},
+{"frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras", "espera": ["manutencao", "relatorio_da_os"], "origem": "log #227 (rotina 05/11)"},
+{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233 (rotina 05/11)"}
 ]
