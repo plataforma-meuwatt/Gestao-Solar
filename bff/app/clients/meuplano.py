@@ -795,9 +795,18 @@ class MeuPlanoClient:
         """`{status: rodando|pronto|erro, etapa, doc_id, erro}` — só de quem pediu."""
         return await self._get(f"/api/v1/meuacesso/word/relatorio-ia/{job}")
 
+    async def fatos_da_os(self, os_id: int) -> list[dict[str, Any]]:
+        """As INFORMAÇÕES DO RELATÓRIO da OS (no meuPlano, "fatos"): 404 se a OS não existe ou não está no alcance dela."""
+        return await self._get(f"/api/v1/meuacesso/service-orders/{os_id}/fatos") or []
+
+    async def criar_fato(self, os_id: int, texto: str) -> dict[str, Any]:
+        """Uma informação do relatório em TEXTO (uma observação, um valor medido)."""
+        r = await self._req("POST", f"/api/v1/meuacesso/service-orders/{os_id}/fatos", json={"texto": texto})
+        return r.json()
+
     async def criar_fato_arquivo(self, os_id: int, nome: str, conteudo: bytes, tipo: str | None,
                                  texto: str) -> dict[str, Any]:
-        """Uma imagem de apoio nos FATOS RELEVANTES da OS — a evidência que o relatório com IA de lá analisa."""
+        """Uma imagem nas INFORMAÇÕES DO RELATÓRIO da OS (lá, "fatos") — a evidência que o relatório com IA de lá analisa."""
         r = await self._req("POST", f"/api/v1/meuacesso/service-orders/{os_id}/fatos/arquivo", timeout=120,
                             files={"file": (nome, conteudo, tipo or "image/jpeg")},
                             data={"texto": texto} if texto else None)

@@ -45,6 +45,16 @@ class MP:
         return {"status": st, "etapa": "escrevendo", "doc_id": 71 if st == "pronto" else None,
                 "erro": "a IA caiu" if st == "erro" else None}
 
+    async def fatos_da_os(self, os_id):
+        self.pedidos.append(("lista_fatos", os_id))
+        if self.falha:
+            raise _erro(self.falha)
+        return []
+
+    async def criar_fato(self, os_id, texto):
+        self.pedidos.append(("fato_texto", os_id, texto))
+        return {"id": 600}
+
     async def criar_fato_arquivo(self, os_id, nome, conteudo, tipo, texto):
         self.pedidos.append(("fato", os_id, nome, conteudo, texto))
         return {"id": 500 + len(self.pedidos)}
@@ -139,15 +149,17 @@ async def test_ia_que_falha_ou_demora(monkeypatch, chat):
 def test_o_bot_conhece_a_ferramenta_e_so_quem_tem_o_meuplano_a_recebe():
     from app.services import assistente
 
-    assert "relatorio_da_os" in assistente.FERRAMENTAS
     com = SimpleNamespace(bot_ativo={"bot_meuplano"}, perfil=None)
     sem = SimpleNamespace(bot_ativo={"bot_meuwatt"}, perfil=None)
-    assert "relatorio_da_os" in assistente.permitidas(com) and "relatorio_da_os" not in assistente.permitidas(sem)
+    for nome in ("relatorio_da_os", "informacoes_do_relatorio"):
+        assert nome in assistente.FERRAMENTAS
+        assert nome in assistente.permitidas(com) and nome not in assistente.permitidas(sem)
 
 
 async def test_prompt_e_imagens_de_apoio_viram_fatos_e_relatorio_novo(monkeypatch, chat):
-    """ "gere o relatório da OS com o prompt xxx, segue imagens de apoio": as fotos guardadas vão aos fatos relevantes
-    da OS (com a legenda), saem da espera, e o relatório é NOVO — mesmo com um salvo na OS."""
+    """ "gere o relatório da OS com o prompt xxx, segue imagens de apoio": é AÇÃO (as fotos entram na OS) — espera o Sim;
+    depois dele as fotos vão às informações do relatório (com a legenda), saem da espera, e o relatório é NOVO, gerado
+    com elas, mesmo com um salvo na OS."""
     async def baixar(mid):
         return f"jpeg-{mid}".encode(), "image/jpeg"
 
@@ -155,15 +167,47 @@ async def test_prompt_e_imagens_de_apoio_viram_fatos_e_relatorio_novo(monkeypatc
     tel = "+5516999998888"
     monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 11, "legenda": "oscilografia", "em": fotos.monotonic()},
                                                 {"id": 12, "legenda": "", "em": fotos.monotonic()}])
+    capt = _captura_propor(monkeypatch)
     mp = MP(SALVOS)
-    r, _ = await _rodar(monkeypatch, mp, instrucao="foco na falta entre B e C", fotos_de_apoio=True)
+    r, ctx = await _rodar(monkeypatch, mp, instrucao="foco na falta entre B e C", fotos_de_apoio=True)
+    assert "OS #1878" in r["proposta_pendente"] and "2 foto(s)" in capt["resumo"] and capt["k"]["confirmacao"] == "sim"
+    assert "foco na falta entre B e C" in capt["resumo"]
+    assert mp.pedidos == [("lista", 1878)] and chat == [] and len(fotos.recebidas(tel)) == 2   # nada antes do Sim
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1), tel)
     fatos_criados = [p for p in mp.pedidos if p[0] == "fato"]
-    ok_fotos = [(p[1], p[3], p[4]) for p in fatos_criados] == [(1878, b"jpeg-11", "oscilografia"),
-                                                               (1878, b"jpeg-12", "Imagem de apoio enviada pelo WhatsApp")]
-    assert ok_fotos and r["fotos_de_apoio"] == 2 and fotos.recebidas(tel) == []
-    assert ("gerar", 1878, "foco na falta entre B e C") in mp.pedidos and r["relatorio"] == "novo"
-    # as fotos entram ANTES de gerar (a IA de lá as vê)
+    assert [(p[1], p[3], p[4]) for p in fatos_criados] == [(1878, b"jpeg-11", "oscilografia"),
+                                                           (1878, b"jpeg-12", "Imagem enviada pelo WhatsApp")]
+    assert fotos.recebidas(tel) == [] and ("gerar", 1878, "foco na falta entre B e C") in mp.pedidos
+    # as fotos entram ANTES de gerar (a IA de lá as vê), e o PDF chega como documento
     assert mp.pedidos.index(fatos_criados[-1]) < mp.pedidos.index(("gerar", 1878, "foco na falta entre B e C"))
+    assert msg.startswith("✅ 2 foto(s) entraram") and chat[-1]["tipo"] == "document" and chat[-1]["arquivo"] == b"%PDF-99"
+
+
+async def test_fotos_que_entraram_e_relatorio_que_falhou_sao_ditos(monkeypatch, chat):
+    """Gerar falha DEPOIS de as fotos entrarem: o bot diz que elas entraram — nunca "nada foi feito" (revisão
+    adversarial, 05/11/2026). E sem nenhuma foto dentro, não gera um relatório sem as evidências pedidas."""
+    from app.clients import whatsapp
+
+    async def baixar(mid):
+        if mid == 99:
+            raise whatsapp.GatewayIndisponivel("fora")
+        return b"jpeg", "image/jpeg"
+
+    monkeypatch.setattr("app.clients.whatsapp.baixar_midia", baixar)
+    tel = "+5516999998888"
+    for falha, trecho in ((403, "papel desta pessoa"), (None, "a IA caiu")):
+        monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 31, "legenda": "", "em": fotos.monotonic()}])
+        capt = _captura_propor(monkeypatch)
+        mp = MP([], falha_gerar=falha, estados=("rodando", "erro"))
+        await _rodar(monkeypatch, mp, fotos_de_apoio=True)
+        msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1), tel)
+        assert msg.startswith("⚠️ 1 foto(s) entraram") and trecho in msg and "Nada foi feito" not in msg and chat == []
+    monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 99, "legenda": "", "em": fotos.monotonic()}])
+    capt = _captura_propor(monkeypatch)
+    mp = MP([])
+    await _rodar(monkeypatch, mp, fotos_de_apoio=True)
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1), tel)
+    assert msg.startswith("❌ Nenhuma foto entrou") and not [p for p in mp.pedidos if p[0] == "gerar"]
 
 
 async def test_sem_pedir_as_fotos_elas_ficam_esperando(monkeypatch, chat):
@@ -178,3 +222,73 @@ async def test_auto_com_prompt_nao_pergunta_qual(monkeypatch, chat):
     mp = MP(SALVOS)
     r, _ = await _rodar(monkeypatch, mp, instrucao="para a diretoria")
     assert r["relatorio"] == "novo" and "relatorios_salvos" not in r
+
+
+# ------------------------------------------------- as INFORMAÇÕES DO RELATÓRIO pelo bot, sem gerar (com o Sim)
+def _captura_propor(monkeypatch):
+    capt = {}
+
+    def propor(ctx, resumo, prazo, executar, detalhes=(), **k):
+        capt.update(resumo=resumo, executar=executar, k=k)
+        return {"proposta_pendente": resumo}
+    monkeypatch.setattr("app.services.assistente_helper.propor", propor)
+    return capt
+
+
+async def test_informacoes_texto_e_fotos_so_depois_do_sim(monkeypatch, chat):
+    async def baixar(mid):
+        return f"jpeg-{mid}".encode(), "image/jpeg"
+
+    monkeypatch.setattr("app.clients.whatsapp.baixar_midia", baixar)
+    tel = "+5516999998888"
+    monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": 31, "legenda": "trip no relé", "em": fotos.monotonic()}])
+    capt = _captura_propor(monkeypatch)
+    mp = MP([])
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.informacoes_do_relatorio(_ctx(), {"os": 1878, "texto": "o relé marcou 12 kA na fase B", "fotos": True})
+    assert "OS #1878" in r["proposta_pendente"] and "1 foto" in capt["resumo"] and capt["k"]["confirmacao"] == "sim"
+    assert not [p for p in mp.pedidos if p[0] in ("fato", "fato_texto")]          # nada grava antes do Sim
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1), tel)
+    assert msg.startswith("✅") and "Informações do relatório da OS #1878" in msg
+    assert ("fato_texto", 1878, "o relé marcou 12 kA na fase B") in mp.pedidos
+    assert [(p[3], p[4]) for p in mp.pedidos if p[0] == "fato"] == [(b"jpeg-31", "trip no relé")] and fotos.recebidas(tel) == []
+
+
+async def test_informacoes_sem_nada_ou_os_fora_do_alcance(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    monkeypatch.setitem(fotos._RECEBIDAS, "+5516999998888", [])
+    r = await rel.informacoes_do_relatorio(_ctx(), {"os": 1878, "fotos": True})
+    assert "Não há o que registrar" in r["erro"] and not capt
+    mp = MP(falha=404)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.informacoes_do_relatorio(_ctx(), {"os": 1878, "texto": "x"})
+    assert "não está no alcance" in r["erro"] and not capt
+
+
+async def test_foto_que_nao_entra_diz_o_porque_sem_jargao(monkeypatch, chat):
+    """Uma foto que não baixa e outra cujo envio demora não derrubam a terceira; o porquê vai na língua de quem lê, e a
+    que pode ter entrado é dita (senão a pessoa manda de novo e ela fica duas vezes)."""
+    from app.clients import whatsapp
+
+    async def baixar(mid):
+        if mid == 41:
+            raise whatsapp.GatewayIndisponivel("fora")
+        return f"jpeg-{mid}".encode(), "image/jpeg"
+
+    class MPLento(MP):
+        async def criar_fato_arquivo(self, os_id, nome, conteudo, tipo, texto):
+            if conteudo == b"jpeg-42":
+                raise httpx.ReadTimeout("demorou")
+            return await super().criar_fato_arquivo(os_id, nome, conteudo, tipo, texto)
+
+    monkeypatch.setattr("app.clients.whatsapp.baixar_midia", baixar)
+    tel = "+5516999998888"
+    monkeypatch.setitem(fotos._RECEBIDAS, tel, [{"id": i, "legenda": "", "em": fotos.monotonic()} for i in (41, 42, 43)])
+    capt = _captura_propor(monkeypatch)
+    mp = MPLento([])
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    await rel.informacoes_do_relatorio(_ctx(), {"os": 1878, "fotos": True})
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1), tel)
+    assert msg.startswith("⚠️ Registrei 1 foto(s)") and "não consegui baixar do WhatsApp" in msg
+    assert "pode ter entrado: confira" in msg and "Error" not in msg and "Timeout" not in msg
+    assert [f["id"] for f in fotos.recebidas(tel)] == [41, 42]                    # só a que entrou sai da espera
