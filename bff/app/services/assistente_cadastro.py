@@ -49,8 +49,8 @@ PAPEIS_MP = {"admin_sistema": "admin do sistema (todas as empresas)", "admin_ten
 #: global é o que o meuPlano dá a quem entra numa O&M sem papel da casa (`owners._default_global_role`).
 PRESTADOR = {"member_role": "terceiro", "tipo_vinculo": "PJ"}
 PARTES = {"meuwatt": "bot_meuwatt", "meuplano": "bot_meuplano", "helper": "bot_helper"}
-SENHA_DO_GS = ("A senha de entrar no GS não vai por aqui: defina em oem-gs → Usuários → Senha. "
-               "O bot já reconhece a pessoa pelo celular.")
+SENHA_DO_GS = ("Para a senha de entrar no GS, me mande a senha nova que eu redefino (ou em oem-gs → Usuários → "
+               "Senha). O bot já reconhece a pessoa pelo celular.")
 #: O FORMULÁRIO de cadastro (WhatsApp Flow `gs_cadastro_pessoa`): o papel em cada sistema, com o título que cabe na
 #: lista (até 20 letras). "Não cadastrar" primeiro. Admin do sistema do meuPlano fica fora: é da plataforma.
 OPCOES_DO_FORMULARIO = {
@@ -552,5 +552,79 @@ async def pelo_formulario(ctx, d: dict) -> str:
     return f"Conferi no Gestão Solar, no meuWatt e no meuPlano: não há conta de {d.get('nome')}. Confira e toque em Sim."
 
 
+# --------------------------------------------------------------------------- login e senha de entrar no GS
+CONTA_DO_GS = {"type": "function", "function": {
+    "name": "conta_do_gs",
+    "description": ("Login (usuário) e senha de ENTRAR no Gestão Solar (app, portal, oem-gs), de quem pede ou de alguém "
+                    "da empresa. Sem `nova_senha`: devolve o login (a senha guardada não se lê, só se redefine). Com "
+                    "`nova_senha` = a senha EXATA que a pessoa escreveu: propõe redefinir, e ela confirma com Sim. Não "
+                    "é a senha de atuação nem a do meuPlano ou do meuWatt."),
+    "parameters": {"type": "object", "properties": {
+        "pessoa": {"type": "string", "description": "nome ou login de quem é a conta; vazio = quem pede"},
+        "nova_senha": {"type": "string"}}}}}
+_EU = {"eu", "meu", "minha", "o meu", "a minha", "minha conta", "a minha conta"}
+
+
+def _conta_pedida(db, user, pessoa: str) -> tuple[User | None, str | None]:
+    """A conta do GS de quem pede ("", "eu", o próprio login) ou a de alguém da empresa: pelo login, senão pelo nome."""
+    from app.services import empresas, pessoas
+    p = (pessoa or "").strip()
+    if not p or _sem_acento(p) in _EU or p.lower() == user.apelido:
+        return user, None
+    contas = db.scalars(select(User).where(empresas.contas_da_empresa(empresas.empresa_exigida(user)),
+                                           User.perfil.notin_(pessoas.DA_PLATAFORMA))).all()
+    achadas = [u for u in contas if u.apelido == p.lower()] or \
+        [u for u in contas if _casa({"nome": u.nome, "email": u.email}, p, "", "")]
+    if len(achadas) == 1:
+        return achadas[0], None
+    if not achadas:
+        return None, f"Não achei «{p}» entre as contas do GS da sua empresa."
+    return None, "Mais de uma conta casa: " + ", ".join(f"{u.nome} (login {u.apelido})" for u in achadas[:10]) + \
+        ". Pergunte qual."
+
+
+async def conta_do_gs(ctx, a: dict) -> dict:
+    """O gerente da O&M vê o login e redefine a senha de entrar de quem é da empresa, como no oem-gs → Usuários (pedido
+    do Renan, 06/11/2026: "eu passo a senha e você só reseta; quando eu pedir o usuário, você me passa o usuário").
+    A senha guardada não se lê (é hash). A nova some do log, do gateway e do histórico que vai à IA (`ctx.segredos`)."""
+    from app.api.v1.empresa import _conta_da_empresa
+    from app.services import empresas
+    if ctx.user.perfil != Perfil.GESTOR_EMPRESA or not ctx.user.empresa_id:
+        return {"erro": "Só o gerente da O&M vê o login e redefine a senha de entrar pelo bot."}
+    conta, erro = _conta_pedida(ctx.db, ctx.user, a.get("pessoa") or "")
+    if erro:
+        return {"erro": erro}
+    senha = a.get("nova_senha") or ""
+    if not senha:
+        return {"login": conta.apelido, "nome": conta.nome, "ativo": conta.ativo,
+                "senha": "não se lê (fica guardada cifrada): mandando a senha nova, eu redefino"}
+    if senha not in (ctx.pedido or ""):                    # a IA não inventa nem "corrige" a senha
+        return {"erro": "Passe a senha nova EXATA que a pessoa escreveu na mensagem, sem mudar nada. Sem ela, peça."}
+    if len(senha) < 8:
+        return {"erro": "A senha precisa de pelo menos 8 caracteres (a regra do oem-gs). Peça outra."}
+    empresa_id = empresas.empresa_exigida(ctx.user)
+    try:
+        _conta_da_empresa(ctx.db, conta.id, empresa_id)    # a régua do oem-gs: a empresa de origem, nunca a plataforma
+    except HTTPException:
+        return {"erro": f"A senha de {conta.nome} é cuidada pela empresa de origem dela, não pela sua."}
+    ctx.segredos.append(senha)
+    alvo, nome, login = conta.id, conta.nome, conta.apelido
+
+    async def executar(db, quem, telefone: str) -> str:
+        from app.core.security import gerar_hash_senha
+        try:
+            if quem.perfil != Perfil.GESTOR_EMPRESA or empresas.empresa_exigida(quem) != empresa_id:
+                raise HTTPException(403)
+            c = _conta_da_empresa(db, alvo, empresa_id)
+        except HTTPException:
+            return "❌ Só o gerente da empresa da conta redefine a senha dela. Nada foi feito."
+        c.senha_hash = await asyncio.to_thread(gerar_hash_senha, senha)
+        db.commit()
+        return f"✅ Feito: a senha de entrar no GS de {nome} foi trocada (entra como «{login}»)."
+
+    return helper.propor(ctx, f"Trocar a senha de entrar no GS de {nome} (entra como «{login}»)", PRAZO_S, executar,
+                         avisos=["A senha antiga deixa de valer."], parte=None, confirmacao="sim")
+
+
 FERRAMENTAS = {"procurar_pessoa": (procurar_pessoa, PROCURAR), "cadastrar_pessoa": (cadastrar_pessoa, CADASTRAR),
-               "formulario_de_cadastro": (formulario_de_cadastro, FORMULARIO)}
+               "formulario_de_cadastro": (formulario_de_cadastro, FORMULARIO), "conta_do_gs": (conta_do_gs, CONTA_DO_GS)}

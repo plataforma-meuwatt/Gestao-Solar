@@ -891,7 +891,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
 def bloco_da_proposta(p: Pendente) -> str:
     """O que a pessoa confirma — escrito pelo sistema, palavra por palavra."""
     sim = p.confirmacao == "sim"
-    linhas = ["📋 *Ação no meuPlano esperando a sua confirmação*" if sim else "🔒 *Ação esperando a sua senha de atuação*",
+    linhas = ["📋 *Ação esperando a sua confirmação*" if sim else "🔒 *Ação esperando a sua senha de atuação*",
               _escopo(p)]
     linhas.append(f"Para fazer, toque em *Sim* (ou responda SIM) até as {_limite(p)}. Um não, uma correção ou "
                   "outro assunto cancela; na dúvida, pergunto de novo." if sim else

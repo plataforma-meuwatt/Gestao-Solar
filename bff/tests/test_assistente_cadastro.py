@@ -441,3 +441,45 @@ def test_o_formulario_so_oferece_papeis_que_o_cadastro_conhece():
         assert ids[0] == "nao" and set(ids[1:]) <= set(papeis)
         assert all(len(t) <= 20 for _, t in cad.OPCOES_DO_FORMULARIO[sistema])     # o título que cabe na lista
     assert "admin_sistema" not in dict(cad.OPCOES_DO_FORMULARIO["meuplano"])
+
+
+async def test_o_gerente_ve_o_login_e_redefine_a_senha_de_entrar_com_o_sim(db, cenario, monkeypatch):
+    """Dono, 06/11/2026: "eu, gestor, quero e posso e devo conseguir resetar a senha do usuário. Eu passo a senha e você
+    só reseta. E quando eu pedir o usuário, você me passa o usuário" — o bot dizia que não conseguia."""
+    from app.core.security import conferir_senha
+    michel = _conta(db, "michel", "+5517996495799")
+    adm = _conta(db, "renan.gestao", "+5517900000001")
+    adm.perfil = Perfil.ADMINISTRADOR
+    db.commit()
+    ctx = cenario.ctx
+    assert (await cad.conta_do_gs(ctx, {"pessoa": "Michel"}))["login"] == "michel"
+    assert (await cad.conta_do_gs(ctx, {"pessoa": "eu"}))["login"] == "renan.marquezini"
+    assert "Não achei" in (await cad.conta_do_gs(ctx, {"pessoa": "renan.gestao"}))["erro"]   # a plataforma não
+    ctx.pedido = "senha do michel: curta1"
+    assert "8 caracteres" in (await cad.conta_do_gs(ctx, {"pessoa": "michel", "nova_senha": "curta1"}))["erro"]
+    assert "EXATA" in (await cad.conta_do_gs(ctx, {"pessoa": "michel", "nova_senha": "Curta1234"}))["erro"]
+    assert cenario.gerente.id not in h.PENDENTES
+
+    # o turno inteiro: a senha vai à conta só com o Sim, e não fica no log nem na cópia do gateway
+    async def _nada(*a, **k):
+        return None
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "user":
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "conta_do_gs", "arguments": '{"pessoa": "Michel", "nova_senha": "ufvtieteazul"}'}}]}
+        return {"content": "Vou redefinir a senha do Michel.", "tool_calls": []}
+
+    monkeypatch.setattr(ger, "preparar", _nada)
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    await assistente.atender({"id": 901, "telefone": cenario.gerente.telefone, "wa_id": "2", "tipo": "text",
+                              "texto": "Troca a do Michel pra ufvtieteazul"})
+    assert "Trocar a senha de entrar no GS de Michel (entra como «michel»)" in cenario.bot.enviados[-1]
+    assert not conferir_senha("ufvtieteazul", michel.senha_hash)
+    assert (await _sim(cenario)) == "✅ Feito: a senha de entrar no GS de Michel foi trocada (entra como «michel»)."
+    db.refresh(michel)
+    assert conferir_senha("ufvtieteazul", michel.senha_hash)
+    registros = " ".join(f"{r.pergunta} {r.resposta}" for r in db.query(RegistroBot))
+    # (só letras e sem a palavra "senha": a máscara pelo formato não a pega, só a do VALOR)
+    assert "Trocar a senha de entrar no GS de Michel (entra como «michel»)" in registros   # o log legível
+    assert "ufvtieteazul" not in registros and not any("ufvtieteazul" in str(g) for g in cenario.bot.guardados)
