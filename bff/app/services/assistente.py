@@ -889,8 +889,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   SEMPRE `manutencao`, com a pergunta inteira: é o meuPlano que decide se a pessoa pode ver (pelo nível de acesso
   dela) e registra cada senha que mostra. Nunca recuse por conta própria, nem diga que não passa credencial: pergunte
   ao meuPlano e repasse o que ele responder.
-- «[📷 N foto(s) recebida(s)…]» = a pessoa mandou foto(s); você NÃO vê a imagem, e o texto depois é a legenda. Para
-  anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa ou a OS (da legenda ou da conversa). Disse a usina e o
+- «[📷 N foto(s) recebida(s)…]» ou «[📷 … vídeo(s) recebido(s)…]» = a pessoa mandou foto(s) e/ou vídeo(s); você NÃO
+  vê nenhum dos dois, e o texto depois é a legenda. Para anexar numa tarefa do meuPlano → `anexar_fotos` com a tarefa
+  ou a OS (da legenda ou da conversa); pediu NA OS, não numa tarefa → `anexos_da_os`. Disse a usina e o
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
@@ -1591,7 +1592,7 @@ async def _atender(evento: dict) -> None:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
                      "escreva ou mande em áudio." if nome else
-                     "Por enquanto eu entendo texto e áudio. Imagem, vídeo e arquivo ainda não.")
+                     "Por enquanto eu entendo texto, áudio, foto e vídeo. Outro tipo de arquivo ainda não.")
             await _texto(telefone, aviso + nota)
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", resposta=aviso,
                        em=enviada)

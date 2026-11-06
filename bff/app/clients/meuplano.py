@@ -748,6 +748,14 @@ class MeuPlanoClient:
                             data={"description": descricao, "uploaded_by": autor})
         return r.json()
 
+    async def anexar_na_os(self, os_id: int, nome: str, conteudo: bytes, tipo: str | None,
+                           descricao: str) -> dict[str, Any]:
+        """Um arquivo nos Anexos da OS (a aba Anexos do site), com o token de quem manda; lá o autor é o dono dele."""
+        r = await self._req("POST", f"/api/v1/meuacesso/service-orders/{os_id}/attachments", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "application/octet-stream")},
+                            data={"description": descricao})
+        return r.json()
+
     async def abrir_ficha(self, task_id: int, autor: str) -> dict[str, Any]:
         """A ficha (sessão de execução) da tarefa, como o app de campo a abre: `review` não muda a situação de nada.
         Devolve `test_asset_id`, `session_id` e `session_status`; tarefa coletiva ou sem equipamento dá 400."""

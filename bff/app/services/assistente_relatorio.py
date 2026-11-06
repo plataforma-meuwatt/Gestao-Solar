@@ -218,7 +218,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         return {"erro": f"A OS #{os_id} não tem relatório salvo. Ofereça gerar um novo agora."}
 
     instrucao = (a.get("instrucao") or "").strip()[:MAX_INSTRUCAO]
-    lista = fotos.recebidas(ctx.telefone) if a.get("fotos_de_apoio") else []
+    lista = fotos.recebidas(ctx.telefone, sem_video=True) if a.get("fotos_de_apoio") else []
     if lista:
         return _propor_com_fotos(ctx, os_id, instrucao, lista)
     apoio = {"fotos_de_apoio": 0, "nota_fotos": "Não havia foto recebida (cada uma fica guardada 30 min)."} \
@@ -267,7 +267,7 @@ async def informacoes_do_relatorio(ctx, a: dict) -> dict:
     except (TypeError, ValueError):
         return {"erro": "Falta o número da OS: pergunte qual é."}
     texto = (a.get("texto") or "").strip()[:MAX_TEXTO_INFO]
-    lista = fotos.recebidas(ctx.telefone) if a.get("fotos") else []
+    lista = fotos.recebidas(ctx.telefone, sem_video=True) if a.get("fotos") else []
     if not texto and not lista:
         return {"erro": "Não há o que registrar: nenhum texto e nenhuma foto recebida (cada foto fica guardada 30 min)."}
     try:
