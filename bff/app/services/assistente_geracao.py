@@ -587,9 +587,13 @@ def _desenhar(pts: list[tuple[str, float]], titulo: str, unid: str) -> bytes:
 COMO_EXPLICAR_GEMEO = (
     "Placar: o real × o PREVISTO pelo gêmeo (com o tempo que fez e os limites reais) × o PVsyst (ano típico), em MWh. "
     "Cascata, em linguagem simples: PVsyst → régua (o gêmeo no MESMO ano típico do PVsyst: o que ele não reproduz) → "
-    "clima (o tempo que fez; gêmeo contra gêmeo) → limitação (limites reais dos inversores e da usina × os do "
-    "projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor no plano recebeu menos que o tempo "
-    "permitia: tracker ou sensor), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
+    "clima (o tempo que fez; gêmeo contra gêmeo) → geometria (a usina CONSTRUÍDA × a do PDF do PVsyst: trackers mais "
+    "juntos que no projeto recuam mais e pegam menos sol; geometria_construida diz de onde veio) → limitação (limites "
+    "reais dos inversores e da usina × os do projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor INCLINADO, no plano dos módulos, mediu menos que o "
+    "ESPERADO; esperado = o sensor DEITADO da estação levado ao plano dos módulos com o tracker na posição certa, a "
+    "mesma conta de transposição do PVsyst; causas: tracker fora de posição, sensor inclinado sujo ou torto, ou erro "
+    "da própria conta, uns 2 a 4% no mês; diga 'o esperado pela conta do sensor deitado', nunca 'o que o tempo "
+    "permitia'), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
     "não vê). parte_clima_pct = quanto da diferença para o PVsyst foi o tempo. hora_a_hora.leitura já traz o padrão "
     "(perda que cresce com o sol direto → posição de tracker; parecida com sol e nuvem → sujeira; um inversor que "
     "descola). Números só daqui; None = sem dado.")
@@ -636,16 +640,17 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
     return {
         "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
         "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
+        "geometria": {"do_pdf": f.get("geometria"), "geometria_construida": f.get("geometria_real")},
         "placar_mwh": {"real": s["real_mwh"], "previsto_pelo_gemeo": s["previsto_mwh"], "pvsyst": s["pvsyst_mwh"],
                        "gemeo_no_ano_tipico_regua": s.get("regua_mwh")},
         "usina_x_previsto_pct": s["desvio_previsto_pct"],
         "cascata_mwh": {"regua": s.get("efeito_regua_mwh"), "clima": s["efeito_clima_mwh"],
-                        "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"],
+                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"],
                         "paradas": s.get("efeito_paradas_mwh"), "conversao": s["efeito_conversao_mwh"],
                         "usina_total": s["efeito_usina_mwh"]},
         "parte_clima_pct": s["parte_clima_pct"],
         "incerteza_regua": {"pct": s["incerteza_regua_pct"], "mwh": s["incerteza_regua_mwh"]},
-        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "o_tempo_permitia": s["poa_tempo"], "pvsyst": s["poa_pvsyst"],
+        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "no_plano_esperado": s["poa_tempo"], "pvsyst": s["poa_pvsyst"],
                        "horizontal": s["ghi_real"], "horizontal_pvsyst": s["ghi_pvsyst"]},
         "temperatura_media_c": {"real": s["t_amb_media"], "pvsyst": s["t_amb_pvsyst"]},
         "pr": {"real": s["pr_real"], "pvsyst": s["pr_pvsyst"]}, "corte_nos_limites_mwh": s["corte_mwh"],
@@ -676,12 +681,12 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
 
 
 async def gemeo_dia(ctx: Contexto, a: dict) -> dict:
-    """Um dia no gêmeo, hora a hora: o previsto × o real, o sol medido × o que o tempo permitia, corte e paradas."""
+    """Um dia no gêmeo, hora a hora: o previsto × o real, o sol medido no plano × o esperado, corte e paradas."""
     u = _usina(ctx, a.get("usina"))
     dia, _ = _periodo(a.get("dia"), None)
     d = await _gemeo_ler(ctx, u, ctx.mw.gemeo_dia(u["id"], dia.isoformat()))
     horas = [{"hora": h["hora"], "previsto_kwh": h["previsto_kwh"], "real_kwh": h["real_kwh"], "desvio_pct": h["desvio_pct"],
-              "sol_medido_wh_m2": h["poa_wh"], "sol_que_o_tempo_permitia_wh_m2": h["poa_tempo_wh"], "t_amb_c": h["t_amb"],
+              "sol_medido_wh_m2": h["poa_wh"], "sol_esperado_wh_m2": h["poa_tempo_wh"], "t_amb_c": h["t_amb"],
               "t_celula_max_c": h["t_cel_max"], "corte_kwh": h["corte_kwh"], "paradas_kwh": h["paradas_kwh"]}
              for h in d.get("horas") or []]
     prev = sum(h["previsto_kwh"] or 0 for h in horas)
@@ -691,7 +696,9 @@ async def gemeo_dia(ctx: Contexto, a: dict) -> dict:
                       "desvio_pct": None if real is None or not prev else round((real / prev - 1) * 100, 1)},
             "horas": horas,
             "nota": "previsto = gêmeo com o tempo que fez e os limites reais, na rede; hora de hoje que não fechou vem "
-                    "parcial; corte = o que os limites tiraram; sol medido abaixo do que o tempo permitia = tracker ou sensor"}
+                    "parcial; corte = o que os limites tiraram; sol medido (sensor inclinado) abaixo do esperado (o sensor "
+                    "deitado levado ao plano com o tracker na posição certa) = tracker fora de posição, sensor sujo "
+                    "ou torto, ou erro da conta"}
 
 
 async def gemeo_regua(ctx: Contexto, a: dict) -> dict:
@@ -787,8 +794,8 @@ FERRAMENTAS = {
         "inversor), inversores, limites de potência lidos nos inversores e paradas. Para essas usinas, prefira esta a "
         "`projeto` quando a pergunta é por que gerou abaixo/acima.", {"usina": _USINA, "mes": {"type": "string",
         "description": "Mês AAAA-MM (o mês corrente vai até agora)."}}, ["mes"])),
-    "gemeo_dia": (gemeo_dia, _f("gemeo_dia", "Um DIA no gêmeo digital, hora a hora: previsto × real, o sol medido × o "
-        "que o tempo permitia, temperatura, corte nos limites e paradas.", {"usina": _USINA, "dia": {"type": "string",
+    "gemeo_dia": (gemeo_dia, _f("gemeo_dia", "Um DIA no gêmeo digital, hora a hora: previsto × real, o sol medido no "
+        "plano × o esperado, temperatura, corte nos limites e paradas.", {"usina": _USINA, "dia": {"type": "string",
         "description": "Dia AAAA-MM-DD (vazio = hoje)."}})),
     "gemeo_regua": (gemeo_regua, _f("gemeo_regua", "A RÉGUA do gêmeo digital: o quanto ele reproduz o PVsyst rodando com "
         "o clima e as premissas do PDF — diagrama de perdas etapa por etapa, mês a mês, ajustes (k, contraste), "
