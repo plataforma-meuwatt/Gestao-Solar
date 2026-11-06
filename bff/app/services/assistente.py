@@ -894,6 +894,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   ou a OS (da legenda ou da conversa); pediu NA OS, não numa tarefa → `anexos_da_os`. Disse a usina e o
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
+- «[👤 contato compartilhado: nome · telefone…]» = a pessoa mandou um contato pelo botão do WhatsApp: são os dados de
+  quem ela chama de "este contato". Siga a regra de sempre para o pedido e use o nome, o telefone e o e-mail EXATOS
+  dele. Sem pedido junto, pergunte o que fazer com o contato.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
   e chame `gravar_coordenada` com a usina; o sistema diz se grava ou substitui e pede o Sim. Nunca escreva coordenada.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
@@ -1132,8 +1135,8 @@ async def atender(evento: dict) -> None:
         fotos.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     texto = (evento.get("texto") or "").strip()
-    item = {"juntavel": fotos.e_foto(evento) or (evento.get("tipo") == "text" and not evento.get("botao")
-                                                 and bool(texto) and not helper.parece_senha(texto))}
+    item = {"juntavel": fotos.e_foto(evento) or evento.get("tipo") == "contacts" or (
+        evento.get("tipo") == "text" and not evento.get("botao") and bool(texto) and not helper.parece_senha(texto))}
     fila = _FILA.setdefault(chave, [])
     fila.append(item)
     evento = {**evento, "_chegou": monotonic(), "_fila": fila, "_item": item}
@@ -1144,6 +1147,16 @@ async def atender(evento: dict) -> None:
         fila.remove(item)
         if not fila and _FILA.get(chave) is fila:
             del _FILA[chave]
+
+
+def _contatos_em_texto(evento: dict) -> str:
+    """O contato do botão "Compartilhar contato" em texto, para a IA (06/11/2026: "cadastre este contato em Pirapozinho
+    como terceiro" chegava sem o contato, que vinha só como o tipo). O pedido costuma vir num texto logo antes ou
+    depois: o contato é juntável e espera a seguinte como a foto sem legenda."""
+    linhas = [" · ".join([c.get("nome") or "sem nome", *(c.get("telefones") or []), *(c.get("emails") or []),
+                          *([c["empresa"]] if c.get("empresa") else []), *([c["cargo"]] if c.get("cargo") else [])])
+              for c in ((evento.get("midia") or {}).get("contatos") or [])]
+    return f"[👤 contato compartilhado: {'; '.join(linhas)}]" if linhas else ""
 
 
 def _vem_mais(evento: dict) -> bool:
@@ -1588,6 +1601,8 @@ async def _atender(evento: dict) -> None:
         if not texto and local.e_local(evento):
             local.guardar(telefone, evento)                 # os números ficam aqui; a IA só pergunta a usina
             texto = seguro = pergunta = local.mensagem(telefone)
+        if not texto and evento.get("tipo") == "contacts":
+            texto = seguro = pergunta = _contatos_em_texto(evento)
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
@@ -1655,7 +1670,8 @@ async def _atender(evento: dict) -> None:
             if juntavel:
                 db.commit()                               # solta a conexão durante a espera
                 # a foto sem legenda espera mais: o pedido costuma vir num texto logo depois
-                sem_legenda = fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone))
+                sem_legenda = evento.get("tipo") == "contacts" or (
+                    fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone)))
                 if await _esperar_a_seguinte(evento, ESPERA_FOTO_S if sem_legenda else ESPERA_TEXTO_S):
                     return await juntar()
             n = _do_pedido(historico)

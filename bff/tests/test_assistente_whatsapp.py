@@ -4088,3 +4088,39 @@ async def test_nunca_chutar_driver_leitura_ou_acao_fora_do_catalogo_nao_chega_ao
     assert chamadas == ["/api/devices"]                    # nenhum pedido chutado saiu
     ok = await h.usina_helper(ctx, {"rota": "/api/read", "corpo": {**base, "device_id": "pextron_urp6000", "read_cmd": "status_trips"}})
     assert ok["status_http"] == 200 and chamadas == ["/api/devices", "/api/read"]
+
+
+async def test_o_contato_compartilhado_e_o_pedido_logo_depois_vao_juntos_a_ia(db, bot_local, monkeypatch):
+    """06/11/2026, o dono: "Mandei um contato e o Gestão Solar não entende" — o contato do botão Compartilhar
+    contato chegava só como o tipo ("Outro tipo de arquivo ainda não") e o pedido, 1 s depois, ia à IA sem ele."""
+    import asyncio
+
+    from app.models.conversa_whatsapp import RegistroBot
+    dono = _conta(db, "dono", "+5517997377626")
+    monkeypatch.setattr(assistente, "ESPERA_FOTO_S", 1.0)      # o contato espera o pedido, como a foto sem legenda
+    vistas = []
+
+    async def _llm(msgs, ferramentas=None, **k):
+        vistas.append([m["content"] for m in msgs if m["role"] == "user"])
+        return {"content": "Certo."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    contato = {"id": 1, "telefone": dono.telefone, "wa_id": "5517997377626", "tipo": "contacts", "texto": None,
+               "midia": {"contatos": [{"nome": "José Roçagem", "telefones": ["+55 18 99777-1234"],
+                                       "empresa": "Roçadas JR"}]}}
+    pedido = {"id": 2, "telefone": dono.telefone, "wa_id": "5517997377626", "tipo": "text",
+              "texto": "Cadastre este contato em Pirapozinho como terceiro que faz roçagem"}
+
+    async def _depois():
+        await asyncio.sleep(0.3)
+        await assistente.atender(pedido)
+
+    await asyncio.gather(assistente.atender(contato), _depois())
+    lido = "[👤 contato compartilhado: José Roçagem · +55 18 99777-1234 · Roçadas JR]"
+    assert vistas == [[lido, pedido["texto"]]]                      # uma volta só, com o contato e o pedido
+    assert bot_local.enviados == ["Certo."]
+    assert db.query(RegistroBot).order_by(RegistroBot.id).first().resposta == assistente.JUNTADA
+    # o contato sem dados (gateway antigo, vCard vazio) continua com o aviso, não vai vazio à IA
+    vistas.clear()
+    await assistente.atender({**contato, "id": 3, "midia": None})
+    assert vistas == [] and "Outro tipo de arquivo" in bot_local.enviados[-1]

@@ -164,9 +164,29 @@ def _formulario(m: dict[str, Any]) -> dict[str, Any] | None:
     return {"formulario": r} if isinstance(r, dict) else None
 
 
+def _contatos(m: dict[str, Any]) -> dict[str, Any] | None:
+    """O contato do botão "Compartilhar contato" (um ou mais): nome, telefones, e-mails e empresa. O bot passa à IA
+    para cadastrar (06/11/2026: "cadastre este contato em Pirapozinho como terceiro que faz roçagem" chegava sem o
+    contato). O vCard bruto fica de fora: repete o resto."""
+    lista = []
+    for c in _lista(m.get("contacts")):
+        n = c.get("name") if isinstance(c.get("name"), dict) else {}
+        nome = n.get("formatted_name") or " ".join(p for p in (n.get("first_name"), n.get("last_name")) if p)
+        telefones = [p.get("phone") or (f"+{p['wa_id']}" if p.get("wa_id") else None) for p in _lista(c.get("phones"))]
+        org = c.get("org") if isinstance(c.get("org"), dict) else {}
+        item = {"nome": nome, "telefones": [t for t in telefones if t],
+                "emails": [e["email"] for e in _lista(c.get("emails")) if e.get("email")],
+                "empresa": org.get("company"), "cargo": org.get("title")}
+        if item["nome"] or item["telefones"]:
+            lista.append({k: v for k, v in item.items() if v})
+    return {"contatos": lista} if lista else None
+
+
 def _midia(m: dict[str, Any], tipo: str) -> dict[str, Any] | None:
     if tipo == "location":
         return _local(m)
+    if tipo == "contacts":
+        return _contatos(m)
     if tipo == "interactive":
         return _formulario(m)
     corpo = m.get(tipo) if tipo in TIPOS_COM_ARQUIVO else None

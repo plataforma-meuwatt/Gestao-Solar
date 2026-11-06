@@ -127,6 +127,28 @@ def test_localizacao_vem_com_os_numeros_e_a_torta_fica_sem():
 
 
 
+def test_contato_compartilhado_vem_com_nome_telefones_e_empresa():
+    """06/11/2026: o contato do botão "Compartilhar contato" chegava só como o tipo, sem nome nem telefone, e o bot
+    dizia que não tinha recebido contato nenhum."""
+    corpo = _entrega({"messages": [
+        {"from": "5516999998888", "id": "wamid.CT", "timestamp": "1789000000", "type": "contacts",
+         "contacts": [{"name": {"first_name": "José", "last_name": "Roçagem", "formatted_name": "José Roçagem"},
+                       "phones": [{"phone": "+55 18 99777-1234", "wa_id": "5518997771234", "type": "CELL"},
+                                  {"wa_id": "551832221234"}],
+                       "emails": [{"email": "jose@exemplo.com", "type": "WORK"}],
+                       "org": {"company": "Roçadas JR"}, "vcard": "BEGIN:VCARD…"},
+                      {"name": {"first_name": "Ana"}}, "torto", {"name": {}}]},
+        {"from": "5516999998888", "id": "wamid.CT2", "timestamp": "1789000001", "type": "contacts", "contacts": "x"},
+    ]})
+    bom, torto = payload.ler(corpo).mensagens
+    assert bom.tipo == "contacts" and bom.texto is None
+    assert bom.midia == {"contatos": [
+        {"nome": "José Roçagem", "telefones": ["+55 18 99777-1234", "+551832221234"], "emails": ["jose@exemplo.com"],
+         "empresa": "Roçadas JR"},
+        {"nome": "Ana"}]}
+    assert torto.midia is None
+
+
 def test_formulario_respondido_vem_com_o_que_foi_marcado():
     corpo = _entrega({"messages": [
         {"from": "5516999998888", "id": "wamid.F1", "timestamp": "1789000000", "type": "interactive",
