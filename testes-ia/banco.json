@@ -150,5 +150,13 @@
 {"frase": "Me envie o Excel de geração diária para o mês de novembro da UFV Porto Ferreira", "espera": ["excel_energia_diaria"], "origem": "log #245"},
 {"frase": "🎙️ Bot, faz um favor pra mim. Me mostra tudo que foi realizado de OS pra usina UFV Porto Ferreira.", "espera": ["manutencao"], "origem": "log #246"},
 {"frase": "Abra OS de roçada de pirapozinho", "espera": ["manutencao"], "origem": "log #249"},
-{"frase": "me de o PDF da tarefa · Tarefa #9474", "espera": ["manutencao"], "origem": "log #264"}
+{"frase": "me de o PDF da tarefa · Tarefa #9474", "espera": ["manutencao"], "origem": "log #264"},
+{"frase": "Ibitinga gerou mal em outubro, foi o clima?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "o que o gêmeo diz de porto ferreira em outubro", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "quanto o clima tirou de porto ferreira no mês passado?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "em ibitinga é sujeira ou tracker?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "a régua do gêmeo de ibitinga bate com o pvsyst?", "espera": ["gemeo_regua"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "como foi ibitinga hora a hora ontem no gêmeo", "espera": ["gemeo_dia"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "qual o limite de potência dos inversores de porto ferreira?", "espera": ["gemeo", "gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "o gêmeo de ibitinga usa o arquivo .PAN do módulo?", "espera": ["gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"}
 ]

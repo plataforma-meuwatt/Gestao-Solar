@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # mais em variável de ambiente: mudar uma exigiria redeploy, e o painel precisa que
     # ela seja editável e testável na hora.
     meuwatt_api_url: str = "https://api.meuwatt.com.br"
+    #: O módulo de análise do meuWatt (o GÊMEO DIGITAL): o mesmo token da pessoa, outro endereço. Só a equipe da
+    #: plataforma passa lá — o módulo confere o token no `/auth/me` do meuWatt.
+    meuwatt_analise_url: str = "https://analise.meuwatt.com.br"
     meuwatt_web_url: str = "https://app.meuwatt.com.br"
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o

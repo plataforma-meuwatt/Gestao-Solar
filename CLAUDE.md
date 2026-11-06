@@ -784,7 +784,11 @@ srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco é o Supabase BR (s
 O número casa com UMA conta daqui (`gs_users.telefone`); sem conta, não há conversa. Um
 orquestrador (DeepSeek, `DEEPSEEK_API_KEY`) usa as ferramentas de GERAÇÃO
 (`assistente_geracao.py`: API do meuWatt, só usinas concedidas) e a de MANUTENÇÃO (o assistente
-do meuPlano, falando como a pessoa). ⛔ **Regra do dono (23/10/2026): cada um usa o bot com o
+do meuPlano, falando como a pessoa). **Gêmeo digital** (06/11/2026, pedido do dono: "o bot sabe tudo dos gêmeos"):
+`gemeo` (o mês: placar real × previsto × PVsyst, cascata, hora a hora com o padrão tracker × sujeira, limites lidos nos
+inversores), `gemeo_dia`, `gemeo_regua` e `gemeo_config`, no mesmo módulo; leem o módulo de análise do meuWatt
+(`MEUWATT_ANALISE_URL`, padrão `https://analise.meuwatt.com.br`) com o token da pessoa — só a equipe da plataforma
+passa lá (os outros ouvem que o gêmeo é da plataforma). As rotas estão na sonda com `sonda=False` (outro endereço). ⛔ **Regra do dono (23/10/2026): cada um usa o bot com o
 SEU token** (`gs_vinculos_produto`, `so_proprio=True`) — nunca o da empresa nem o da plataforma.
 O administrador da plataforma não usa o bot (não tem token); o do Renan responde à conta de
 gerente dele (`renan.marquezini`). Liberar uma parte exige o token dela (`cadastro.liberar_bot`),

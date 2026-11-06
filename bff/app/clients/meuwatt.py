@@ -522,6 +522,38 @@ class MeuWattClient:
         return await self._get("/grandezas/series", plants=",".join(slugs), grandezas=",".join(grandezas),
                                start=inicio.isoformat(), end=fim.isoformat(), step=passo)
 
+    async def _get_analise(self, path: str, timeout: float | None = None, **params: Any) -> Any:
+        """O módulo de análise do meuWatt (`analise.meuwatt.com.br`, o gêmeo digital): o mesmo token, outro endereço.
+        Só a equipe da plataforma passa lá — 403 para os outros, que o bot traduz."""
+        base = get_settings().meuwatt_analise_url.rstrip("/")
+        jwt = await self._token_servico()
+        r = await sessao(base, self._timeout).get(
+            f"{base}{path}", headers={"Authorization": f"Bearer {jwt}"},
+            params={k: v for k, v in params.items() if v is not None}, timeout=timeout or self._timeout)
+        r.raise_for_status()
+        return r.json()
+
+    async def gemeos(self) -> list[dict[str, Any]]:
+        """As usinas com gêmeo digital: `[{plant_id, slug, nome, tipo, kwp, kwac}]`."""
+        return await self._get_analise("/gemeos")
+
+    async def gemeo_mes(self, plant_id: int, mes: str) -> dict[str, Any]:
+        """O mês no gêmeo (placar, cascata, dia a dia, hora a hora, inversores, limites, paradas). Calcula na hora
+        (~10 s, cache de 10 min lá); as paradas vêm do detector novo com o mesmo token."""
+        return await self._get_analise(f"/gemeos/{plant_id}", mes=mes, timeout=120)
+
+    async def gemeo_dia(self, plant_id: int, dia: str) -> dict[str, Any]:
+        """Um dia no gêmeo: a curva de 5 min e o hora a hora."""
+        return await self._get_analise(f"/gemeos/{plant_id}/dia", dia=dia, timeout=120)
+
+    async def gemeo_regua(self, plant_id: int) -> dict[str, Any]:
+        """A régua: o gêmeo com o clima e as premissas do PVsyst × o PVsyst, e as versões gravadas."""
+        return await self._get_analise(f"/gemeos/{plant_id}/regua", timeout=120)
+
+    async def gemeo_config(self, plant_id: int) -> dict[str, Any]:
+        """O que o gêmeo sabe da usina (configuração, padrão do PDF, inversores e a última leitura de limite)."""
+        return await self._get_analise(f"/gemeos/{plant_id}/config")
+
     async def paradas_detector(self, plant_id: int, inicio: str, fim: str) -> dict[str, Any]:
         """O detector NOVO de paradas (o da tela de Paradas do meuWatt): `{run, rows[], groups[]}`,
         as linhas que SOBREPÕEM a janela, e `run` com a janela que ele analisou. Pede o id

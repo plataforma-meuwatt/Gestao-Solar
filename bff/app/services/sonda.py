@@ -323,6 +323,17 @@ MEUWATT: list[Rota] = [
          nao_sondada_porque="Exige uma senha, e a sonda só tem o token pessoal. Se o "
                             "login sumisse, a tela de Conexões (que autentica de "
                             "verdade) avisaria antes."),
+    # O GÊMEO DIGITAL mora no módulo de análise do meuWatt (outro endereço, mesmo token): o bot do WhatsApp lê.
+    *[Rota(chave, "GET", caminho, "O gêmeo digital no bot do WhatsApp (" + o_que + ")", essencial=False, sonda=False,
+           nao_sondada_porque="Mora no módulo de análise do meuWatt (analise.meuwatt.com.br), não na API que a "
+                              "sonda conhece, e só a equipe da plataforma passa lá — com o token de uma empresa de "
+                              "O&M daria 403 por desenho. O bot exercita sob demanda, com o token de quem pergunta.")
+      for chave, caminho, o_que in (
+          ("mw.gemeos", "/gemeos", "as usinas com gêmeo"),
+          ("mw.gemeo_mes", "/gemeos/{plant_id}", "o mês"),
+          ("mw.gemeo_dia", "/gemeos/{plant_id}/dia", "um dia hora a hora"),
+          ("mw.gemeo_regua", "/gemeos/{plant_id}/regua", "a régua contra o PVsyst"),
+          ("mw.gemeo_config", "/gemeos/{plant_id}/config", "o que o gêmeo sabe da usina"))],
 ]
 
 #: Rotas do meuPlano. Prefixos `/api/v1/meuacesso` e `/api/v1/maintenance`.

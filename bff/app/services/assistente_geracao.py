@@ -20,6 +20,7 @@ from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.clients.meuwatt import MeuWattClient
@@ -578,6 +579,166 @@ def _desenhar(pts: list[tuple[str, float]], titulo: str, unid: str) -> bytes:
     return buf.getvalue()
 
 
+# --------------------------------------------------------------------------- gêmeo digital
+# O gêmeo mora no módulo de análise do meuWatt (analise.meuwatt.com.br, `ctx.mw.gemeo_*`, o token da pessoa). Dono,
+# 06/11/2026: "faça o bot saber tudo dos gêmeos, qualquer pergunta que eu fizer ele responde".
+COMO_EXPLICAR_GEMEO = (
+    "Placar: o real × o PREVISTO pelo gêmeo (com o tempo que fez e os limites reais) × o PVsyst (ano típico), em MWh. "
+    "Cascata, em linguagem simples: PVsyst → régua (o gêmeo no MESMO ano típico do PVsyst: o que ele não reproduz) → "
+    "clima (o tempo que fez; gêmeo contra gêmeo) → limitação (limites reais dos inversores e da usina × os do "
+    "projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor no plano recebeu menos que o tempo "
+    "permitia: tracker ou sensor), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
+    "não vê). parte_clima_pct = quanto da diferença para o PVsyst foi o tempo. hora_a_hora.leitura já traz o padrão "
+    "(perda que cresce com o sol direto → posição de tracker; parecida com sol e nuvem → sujeira; um inversor que "
+    "descola). Números só daqui; None = sem dado.")
+
+
+async def _gemeo_ler(ctx: Contexto, u: dict, chamada: Any) -> Any:
+    try:
+        return await chamada
+    except httpx.HTTPStatusError as e:
+        st = e.response.status_code
+        if st == 404:
+            try:
+                com = [x["nome"] for x in await ctx.mw.gemeos()]
+            except Exception:                             # noqa: BLE001 — a lista é só um agrado na frase
+                com = []
+            raise Recusa(f"{u['nome']} não tem gêmeo digital" + (f" (têm: {', '.join(com)})." if com else ".")) from None
+        if st in (401, 403):
+            raise Recusa("O gêmeo digital mora no módulo de análise do meuWatt, que é só da equipe da plataforma: o "
+                         "seu login do meuWatt não tem acesso a ele.") from None
+        raise
+
+
+def _mes_gemeo(mes: str | None) -> str:
+    try:
+        ano, m = (int(x) for x in (mes or hoje().strftime("%Y-%m")).split("-"))
+        d = date(ano, m, 1)
+    except ValueError:
+        raise Recusa("Mês no formato AAAA-MM.") from None
+    if d > hoje():
+        raise Recusa("Esse mês ainda não começou.")
+    return d.strftime("%Y-%m")
+
+
+async def gemeo(ctx: Contexto, a: dict) -> dict:
+    """O mês no gêmeo digital: foi o clima ou a usina? (placar, cascata, dia a dia, hora a hora, inversores, limites)."""
+    u = _usina(ctx, a.get("usina"))
+    mes = _mes_gemeo(a.get("mes"))
+    d = await _gemeo_ler(ctx, u, ctx.mw.gemeo_mes(u["id"], mes))
+    s, f, hh, lim = d["resumo"], d.get("ficha") or {}, d.get("hora_a_hora") or {}, d.get("limites") or {}
+    rot = {i["sn"]: i.get("rotulo") or i["sn"] for i in d.get("inversores") or []}
+    ultimo = next((x for x in reversed(lim.get("dias") or []) if any(v.get("comando_kw") for v in x["inversores"].values())),
+                  (lim.get("dias") or [None])[-1])
+    paradas = d.get("paradas")
+    return {
+        "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
+        "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
+        "placar_mwh": {"real": s["real_mwh"], "previsto_pelo_gemeo": s["previsto_mwh"], "pvsyst": s["pvsyst_mwh"],
+                       "gemeo_no_ano_tipico_regua": s.get("regua_mwh")},
+        "usina_x_previsto_pct": s["desvio_previsto_pct"],
+        "cascata_mwh": {"regua": s.get("efeito_regua_mwh"), "clima": s["efeito_clima_mwh"],
+                        "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"],
+                        "paradas": s.get("efeito_paradas_mwh"), "conversao": s["efeito_conversao_mwh"],
+                        "usina_total": s["efeito_usina_mwh"]},
+        "parte_clima_pct": s["parte_clima_pct"],
+        "incerteza_regua": {"pct": s["incerteza_regua_pct"], "mwh": s["incerteza_regua_mwh"]},
+        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "o_tempo_permitia": s["poa_tempo"], "pvsyst": s["poa_pvsyst"],
+                       "horizontal": s["ghi_real"], "horizontal_pvsyst": s["ghi_pvsyst"]},
+        "temperatura_media_c": {"real": s["t_amb_media"], "pvsyst": s["t_amb_pvsyst"]},
+        "pr": {"real": s["pr_real"], "pvsyst": s["pr_pvsyst"]}, "corte_nos_limites_mwh": s["corte_mwh"],
+        "hora_a_hora": {
+            "leitura": hh.get("leitura"),
+            "por_hora_fora_do_limite_pct": {p["hora"]: p["pct_fora_limite"] for p in hh.get("perfil") or []
+                                            if p.get("pct_fora_limite") is not None},
+            "rendimento_por_dia_pct": [{"dia": x["dia"][8:], "pct": x["pct"], "chuva_mm": x["chuva_mm"]}
+                                       for x in hh.get("rendimento") or [] if x.get("pct") is not None],
+            "nota": "real ÷ gêmeo com o sol MEDIDO no plano (só a conversão), fora das horas em que o gêmeo está no limite"},
+        "dias": [{"dia": x["dia"][8:], "previsto_kwh": x["previsto_kwh"], "real_kwh": x["real_kwh"], "desvio_pct": x["desvio_pct"],
+                  "sol_kwh_m2": x["poa"], "corte_kwh": x["corte_kwh"], "paradas": x.get("paradas_n")}
+                 for x in d.get("dias") or [] if x.get("real_kwh") or x.get("previsto_kwh")],
+        "inversores": [{"inversor": rot[i["sn"]], "real_kwh": i["real_kwh"], "previsto_kwh": i["previsto_kwh"],
+                        "desvio_pct": i["desvio_pct"], "paradas": i.get("paradas_n"), "paradas_kwh": i.get("paradas_kwh")}
+                       for i in d.get("inversores") or []],
+        "limites": {"usina_projeto_kw": lim.get("projeto_kw"), "usina_kw": lim.get("usina_configurado_kw"),
+                    "teto_medido_usina_kw": lim.get("usina_teto_medido_kw"), "dias_travados": s.get("dias_travados"),
+                    "por_inversor": None if not ultimo else [
+                        {"inversor": rot.get(sn, sn), "limite_kw": v.get("limite_kw"), "comando_lido_kw": v.get("comando_kw"),
+                         "fonte": v.get("fonte")} for sn, v in ultimo["inversores"].items()]},
+        "paradas": None if paradas is None else {
+            "n": (s.get("paradas") or {}).get("n"), "minutos": (s.get("paradas") or {}).get("minutos"),
+            "maiores": [{"inversor": p["inversor"], "inicio": p["ini"][5:16].replace("T", " "), "minutos": p["minutos"],
+                         "perda_kwh": p.get("perda_kwh")} for p in sorted(paradas, key=lambda p: -(p.get("perda_kwh") or 0))[:5]]},
+        "como_explicar": COMO_EXPLICAR_GEMEO,
+    }
+
+
+async def gemeo_dia(ctx: Contexto, a: dict) -> dict:
+    """Um dia no gêmeo, hora a hora: o previsto × o real, o sol medido × o que o tempo permitia, corte e paradas."""
+    u = _usina(ctx, a.get("usina"))
+    dia, _ = _periodo(a.get("dia"), None)
+    d = await _gemeo_ler(ctx, u, ctx.mw.gemeo_dia(u["id"], dia.isoformat()))
+    horas = [{"hora": h["hora"], "previsto_kwh": h["previsto_kwh"], "real_kwh": h["real_kwh"], "desvio_pct": h["desvio_pct"],
+              "sol_medido_wh_m2": h["poa_wh"], "sol_que_o_tempo_permitia_wh_m2": h["poa_tempo_wh"], "t_amb_c": h["t_amb"],
+              "t_celula_max_c": h["t_cel_max"], "corte_kwh": h["corte_kwh"], "paradas_kwh": h["paradas_kwh"]}
+             for h in d.get("horas") or []]
+    prev = sum(h["previsto_kwh"] or 0 for h in horas)
+    real = sum(h["real_kwh"] or 0 for h in horas) if any(h["real_kwh"] is not None for h in horas) else None
+    return {"usina": u["nome"], "dia": dia.isoformat(), "potencia_maxima_kw": d.get("kwac"),
+            "total": {"previsto_kwh": round(prev), "real_kwh": None if real is None else round(real),
+                      "desvio_pct": None if real is None or not prev else round((real / prev - 1) * 100, 1)},
+            "horas": horas,
+            "nota": "previsto = gêmeo com o tempo que fez e os limites reais, na rede; hora de hoje que não fechou vem "
+                    "parcial; corte = o que os limites tiraram; sol medido abaixo do que o tempo permitia = tracker ou sensor"}
+
+
+async def gemeo_regua(ctx: Contexto, a: dict) -> dict:
+    """A régua: o gêmeo com o clima e as premissas do PVsyst contra o próprio PVsyst."""
+    u = _usina(ctx, a.get("usina"))
+    d = await _gemeo_ler(ctx, u, ctx.mw.gemeo_regua(u["id"]))
+    r = d["regua"]
+    return {"usina": u["nome"], "gravada_em": r.get("calculado_em"), "modelo": r.get("modelo"), "k": r["k"],
+            "contraste_do_ano": r.get("contraste"), "contraste_ajustado_ao_corte_do_pvsyst": r.get("contraste_ajustado"),
+            "ano_desvio_pct": r["ano_desvio_pct"],
+            "meses": [{"mes": m["rotulo"], "pvsyst_mwh": m["pvsyst"]["e_grid_mwh"], "gemeo_mwh": m["gemeo"]["e_grid_mwh"],
+                       "desvio_pct": m["desvio_pct"]} for m in r["meses"]],
+            "diagrama_de_perdas": r.get("diagrama"),
+            "variantes": [{k: v for k, v in x.items() if k not in ("meses_desvio_pct", "modelo")} for x in r.get("variantes") or []],
+            "versoes": [{"gravada_em": x["calculado_em"], "em_vigor": x["em_vigor"], "ano_desvio_pct": x["ano_desvio_pct"],
+                         "pior_mes_pct": x["pior_mes_pct"], "k": x["k"]} for x in d.get("versoes") or []],
+            "nota": "A régua roda o gêmeo com o que o PVsyst usou: o clima mensal do PDF (não a estação) e os limites do "
+                    "PROJETO (não os reais). Os únicos ajustes são k (fecha a energia no MPP do ano) e o contraste do ano "
+                    "sintético (fecha o corte do inversor do diagrama); origem 'calculado' = o gêmeo chegou lá sozinho. "
+                    "O desvio do mês é a incerteza da régua naquele mês."}
+
+
+async def gemeo_config(ctx: Contexto, a: dict) -> dict:
+    """O que o gêmeo sabe da usina: geometria, módulo (.PAN), inversor (.OND), perdas do PDF, limites e leituras."""
+    u = _usina(ctx, a.get("usina"))
+    d = await _gemeo_ler(ctx, u, ctx.mw.gemeo_config(u["id"]))
+    c = d.get("cfg")
+    if not c:
+        raise Recusa(f"{u['nome']} não tem gêmeo digital.")
+    ond = c.get("ond")
+    return {"usina": u["nome"], "origem": d.get("origem"), "pdf": c.get("pdf"), "geometria": c.get("geometria"),
+            "modulo": c.get("modulo"), "bifacial": c.get("bifacial"), "inversor_projeto": c.get("inversor"),
+            "limite_de_rede_projeto_kw": c.get("limite_rede_kw"), "limites_reais": c.get("limites_reais"),
+            "perdas_do_pdf_pct": c.get("perdas"), "sombra_eletrica": c.get("sombra_eletrica"),
+            "energia_no_mpp_do_pvsyst_mwh": c.get("pvsyst_mpp_mwh"), "diagrama_do_pvsyst": c.get("diagrama"),
+            "pan": c.get("pan"),
+            "ond": None if not ond else {"arquivo": ond.get("arquivo"), "pnom_kw": ond.get("pnom_kw"), "pmax_kw": ond.get("pmax_kw"),
+                                         "curvas": [{"tensao_v": x["v"], "eficiencia_max_pct": round(max(
+                                             (o / i * 100 for i, o in zip(x["pin_kw"], x["pout_kw"]) if i > 0.5), default=0), 2)}
+                                             for x in ond.get("curvas") or []]},
+            "pvsyst_mensal": {"colunas": ["GlobHor", "DiffHor", "T_Amb", "GlobInc", "GlobEff", "EArray_MWh", "E_Grid_MWh"],
+                              "meses": c.get("pvsyst")},
+            "inversores": [{"inversor": i.get("rotulo") or i["sn"], "sn": i["sn"], "kwp": i.get("kwp"),
+                            "comando_lido_kw": (i.get("leitura") or {}).get("comando_kw"),
+                            "modo": (i.get("leitura") or {}).get("modo"),
+                            "lido_em": (i.get("leitura") or {}).get("comando_lido_em")} for i in d.get("inversores") or []],
+            "avisos": c.get("avisos")}
+
+
 # --------------------------------------------------------------------------- catálogo
 _USINA = {"type": "string", "description": "Nome da usina (parcial, sem acento serve). Vazio só se houver uma."}
 _INI = {"type": "string", "description": "Data inicial AAAA-MM-DD. Calcule a partir de HOJE: 'mês' = dia 1; "
@@ -618,6 +779,21 @@ FERRAMENTAS = {
         "inversor). Sem datas = mês atual até hoje.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "resumo_executivo": (resumo_executivo, _f("resumo_executivo", "Texto do resumo executivo do mês (veredito, "
         "destaques, perdas, ações e a observação da O&M).", {"usina": _USINA, "mes": _MES}, ["mes"])),
+    "gemeo": (gemeo, _f("gemeo", "GÊMEO DIGITAL de uma usina com estação (hoje Ibitinga e Porto Ferreira) num mês: "
+        "'foi o clima ou a usina?' — o real × o previsto pelo gêmeo (com o tempo que fez) × o PVsyst, a cascata (régua, "
+        "clima, limitação, sol no plano, paradas, conversão), dia a dia, o hora a hora (padrão de tracker × sujeira × "
+        "inversor), inversores, limites de potência lidos nos inversores e paradas. Para essas usinas, prefira esta a "
+        "`projeto` quando a pergunta é por que gerou abaixo/acima.", {"usina": _USINA, "mes": {"type": "string",
+        "description": "Mês AAAA-MM (o mês corrente vai até agora)."}}, ["mes"])),
+    "gemeo_dia": (gemeo_dia, _f("gemeo_dia", "Um DIA no gêmeo digital, hora a hora: previsto × real, o sol medido × o "
+        "que o tempo permitia, temperatura, corte nos limites e paradas.", {"usina": _USINA, "dia": {"type": "string",
+        "description": "Dia AAAA-MM-DD (vazio = hoje)."}})),
+    "gemeo_regua": (gemeo_regua, _f("gemeo_regua", "A RÉGUA do gêmeo digital: o quanto ele reproduz o PVsyst rodando com "
+        "o clima e as premissas do PDF — diagrama de perdas etapa por etapa, mês a mês, ajustes (k, contraste), "
+        "variantes e versões gravadas.", {"usina": _USINA})),
+    "gemeo_config": (gemeo_config, _f("gemeo_config", "O que o gêmeo digital sabe da usina: geometria, módulo e .PAN, "
+        "inversor e .OND, perdas do PDF do PVsyst, limites reais e o comando de potência lido em cada inversor.",
+        {"usina": _USINA})),
     "grafico": (grafico, _f("grafico", "Desenha e manda como IMAGEM: geracao_diaria, inversores, pr_diario, irradiacao "
         "ou usinas (produtividade de todas).", {"usina": _USINA, "inicio": _INI, "fim": _FIM, "tipo": {"type": "string",
         "enum": ["geracao_diaria", "inversores", "pr_diario", "irradiacao", "usinas"]}})),

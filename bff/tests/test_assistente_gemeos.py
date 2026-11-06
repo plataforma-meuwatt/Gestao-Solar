@@ -1,0 +1,105 @@
+"""Gêmeo digital no bot (dono, 06/11/2026: "faça o bot saber tudo dos gêmeos, qualquer pergunta que eu fizer ele
+responde"). O gêmeo mora no módulo de análise do meuWatt; o bot lê com o token da pessoa e resume para a IA."""
+
+import json
+
+import httpx
+import pytest
+
+from app.services import assistente_geracao as ger
+
+
+def _erro(status: int) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://analise.meuwatt.test/gemeos/9371")
+    return httpx.HTTPStatusError("x", request=req, response=httpx.Response(status, request=req))
+
+
+MES = {
+    "estacao": "ws-ufv-ibitinga-1", "ficha": {"modelo_modulo": "um diodo do PVsyst (x.PAN)", "modelo_inversor": "curva do .OND (y.ond)"},
+    "resumo": {"real_mwh": 169.5, "previsto_mwh": 196.5, "pvsyst_mwh": 249.2, "regua_mwh": 244.5, "desvio_previsto_pct": -13.7,
+               "efeito_regua_mwh": -4.7, "efeito_clima_mwh": -50.4, "efeito_limitacao_mwh": 2.4, "efeito_plano_mwh": -10.3,
+               "efeito_paradas_mwh": -0.06, "efeito_conversao_mwh": -16.7, "efeito_usina_mwh": -27.0, "parte_clima_pct": 63,
+               "incerteza_regua_pct": -1.87, "incerteza_regua_mwh": 4.7, "poa_real": 176.2, "poa_tempo": 189.6, "poa_pvsyst": 233.9,
+               "ghi_real": 155.8, "ghi_pvsyst": 173.6, "t_amb_media": 24.3, "t_amb_pvsyst": 23.9, "pr_real": 0.746,
+               "pr_pvsyst": 0.826, "corte_mwh": 19.4, "dias_travados": 0, "paradas": {"n": 2, "minutos": 51}},
+    "hora_a_hora": {"leitura": {"tipo": "sol_direto", "titulo": "A perda cresce com o sol direto…", "inversor": None},
+                    "perfil": [{"hora": 9, "pct": -8.0, "pct_fora_limite": -10.5}, {"hora": 5, "pct": None, "pct_fora_limite": None}],
+                    "rendimento": [{"dia": "2026-10-22", "pct": -1.7, "chuva_mm": 6.6, "minutos": 385, "inversores": {}},
+                                   {"dia": "2026-10-23", "pct": None, "chuva_mm": 0.0, "minutos": 0, "inversores": {}}]},
+    "dias": [{"dia": "2026-10-01", "previsto_kwh": 2580, "real_kwh": 2260, "desvio_pct": -12.4, "poa": 2.1, "corte_kwh": 10, "paradas_n": 0},
+             {"dia": "2026-10-02", "previsto_kwh": 0, "real_kwh": 0, "desvio_pct": None, "poa": 0.0, "corte_kwh": 0, "paradas_n": 0}],
+    "inversores": [{"sn": "ES1", "rotulo": "Inv 1", "real_kwh": 42659, "previsto_kwh": 49601, "desvio_pct": -14.0,
+                    "paradas_n": 2, "paradas_kwh": 27.8}],
+    "limites": {"projeto_kw": 1000.0, "usina_configurado_kw": 1027.0, "usina_teto_medido_kw": None, "dias": [
+        {"dia": "2026-10-30", "inversores": {"ES1": {"limite_kw": 252.5, "comando_kw": 252.5, "fonte": "leitura"}}},
+        {"dia": "2026-10-31", "inversores": {"ES1": {"limite_kw": 252.5, "comando_kw": None, "fonte": "modelo"}}}]},
+    "paradas": [{"inversor": "Inv 1", "ini": "2026-10-08T16:39:00-03:00", "minutos": 7, "perda_kwh": 27.7},
+                {"inversor": "Inv 1", "ini": "2026-10-13T16:45:00-03:00", "minutos": 3, "perda_kwh": 0.1}],
+}
+
+
+class _GemeoFalso:
+    def __init__(self, erro: int | None = None):
+        self.erro = erro
+        self.pedidos: list = []
+
+    async def gemeo_mes(self, plant_id, mes):
+        self.pedidos.append((plant_id, mes))
+        if self.erro:
+            raise _erro(self.erro)
+        return MES
+
+    async def gemeos(self):
+        return [{"plant_id": 9371, "nome": "Ibitinga"}, {"plant_id": 9378, "nome": "Porto Ferreira"}]
+
+    async def gemeo_dia(self, plant_id, dia):
+        return {"kwac": 1027.0, "horas": [
+            {"hora": 10, "previsto_kwh": 900.0, "real_kwh": 800.0, "desvio_pct": -11.1, "poa_wh": 700, "poa_tempo_wh": 760,
+             "t_amb": 30.1, "t_cel_max": 52.0, "corte_kwh": 0.0, "paradas_kwh": 0.0},
+            {"hora": 11, "previsto_kwh": 1000.0, "real_kwh": None, "desvio_pct": None, "poa_wh": 800, "poa_tempo_wh": 820,
+             "t_amb": 31.0, "t_cel_max": 55.0, "corte_kwh": 20.0, "paradas_kwh": 0.0}]}
+
+
+def _ctx(mw):
+    return ger.Contexto(db=None, user=None, telefone="+5517997377626", mw=mw, usinas={
+        "ibitinga": {"id": 9371, "nome": "Ibitinga", "slug": "ibitinga"},
+        "pirapozinho": {"id": 9376, "nome": "Pirapozinho", "slug": "pirapozinho"}})
+
+
+async def test_o_mes_no_gemeo_resumido_para_a_ia():
+    mw = _GemeoFalso()
+    r = await ger.gemeo(_ctx(mw), {"usina": "ibiti", "mes": "2026-10"})
+    assert mw.pedidos == [(9371, "2026-10")]                           # o id numérico do meuWatt, não o slug
+    assert r["placar_mwh"] == {"real": 169.5, "previsto_pelo_gemeo": 196.5, "pvsyst": 249.2, "gemeo_no_ano_tipico_regua": 244.5}
+    assert r["cascata_mwh"]["conversao"] == -16.7 and r["parte_clima_pct"] == 63
+    assert r["hora_a_hora"]["leitura"]["tipo"] == "sol_direto"
+    assert r["hora_a_hora"]["por_hora_fora_do_limite_pct"] == {9: -10.5}           # hora sem dado não vira zero
+    assert [x["dia"] for x in r["hora_a_hora"]["rendimento_por_dia_pct"]] == ["22"]
+    assert [x["dia"] for x in r["dias"]] == ["01"]                                  # dia sem nada fica de fora
+    assert r["limites"]["por_inversor"] == [{"inversor": "Inv 1", "limite_kw": 252.5, "comando_lido_kw": 252.5, "fonte": "leitura"}]
+    assert r["paradas"]["maiores"][0] == {"inversor": "Inv 1", "inicio": "10-08 16:39", "minutos": 7, "perda_kwh": 27.7}
+    assert "Números só daqui" in r["como_explicar"]
+    assert len(json.dumps(r, ensure_ascii=False)) < ger_teto()
+
+
+def ger_teto() -> int:
+    from app.services import assistente
+    return assistente.TETO_RESULTADO
+
+
+async def test_quem_nao_e_da_plataforma_e_usina_sem_gemeo():
+    with pytest.raises(ger.Recusa, match="só da equipe da plataforma"):
+        await ger.gemeo(_ctx(_GemeoFalso(erro=403)), {"usina": "ibitinga", "mes": "2026-10"})
+    with pytest.raises(ger.Recusa, match=r"Pirapozinho não tem gêmeo digital \(têm: Ibitinga, Porto Ferreira\)"):
+        await ger.gemeo(_ctx(_GemeoFalso(erro=404)), {"usina": "pirapozinho", "mes": "2026-10"})
+    with pytest.raises(ger.Recusa, match="ainda não começou"):
+        await ger.gemeo(_ctx(_GemeoFalso()), {"usina": "ibitinga", "mes": "2099-01"})
+    with pytest.raises(httpx.HTTPStatusError):                       # 500 sobe: o laço do bot diz o erro, não inventa
+        await ger.gemeo(_ctx(_GemeoFalso(erro=500)), {"usina": "ibitinga", "mes": "2026-10"})
+
+
+async def test_o_dia_hora_a_hora():
+    r = await ger.gemeo_dia(_ctx(_GemeoFalso()), {"usina": "ibitinga", "dia": "2026-10-17"})
+    assert r["dia"] == "2026-10-17" and r["potencia_maxima_kw"] == 1027.0
+    assert r["total"] == {"previsto_kwh": 1900, "real_kwh": 800, "desvio_pct": -57.9}
+    assert r["horas"][1]["real_kwh"] is None                         # hora sem leitura fica nula, não zero
