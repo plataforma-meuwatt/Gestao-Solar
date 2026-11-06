@@ -137,5 +137,18 @@
 {"frase": "Qual o número de série do transformador do skid 1 de ouro fino?", "espera": ["manutencao"], "origem": "log #224 (rotina 05/11)"},
 {"frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto", "espera": ["manutencao"], "origem": "log #225 (rotina 05/11)"},
 {"frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras", "espera": ["manutencao", "relatorio_da_os"], "origem": "log #227 (rotina 05/11)"},
-{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233 (rotina 05/11)"}
+{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233 (rotina 05/11)"},
+{"frase": "Como eu configuro o estado default da saída fault do relé de temperatura ep4?", "espera": ["manutencao"], "origem": "log #18"},
+{"frase": "qual e-mail para solicitar liberação de pulso de medição saída serial do usuário grupo A elektro neoenergia", "espera": ["manutencao"], "origem": "log #39"},
+{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #131"},
+{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #137"},
+{"frase": "Qual a senha do cadeado de pirapozinho", "espera": ["manutencao"], "origem": "log #174"},
+{"frase": "Tem os de troca de bobina do trafo 2 de ouro fino?", "espera": ["manutencao"], "origem": "log #218"},
+{"frase": "Qual o número de série do transformador do skid 1 de ouro fino?", "espera": ["manutencao"], "origem": "log #224"},
+{"frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto", "espera": ["manutencao"], "origem": "log #225"},
+{"frase": "Cadastre o Marlon no gestao solar, +55 17 ••••, veja que ele ja tem meuwatt e meu plano. Libere o acesso ao bot", "espera": ["formulario_de_cadastro"], "origem": "log #236"},
+{"frase": "Me envie o Excel de geração diária para o mês de novembro da UFV Porto Ferreira", "espera": ["excel_energia_diaria"], "origem": "log #245"},
+{"frase": "🎙️ Bot, faz um favor pra mim. Me mostra tudo que foi realizado de OS pra usina UFV Porto Ferreira.", "espera": ["manutencao"], "origem": "log #246"},
+{"frase": "Abra OS de roçada de pirapozinho", "espera": ["manutencao"], "origem": "log #249"},
+{"frase": "me de o PDF da tarefa · Tarefa #9474", "espera": ["manutencao"], "origem": "log #264"}
 ]
