@@ -330,7 +330,8 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "relatorio_da_os": (relatorio.relatorio_da_os, relatorio.FERRAMENTA),
                "informacoes_do_relatorio": (relatorio.informacoes_do_relatorio, relatorio.FERRAMENTA_INFO),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
-               "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
+               "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
+               "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -837,7 +838,8 @@ def permitidas(user) -> list[str]:
     if "bot_meuwatt" in ativo:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
-        nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada"]
+        nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada",
+                  "local_da_usina"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
@@ -900,8 +902,11 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - «[👤 contato compartilhado: nome · telefone…]» = a pessoa mandou um contato pelo botão do WhatsApp: são os dados de
   quem ela chama de "este contato". Siga a regra de sempre para o pedido e use o nome, o telefone e o e-mail EXATOS
   dele. Sem pedido junto, pergunte o que fazer com o contato.
-- «[📍 localização recebida…]» = a pessoa mandou uma localização. Pergunte de QUAL usina é (se ela ainda não disse)
-  e chame `gravar_coordenada` com a usina; o sistema diz se grava ou substitui e pede o Sim. Nunca escreva coordenada.
+- «[📍 localização recebida…]» = a pessoa mandou uma localização (pelo 📎 ou por link do Google Maps, que o sistema já
+  leu). Pergunte de QUAL usina é (se ela ainda não disse) e chame `gravar_coordenada` com a usina; o sistema diz se
+  grava ou substitui e pede o Sim. Nunca escreva coordenada.
+- Pedido da localização, da coordenada ou de como chegar a uma usina → `local_da_usina`: o sistema manda o link do
+  Google Maps e o do Waze; você só diz uma linha, sem os links.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
   meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
   tarefas das OS no meuPlano (papel `prestador`).
@@ -1606,6 +1611,8 @@ async def _atender(evento: dict) -> None:
             texto = seguro = pergunta = local.mensagem(telefone)
         if not texto and evento.get("tipo") == "contacts":
             texto = seguro = pergunta = _contatos_em_texto(evento)
+        if texto:
+            seguro = await local.do_link(telefone, seguro)   # o link do Google Maps vira a localização, lida pelo sistema
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
             aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
@@ -1673,7 +1680,7 @@ async def _atender(evento: dict) -> None:
             if juntavel:
                 db.commit()                               # solta a conexão durante a espera
                 # a foto sem legenda espera mais: o pedido costuma vir num texto logo depois
-                sem_legenda = evento.get("tipo") == "contacts" or (
+                sem_legenda = evento.get("tipo") == "contacts" or local.so_link(texto) or (
                     fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone)))
                 if await _esperar_a_seguinte(evento, ESPERA_FOTO_S if sem_legenda else ESPERA_TEXTO_S):
                     return await juntar()
@@ -1703,6 +1710,8 @@ async def _atender(evento: dict) -> None:
                              if desarmada is not None and desarmada.confirmacao == "sim" else
                              "\n\n(Escondi a sua senha de atuação desta mensagem: ela só vale sozinha, numa "
                              "mensagem só dela. Nada foi executado.)")
+            if ctx.rodape:                                  # os links do mapa: texto do sistema, não da IA
+                resposta += "\n\n" + "\n\n".join(ctx.rodape)
             if ctx.proposta is not None:
                 # O que a pessoa confirma é texto do SISTEMA, não da IA — e a ação do meuPlano vai
                 # com os botões Sim / Não, numa mensagem só dela.

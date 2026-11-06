@@ -55,6 +55,8 @@ async def _turno(apelido: str, frase: str, inteira: bool) -> dict:
                                               for i in range(int(m.group(1)))]
         if inteira:
             texto = await a.responder(ctx, [{"role": "user", "content": frase}])
+            if ctx.rodape:                                  # os links do mapa, como no bot
+                texto += "\n\n" + "\n\n".join(ctx.rodape)
             if ctx.proposta is not None:
                 texto += "\n\n" + a.helper.bloco_da_proposta(ctx.proposta)
             return {"ferramentas": ctx.ferramentas,

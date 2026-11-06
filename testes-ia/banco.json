@@ -102,7 +102,7 @@
 {"frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers", "espera": ["geracao", "paradas"], "origem": "log #169"},
 {"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "usina_helper_catalogo"], "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"},
 {"frase": "Pirapozinho esta parado", "espera": ["reles", "geracao", "paradas", "usina_helper", "usina_helper_catalogo"], "origem": "31/10 (skid 2 parado)"},
-{"frase": "Qual a coordenada de tiete", "espera": ["manutencao"], "origem": "log #92"},
+{"frase": "Qual a coordenada de tiete", "espera": ["local_da_usina"], "origem": "log #92 · 06/11/2026: Google Maps e Waze pelo sistema (pedido do Renan)"},
 {"frase": "Coloque que a tarefa de rocagem de tiete é responsabilidade do Thiago marquezini", "espera": ["manutencao"], "origem": "log #126"},
 {"frase": "Anotei o wiki de pirapozinho: as chaves ficam dentro da caixa do transformador do skid 2", "espera": ["manutencao"], "origem": "log #175"},
 {"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles"], "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)", "ou_sem_ferramenta": true},
@@ -158,5 +158,8 @@
 {"frase": "a régua do gêmeo de ibitinga bate com o pvsyst?", "espera": ["gemeo_regua"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
 {"frase": "como foi ibitinga hora a hora ontem no gêmeo", "espera": ["gemeo_dia"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
 {"frase": "qual o limite de potência dos inversores de porto ferreira?", "espera": ["gemeo", "gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "o gêmeo de ibitinga usa o arquivo .PAN do módulo?", "espera": ["gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"}
+{"frase": "o gêmeo de ibitinga usa o arquivo .PAN do módulo?", "espera": ["gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
+{"frase": "Me de a coordenada da usina de tiete", "espera": ["local_da_usina"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"},
+{"frase": "Me manda a localização de ibitinga", "espera": ["local_da_usina"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"},
+{"frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb [📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete", "espera": ["gravar_coordenada"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"}
 ]

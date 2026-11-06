@@ -8,9 +8,11 @@ diz a distância. Confirmada com o Sim, vai pela rota do app de campo (`POST /us
 permissão de lá (`meuacesso.usinas.coordenada`).
 """
 
+import re
 import unicodedata
 from math import asin, cos, radians, sin, sqrt
 from time import monotonic
+from urllib.parse import unquote
 
 import httpx
 
@@ -49,6 +51,65 @@ def _ponto(lat: float, lng: float) -> str:
 
 def _mapa(lat: float, lng: float) -> str:
     return f"https://maps.google.com/?q={lat:.6f},{lng:.6f}"
+
+
+def _waze(lat: float, lng: float) -> str:
+    return f"https://waze.com/ul?ll={lat:.6f},{lng:.6f}&navigate=yes"
+
+
+#: Link do Google Maps no texto (06/11/2026, dono: "eu quero que o bot entenda links Google Maps"; o bot respondia que
+#: não abria link). O SISTEMA lê o ponto do link, como o da localização do 📎: a IA não escreve número.
+LINK = re.compile(r"https?://(?:maps\.app\.goo\.gl|goo\.gl/maps|(?:www\.)?google\.[a-z.]+/maps|maps\.google\.[a-z.]+)"
+                  r"[^\s<>]*", re.I)
+#: O PINO do lugar (!3d…!4d…) e, sem ele, o ponto pedido (q=, query=, ll=, destination=, /place/, /search/). O "@" é
+#: a câmera do mapa, não um ponto: não vale.
+_PINO = re.compile(r"!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)")
+_PEDIDO = re.compile(r"(?:[?&](?:q|query|ll|destination|daddr)=|/place/|/search/)(-?\d{1,2}\.\d+),\s*\+?(-?\d{1,3}\.\d+)")
+
+
+def _ponto_da_url(url: str) -> tuple[float, float] | None:
+    u = unquote(unquote(url)).replace("+", " ")
+    m = _PINO.search(u) or _PEDIDO.search(u)
+    if m is None:
+        return None
+    lat, lng = float(m.group(1)), float(m.group(2))
+    return (lat, lng) if -90 <= lat <= 90 and -180 <= lng <= 180 else None
+
+
+async def _ponto_do_link(url: str) -> tuple[float, float] | None:
+    """O ponto do link; o curto (maps.app.goo.gl) é seguido, só para endereço do Google, até 3 saltos."""
+    try:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=False) as c:
+            for _ in range(3):
+                if (ponto := _ponto_da_url(url)) is not None:
+                    return ponto
+                r = await c.get(url)
+                destino = r.headers.get("location")
+                if not r.is_redirect or not destino or not LINK.match(destino):
+                    return None
+                url = destino
+    except httpx.HTTPError:
+        return None
+    return _ponto_da_url(url)
+
+
+async def do_link(telefone: str, texto: str) -> str:
+    """O texto com a marca de localização depois do link do Google Maps (o ponto fica guardado, como o do 📎)."""
+    m = LINK.search(texto or "")
+    if m is None:
+        return texto
+    ponto = await _ponto_do_link(m.group(0).rstrip(".,;)"))
+    if ponto is None:
+        marca = " [🔗 link do Google Maps sem um ponto que eu consiga ler: peça a localização pelo 📎 → Localização]"
+    else:
+        guardar(telefone, {"midia": {"lat": ponto[0], "lng": ponto[1]}})
+        marca = " [📍 localização recebida pelo link do Google Maps, ainda não gravada]"
+    return texto[:m.end()] + marca + texto[m.end():]
+
+
+def so_link(texto: str) -> bool:
+    """A mensagem é só o link: o pedido costuma vir logo depois, como na foto sem legenda."""
+    return bool(LINK.fullmatch((texto or "").strip()))
 
 
 def mensagem(telefone: str) -> str:
@@ -160,3 +221,41 @@ async def gravar_coordenada(ctx, a: dict) -> dict:
         return f"✅ Coordenada da usina {nome} {'substituída' if tem else 'gravada'} no meuPlano: {_ponto(lat, lng)}."
 
     return helper.propor(ctx, resumo, PRAZO_S, executar, linhas, parte="bot_meuplano", confirmacao="sim")
+
+
+FERRAMENTA_LER = {"type": "function", "function": {
+    "name": "local_da_usina",
+    "description": ("A LOCALIZAÇÃO de uma usina (coordenada, onde fica, como chegar), a gravada no meuPlano. O SISTEMA "
+                    "manda à pessoa, ao pé da sua resposta, o link do Google Maps e o do Waze: não escreva os links nem "
+                    "os números. Use sempre que pedirem a localização, a coordenada, o mapa ou o caminho de uma usina."),
+    "parameters": {"type": "object", "properties": {
+        "usina": {"type": "string", "description": "nome da usina (ou o id das opções)"}},
+        "required": ["usina"]}}}
+
+
+async def local_da_usina(ctx, a: dict) -> dict:
+    """A coordenada da usina em Google Maps e Waze (06/11/2026, dono: "toda vez que eu pedir uma loc ele deve me enviar
+    formato Google Maps e formato Waze"). Os links são texto do sistema, ao pé da resposta (`ctx.rodape`)."""
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    if not (a.get("usina") or "").strip():
+        return {"erro": "Falta a usina: pergunte qual."}
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()                                       # solta a conexão enquanto o meuPlano responde
+    try:
+        usina, candidatas = escolher(await mp.usinas(), a["usina"])
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora."}
+    if usina is None:
+        return {"erro": f"Usina '{a['usina']}' " + ("é ambígua" if candidatas else "não está entre as dela")
+                        + ": pergunte qual é.",
+                "opcoes": [_rotulo_da_usina(u) for u in candidatas]}
+    nome, lat, lng = usina.get("name"), usina.get("latitude"), usina.get("longitude")
+    if lat is None or lng is None:
+        return {"erro": f"A usina {nome} não tem coordenada gravada no meuPlano. Para gravar, a pessoa manda a "
+                        "localização (📎 → Localização) ou um link do Google Maps e diz a usina."}
+    ctx.rodape.append(f"📍 *{nome}*\nGoogle Maps: {_mapa(lat, lng)}\nWaze: {_waze(lat, lng)}")
+    return {"usina": nome, "enviado": "O sistema manda os links do Google Maps e do Waze ao pé da sua resposta: "
+                                      "não os escreva. Responda numa linha curta."}

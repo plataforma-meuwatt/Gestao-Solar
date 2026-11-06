@@ -184,3 +184,79 @@ def test_evento_de_localizacao_torto_nao_conta():
     assert not local.e_local({"tipo": "location", "midia": None})
     assert not local.e_local({"tipo": "location", "midia": {"lat": "-21", "lng": -48.0}})
     assert not local.e_local({"tipo": "image", "midia": {"lat": -21.0, "lng": -48.0}})
+
+
+# 06/11/2026, dono: "eu quero que o bot entenda links Google Maps. Toda vez que eu pedir uma loc ele deve me enviar
+# formato Google Maps e formato Waze" (o bot respondia que não abria o link do Maps).
+CURTO = "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb"
+LONGO = ("https://www.google.com/maps/place/-23.053564,-47.725915/data=!4m6!3m5!1s0!7e2!8m2!3d-23.0535642"
+         "!4d-47.7259153!18m1!1e1?utm_source=mstt_1&entry=gps")       # o destino real do link do dono
+
+
+@pytest.fixture
+def google(monkeypatch):
+    """O Google de mentira: o link curto redireciona para o longo (o que o dono mandou, conferido em 06/11)."""
+    pedidos = []
+
+    def _responde(req):
+        pedidos.append(str(req.url))
+        if req.url.host == "maps.app.goo.gl":
+            destino = LONGO if "E2Jm" in str(req.url) else "https://www.google.com/maps?q=Rua+Sem+Numero&ftid=1"
+            return httpx.Response(302, headers={"location": destino})
+        if req.url.host == "evil.example":
+            return httpx.Response(200)
+        return httpx.Response(200, text="<html></html>")
+
+    real = httpx.AsyncClient
+
+    class _Cliente(real):
+        def __init__(self, *a, **k):
+            super().__init__(*a, transport=httpx.MockTransport(_responde), **k)
+
+    monkeypatch.setattr(local.httpx, "AsyncClient", _Cliente)
+    return pedidos
+
+
+async def test_o_link_do_google_maps_vira_a_localizacao_e_grava_com_o_sim(db, cenario, google):
+    p = _pessoa(db)
+    await assistente.atender(_texto(p, 1, CURTO))
+    # a IA lê que a localização chegou pelo link, sem que ela tenha de abrir o link ou escrever número
+    assert cenario.bot.llm == [CURTO + " [📍 localização recebida pelo link do Google Maps, ainda não gravada]"]
+    assert cenario.bot.enviados == ["De qual usina é essa localização?"]
+    await assistente.atender(_texto(p, 2, "usina tiete"))
+    assert h.PENDENTES[p.id].detalhes[1] == "Nova: -23.053564, -47.725915"
+    await _sim(p, 3)
+    assert cenario.mp.gravadas == [(502, -23.0535642, -47.7259153, True)]     # o PINO do link, não a câmera do mapa
+
+
+async def test_link_sem_ponto_ou_fora_do_google_nao_vira_localizacao(db, google):
+    texto = await local.do_link("+5517999990000", "https://maps.app.goo.gl/outro")
+    assert texto.endswith("[🔗 link do Google Maps sem um ponto que eu consiga ler: peça a localização pelo 📎 → Localização]")
+    assert local.recebida("+5517999990000") is None
+    assert await local.do_link("+5517999990000", "veja https://evil.example/maps?q=-23.1,-47.7") \
+        == "veja https://evil.example/maps?q=-23.1,-47.7"                   # não é do Google: nem é lido
+    assert not any("evil" in u for u in google)
+    assert local._ponto_da_url("https://www.google.com/maps/@-23.05,-47.72,15z") is None   # a câmera não é ponto
+    assert local._ponto_da_url("https://www.google.com/maps/search/?api=1&query=-21.7%2C-48.7") == (-21.7, -48.7)
+    assert local.so_link(CURTO) and not local.so_link("grava " + CURTO)
+
+
+async def test_o_pedido_da_localizacao_sai_em_google_maps_e_waze_pelo_sistema(db, cenario, monkeypatch):
+    p = _pessoa(db)
+
+    async def _llm(msgs, ferramentas=None):
+        if msgs[-1]["role"] == "tool":
+            r = json.loads(msgs[-1]["content"])
+            return {"content": r.get("erro") or "Segue a localização da Tietê."}
+        usina = msgs[-1]["content"].split()[-1]
+        return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "local_da_usina", "arguments": json.dumps({"usina": usina})}}]}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    await assistente.atender(_texto(p, 1, "Me manda a localização de tiete"))
+    assert cenario.bot.enviados[-1] == ("Segue a localização da Tietê.\n\n📍 *UFV TIETE*\n"
+                                        "Google Maps: https://maps.google.com/?q=-23.100000,-47.700000\n"
+                                        "Waze: https://waze.com/ul?ll=-23.100000,-47.700000&navigate=yes")
+    await assistente.atender(_texto(p, 2, "e a de ibitinga"))
+    assert "não tem coordenada gravada no meuPlano" in cenario.bot.enviados[-1] and "Waze" not in cenario.bot.enviados[-1]
+    assert "local_da_usina" in assistente.permitidas(p)
