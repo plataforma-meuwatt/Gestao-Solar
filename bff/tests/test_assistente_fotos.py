@@ -46,7 +46,7 @@ class _MeuPlano:
         #: a ficha de cada tarefa (a 9332, aprovada, foi emitida: não recebe anexo); sem ficha, o meuPlano dá 400
         self.fichas = {9331: {"test_asset_id": 70, "session_id": 500, "session_status": "IN_PROGRESS"},
                        9332: {"test_asset_id": 71, "session_id": 501, "session_status": "FINALIZED"}}
-        self.ordens = {1845: {"id": 1845, "title": "Roçagem e limpeza", "status": "EM_EXECUCAO",
+        self.ordens = {1845: {"id": 1845, "name": "Roçagem e limpeza", "status": "EM_EXECUCAO",
                               "plant_name": "UFV Pirapozinho"}}
 
     async def ordem_servico(self, so_id):

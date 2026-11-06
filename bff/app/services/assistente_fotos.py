@@ -167,7 +167,7 @@ async def anexar_fotos(ctx, a: dict) -> dict:
     nome_alvo = f"OS #{aid}" if na_os else f"tarefa #{aid}"
     if motivo := recusa(ctx.user, alvo.get("status"), na_os):
         return {"erro": f"A {nome_alvo} {motivo}. Nada foi anexado."}
-    titulo = alvo.get("title") if na_os else alvo.get("name")
+    titulo = alvo.get("name")                             # a OS também chama o nome dela de `name`
     resumo = (f"Anexar {quantos(fotos)} nos Anexos da OS #{aid}" + (f" «{titulo}»" if titulo else "") if na_os
               else f"Anexar {quantos(fotos)} na ficha da tarefa #{aid} «{titulo or 'sem nome'}»")
     lugar = " · ".join(x for x in ("" if na_os else f"OS {alvo['os_id']}" if alvo.get("os_id") else "",
