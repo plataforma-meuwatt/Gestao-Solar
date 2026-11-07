@@ -863,8 +863,8 @@ _OS = re.compile(r"(?i)^(?:(?:os|o\.s\.?|ordem(?:\s+de\s+servi[cç]o)?)\s*[:#-]?
 _PALAVRAS_DE_OS = {"a", "o", "os", "e", "n", "no", "numero", "num", "ordem", "de", "servico", "da", "do", "eh", "s"}
 #: As ações de TEXTO LIVRE (observação, OS, motivo de não ser parada): só valem até `TEXTO_VALE` depois da pergunta.
 _LIVRES = ("txt", "obs+", "os:")
-#: O sim/não SOLTO: só é do fluxo dentro da janela E se a última mensagem do bot à pessoa foi a pergunta do fluxo
-#: (`_ultima_foi_do_fluxo`). Senão é resposta a outra coisa: 2 h depois, ou depois de a IA perguntar algo, um "sim"
+#: O sim/não SOLTO: só é do fluxo dentro da janela E se nada mais saiu para a pessoa depois da pergunta do fluxo
+#: (`_saiu_outra_coisa`: a IA respondeu, ou o motor mandou o aviso «Tietê parou»). Senão é resposta a outra coisa: 2 h depois, ou depois de a IA perguntar algo, um "sim"
 #: gravava a classificação; um "não" a descartava.
 _SOLTAS = {"sim", "s", "ok", "pode", "isso", "nao", "n", "confere", "certo", "beleza", "blz"}
 #: O horário solto («10:42», «11h») não é número de OS.
@@ -891,14 +891,29 @@ def _numeros_de_os(cru: str, t: str) -> str | None:
     return None
 
 
-def _ultima_foi_do_fluxo(db: Session, user_id: int) -> bool:
-    """A última mensagem do bot a esta pessoa foi da classificação (o Log do bot, `gs_bot_registros`, onde todo turno
-    entra: o do fluxo com a ferramenta `classificar_paradas`)? Sem linha nenhuma, sim."""
-    from app.models.conversa_whatsapp import RegistroBot
+def _saiu_outra_coisa(db: Session, user, desde: datetime | None) -> bool:
+    """Saiu para esta pessoa, depois da pergunta do fluxo (`desde`), alguma mensagem que NÃO é do fluxo? Então o sim/não
+    solto dela responde àquilo. As fontes que registram envio ao WhatsApp:
+    - o Log do bot (`gs_bot_registros`): todo turno do `assistente._atender` (resposta, botões, formulário, os
+      arquivos das ferramentas); a última linha dela tem de ser do fluxo (ferramenta `classificar_paradas`);
+    - o motor de avisos (`gs_notificacoes_enviadas`): os templates de parada, OS e energia, pela conta ou pelo número
+      (o contato da usina pode ter o mesmo número), criados depois da pergunta e que não falharam.
+    ponytail: o "Enviar teste" do adm-gs (`painel_whatsapp.enviar_teste`) só fica no gateway; não é olhado aqui."""
+    from sqlalchemy import func, or_
 
-    ultima = db.execute(select(RegistroBot.ferramentas).where(RegistroBot.gs_user_id == user_id)
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.models.notificacao import NotificacaoEnviada
+
+    ultima = db.execute(select(RegistroBot.ferramentas).where(RegistroBot.gs_user_id == user.id)
                         .order_by(RegistroBot.id.desc()).limit(1)).first()
-    return ultima is None or "classificar_paradas" in (ultima[0] or "").split(",")
+    if ultima is not None and "classificar_paradas" not in (ultima[0] or "").split(","):
+        return True
+    quem = [NotificacaoEnviada.user_id == user.id] + ([NotificacaoEnviada.destino == user.telefone]
+                                                      if user.telefone else [])
+    aviso = db.scalar(select(func.max(NotificacaoEnviada.criada_em))
+                      .where(or_(*quem), NotificacaoEnviada.status != "falhou"))
+    aviso = _dt(aviso)
+    return aviso is not None and (desde is None or aviso > desde)
 
 
 def _texto_vale(estado: dict) -> bool:
@@ -1403,7 +1418,7 @@ async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pen
             acao = _acao_do_texto(estado, t, texto)
             if acao is None or (acao.startswith(_LIVRES) and not _texto_vale(estado)):
                 return None                                # texto livre horas depois da pergunta: é conversa
-            if t in _SOLTAS and not (_texto_vale(estado) and _ultima_foi_do_fluxo(db, user.id)):
+            if t in _SOLTAS and not (_texto_vale(estado) and not _saiu_outra_coisa(db, user, _dt(estado.get("em")))):
                 return None                                # o sim/não solto responde a outra coisa
     if evento.get("wamid"):
         try:

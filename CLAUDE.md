@@ -770,9 +770,10 @@ classificar?", "a de ontem já foi classificada?") e data que não se lê com ce
 passado") vão à IA, que chama `classificar_paradas` ou `paradas_a_classificar` (só conta) com as datas. Com a
 classificação aberta, o texto que não é resposta da pergunta de agora vai à IA; o título do botão, a opção exata e
 «parar» valem as 12 h (o toque no botão também), o TEXTO LIVRE (observação, OS, motivo) só até 30 min depois da
-pergunta, e o sim/não SOLTO só dentro desses 30 min e se a última mensagem do bot à pessoa foi a pergunta do fluxo
-(a última linha dela no Log do bot, `gs_bot_registros`, com `classificar_paradas`) — senão o «sim» que respondia a
-IA gravava a classificação. Com uma ação na fila (vencida inclusive), o texto solto é dela. Na observação só desvia a pergunta («?») ou o pedido de começar a classificar, nunca a 1ª palavra; na OS vale
+pergunta, e o sim/não SOLTO só dentro desses 30 min e se NADA mais saiu para a pessoa depois da pergunta do fluxo
+(`_saiu_outra_coisa`: a última linha dela no Log do bot, `gs_bot_registros`, é do fluxo, e nenhum aviso do motor em
+`gs_notificacoes_enviadas`, pela conta ou pelo número, saiu depois) — senão o «sim» que respondia a IA, ou o «ok» ao
+aviso «Tietê parou», gravava a classificação. O "Enviar teste" do adm-gs só fica no gateway e não é olhado. Com uma ação na fila (vencida inclusive), o texto solto é dela. Na observação só desvia a pergunta («?») ou o pedido de começar a classificar, nunca a 1ª palavra; na OS vale
 o número dito numa frase («a OS é a 1638», «nº 1638»; «1638 e 1640» guarda as duas) e sim/ok não viram observação. O
 fluxo lê o texto MASCARADO (sem a senha de atuação; o número de 6 a 8 dígitos que NÃO é a senha é resposta, não
 tentativa) e a cópia do gateway passa pelo `_guardado`, cortada no teto de 4.096 dele. Resumo

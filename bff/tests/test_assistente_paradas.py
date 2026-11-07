@@ -1049,3 +1049,42 @@ async def test_horario_logo_depois_da_observacao_nao_e_os(db, dono, mw):
     await c.diz("10:42")
     assert "OS" not in c.texto.split("\n")[0] and c.texto.startswith("Juntei à observação: «a rede caiu 10:42».")
     assert await c.diz("11h") is not None and "a rede caiu 10:42 11h" in c.texto
+
+
+# ============================================================================================= 4ª revisão
+def _aviso_do_motor(db, quando, user_id=None, destino=TEL, status="enviada", chave="parada:tiete:1"):
+    """O que `motor._entregar` grava ao mandar o template («Tietê parou às 10:08») — ele não passa pelo Log do bot."""
+    from app.models.notificacao import NotificacaoEnviada
+
+    db.add(NotificacaoEnviada(user_id=user_id, tipo="parada", chave=chave, destino=destino, status=status,
+                              criada_em=quando))
+    db.commit()
+
+
+async def test_4_aviso_do_motor_depois_da_pergunta_tira_a_validade_do_sim_solto(db, dono, mw, monkeypatch):
+    """O Confere saiu; o motor manda «Tietê parou»; o «ok» da pessoa é para o AVISO e não grava a classificação. Idem o
+    «sim» na pergunta das outras (pelo número: o contato da usina com o mesmo celular) e no «não foi parada». O aviso que
+    saiu ANTES da pergunta não conta; o aviso que falhou não chegou."""
+    bot = PeloBot(db, monkeypatch)
+    _aviso_do_motor(db, datetime.now(UTC) - timedelta(minutes=30), user_id=dono.id, chave="parada:tiete:0")
+    await _ate_o_confere_pelo_bot(bot)
+    _aviso_do_motor(db, datetime.now(UTC), user_id=dono.id, status="falhou", chave="parada:tiete:9")
+    await bot.manda("sim")                                                    # o aviso antigo e o que falhou: vale
+    assert len(mw.gravadas) == 1 and "Há mais 1 parada(s)" in bot.enviados[-1]["texto"]
+    _aviso_do_motor(db, datetime.now(UTC) + timedelta(seconds=1), destino=TEL)   # pelo número, sem a conta
+    await bot.manda("sim")
+    assert len(mw.gravadas) == 1                                              # não aplicou às outras
+    await bot.toca("Uma a uma")
+    await bot.toca("Classificar")
+    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS"):
+        await bot.toca(passo)
+    _aviso_do_motor(db, datetime.now(UTC) + timedelta(seconds=1), user_id=dono.id, chave="parada:tiete:2")
+    await bot.manda("ok")                                                     # o «ok» é para o aviso
+    assert len(mw.gravadas) == 1
+    await bot.toca("Confirmar")                                               # o botão continua valendo
+    assert len(mw.gravadas) == 2
+    await bot.toca("Não foi parada")                                          # Tietê
+    await bot.toca("Comunicação")
+    _aviso_do_motor(db, datetime.now(UTC) + timedelta(seconds=1), user_id=dono.id, chave="parada:tiete:3")
+    await bot.manda("sim")
+    assert mw.desclassificadas == []
