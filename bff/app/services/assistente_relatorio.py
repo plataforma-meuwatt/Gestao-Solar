@@ -308,8 +308,60 @@ FERRAMENTA_SEM_CADASTRO = {"type": "function", "function": {
         "servico": {"type": "string", "description": "o serviço em poucas palavras, para o nome da OS (ex.: 'ensaio do trafo e da proteção do SKID 3')"},
         "contexto": {"type": "string", "description": "o contexto que a pessoa escreveu, inteiro (vazio se ela não escreveu)"},
         "instrucao": {"type": "string", "description": "como ela quer o relatório (para quem, foco, tamanho), se disse"},
-        "link": {"type": "string", "description": "o link da pasta do Drive que a pessoa mandou"}},
+        "link": {"type": "string", "description": "o link da pasta do Drive que a pessoa mandou"},
+        "nova": {"type": "boolean", "description": ("true só quando a pessoa disse que quer OUTRA OS, depois de saber "
+                                                    "que já existe OS desta pasta")}},
         "required": []}}}
+
+FERRAMENTA_LISTA = {"type": "function", "function": {
+    "name": "os_sem_cadastro",
+    "description": ("LISTA as OS da usina «Usinas sem cadastro» do meuPlano (um serviço em usina sem cadastro por OS, "
+                    "como os relatórios feitos de uma pasta do Drive): número, nome, situação, data e se veio de uma "
+                    "pasta. Use quando a pessoa pede a lista, e SEMPRE antes de dizer que uma OS ou um relatório de "
+                    "usina sem cadastro existe (ou não existe): vale o meuPlano de agora, nunca a memória da conversa "
+                    "(alguém pode ter apagado ou criado)."),
+    "parameters": {"type": "object", "properties": {
+        "busca": {"type": "string", "description": "parte do nome da OS (a usina do serviço) para filtrar; vazio = todas"}},
+        "required": []}}}
+MAX_LISTA = 30
+
+
+async def _da_usina_guarda(mp) -> tuple[dict | None, list[dict]]:
+    """A usina «Usinas sem cadastro» e as OS dela, lidas agora no meuPlano com o token da pessoa."""
+    from app.services.assistente_local import escolher
+    guarda, _ = escolher(await mp.usinas(), USINA_GUARDA)
+    return (guarda, await mp.ordens_servico(int(guarda["id"]))) if guarda else (None, [])
+
+
+def _linha_os(o: dict) -> dict:
+    return {"os": o.get("id"), "nome": o.get("name"), "situacao": o.get("status"), "criada_em": _de(o.get("created_at")),
+            "da_pasta_do_drive": bool(_DRIVE.search(o.get("notes") or ""))}
+
+
+async def os_sem_cadastro(ctx, a: dict) -> dict:
+    """Dono, 07/11/2026: "preciso de uma forma de listar as OS sem usina para não ter esse rolo" — o bot disse, de
+    memória, que a OS 1996 existia, e ela tinha sido apagada."""
+    from app.services.assistente_local import _sem_acento
+    from app.services.integracoes import detalhe_do_upstream
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()
+    try:
+        guarda, ordens = await _da_usina_guarda(mp)
+    except httpx.HTTPStatusError as e:
+        return {"erro": detalhe_do_upstream(e.response) or f"O meuPlano recusou ({e.response.status_code})."}
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora."}
+    if guarda is None:
+        return {"erro": "Não achei a usina «Usinas sem cadastro» no meuPlano desta pessoa."}
+    busca = _sem_acento((a.get("busca") or "").strip())
+    lista = [_linha_os(o) for o in sorted(ordens, key=lambda o: o.get("id") or 0, reverse=True)
+             if busca in _sem_acento(o.get("name") or "")]
+    return {"usina": guarda.get("name"), "total": len(lista), "os": lista[:MAX_LISTA],
+            **({"mais": len(lista) - MAX_LISTA} if len(lista) > MAX_LISTA else {})}
 
 FERRAMENTA_ALTERAR = {"type": "function", "function": {
     "name": "alterar_relatorio",
@@ -337,7 +389,6 @@ def _link_do_drive(ctx, sugerido: str | None) -> str | None:
 
 async def relatorio_sem_cadastro(ctx, a: dict) -> dict:
     from app.services import assistente_helper as helper
-    from app.services.assistente_local import escolher
     from app.services.integracoes import detalhe_do_upstream
     from app.services.vinculos import SemConexao, cliente_meuplano
     link = _link_do_drive(ctx, a.get("link"))
@@ -350,7 +401,7 @@ async def relatorio_sem_cadastro(ctx, a: dict) -> dict:
     ctx.db.commit()
     try:
         previa = await mp.drive_previa(link)
-        usinas = await mp.usinas()
+        guarda, ordens = await _da_usina_guarda(mp)
     except httpx.HTTPStatusError as e:
         return {"erro": f"{detalhe_do_upstream(e.response) or f'O meuPlano recusou ({e.response.status_code})'}. Nada foi feito."}
     except httpx.HTTPError:
@@ -363,10 +414,18 @@ async def relatorio_sem_cadastro(ctx, a: dict) -> dict:
         return {"erro": ("Falta o CONTEXTO do serviço e a pasta não tem documento que o traga. Pergunte à pessoa, numa "
                          "mensagem só: onde foi (a usina e o cliente), o que foi feito e o que se encontrou. Não gere "
                          "sem ele.")}
-    guarda, _ = escolher(usinas, USINA_GUARDA)
     if guarda is None:
         return {"erro": ("Não achei a usina «Usinas sem cadastro» no meuPlano desta pessoa: o gerente da O&M a cria uma "
                          "vez (ou a libera para ela). Nada foi feito.")}
+    # a OS que JÁ É desta pasta, lida agora no meuPlano (o link dela fica nas notas da OS): quem diz que existe é o
+    # sistema, não a memória da conversa (07/11/2026: o bot ofereceu a OS 1996, que tinha sido apagada)
+    pasta = _DRIVE.search(link).group(1)
+    iguais = [_linha_os(o) for o in ordens if pasta in (o.get("notes") or "")]
+    if iguais and not a.get("nova"):
+        return {"ja_existe": iguais, "instrucao": (
+            "O meuPlano JÁ TEM OS desta pasta (acima). Diga qual (número, nome e situação) e pergunte numa linha: gerar "
+            "o relatório de novo nela (`relatorio_da_os` escolha=novo, com o número dela) ou criar outra OS (chame "
+            "esta ferramenta de novo com nova=true). Nada foi feito.")}
     usina = (a.get("usina") or "").strip() or str(previa.get("pasta") or "").replace("_", " ").strip()
     if not usina:
         return {"erro": "Falta o nome da usina do serviço: pergunte."}

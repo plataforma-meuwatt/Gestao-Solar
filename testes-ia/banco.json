@@ -179,5 +179,7 @@
 {"frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete", "espera": ["gravar_coordenada"], "origem": "log #319"},
 {"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #322"},
 {"frase": "Na tmOS 1840, abra as seguintes tarefas\nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #303"},
-{"frase": "Me de o relatorio de geracao de outubro de porto ferreira", "espera": ["relatorio_pdf", "geracao"], "origem": "log #305"}
+{"frase": "Me de o relatorio de geracao de outubro de porto ferreira", "espera": ["relatorio_pdf", "geracao"], "origem": "log #305"},
+{"frase": "Lista as OS sem usina", "espera": ["os_sem_cadastro"], "origem": "dono 07/11 (lista das OS sem cadastro)"},
+{"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro", "os_sem_cadastro"], "origem": "log #330"}
 ]

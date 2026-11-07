@@ -331,6 +331,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "informacoes_do_relatorio": (relatorio.informacoes_do_relatorio, relatorio.FERRAMENTA_INFO),
                "relatorio_sem_cadastro": (relatorio.relatorio_sem_cadastro, relatorio.FERRAMENTA_SEM_CADASTRO),
                "alterar_relatorio": (relatorio.alterar_relatorio, relatorio.FERRAMENTA_ALTERAR),
+               "os_sem_cadastro": (relatorio.os_sem_cadastro, relatorio.FERRAMENTA_LISTA),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
@@ -841,7 +842,7 @@ def permitidas(user) -> list[str]:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada",
-                  "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio"]
+                  "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
@@ -862,6 +863,12 @@ def _sistema(ctx: ger.Contexto) -> str:
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
 a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente responder de outro jeito.
+
+REGRA 1 (a mais importante): você JAMAIS afirma algo sem consultar. Todo fato do meuWatt, do meuPlano ou do helper
+(se uma OS, um relatório, uma tarefa ou um cadastro existe ou não, a situação, o número, o nome, a data, o valor) sai
+de uma ferramenta chamada NESTA mensagem. A conversa de antes é só contexto: o que ela disse pode ter mudado (alguém
+apagou, criou, fechou). Sem ter consultado, consulte; não dando para consultar, diga que não conferiu. Nunca afirme
+de memória.
 
 - Geração, inversores, PR, produtividade, irradiação, PVsyst, paradas de inversor, relatório/gráfico do
   monitoramento → ferramentas de geração. Manutenção (OS, cronograma, pendências, estoque, documentos,
@@ -912,7 +919,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
 - Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →
   `relatorio_sem_cadastro`, com o contexto que a pessoa escreveu. Comentário sobre o relatório em revisão ("tira a foto
   X", "melhora a conclusão") → `alterar_relatorio` com a OS dele; "manda o PDF" → `relatorio_da_os` escolha=word;
-  "manda o link (público) do relatório" → o mesmo, com link_publico=true.
+  "manda o link (público) do relatório" → o mesmo, com link_publico=true. A lista das OS de usina sem cadastro ("quais
+  relatórios sem cadastro tem", "lista as OS sem usina") → `os_sem_cadastro`. Nunca diga que uma OS ou um relatório
+  existe (ou não) pela memória da conversa: confira na ferramenta, que lê o meuPlano agora.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
   meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
   tarefas das OS no meuPlano (papel `prestador`).
@@ -983,16 +992,42 @@ CANCELADA_PARA_A_IA = ("\n- NESTA MENSAGEM: a ação «{resumo}», que esperava 
                        "quiser (ou corrigiu algo), proponha de novo pela ferramenta.")
 
 
+#: REGRA 1 do dono (07/11/2026: "ele jamais pode dizer algo sem consultar, erro grave"): a resposta que cita um REGISTRO
+#: pelo número (OS, tarefa, relatório, contrato, serviço) que a pessoa não escreveu nesta mensagem, ou diz que algo "já
+#: existe", sem nenhuma consulta nesta mensagem, não sai — a IA consulta antes. O caso: "Esse relatório de Ouro Fino 2
+#: já existe: é a OS #1996", de memória, e a OS tinha sido apagada.
+_AFIRMA_REGISTRO = re.compile(r"\b(?:os|o\.s\.|tarefa|relat[oó]rio|contrato|servi[cç]o|item|pend[eê]ncia|sinistro)"
+                              r"\s*(?:n[ºo°.]?\s*)?#?\s*(\d{2,})\b|#\s*(\d{3,})\b|\bj[aá] existe", re.I)
+CONSULTE = ("[sistema] REGRA 1: a sua resposta acima afirma um registro (pelo número, ou que ele já existe) sem nenhuma "
+            "consulta nesta mensagem, e ela NÃO foi enviada. A conversa de antes pode estar desatualizada. Consulte "
+            "agora a ferramenta que confere isso e responda com o que ela disser.")
+
+
+def de_memoria(texto: str, pedido: str) -> bool:
+    """A resposta cita registro que a pessoa não escreveu nesta mensagem (ou diz que algo já existe)?"""
+    for m in _AFIRMA_REGISTRO.finditer(texto or ""):
+        n = m.group(1) or m.group(2)
+        if n is None or not re.search(rf"(?<!\d){n}(?!\d)", pedido or ""):
+            return True
+    return False
+
+
 async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -> str:
     """`aviso`: o que o sistema diz à IA só nesta mensagem (`CANCELADA_PARA_A_IA`)."""
     msgs: list[dict] = [{"role": "system", "content": _sistema(ctx) + aviso}, *historico]
     ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
+    cobrou = False
     for _ in range(MAX_RODADAS):
         ctx.db.commit()                                   # solta a conexão enquanto a IA pensa
-        m = await _llm(msgs, ferramentas)
+        m = await _llm(msgs, ferramentas, **({"obrigatoria": True} if cobrou and not ctx.ferramentas else {}))
         chamadas = m.get("tool_calls") or []
         if not chamadas:
-            return (m.get("content") or "").strip() or "Não consegui montar a resposta. Pode reformular?"
+            texto = (m.get("content") or "").strip()
+            if ferramentas and not ctx.ferramentas and not cobrou and de_memoria(texto, ctx.pedido):
+                cobrou = True                             # REGRA 1: consultar antes de afirmar (uma vez por mensagem)
+                msgs += [{"role": "assistant", "content": texto}, {"role": "user", "content": CONSULTE}]
+                continue
+            return texto or "Não consegui montar a resposta. Pode reformular?"
         msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": chamadas})
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
         # Atalho de velocidade: só o meuPlano foi chamado e respondeu → a resposta dele É a resposta.

@@ -1197,7 +1197,8 @@ async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, mon
         if msgs[-1]["role"] == "tool":
             return {"content": _json.loads(msgs[-1]["content"])["texto"]}
         if msgs[-1]["content"] == "obrigado":
-            return {"content": "De nada! A OS 1638 segue aberta."}            # sem o meuPlano: o texto fica no log
+            # sem o meuPlano: o texto fica no log (sem afirmar registro: a REGRA 1 não deixa sair sem consulta)
+            return {"content": "De nada! Qualquer coisa, é só chamar."}
         return {"content": "", "tool_calls": [{"id": "m", "type": "function", "function": {
             "name": "manutencao", "arguments": _json.dumps({"pergunta": next(perguntas)})}}]}
 
@@ -1215,7 +1216,7 @@ async def test_a_resposta_ao_pedido_de_senha_fica_fora_do_log(db, bot_local, mon
     # o que passou pelo meuPlano fica fora do log, trate ou não de acesso (avaliação 28); o resto fica
     assert [(r.pergunta, r.resposta) for r in linhas] == [
         ("como entro nos SL de Ibitinga?", assistente.RESPOSTA_OMITIDA), ("e as OS abertas?", assistente.RESPOSTA_OMITIDA),
-        ("obrigado", "De nada! A OS 1638 segue aberta.")]
+        ("obrigado", "De nada! Qualquer coisa, é só chamar.")]
     assert all(assistente._e_de_credencial(p) for p in (
         "Qual a senha do SL1?", "Me passa o login do SmartLogger", "dados de acesso do ABS", "o acesso web do SL2",
         "Qual a chave do Wi-Fi?", "Como abro o cadeado do portão?", "Como eu entro no SmartLogger 1?",

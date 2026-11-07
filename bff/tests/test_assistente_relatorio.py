@@ -318,6 +318,10 @@ class MPDrive(MP):
     async def usinas(self):
         return self.lista_usinas
 
+    async def ordens_servico(self, usina_id, status=None):
+        self.pedidos.append(("ordens", usina_id))
+        return getattr(self, "ordens", [])
+
     async def funil_de_servicos_adicionais(self):
         return {"id": 50}
 
@@ -390,7 +394,7 @@ async def test_sem_cadastro_propoe_e_so_cria_depois_do_sim(monkeypatch, chat):
     assert "proposta_pendente" in r and capt["k"]["confirmacao"] == "sim"
     assert "«Usinas sem cadastro»" in resumo and "«UFV Ouro Fino 2: ensaio do trafo do SKID 3»" in resumo
     assert "54 foto(s) e 1 documento(s); 5 vídeo(s) ficam só no link" in resumo
-    assert [p[0] for p in mp.pedidos] == ["previa"]                              # nada criado antes do Sim
+    assert [p[0] for p in mp.pedidos] == ["previa", "ordens"]                    # nada criado antes do Sim
     msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1, nome="Renan"), "+55")
     assert msg.startswith("✅") and "OS #1900" in msg and "https://app.meuplano.solar/word/71" in msg
     _, pid, card = next(p for p in mp.pedidos if p[0] == "container")
@@ -456,3 +460,74 @@ def test_as_ferramentas_novas_sao_de_quem_tem_o_meuplano():
     sem = SimpleNamespace(bot_ativo={"bot_meuwatt"}, perfil=None)
     for nome in ("relatorio_sem_cadastro", "alterar_relatorio"):
         assert nome in assistente.permitidas(com) and nome not in assistente.permitidas(sem)
+
+
+# --------------------------------------------------------------------------- a lista e a REGRA 1 (dono, 07/11/2026)
+OS_GUARDA = [{"id": 1995, "name": "UFV Ouro Fino 2: ensaio do transformador", "status": "ABERTA",
+              "created_at": "2026-11-07T09:00:00", "notes": f"Contexto.\n\nFotos e vídeos do serviço (Google Drive): {PASTA}"},
+             {"id": 1990, "name": "Pereiras: limpeza", "status": "FECHADA", "created_at": "2026-11-05T09:00:00",
+              "notes": "sem pasta"}]
+
+
+class MPGuarda(MPDrive):
+    def __init__(self, ordens=(), **k):
+        super().__init__(**k)
+        self.ordens = list(ordens)
+
+
+async def test_a_lista_das_os_sem_cadastro_vem_do_meuplano_agora(monkeypatch, chat):
+    mp = MPGuarda(OS_GUARDA)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.os_sem_cadastro(_ctx_drive("lista as OS sem usina"), {})
+    assert ("ordens", 3001) in mp.pedidos and r["total"] == 2 and [o["os"] for o in r["os"]] == [1995, 1990]
+    assert r["os"][0]["da_pasta_do_drive"] and not r["os"][1]["da_pasta_do_drive"]
+    r = await rel.os_sem_cadastro(_ctx_drive("x"), {"busca": "ouro fino"})
+    assert [o["os"] for o in r["os"]] == [1995]
+
+
+async def test_pasta_que_ja_tem_os_o_sistema_avisa_e_nao_propoe(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    mp = MPGuarda(OS_GUARDA)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {"contexto": "ensaio do trafo"})
+    assert [o["os"] for o in r["ja_existe"]] == [1995] and capt == {}           # a OS que existe AGORA, não a de memória
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {"contexto": "ensaio do trafo", "nova": True})
+    assert "proposta_pendente" in r                                                # ela disse que quer outra
+    mp = MPGuarda([OS_GUARDA[1]])                                                  # a OS da pasta foi apagada
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {"contexto": "ensaio do trafo"})
+    assert "proposta_pendente" in r
+
+
+def test_regra_1_resposta_que_cita_registro_sem_consultar():
+    from app.services.assistente import de_memoria
+    assert de_memoria("Esse relatório já existe: é a OS #1996.", "https://drive… Ouro fino 2")
+    assert de_memoria("A OS 1995 é a de Ouro Fino?", "o de ouro fino")
+    assert not de_memoria("Fecho a OS 1638?", "fecha a 1638")                     # o número que a pessoa escreveu
+    assert not de_memoria("De qual usina é a localização?", "📍")
+
+
+async def test_regra_1_a_resposta_de_memoria_nao_sai_a_ia_consulta_antes(monkeypatch, chat):
+    from app.services import assistente
+    vistos = []
+
+    async def _llm(msgs, ferramentas=None, obrigatoria=False):
+        vistos.append(obrigatoria)
+        if len(vistos) == 1:
+            return {"content": "Esse relatório já existe: é a OS #1996."}         # de memória
+        if len(vistos) == 2:
+            assert msgs[-1]["content"].startswith("[sistema] REGRA 1")
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "os_sem_cadastro", "arguments": "{}"}}]}
+        return {"content": "Achei a OS 1995 desta pasta."}
+
+    async def _lista(ctx, a):
+        return {"total": 1, "os": [{"os": 1995}]}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setattr(assistente, "_sistema", lambda ctx: "")
+    monkeypatch.setitem(assistente.FERRAMENTAS, "os_sem_cadastro", (_lista, rel.FERRAMENTA_LISTA))
+    ctx = _ctx_drive(PASTA)
+    ctx.user.bot_ativo, ctx.user.perfil, ctx.ferramentas = {"bot_meuplano"}, None, []
+    r = await assistente.responder(ctx, [{"role": "user", "content": PASTA}])
+    assert r == "Achei a OS 1995 desta pasta." and vistos == [False, True, False] and ctx.ferramentas == ["os_sem_cadastro"]
