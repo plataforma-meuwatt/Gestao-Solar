@@ -329,6 +329,8 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
 FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "relatorio_da_os": (relatorio.relatorio_da_os, relatorio.FERRAMENTA),
                "informacoes_do_relatorio": (relatorio.informacoes_do_relatorio, relatorio.FERRAMENTA_INFO),
+               "relatorio_sem_cadastro": (relatorio.relatorio_sem_cadastro, relatorio.FERRAMENTA_SEM_CADASTRO),
+               "alterar_relatorio": (relatorio.alterar_relatorio, relatorio.FERRAMENTA_ALTERAR),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
@@ -839,7 +841,7 @@ def permitidas(user) -> list[str]:
         nomes += list(ger.FERRAMENTAS)
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada",
-                  "local_da_usina"]
+                  "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
@@ -907,6 +909,9 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   grava ou substitui e pede o Sim. Nunca escreva coordenada.
 - Pedido da localização, da coordenada ou de como chegar a uma usina → `local_da_usina`: o sistema manda o link do
   Google Maps e o do Waze; você só diz uma linha, sem os links.
+- Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →
+  `relatorio_sem_cadastro`, com o contexto que a pessoa escreveu. Comentário sobre o relatório em revisão ("tira a foto
+  X", "melhora a conclusão") → `alterar_relatorio` com a OS dele; "manda o PDF" → `relatorio_da_os` escolha=word.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
   meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
   tarefas das OS no meuPlano (papel `prestador`).

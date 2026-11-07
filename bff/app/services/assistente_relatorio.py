@@ -40,7 +40,10 @@ FERRAMENTA = {"type": "function", "function": {
                     "pediu o relatório: se a OS já tem relatório salvo, a resposta traz a lista e você PERGUNTA se ela "
                     "quer o salvo (diga o título e a data) ou um novo — não mande nem gere antes da resposta; sem "
                     "salvo, o novo é gerado e enviado na hora. escolha=salvo manda o salvo (relatorio_id da lista, ou "
-                    "o mais recente). escolha=novo gera AGORA com IA e manda (leva até 2 minutos): use quando a pessoa "
+                    "o mais recente). escolha=word manda em PDF o Word (rascunho) mais recente da OS como ele está "
+                    "AGORA, com as alterações e as edições feitas à mão: use quando a pessoa pede o PDF do relatório "
+                    "que está sendo ajustado ('manda o PDF'). escolha=novo gera AGORA com IA e manda (leva até 2 "
+                    "minutos): use quando a pessoa "
                     "pediu um novo ('gera outro', 'refaz'), respondeu que quer o novo, ou mandou COMO quer o relatório "
                     "(o prompt) ou imagens de apoio. O prompt dela (para quem, foco, tamanho — 'com o prompt …') vai em "
                     "`instrucao`, inteiro, e fica salvo na OS; sem ele, vale o que já estiver salvo lá ou o padrão. "
@@ -51,7 +54,7 @@ FERRAMENTA = {"type": "function", "function": {
                     "`informacoes_do_relatorio`."),
     "parameters": {"type": "object", "properties": {
         "os": {"type": "integer", "description": "o número da OS"},
-        "escolha": {"type": "string", "enum": ["auto", "salvo", "novo"]},
+        "escolha": {"type": "string", "enum": ["auto", "salvo", "word", "novo"]},
         "relatorio_id": {"type": "integer", "description": "qual relatório salvo (o id da lista); vazio = o mais recente"},
         "instrucao": {"type": "string", "description": "como a pessoa quer o relatório NOVO (o prompt dela, inteiro); vazio = o salvo ou o padrão"},
         "fotos_de_apoio": {"type": "boolean", "description": "as fotos que ela mandou por aqui vão às informações do relatório da OS antes de gerar"}},
@@ -90,21 +93,33 @@ async def _mandar(ctx, raw: bytes, titulo: str) -> dict:
     return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro") or "o WhatsApp recusou"}
 
 
-async def _gerar(mp, os_id: int, instrucao: str) -> dict:
-    """O "Novo relatório com IA" de lá até o fim, e o PDF dele pelo WordCraft de lá."""
-    job = (await mp.relatorio_ia(os_id, instrucao))
-    fim = monotonic() + PRAZO_GERAR_S
+async def _esperar(mp, job: str, prazo_s: int | None = None) -> dict:
+    """O trabalho da IA de lá (gerar ou alterar) até o fim: o estado final, ou RuntimeError com o motivo."""
+    prazo_s = PRAZO_GERAR_S if prazo_s is None else prazo_s
+    fim = monotonic() + prazo_s
     while True:
         await asyncio.sleep(ESPERA_S)
         e = await mp.relatorio_ia_estado(job)
-        if e.get("status") == "pronto" and e.get("doc_id"):
-            break
+        if e.get("status") == "pronto":
+            return e
         if e.get("status") == "erro":
-            raise RuntimeError(e.get("erro") or "a IA de lá não conseguiu montar o relatório")
+            raise RuntimeError(e.get("erro") or "a IA de lá não conseguiu terminar")
         if monotonic() > fim:
-            raise RuntimeError(f"passou de {PRAZO_GERAR_S // 60} minutos e o relatório não ficou pronto "
-                               f"(etapa: {e.get('etapa') or '—'})")
+            raise RuntimeError(f"passou de {prazo_s // 60} minutos e não ficou pronto (etapa: {e.get('etapa') or '—'})")
+
+
+async def _gerar(mp, os_id: int, instrucao: str) -> dict:
+    """O "Novo relatório com IA" de lá até o fim, e o PDF dele pelo WordCraft de lá."""
+    e = await _esperar(mp, await mp.relatorio_ia(os_id, instrucao))
+    if not e.get("doc_id"):
+        raise RuntimeError("a IA de lá terminou sem o documento")
     return await mp.publicar_relatorio(int(e["doc_id"]))
+
+
+async def _word_mais_recente(mp, os_id: int) -> dict | None:
+    """O rascunho Word mais recente da OS (o que está sendo ajustado), ou None."""
+    docs = [d for d in await mp.documentos_word_da_os(os_id) if (d.get("formato") or "docx") == "docx"]
+    return max(docs, key=lambda d: d.get("updated_at") or "", default=None)
 
 
 async def _subir_fotos(mp, os_id: int, telefone: str, lista: list[dict]) -> tuple[int, list[str]]:
@@ -199,6 +214,20 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
     except httpx.HTTPError:
         return {"erro": "O meuPlano não respondeu agora. Nada foi enviado."}
 
+    if escolha == "word":
+        try:
+            doc = await _word_mais_recente(mp, os_id)
+            if doc is None:
+                return {"erro": f"A OS #{os_id} não tem relatório em Word. Ofereça gerar um novo agora."}
+            r = await mp.publicar_relatorio(int(doc["id"]))
+            raw = await mp.relatorio_pdf(r["id"])
+        except httpx.HTTPStatusError as e:
+            return {"erro": _motivo(e, os_id, "exporta o relatório da OS em PDF (precisa poder editar a OS)")}
+        except httpx.HTTPError:
+            return {"erro": "O meuPlano não respondeu enquanto o PDF era feito. Nada foi enviado."}
+        return {"os": os_id, "relatorio": "o Word atual em PDF", "titulo": r.get("titulo"),
+                "versao_do_word": doc.get("versao_atual"),
+                **(await _mandar(ctx, raw, r.get("titulo") or f"Relatório da OS #{os_id}"))}
     if escolha != "novo" and salvos:
         if escolha == "auto":
             return {"os": os_id, "relatorios_salvos": [
@@ -236,6 +265,172 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
     return {"os": os_id, "relatorio": "novo", "titulo": rel.get("titulo"), **apoio,
             "salvo_na_os": "o rascunho Word e o PDF ficaram na aba Relatórios da OS; o prompt, na conversa do relatório",
             **(await _mandar(ctx, raw, rel.get("titulo") or f"Relatório da OS #{os_id}"))}
+
+
+# --------------------------------------------------------------------------- usina SEM CADASTRO e o ajuste do Word
+# Dono, 07/11/2026: "tem usinas que não têm cadastro e eu faço serviço. Quero enviar um link público de drive, e você
+# analisa as fotos, salva elas… eu mando a msg pro bot: quero um relatório de usina sem cadastro, aí eu envio as fotos,
+# e preciso enviar o contexto, senão tiver no drive ele pede, e aí você gera um Word público, com as fotos que julgar
+# ok, link com todas as fotos, usa o contexto. Se eu não gostar eu comento e você altera até convergir, aí eu falo manda
+# o PDF e você manda. Eu posso também editar o Word, salvar, pedir alteração, você altera e respeita o que editei."
+# Escolhas dele: a usina "Usinas sem cadastro" do meuPlano guarda cada serviço (um item em Serviços Adicionais e a OS
+# dele); o Word é o Word meuPlano (o link abre no editor do site, com o login dele).
+
+PRAZO_DRIVE_S = 900         # baixar as fotos, a IA olhar cada uma e escrever: de 5 a 10 min numa pasta de 60 fotos
+USINA_GUARDA = "sem cadastro"
+_DRIVE = re.compile(r"https?://drive\.google\.com/(?:drive/(?:u/\d+/)?folders/|open\?id=)([\w-]{10,})")
+
+FERRAMENTA_SEM_CADASTRO = {"type": "function", "function": {
+    "name": "relatorio_sem_cadastro",
+    "description": ("RELATÓRIO de um serviço numa usina SEM CADASTRO no meuPlano, a partir de uma PASTA do Google Drive "
+                    "com as fotos (link drive.google.com/drive/folders/…). O sistema cria o serviço e a OS na usina "
+                    "«Usinas sem cadastro», traz as fotos (a IA olha cada uma) e os documentos da pasta e escreve o "
+                    "Word; a pessoa confirma com o Sim e recebe o LINK do Word para revisar. Passe o CONTEXTO que a "
+                    "pessoa escreveu (onde foi, o que se fez, o que se achou), inteiro; sem contexto, o sistema diz se "
+                    "a pasta traz documento que o substitua, senão você pergunta. Não use para usina que tem cadastro "
+                    "(essa é `relatorio_da_os`, na OS dela)."),
+    "parameters": {"type": "object", "properties": {
+        "usina": {"type": "string", "description": "o nome da usina do serviço, como a pessoa disse (vazio: o nome da pasta)"},
+        "servico": {"type": "string", "description": "o serviço em poucas palavras, para o nome da OS (ex.: 'ensaio do trafo e da proteção do SKID 3')"},
+        "contexto": {"type": "string", "description": "o contexto que a pessoa escreveu, inteiro (vazio se ela não escreveu)"},
+        "instrucao": {"type": "string", "description": "como ela quer o relatório (para quem, foco, tamanho), se disse"},
+        "link": {"type": "string", "description": "o link da pasta do Drive que a pessoa mandou"}},
+        "required": []}}}
+
+FERRAMENTA_ALTERAR = {"type": "function", "function": {
+    "name": "alterar_relatorio",
+    "description": ("ALTERA o relatório em Word de uma OS (o rascunho mais recente, como está agora, com as edições que "
+                    "a pessoa fez à mão no editor) pelo pedido dela: tirar ou pôr foto, reescrever um trecho, mudar a "
+                    "conclusão, pôr um quadro de valores. A IA do meuPlano muda só o que foi pedido e o resto fica. Use "
+                    "para todo comentário sobre o relatório que está sendo revisado ('tira a foto do marimbondo', 'a "
+                    "conclusão está fraca'). O PDF é `relatorio_da_os` escolha=word."),
+    "parameters": {"type": "object", "properties": {
+        "os": {"type": "integer", "description": "o número da OS do relatório"},
+        "pedido": {"type": "string", "description": "o que a pessoa pediu para mudar, inteiro, nas palavras dela"}},
+        "required": ["os", "pedido"]}}}
+
+
+def _link_do_drive(ctx, sugerido: str | None) -> str | None:
+    """A pasta que a PESSOA mandou (esta mensagem, depois as de antes), nunca uma que a IA escreveu: o id é longo e uma
+    letra trocada abriria outra pasta. A sugerida pela IA só escolhe entre as que a pessoa mandou."""
+    textos = [ctx.pedido or ""] + [str(m.get("content") or "") for m in reversed(ctx.historico or [])
+                                   if m.get("role") == "user"]
+    ids = [m.group(1) for t in textos for m in _DRIVE.finditer(t)]
+    m = _DRIVE.search(sugerido or "")
+    escolhido = m.group(1) if m and m.group(1) in ids else (ids[0] if ids else None)
+    return f"https://drive.google.com/drive/folders/{escolhido}" if escolhido else None
+
+
+async def relatorio_sem_cadastro(ctx, a: dict) -> dict:
+    from app.services import assistente_helper as helper
+    from app.services.assistente_local import escolher
+    from app.services.integracoes import detalhe_do_upstream
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    link = _link_do_drive(ctx, a.get("link"))
+    if not link:
+        return {"erro": "Falta o link da PASTA do Google Drive com as fotos (drive.google.com/drive/folders/…): peça."}
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()
+    try:
+        previa = await mp.drive_previa(link)
+        usinas = await mp.usinas()
+    except httpx.HTTPStatusError as e:
+        return {"erro": f"{detalhe_do_upstream(e.response) or f'O meuPlano recusou ({e.response.status_code})'}. Nada foi feito."}
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora. Nada foi feito."}
+    docs = previa.get("documentos") or []
+    if not previa.get("fotos") and not docs:
+        return {"erro": f"A pasta «{previa.get('pasta')}» não tem foto nem documento que eu leia. Nada foi feito."}
+    contexto = (a.get("contexto") or "").strip()[:MAX_INSTRUCAO]
+    if not contexto and not docs:
+        return {"erro": ("Falta o CONTEXTO do serviço e a pasta não tem documento que o traga. Pergunte à pessoa, numa "
+                         "mensagem só: onde foi (a usina e o cliente), o que foi feito e o que se encontrou. Não gere "
+                         "sem ele.")}
+    guarda, _ = escolher(usinas, USINA_GUARDA)
+    if guarda is None:
+        return {"erro": ("Não achei a usina «Usinas sem cadastro» no meuPlano desta pessoa: o gerente da O&M a cria uma "
+                         "vez (ou a libera para ela). Nada foi feito.")}
+    usina = (a.get("usina") or "").strip() or str(previa.get("pasta") or "").replace("_", " ").strip()
+    if not usina:
+        return {"erro": "Falta o nome da usina do serviço: pergunte."}
+    nome = f"{usina}: {(a.get('servico') or '').strip() or 'serviço em campo'}"[:200]
+    instrucao = (a.get("instrucao") or "").strip()[:MAX_INSTRUCAO]
+    extra = (f" e {len(docs)} documento(s)" if docs else "") + \
+        (f"; {previa['videos']} vídeo(s) ficam só no link da pasta" if previa.get("videos") else "")
+    resumo = (f"Criar na usina «{guarda['name']}» do meuPlano o serviço e a OS «{nome}», trazer da pasta "
+              f"«{previa.get('pasta')}» {previa.get('fotos') or 0} foto(s){extra} e escrever o relatório com IA "
+              "(de 5 a 10 minutos)")
+
+    async def executar(db, user, telefone: str) -> str:
+        try:
+            mp = cliente_meuplano(db, user.id, so_proprio=True)
+            db.commit()
+        except SemConexao as e:
+            return f"❌ Não executado: {e}"
+        try:
+            funil = await mp.funil_de_servicos_adicionais()
+            card = await mp.criar_container(int(funil["id"]), {
+                "title": nome, "usina_id": guarda["id"], "kind": "servico_adicional",
+                "description": contexto or None, "created_by": user.nome})
+        except httpx.HTTPStatusError as e:
+            return (f"❌ O meuPlano recusou criar o serviço ({e.response.status_code}): "
+                    f"{detalhe_do_upstream(e.response) or 'sem detalhe'}. Nada foi feito.")
+        except httpx.HTTPError:
+            return ("⚠️ O meuPlano não respondeu ao criar o serviço: confira em Serviços Adicionais antes de pedir de "
+                    "novo (ele pode ter sido criado).")
+        notas = "\n\n".join(x for x in (contexto, f"Fotos e vídeos do serviço (Google Drive): {link}") if x)
+        try:
+            os_id = int((await mp.criar_os({"plant_id": guarda["id"], "container_id": card["id"], "name": nome,
+                                             "notes": notas}))["id"])
+        except httpx.HTTPError as e:
+            motivo = detalhe_do_upstream(e.response) if isinstance(e, httpx.HTTPStatusError) else "não respondeu"
+            return (f"⚠️ O serviço «{nome}» foi criado em Serviços Adicionais, mas a OS não ({motivo}). Crie a OS nele "
+                    "e peça o relatório de novo.")
+        try:
+            e = await _esperar(mp, await mp.relatorio_ia(os_id, instrucao, drive=link), PRAZO_DRIVE_S)
+        except (httpx.HTTPError, RuntimeError) as e:
+            motivo = (detalhe_do_upstream(e.response) if isinstance(e, httpx.HTTPStatusError)
+                      else str(e) if isinstance(e, RuntimeError) else "o meuPlano não respondeu")
+            return (f"⚠️ A OS #{os_id} «{nome}» foi criada, mas o relatório não ficou pronto: {motivo}. As fotos que "
+                    f"já vieram ficam na OS; peça «gera o relatório da OS {os_id}» para tentar de novo.")
+        return (f"✅ Relatório pronto, na OS #{os_id} «{nome}»: {e.get('link')}\n"
+                "As fotos da pasta ficaram nos anexos da OS, com a legenda da IA. Diga o que mudar (ou mude no Word e "
+                "salve), e peça o PDF quando estiver bom.")
+
+    return helper.propor(ctx, resumo, PRAZO_INFO_S, executar, [], parte="bot_meuplano", confirmacao="sim")
+
+
+async def alterar_relatorio(ctx, a: dict) -> dict:
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    try:
+        os_id = int(a.get("os"))
+    except (TypeError, ValueError):
+        return {"erro": "Falta o número da OS do relatório: pergunte qual é."}
+    pedido = (a.get("pedido") or "").strip()[:4000]
+    if not pedido:
+        return {"erro": "Falta o que mudar: pergunte."}
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()                                       # solta a conexão: a IA de lá leva até 2 min
+    try:
+        doc = await _word_mais_recente(mp, os_id)
+        if doc is None:
+            return {"erro": f"A OS #{os_id} não tem relatório em Word para alterar. Ofereça gerar um novo."}
+        e = await _esperar(mp, await mp.alterar_relatorio(int(doc["id"]), pedido))
+    except httpx.HTTPStatusError as e:
+        return {"erro": _motivo(e, os_id, "altera relatório de OS (precisa poder editar a OS)")}
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu enquanto o relatório era alterado: confira o Word antes de pedir de novo."}
+    except RuntimeError as e:
+        return {"erro": f"Não consegui alterar: {e}."}
+    ctx.rodape.append(f"📝 Word: {e.get('link') or ''}".strip())
+    return {"os": os_id, "o_que_mudou": e.get("resposta"),
+            "nota": "Diga em UMA linha o que mudou (o_que_mudou); o sistema põe o link do Word embaixo."}
 
 
 # --------------------------------------------------------------------------- informações do relatório, sem gerar

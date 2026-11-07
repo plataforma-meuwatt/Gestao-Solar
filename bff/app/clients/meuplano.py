@@ -794,14 +794,44 @@ class MeuPlanoClient:
         r = await self._req("GET", f"/api/v1/meuacesso/word/relatorios/{rid}/arquivo", timeout=60.0)
         return r.content
 
-    async def relatorio_ia(self, os_id: int, instrucao: str) -> str:
-        """Pede o "Novo relatório com IA" de lá; devolve o `job` (o andamento em `relatorio_ia_estado`)."""
-        r = await self._req("POST", "/api/v1/meuacesso/word/relatorio-ia", json={"os_id": os_id, "instrucao": instrucao})
+    async def relatorio_ia(self, os_id: int, instrucao: str, drive: str | None = None) -> str:
+        """Pede o "Novo relatório com IA" de lá; devolve o `job` (o andamento em `relatorio_ia_estado`). Com `drive` (a
+        pasta pública do Google Drive), as fotos e os documentos dela entram na OS antes."""
+        corpo: dict[str, Any] = {"os_id": os_id, "instrucao": instrucao}
+        if drive:
+            corpo["drive"] = drive
+        r = await self._req("POST", "/api/v1/meuacesso/word/relatorio-ia", json=corpo)
         return r.json()["job"]
 
     async def relatorio_ia_estado(self, job: str) -> dict[str, Any]:
-        """`{status: rodando|pronto|erro, etapa, doc_id, erro}` — só de quem pediu."""
+        """`{status: rodando|pronto|erro, etapa, doc_id, resposta, erro, link}` — só de quem pediu."""
         return await self._get(f"/api/v1/meuacesso/word/relatorio-ia/{job}")
+
+    async def drive_previa(self, link: str) -> dict[str, Any]:
+        """O que a pasta pública do Google Drive tem: `{pasta, fotos, videos, outros, documentos: [nome]}`."""
+        return await self._get("/api/v1/meuacesso/word/drive", link=link)
+
+    async def documentos_word_da_os(self, os_id: int) -> list[dict[str, Any]]:
+        """Os documentos Word da OS (os rascunhos de relatório), o mais recente primeiro."""
+        return await self._get("/api/v1/meuacesso/word/documentos", dono_tipo="os", dono_id=os_id) or []
+
+    async def alterar_relatorio(self, doc_id: int, pedido: str) -> str:
+        """O pedido de alteração aplicado pela IA de lá à versão atual do Word; devolve o `job`."""
+        r = await self._req("POST", f"/api/v1/meuacesso/word/documentos/{doc_id}/alterar-ia", json={"pedido": pedido})
+        return r.json()["job"]
+
+    async def funil_de_servicos_adicionais(self) -> dict[str, Any]:
+        """O funil global de Serviços Adicionais (`{id, name, …}`): onde nasce o serviço da usina sem cadastro."""
+        return await self._get("/api/v1/meuacesso/pipelines/global/servico_adicional")
+
+    async def criar_container(self, pipeline_id: int, dados: dict[str, Any]) -> dict[str, Any]:
+        r = await self._req("POST", f"/api/v1/meuacesso/pipelines/{pipeline_id}/containers", json=dados)
+        return r.json()
+
+    async def criar_os(self, dados: dict[str, Any]) -> dict[str, Any]:
+        """Uma OS vazia (ABERTA) numa usina e num container (`plant_id`, `container_id`, `name`, `notes`)."""
+        r = await self._req("POST", "/api/v1/meuacesso/service-orders", json=dados)
+        return r.json()
 
     async def fatos_da_os(self, os_id: int) -> list[dict[str, Any]]:
         """As INFORMAÇÕES DO RELATÓRIO da OS (no meuPlano, "fatos"): 404 se a OS não existe ou não está no alcance dela."""

@@ -292,3 +292,151 @@ async def test_foto_que_nao_entra_diz_o_porque_sem_jargao(monkeypatch, chat):
     assert msg.startswith("⚠️ Registrei 1 foto(s)") and "não consegui baixar do WhatsApp" in msg
     assert "pode ter entrado: confira" in msg and "Error" not in msg and "Timeout" not in msg
     assert [f["id"] for f in fotos.recebidas(tel)] == [41, 42]                    # só a que entrou sai da espera
+
+
+# --------------------------------------------------------------------------- usina SEM CADASTRO (dono, 07/11/2026)
+PASTA = "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY"
+
+
+class MPDrive(MP):
+    """O meuPlano de mentira da usina sem cadastro: a prévia da pasta, as usinas, o funil, o Word da OS."""
+
+    def __init__(self, documentos=("medicoes.xlsx",), usinas=None, docs_word=None, **k):
+        super().__init__([], **k)
+        self.documentos, self.docs_word = list(documentos), docs_word
+        self.lista_usinas = usinas if usinas is not None else [{"id": 5, "name": "UFV Ouro Fino"},
+                                                               {"id": 3001, "name": "Usinas sem cadastro"}]
+
+    async def drive_previa(self, link):
+        self.pedidos.append(("previa", link))
+        return {"pasta": "UFV_Ouro_Fino_2", "fotos": 54, "videos": 5, "outros": 0, "documentos": self.documentos}
+
+    async def usinas(self):
+        return self.lista_usinas
+
+    async def funil_de_servicos_adicionais(self):
+        return {"id": 50}
+
+    async def criar_container(self, pid, dados):
+        self.pedidos.append(("container", pid, dados))
+        return {"id": 2300}
+
+    async def criar_os(self, dados):
+        self.pedidos.append(("os", dados))
+        return {"id": 1900}
+
+    async def relatorio_ia(self, os_id, instrucao, drive=None):
+        self.pedidos.append(("gerar", os_id, instrucao, drive))
+        return "job1"
+
+    async def relatorio_ia_estado(self, job):
+        e = await super().relatorio_ia_estado(job)
+        return {**e, "link": "https://app.meuplano.solar/word/71" if e["status"] == "pronto" else None,
+                "resposta": "Tirei a foto do marimbondo." if e["status"] == "pronto" else None}
+
+    async def documentos_word_da_os(self, os_id):
+        self.pedidos.append(("words", os_id))
+        return self.docs_word or []
+
+    async def alterar_relatorio(self, doc_id, pedido):
+        self.pedidos.append(("alterar", doc_id, pedido))
+        return "job2"
+
+
+def _ctx_drive(pedido, historico=()):
+    c = _ctx()
+    c.pedido, c.historico = pedido, list(historico)
+    c.user.nome = "Renan"
+    return c
+
+
+async def test_sem_cadastro_pede_o_contexto_quando_a_pasta_nao_traz_documento(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    mp = MPDrive(documentos=())
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(f"quero um relatório de usina sem cadastro {PASTA}"), {})
+    assert "Falta o CONTEXTO" in r["erro"] and capt == {}
+    # com o contexto escrito, ou com documento na pasta, segue para o Sim
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {"contexto": "Ensaio do trafo do SKID 3 para a Eldorado"})
+    assert "proposta_pendente" in r
+    mp.documentos = ["medicoes.xlsx"]                                            # a pasta traz o contexto
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {})
+    assert "proposta_pendente" in r
+
+
+async def test_sem_cadastro_so_usa_a_pasta_que_a_pessoa_mandou(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    mp = MPDrive()
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive("faz o relatório de usina sem cadastro"), {"link": PASTA})
+    assert "Falta o link da PASTA" in r["erro"] and mp.pedidos == []            # a IA não inventa a pasta
+    antes = [{"role": "user", "content": f"as fotos: {PASTA}?usp=sharing"}, {"role": "assistant", "content": "ok"}]
+    r = await rel.relatorio_sem_cadastro(_ctx_drive("é de Ouro Fino 2, ensaio do trafo", antes),
+                                         {"link": PASTA.replace("17K3", "17K4"), "contexto": "ensaio do trafo"})
+    assert ("previa", PASTA) in mp.pedidos and "proposta_pendente" in r
+
+
+async def test_sem_cadastro_propoe_e_so_cria_depois_do_sim(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    mp = MPDrive()
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {"servico": "ensaio do trafo do SKID 3",
+                                                             "contexto": "Cliente Eldorado; trafo de 500 kVA"})
+    resumo = capt["resumo"]
+    assert "proposta_pendente" in r and capt["k"]["confirmacao"] == "sim"
+    assert "«Usinas sem cadastro»" in resumo and "«UFV Ouro Fino 2: ensaio do trafo do SKID 3»" in resumo
+    assert "54 foto(s) e 1 documento(s); 5 vídeo(s) ficam só no link" in resumo
+    assert [p[0] for p in mp.pedidos] == ["previa"]                              # nada criado antes do Sim
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1, nome="Renan"), "+55")
+    assert msg.startswith("✅") and "OS #1900" in msg and "https://app.meuplano.solar/word/71" in msg
+    _, pid, card = next(p for p in mp.pedidos if p[0] == "container")
+    assert pid == 50 and card["usina_id"] == 3001 and card["kind"] == "servico_adicional"
+    os_ = next(p[1] for p in mp.pedidos if p[0] == "os")
+    assert os_["container_id"] == 2300 and os_["plant_id"] == 3001 and PASTA in os_["notes"] and "Eldorado" in os_["notes"]
+    assert ("gerar", 1900, "", PASTA) in mp.pedidos
+
+
+async def test_sem_cadastro_sem_a_usina_guarda_ou_com_o_relatorio_que_falha(monkeypatch, chat):
+    capt = _captura_propor(monkeypatch)
+    mp = MPDrive(usinas=[{"id": 5, "name": "UFV Ouro Fino"}])
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {})
+    assert "Usinas sem cadastro" in r["erro"] and capt == {}
+    mp = MPDrive(estados=("rodando", "erro"))
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    await rel.relatorio_sem_cadastro(_ctx_drive(PASTA), {})
+    msg = await capt["executar"](SimpleNamespace(commit=lambda: None), SimpleNamespace(id=1, nome="Renan"), "+55")
+    assert msg.startswith("⚠️ A OS #1900") and "a IA caiu" in msg and "gera o relatório da OS 1900" in msg
+
+
+WORDS = [{"id": 70, "formato": "docx", "updated_at": "2026-11-07T10:00:00", "versao_atual": 2},
+         {"id": 71, "formato": "docx", "updated_at": "2026-11-07T12:30:00", "versao_atual": 5},
+         {"id": 72, "formato": "xlsx", "updated_at": "2026-11-07T13:00:00"}]
+
+
+async def test_alterar_vai_ao_word_mais_recente_e_o_link_sai_pelo_sistema(monkeypatch, chat):
+    mp = MPDrive(docs_word=WORDS)
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    ctx = _ctx_drive("tira a foto do marimbondo")
+    r = await rel.alterar_relatorio(ctx, {"os": 1900, "pedido": "tira a foto do marimbondo"})
+    assert ("alterar", 71, "tira a foto do marimbondo") in mp.pedidos and r["o_que_mudou"] == "Tirei a foto do marimbondo."
+    assert ctx.rodape == ["📝 Word: https://app.meuplano.solar/word/71"]
+    mp = MPDrive(docs_word=[])
+    monkeypatch.setattr("app.services.vinculos.cliente_meuplano", lambda db, uid, so_proprio=False: mp)
+    r = await rel.alterar_relatorio(_ctx_drive("x"), {"os": 1900, "pedido": "x"})
+    assert "não tem relatório em Word" in r["erro"]
+
+
+async def test_manda_o_pdf_e_o_word_de_agora(monkeypatch, chat):
+    mp = MPDrive(docs_word=WORDS)
+    r, _ = await _rodar(monkeypatch, mp, escolha="word")
+    assert ("publicar", 71) in mp.pedidos and chat[-1]["arquivo"] == b"%PDF-99" and r["versao_do_word"] == 5
+    assert not [p for p in mp.pedidos if p[0] == "gerar"]
+
+
+def test_as_ferramentas_novas_sao_de_quem_tem_o_meuplano():
+    from app.services import assistente
+    com = SimpleNamespace(bot_ativo={"bot_meuplano"}, perfil=None)
+    sem = SimpleNamespace(bot_ativo={"bot_meuwatt"}, perfil=None)
+    for nome in ("relatorio_sem_cadastro", "alterar_relatorio"):
+        assert nome in assistente.permitidas(com) and nome not in assistente.permitidas(sem)
