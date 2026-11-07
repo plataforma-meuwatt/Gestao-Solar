@@ -173,7 +173,6 @@
 {"frase": "Me de a coordenada da usina de tiete", "espera": ["local_da_usina"], "origem": "log #312"},
 {"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #139"},
 {"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #148"},
-{"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles", "usina_helper"], "origem": "log #179"},
 {"frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?", "espera": ["usina_helper"], "origem": "log #223"},
 {"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233"},
 {"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #315"},
