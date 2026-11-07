@@ -589,14 +589,17 @@ COMO_EXPLICAR_GEMEO = (
     "Cascata, em linguagem simples: PVsyst → régua (o gêmeo no MESMO ano típico do PVsyst: o que ele não reproduz) → "
     "clima (o tempo que fez; gêmeo contra gêmeo) → geometria (a usina CONSTRUÍDA × a do PDF do PVsyst: trackers mais "
     "juntos que no projeto recuam mais e pegam menos sol; geometria_construida diz de onde veio) → limitação (limites "
-    "reais dos inversores e da usina × os do projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor INCLINADO, no plano dos módulos, mediu menos que o "
-    "ESPERADO; esperado = o sensor DEITADO da estação levado ao plano dos módulos com o tracker na posição certa, a "
-    "mesma conta de transposição do PVsyst; causas: tracker fora de posição, sensor inclinado sujo ou torto, ou erro "
-    "da própria conta, uns 2 a 4% no mês; diga 'o esperado pela conta do sensor deitado', nunca 'o que o tempo "
-    "permitia'), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
+    "reais dos inversores e da usina × os do projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor INCLINADO, no plano dos módulos, × o "
+    "ESPERADO = o sensor DEITADO da estação levado ao plano dos módulos com o tracker na posição certa; diga 'o esperado "
+    "pela conta do sensor deitado', nunca 'o que o tempo permitia'. A conta é uma FAIXA: Perez, o modelo do PVsyst, e "
+    "isotrópico (sol_kwh_m2 e cascata_mwh trazem as duas pontas); no tracker os modelos discordam até ~6 pontos no mês. "
+    "Quem decide é sol_no_plano_situacao (o mesmo que a tela mostra; NUNCA compare os números você mesmo): dentro = não "
+    "dá para afirmar que faltou sol; abaixo = faltou sol no plano (tracker, sombra ou o sensor); sensor_mede_baixo = o "
+    "sensor inclinado mede baixo (sujeira ou calibração), não os módulos — a usina gerou o esperado; acima; sem_sensor = "
+    "o sol veio do satélite), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
     "não vê). parte_clima_pct = quanto da diferença para o PVsyst foi o tempo. hora_a_hora.leitura já traz o padrão "
-    "(perda que cresce com o sol direto → posição de tracker; parecida com sol e nuvem → sujeira; um inversor que "
-    "descola). Números só daqui; None = sem dado.")
+    "(perda que cresce com o sol direto → posição de tracker, sombra ou temperatura: hipótese, quem prova a posição é o "
+    "ângulo dos controladores; parecida com sol e nuvem → sujeira; um inversor que descola). Números só daqui; None = sem dado.")
 
 
 async def _gemeo_ler(ctx: Contexto, u: dict, chamada: Any) -> Any:
@@ -645,12 +648,13 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
                        "gemeo_no_ano_tipico_regua": s.get("regua_mwh")},
         "usina_x_previsto_pct": s["desvio_previsto_pct"],
         "cascata_mwh": {"regua": s.get("efeito_regua_mwh"), "clima": s["efeito_clima_mwh"],
-                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"],
+                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"], "sol_no_plano_pelo_isotropico": s.get("efeito_plano_iso_mwh"),
                         "paradas": s.get("efeito_paradas_mwh"), "conversao": s["efeito_conversao_mwh"],
                         "usina_total": s["efeito_usina_mwh"]},
         "parte_clima_pct": s["parte_clima_pct"],
         "incerteza_regua": {"pct": s["incerteza_regua_pct"], "mwh": s["incerteza_regua_mwh"]},
-        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "no_plano_esperado": s["poa_tempo"], "pvsyst": s["poa_pvsyst"],
+        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "no_plano_esperado": s["poa_tempo"], "no_plano_esperado_isotropico": s.get("poa_tempo_iso"),
+                       "sol_no_plano_situacao": s.get("sol_no_plano_situacao"), "pvsyst": s["poa_pvsyst"],
                        "horizontal": s["ghi_real"], "horizontal_pvsyst": s["ghi_pvsyst"]},
         "temperatura_media_c": {"real": s["t_amb_media"], "pvsyst": s["t_amb_pvsyst"]},
         "pr": {"real": s["pr_real"], "pvsyst": s["pr_pvsyst"]}, "corte_nos_limites_mwh": s["corte_mwh"],
