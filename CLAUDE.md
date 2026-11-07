@@ -762,6 +762,22 @@ ele analisou — "não analisado" sai nulo, nunca "nenhuma parada". A régua é 
 (`paradas.ler_do_detector`): a tela e o bot do WhatsApp (`assistente_geracao.paradas`) contam a
 mesma parada, a mesma perda (nula onde o detector não fez a conta) e o mesmo "não analisado".
 
+**Classificar paradas pelo WhatsApp** (dono, 07/11/2026: "caíram várias usinas hoje, quero um fluxo HIPER COMPLETO e
+DIDÁTICO no WhatsApp para eu classificar as paradas sem precisar ir no site"; `bff/app/services/assistente_paradas.py`).
+O passo a passo é do SISTEMA, não da IA: "classificar paradas", "paradas de hoje/ontem/da semana", "o que caiu hoje"
+começam sem ela; outras formas a IA reconhece e chama `classificar_paradas` (e `paradas_a_classificar` só conta). Resumo
+por usina → cartão de cada parada → motivo › origem › causa › causa raiz (o `/breakdown-options`, o filho pelo
+`parent_ids` do pai; até 3 opções botões, até 10 LISTA interativa — tipo `lista` do gateway, o toque volta no `botao` —,
+mais o Flow `gs_escolha_uma`; uma opção só é escolhida sozinha e dita) → causa externa (padrão do motivo) → observação
+→ OS → confere → Confirmar. Grava com o token DA PESSOA em `POST /breakdowns/classify-bulk`, nos `live_id` da parada AO
+VIVO casada (nunca no id do detector), relendo o `/compare` antes para não sobrescrever o que o site classificou;
+"Não foi parada" é o `suppress` com a nota; depois de gravar oferece "Aplicar às N" do mesmo dia e usina. O que é "a
+classificar" e o que é UMA parada (os inversores que caíram juntos) é a porta de `build_shadow_units`/`a_classificar`
+do mw-api (`src/shadow_breakdowns/units.py`) sobre `/queue` + `/compare` — mudou lá, muda aqui. Estado no banco
+(`gs_fluxos_paradas`, um por pessoa, 12 h desde o último passo); botões `pc:<tok>:<ação>`, o `tok` muda a cada pergunta
+e o toque `pc:` é tratado ANTES do "botão de resumo antigo" do helper (e derruba a ação que esperava o Sim). 403 do
+meuWatt = o papel da pessoa na usina não classifica (só admin, admin do sistema e operador): o bot diz e encerra.
+
 ---
 
 ## 9. Git e deploy

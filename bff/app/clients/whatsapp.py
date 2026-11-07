@@ -194,15 +194,18 @@ async def enviar_conteudo(
     filename: str | None = None, mime: str | None = None, origem: str = "assistente",
     botoes: list[dict[str, str]] | None = None, guardar: str | None = None,
     formulario: dict[str, Any] | None = None, cadastro: dict[str, Any] | None = None,
+    lista: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`tipo`: text | document | image | botoes | formulario (`{token, titulo, opcoes, marcados, aviso}`). Arquivo vai em base64 para o gateway subir na
-    Meta; `botoes` (até 3, `{id, titulo}`) vão com o `texto` numa mensagem interativa. `guardar`: o que
+    Meta; `botoes` (até 3, `{id, titulo}`) vão com o `texto` numa mensagem interativa; `lista` (tipo `lista`:
+    `{botao, secao, linhas: [{id, titulo, descricao}]}`, até 10 linhas) é a lista interativa. `guardar`: o que
     o gateway guarda no lugar do `texto` (a resposta sem as senhas; a Meta recebe a inteira)."""
     import base64
     return await _req("POST", "/interno/conteudo", json={
         "telefone": telefone, "tipo": tipo, "texto": texto, "filename": filename, "mime": mime,
         "arquivo_b64": base64.b64encode(arquivo).decode() if arquivo else None, "origem": origem,
-        **({"botoes": botoes} if botoes else {}), **({"guardar": guardar} if guardar else {}),
+        **({"botoes": botoes} if botoes else {}), **({"lista": lista} if lista else {}),
+        **({"guardar": guardar} if guardar else {}),
         **({"formulario": formulario} if formulario else {}), **({"cadastro": cadastro} if cadastro else {}),
     })
 

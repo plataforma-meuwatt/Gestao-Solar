@@ -43,6 +43,7 @@ from app.services import assistente_local as local
 from app.services import assistente_relatorio as relatorio
 from app.services import assistente_formulario as formulario
 from app.services import assistente_helper as helper
+from app.services import assistente_paradas as par
 
 log = logging.getLogger("gs.assistente")
 
@@ -334,7 +335,8 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "os_sem_cadastro": (relatorio.os_sem_cadastro, relatorio.FERRAMENTA_LISTA),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
-               "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS}
+               "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS,
+               **par.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -839,7 +841,7 @@ def permitidas(user) -> list[str]:
     nomes: list[str] = []
     ativo = user.bot_ativo
     if "bot_meuwatt" in ativo:
-        nomes += list(ger.FERRAMENTAS)
+        nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada",
                   "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
@@ -876,6 +878,10 @@ de memória.
 - FINANCEIRO (contas a pagar e a receber, saldo das contas, o que vence, receita, despesa, DRE, fluxo de caixa,
   margem de contrato, diárias, pagar ou dar baixa) → `manutencao`: o financeiro da empresa mora no meuPlano, e ele
   responde e faz (com o Sim). Nunca responda financeiro sem perguntar a ele.
+- CLASSIFICAR paradas ("classificar as paradas", "o que caiu hoje", "vamos classificar as de ontem") →
+  `classificar_paradas` com o período (e a usina, se ela disse): o SISTEMA conduz o passo a passo com botões e grava
+  no meuWatt com o Confirmar da pessoa; você não pergunta nada da classificação, não lista opções nem escreve depois.
+  Só QUANTAS faltam classificar → `paradas_a_classificar`. As paradas em si (quantas, perda, causa) → `paradas`.
 - Skid ou usina PARADA, trip, desarme, "religa": leia `reles` (estado e trips pelo meuWatt) e só então o
   `usina_helper`. Equipamento que não respondeu = estado DESCONHECIDO: nunca diga "não há trip" ou "está normal" sem
   ter lido todos os relés; diga o que não deu para ler.
@@ -1030,6 +1036,8 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
             return texto or "Não consegui montar a resposta. Pode reformular?"
         msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": chamadas})
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
+        if ctx.fluxo:                                     # a classificação de paradas começou: o passo a passo é do
+            return par.texto_de(ctx.fluxo)                # sistema, e a resposta é o resumo dele (com os botões)
         # Atalho de velocidade: só o meuPlano foi chamado e respondeu → a resposta dele É a resposta.
         # Menos com foto esperando: só a IA daqui anexa, e o "(Sim/Não)" de lá ia à pessoa no lugar do anexo (04/11/2026).
         # Nem quando a consulta é o 1º passo de uma ferramenta daqui (`continuar`): "registra nas informações do relatório
@@ -1605,6 +1613,25 @@ async def _atender(evento: dict) -> None:
                 await _texto(telefone, falha + (f"\n\n{helper.cancelada(desarmada)}" if desarmada else ""))
                 _registrar(db, telefone, user, "sem_texto", pergunta="[áudio]", resposta=falha, em=enviada)
                 return
+        # A classificação de PARADAS (`assistente_paradas`): o passo a passo é do SISTEMA. O toque nos botões e nas
+        # listas dela, e o texto com ela aberta, vêm para cá ANTES do "botão de resumo antigo" (que engolia todo toque
+        # que não fosse o Sim/Não da ação esperando). Com uma ação esperando, só o toque `pc:` é do fluxo — e a derruba.
+        # A senha de atuação digitada sozinha nunca vira resposta do fluxo (iria ao meuWatt como número de OS).
+        esperando = helper.PENDENTES.get(user.id)
+        saidas = await par.tratar(db, user, telefone, evento, texto,
+                                  pendente=(esperando is not None and monotonic() <= esperando.expira)
+                                  or (analise.pura and analise.acertou))
+        if saidas is not None:
+            derrubada = helper.desarmar(user.id, seguro or "[botão]") if par.e_do_fluxo(evento) else None
+            nota = helper.cancelada(derrubada) if derrubada is not None else ""
+            fim.set()
+            saiu = await par.enviar(telefone, saidas, nota)
+            _registrar(db, telefone, user, "respondeu" if saiu else "erro",
+                       pergunta=("🔘 " if evento.get("botao") else "") + (seguro or "[formulário]"),
+                       resposta=par.texto_de(saidas) + (f"\n\n{nota}" if nota else ""),
+                       ferramentas=["classificar_paradas"], inicio=inicio, em=enviada,
+                       erro=None if saiu else "A resposta da classificação de paradas não saiu pelo gateway.")
+            return
         aviso_do_botao = (helper.resposta_ao_botao(user.id, evento.get("botao"))       # o formulário não é botão
                           if evento.get("tipo") == "interactive" and not formulario.e_resposta(evento) else None)
         if aviso_do_botao is not None:
@@ -1782,6 +1809,10 @@ async def _atender(evento: dict) -> None:
             saiu = await _botoes(telefone, bloco_sim, ctx.proposta.codigo, valores) and saiu
             if ctx.escolha is not None and not await formulario.mandar(telefone, ctx.escolha):
                 await _texto(telefone, formulario.em_texto(ctx.escolha), valores)   # a lista para TROCAR a escolha
+        elif ctx is not None and ctx.fluxo:
+            # a classificação de paradas que a IA começou: o resumo sai com os botões; o resto (o aviso da ação
+            # cancelada, os do sistema) vai ao pé dele
+            saiu = await par.enviar(telefone, ctx.fluxo, resposta[len(livre):].strip())
         else:
             saiu = await _texto(telefone, para_whatsapp(resposta), valores, como=resposta_log if omitir else None)
             if ctx is not None and ctx.escolha is not None and ctx.proposta is None \

@@ -75,6 +75,9 @@ class Contexto:
     cadastro: dict | None = None
     #: texto do SISTEMA ao pé da resposta (os links do Google Maps e do Waze de `local_da_usina`): a IA não o reescreve
     rodape: list = field(default_factory=list)
+    #: as mensagens da classificação de paradas que este turno começou (`assistente_paradas`): saem pelo sistema, com
+    #: os botões, no lugar da resposta da IA
+    fluxo: list | None = None
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".
