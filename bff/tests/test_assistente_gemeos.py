@@ -56,6 +56,14 @@ class _GemeoFalso:
     async def gemeos(self):
         return [{"plant_id": 9371, "nome": "Ibitinga"}, {"plant_id": 9378, "nome": "Porto Ferreira"}]
 
+    async def gemeo_pendencias(self, plant_id):
+        self.pedidos.append(("pendencias", plant_id))
+        return [{"id": 1, "titulo": "Recuo a mais nos trackers", "status": "aberta", "problema": "controlador com 5,50 m",
+                 "origem": "Gêmeo · out/2026: −1,6 MWh", "criada_em": "2026-11-07T20:00:00+00:00",
+                 "servicos": [{"tipo": "ajuste_trackers", "descricao": "650 cm nos 8 controladores", "os_meuplano": "1901",
+                               "feito_em": "2026-11-10", "resultado": "deu_bom", "anotacao": "ângulo das 06:30 subiu"},
+                              {"tipo": "lavagem", "descricao": "", "os_meuplano": None, "feito_em": None, "resultado": None, "anotacao": ""}]}]
+
     async def gemeo_dia(self, plant_id, dia):
         return {"kwac": 1027.0, "horas": [
             {"hora": 10, "previsto_kwh": 900.0, "real_kwh": 800.0, "desvio_pct": -11.1, "poa_wh": 700, "poa_tempo_wh": 760,
@@ -110,3 +118,15 @@ async def test_o_dia_hora_a_hora():
     assert r["dia"] == "2026-10-17" and r["potencia_maxima_kw"] == 1027.0
     assert r["total"] == {"previsto_kwh": 1900, "real_kwh": 800, "desvio_pct": -57.9}
     assert r["horas"][1]["real_kwh"] is None                         # hora sem leitura fica nula, não zero
+
+
+async def test_pendencias_do_gemeo_para_a_ia():
+    """A caixa de conteúdo: o problema, os serviços com a OS do meuPlano e o "deu bom / não deu bom" anotado."""
+    mw = _GemeoFalso()
+    r = await ger.gemeo_pendencias(_ctx(mw), {"usina": "ibiti"})
+    assert mw.pedidos == [("pendencias", 9371)]
+    p = r["pendencias"][0]
+    assert (p["titulo"], p["situacao"], p["criada_em"]) == ("Recuo a mais nos trackers", "aberta", "2026-11-07")
+    assert p["servicos"][0] == {"servico": "ajuste dos trackers", "o_que_foi_feito": "650 cm nos 8 controladores", "os_meuplano": "1901",
+                                "feito_em": "2026-11-10", "deu_resultado": "deu bom", "anotacao": "ângulo das 06:30 subiu"}
+    assert p["servicos"][1]["deu_resultado"] == "não anotado" and p["servicos"][1]["o_que_foi_feito"] is None

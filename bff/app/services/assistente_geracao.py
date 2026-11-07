@@ -763,6 +763,28 @@ async def gemeo_config(ctx: Contexto, a: dict) -> dict:
             "avisos": c.get("avisos")}
 
 
+_TIPO_SERVICO = {"lavagem": "lavagem", "curva_iv": "curva IV", "termografia": "termografia", "ajuste_trackers": "ajuste dos trackers",
+                 "troca_equipamento": "troca de equipamento", "inspecao": "inspeção", "outro": "outro"}
+_RESULTADO = {"deu_bom": "deu bom", "parcial": "em parte", "nao_deu_bom": "não deu bom"}
+
+
+async def gemeo_pendencias(ctx: Contexto, a: dict) -> dict:
+    """As pendências de performance da usina no gêmeo (o Renan, 07/11/2026: "isso vira uma caixa de conteúdo para a própria
+    IA usar e para a gente aprender"): o problema, os serviços feitos com a OS do meuPlano e se deu resultado."""
+    u = _usina(ctx, a.get("usina"))
+    ps = await _gemeo_ler(ctx, u, ctx.mw.gemeo_pendencias(u["id"]))
+    return {"usina": u["nome"],
+            "pendencias": [{"titulo": p["titulo"], "situacao": p["status"], "problema": p.get("problema") or None,
+                            "de_onde_veio": p.get("origem") or None, "criada_em": (p.get("criada_em") or "")[:10],
+                            "servicos": [{"servico": _TIPO_SERVICO.get(s["tipo"], s["tipo"]), "o_que_foi_feito": s.get("descricao") or None,
+                                          "os_meuplano": s.get("os_meuplano"), "feito_em": s.get("feito_em"),
+                                          "deu_resultado": _RESULTADO.get(s.get("resultado") or "", "não anotado"),
+                                          "anotacao": s.get("anotacao") or None} for s in p.get("servicos") or []]}
+                           for p in ps],
+            "nota": "O antes × depois de cada serviço o gêmeo mede na tela Gêmeos › Pendências ('Medir no gêmeo'); aqui vale "
+                    "o que a equipe anotou. Pendência sem serviço = ainda não se fez nada."}
+
+
 # --------------------------------------------------------------------------- catálogo
 _USINA = {"type": "string", "description": "Nome da usina (parcial, sem acento serve). Vazio só se houver uma."}
 _INI = {"type": "string", "description": "Data inicial AAAA-MM-DD. Calcule a partir de HOJE: 'mês' = dia 1; "
@@ -815,6 +837,11 @@ FERRAMENTAS = {
     "gemeo_regua": (gemeo_regua, _f("gemeo_regua", "A RÉGUA do gêmeo digital: o quanto ele reproduz o PVsyst rodando com "
         "o clima e as premissas do PDF — diagrama de perdas etapa por etapa, mês a mês, ajustes (k, contraste), "
         "variantes e versões gravadas.", {"usina": _USINA})),
+    "gemeo_pendencias": (gemeo_pendencias, _f("gemeo_pendencias", "As PENDÊNCIAS DE PERFORMANCE da usina no gêmeo digital "
+        "(Gêmeos › Pendências): cada problema de geração que o gêmeo apontou, os serviços feitos para resolver (lavagem, "
+        "curva IV, termografia, ajuste dos trackers…) com a data e a OS do meuPlano, se deu resultado (deu bom / em parte "
+        "/ não deu bom) e o que a equipe anotou. Para 'a lavagem resolveu?', 'o que já foi feito para a perda de X', 'o "
+        "que aprendemos'. Não é a lista de OS do meuPlano (essa é `manutencao`).", {"usina": _USINA})),
     "gemeo_config": (gemeo_config, _f("gemeo_config", "O que o gêmeo digital sabe da usina: geometria, módulo e .PAN, "
         "inversor e .OND, perdas do PDF do PVsyst, limites reais e o comando de potência lido em cada inversor.",
         {"usina": _USINA})),

@@ -550,6 +550,11 @@ class MeuWattClient:
         """A régua: o gêmeo com o clima e as premissas do PVsyst × o PVsyst, e as versões gravadas."""
         return await self._get_analise(f"/gemeos/{plant_id}/regua", timeout=120)
 
+    async def gemeo_pendencias(self, plant_id: int) -> list[dict[str, Any]]:
+        """As pendências de performance da usina no gêmeo: o problema, os serviços feitos (com a OS do meuPlano) e se deu
+        resultado."""
+        return await self._get_analise(f"/gemeos/{plant_id}/pendencias")
+
     async def gemeo_config(self, plant_id: int) -> dict[str, Any]:
         """O que o gêmeo sabe da usina (configuração, padrão do PDF, inversores e a última leitura de limite)."""
         return await self._get_analise(f"/gemeos/{plant_id}/config")

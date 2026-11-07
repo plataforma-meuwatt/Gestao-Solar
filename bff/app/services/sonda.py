@@ -350,7 +350,8 @@ MEUWATT: list[Rota] = [
           ("mw.gemeo_mes", "/gemeos/{plant_id}", "o mês"),
           ("mw.gemeo_dia", "/gemeos/{plant_id}/dia", "um dia hora a hora"),
           ("mw.gemeo_regua", "/gemeos/{plant_id}/regua", "a régua contra o PVsyst"),
-          ("mw.gemeo_config", "/gemeos/{plant_id}/config", "o que o gêmeo sabe da usina"))],
+          ("mw.gemeo_config", "/gemeos/{plant_id}/config", "o que o gêmeo sabe da usina"),
+          ("mw.gemeo_pendencias", "/gemeos/{plant_id}/pendencias", "as pendências de performance"))],
 ]
 
 #: Rotas do meuPlano. Prefixos `/api/v1/meuacesso` e `/api/v1/maintenance`.
