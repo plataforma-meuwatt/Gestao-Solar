@@ -589,10 +589,14 @@ def _desenhar(pts: list[tuple[str, float]], titulo: str, unid: str) -> bytes:
 # 06/11/2026: "faça o bot saber tudo dos gêmeos, qualquer pergunta que eu fizer ele responde".
 COMO_EXPLICAR_GEMEO = (
     "Placar: o real × o PREVISTO pelo gêmeo (com o tempo que fez e os limites reais) × o PVsyst (ano típico), em MWh. "
-    "Cascata, em linguagem simples: PVsyst → régua (o gêmeo no MESMO ano típico do PVsyst: o que ele não reproduz) → "
-    "clima (o tempo que fez; gêmeo contra gêmeo) → geometria (a usina CONSTRUÍDA × a do PDF do PVsyst: trackers mais "
-    "juntos que no projeto recuam mais e pegam menos sol; geometria_construida diz de onde veio) → limitação (limites "
-    "reais dos inversores e da usina × os do projeto) → PREVISTO. Real − previsto = a USINA: sol no plano (o sensor INCLINADO, no plano dos módulos, × o "
+    "Cascata, com os MESMOS nomes do relatório: Projeto (PVsyst) → Margem do modelo (cascata_mwh.regua: o gêmeo no "
+    "MESMO ano típico do PVsyst, o que ele não reproduz) → Sol do mês (clima: o tempo que fez; gêmeo contra gêmeo) → "
+    "Recuo (projeto) (geometria: com o sol baixo o tracker gira o painel de volta para não sombrear a fileira de trás; "
+    "o PDF do PVsyst simulou outro painel ou outras fileiras que a usina construída — geometria.pdf × geometria.construida; "
+    "some quando o PVsyst é refeito com a construída) → Teto de potência (limitacao: a potência máxima real dos "
+    "inversores e da usina × a do projeto; conta nas horas de sol forte) → ESPERADO (o previsto). Real − esperado = a "
+    "USINA: Recuo a mais (recuo_a_mais: o controlador do tracker recua com medidas gravadas erradas — "
+    "geometria.controlador × geometria.construida; corrige-se no controlador) → sol no plano (o sensor INCLINADO, no plano dos módulos, × o "
     "ESPERADO = o sensor DEITADO da estação levado ao plano dos módulos com o tracker na posição certa; diga 'o esperado "
     "pela conta do sensor deitado', nunca 'o que o tempo permitia'. A conta é uma FAIXA: Perez, o modelo do PVsyst, e "
     "isotrópico (sol_kwh_m2 e cascata_mwh trazem as duas pontas); no tracker os modelos discordam até ~6 pontos no mês. "
@@ -646,17 +650,21 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
     return {
         "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
         "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
-        "geometria": {"do_pdf": f.get("geometria"), "geometria_construida": f.get("geometria_real")},
+        "geometria": {"do_pdf": f.get("geometria"), "pdf": f.get("geometria_pdf"), "construida": f.get("geometria_real"),
+                      "controlador": f.get("geometria_controlador")},
         "placar_mwh": {"real": s["real_mwh"], "previsto_pelo_gemeo": s["previsto_mwh"], "pvsyst": s["pvsyst_mwh"],
                        "gemeo_no_ano_tipico_regua": s.get("regua_mwh")},
         "usina_x_previsto_pct": s["desvio_previsto_pct"],
         "cascata_mwh": {"regua": s.get("efeito_regua_mwh"), "clima": s["efeito_clima_mwh"],
-                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"], "sol_no_plano": s["efeito_plano_mwh"], "sol_no_plano_pelo_isotropico": s.get("efeito_plano_iso_mwh"),
+                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"],
+                        "recuo_a_mais": s.get("efeito_trackers_mwh"),
+                        "sol_no_plano": s["efeito_plano_mwh"], "sol_no_plano_pelo_isotropico": s.get("efeito_plano_iso_mwh"),
                         "paradas": s.get("efeito_paradas_mwh"), "conversao": s["efeito_conversao_mwh"],
                         "usina_total": s["efeito_usina_mwh"]},
         "parte_clima_pct": s["parte_clima_pct"],
         "incerteza_regua": {"pct": s["incerteza_regua_pct"], "mwh": s["incerteza_regua_mwh"]},
-        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "no_plano_esperado": s["poa_tempo"], "no_plano_esperado_isotropico": s.get("poa_tempo_iso"),
+        "sol_kwh_m2": {"no_plano_medido": s["poa_real"], "no_plano_esperado": s["poa_tempo"],
+                       "no_plano_com_o_recuo_do_controlador": s.get("poa_trackers"), "no_plano_esperado_isotropico": s.get("poa_tempo_iso"),
                        "sol_no_plano_situacao": s.get("sol_no_plano_situacao"), "pvsyst": s["poa_pvsyst"],
                        "horizontal": s["ghi_real"], "horizontal_pvsyst": s["ghi_pvsyst"]},
         "temperatura_media_c": {"real": s["t_amb_media"], "pvsyst": s["t_amb_pvsyst"]},

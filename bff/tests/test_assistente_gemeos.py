@@ -16,9 +16,12 @@ def _erro(status: int) -> httpx.HTTPStatusError:
 
 MES = {
     "estacao": "ws-ufv-ibitinga-1", "ficha": {"modelo_modulo": "um diodo do PVsyst (x.PAN)", "modelo_inversor": "curva do .OND (y.ond)",
-                                         "geometria": "Tracker ±55°, GCR 20%", "geometria_real": {"gcr": 0.436, "max_angle": 57.0, "fonte": "controladores"}},
+                                         "geometria": "Tracker ±55°, GCR 20%", "geometria_pdf": {"gcr": 0.2, "fileiras_m": 6.5, "largura_m": 1.3},
+                                         "geometria_real": {"gcr": 0.367, "max_angle": 57.0, "fileiras_m": 6.5, "largura_m": 2.384, "fonte": "campo"},
+                                         "geometria_controlador": {"gcr": 0.436, "max_angle": 57.0, "fileiras_m": 5.5, "largura_m": 2.4, "fonte": "controladores"}},
     "resumo": {"real_mwh": 169.5, "previsto_mwh": 196.5, "pvsyst_mwh": 249.2, "regua_mwh": 244.5, "desvio_previsto_pct": -13.7,
-               "efeito_regua_mwh": -4.7, "efeito_clima_mwh": -50.4, "efeito_geometria_mwh": -4.2, "efeito_limitacao_mwh": 2.4, "efeito_plano_mwh": -10.3,
+               "efeito_regua_mwh": -4.7, "efeito_clima_mwh": -50.4, "efeito_geometria_mwh": -2.6, "efeito_limitacao_mwh": 2.4,
+               "efeito_trackers_mwh": -1.6, "poa_trackers": 185.7, "efeito_plano_mwh": -8.7,
                "efeito_paradas_mwh": -0.06, "efeito_conversao_mwh": -16.7, "efeito_usina_mwh": -27.0, "parte_clima_pct": 63,
                "incerteza_regua_pct": -1.87, "incerteza_regua_mwh": 4.7, "poa_real": 176.2, "poa_tempo": 189.6, "poa_pvsyst": 233.9,
                "ghi_real": 155.8, "ghi_pvsyst": 173.6, "t_amb_media": 24.3, "t_amb_pvsyst": 23.9, "pr_real": 0.746,
@@ -73,7 +76,9 @@ async def test_o_mes_no_gemeo_resumido_para_a_ia():
     assert mw.pedidos == [(9371, "2026-10")]                           # o id numérico do meuWatt, não o slug
     assert r["placar_mwh"] == {"real": 169.5, "previsto_pelo_gemeo": 196.5, "pvsyst": 249.2, "gemeo_no_ano_tipico_regua": 244.5}
     assert r["cascata_mwh"]["conversao"] == -16.7 and r["parte_clima_pct"] == 63
-    assert r["cascata_mwh"]["geometria"] == -4.2 and r["geometria"]["geometria_construida"]["gcr"] == 0.436
+    assert r["cascata_mwh"]["geometria"] == -2.6 and r["geometria"]["construida"]["gcr"] == 0.367
+    assert r["cascata_mwh"]["recuo_a_mais"] == -1.6 and r["geometria"]["controlador"]["fileiras_m"] == 5.5   # o controlador com 5,50 m
+    assert r["sol_kwh_m2"]["no_plano_com_o_recuo_do_controlador"] == 185.7
     assert r["hora_a_hora"]["leitura"]["tipo"] == "sol_direto"
     assert r["hora_a_hora"]["por_hora_fora_do_limite_pct"] == {9: -10.5}           # hora sem dado não vira zero
     assert [x["dia"] for x in r["hora_a_hora"]["rendimento_por_dia_pct"]] == ["22"]
