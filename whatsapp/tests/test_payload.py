@@ -177,6 +177,23 @@ def test_resposta_de_botao_vira_texto():
     assert (m.texto, m.botao) == ("Sim", "sim:a1b2c3d4")
 
 
+def test_linha_escolhida_numa_lista_volta_com_o_id():
+    """A LISTA interativa (o bot classifica paradas pelo WhatsApp): o toque volta como `list_reply`, e o id da linha diz
+    de QUAL pergunta ela era — o mesmo campo do botão, senão o bot só leria o título."""
+    corpo = _entrega(
+        {
+            "messages": [
+                {"from": "5516999998888", "id": "wamid.LST", "timestamp": "1789000000",
+                 "type": "interactive",
+                 "interactive": {"type": "list_reply", "list_reply": {
+                     "id": "pc:a1b2c3:o4", "title": "Falta de rede", "description": "Concessionária"}}}
+            ]
+        }
+    )
+    m = payload.ler(corpo).mensagens[0]
+    assert (m.tipo, m.texto, m.botao) == ("interactive", "Falta de rede", "pc:a1b2c3:o4")
+
+
 def test_status_traduzido_e_erro_lido():
     corpo = _entrega(
         {

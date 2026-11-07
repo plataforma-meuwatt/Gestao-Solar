@@ -206,6 +206,22 @@ class FormularioIn(BaseModel):
     rotulos: list[str] = Field(default_factory=list)
 
 
+class LinhaIn(BaseModel):
+    """Uma linha de LISTA interativa. Os limites são os da Meta (Cloud API, "Interactive list messages"): id até 200
+    (o banco daqui guarda o toque em 80 — `Mensagem.botao`), título até 24, descrição até 72."""
+    id: str = Field(min_length=1, max_length=80)
+    titulo: str = Field(min_length=1, max_length=24)
+    descricao: str = Field(default="", max_length=72)
+
+
+class ListaIn(BaseModel):
+    """A LISTA interativa (até 10 linhas, uma seção): o botão que a abre (até 20) e o título da seção (até 24). O
+    toque volta como `interactive.list_reply`, com o id da linha em `botao` — o mesmo caminho do botão de resposta."""
+    botao: str = Field(min_length=1, max_length=20)
+    secao: str = Field(default="Opções", min_length=1, max_length=24)
+    linhas: list[LinhaIn] = Field(min_length=1, max_length=10)
+
+
 #: Os formulários de escolha, criados e publicados uma vez na conta da Meta (29/10/2026).
 FLOW_ESCOLHA = "gs_escolha_multipla"
 FLOW_UMA = "gs_escolha_uma"
@@ -234,13 +250,14 @@ class ConteudoIn(BaseModel):
     até 3 BOTÕES de resposta ("Sim"/"Não" para confirmar uma ação — o toque volta como mensagem
     com o título do botão)."""
     telefone: str
-    tipo: str = Field(pattern="^(text|document|image|botoes|formulario)$")
+    tipo: str = Field(pattern="^(text|document|image|botoes|lista|formulario)$")
     texto: str | None = Field(default=None, max_length=4096)
     arquivo_b64: str | None = None
     filename: str | None = None
     mime: str | None = None
     origem: str | None = None
     botoes: list[BotaoIn] | None = Field(default=None, max_length=3)
+    lista: ListaIn | None = None
     formulario: FormularioIn | None = None
     cadastro: CadastroIn | None = None
     #: O que fica GUARDADO aqui no lugar do `texto`, que vai inteiro à Meta: a resposta sem as senhas que ela
@@ -267,6 +284,16 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
             tipo = "interactive"
             conteudo = {"type": "button", "body": {"text": corpo.texto}, "action": {"buttons": [
                 {"type": "reply", "reply": {"id": b.id, "title": b.titulo}} for b in corpo.botoes]}}
+        elif corpo.tipo == "lista":
+            if not (corpo.texto or "").strip() or corpo.lista is None:
+                raise ValueError("A lista pede o texto e as linhas.")
+            if len({li.id for li in corpo.lista.linhas}) != len(corpo.lista.linhas):
+                raise ValueError("Cada linha da lista precisa de um id próprio.")
+            tipo, ls = "interactive", corpo.lista
+            conteudo = {"type": "list", "body": {"text": corpo.texto}, "action": {
+                "button": ls.botao, "sections": [{"title": ls.secao, "rows": [
+                    {"id": li.id, "title": li.titulo, **({"description": li.descricao} if li.descricao else {})}
+                    for li in ls.linhas]}]}}
         elif corpo.tipo == "formulario":
             f, c = corpo.formulario, corpo.cadastro
             if (f is None) == (c is None) or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
@@ -322,7 +349,7 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
                 conteudo["caption"] = corpo.texto[:1024]
         r = await svc_envio.enviar_conteudo(
             db, telefone=corpo.telefone, tipo=tipo, conteudo=conteudo,
-            texto=(corpo.guardar or corpo.texto) if corpo.tipo in ("text", "botoes", "formulario")
+            texto=(corpo.guardar or corpo.texto) if corpo.tipo in ("text", "botoes", "lista", "formulario")
             else (corpo.filename or corpo.guardar or corpo.texto),
             origem=corpo.origem)
     except svc_envio.EnvioIndisponivel as exc:

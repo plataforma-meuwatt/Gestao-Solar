@@ -420,6 +420,46 @@ def test_resposta_com_botoes_sai_como_interativa_da_meta(cliente, credencial, mo
 
 
 
+def test_lista_sai_como_interativa_da_meta_nos_limites_dela(cliente, credencial, monkeypatch, db):
+    """A LISTA interativa (até 10 linhas): o bot classifica paradas com ela quando a pergunta tem de 4 a 10 opções. Os
+    limites são os da Meta (título da linha até 24, descrição até 72, botão até 20, até 10 linhas): o que passa disso é
+    recusado aqui, antes de gastar a Meta — a Meta recusaria a mensagem inteira e a pessoa ficaria sem a pergunta."""
+    from gateway.meta import graph
+
+    enviados = []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid="wamid.L1")
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    linhas = [{"id": f"pc:t:o{i}", "titulo": f"Opção {i}", "descricao": "d" * 72} for i in range(10)]
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "lista", "texto": "O que aconteceu?",
+        "lista": {"botao": "Ver opções", "secao": "Motivo", "linhas": linhas}})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert enviados[0]["tipo"] == "interactive"
+    c = enviados[0]["conteudo"]
+    assert c["type"] == "list" and c["body"] == {"text": "O que aconteceu?"} and c["action"]["button"] == "Ver opções"
+    assert c["action"]["sections"][0]["title"] == "Motivo"
+    assert c["action"]["sections"][0]["rows"][0] == {"id": "pc:t:o0", "title": "Opção 0", "description": "d" * 72}
+    linha = db.query(Mensagem).filter_by(wamid="wamid.L1").one()
+    assert (linha.tipo, linha.texto) == ("interactive", "O que aconteceu?")
+    base = {"telefone": "+5517997377626", "tipo": "lista", "texto": "a"}
+    for ruim in ({"lista": {"botao": "Ver", "linhas": linhas + [{"id": "x", "titulo": "11ª"}]}},       # 11 linhas
+                 {"lista": {"botao": "Ver", "linhas": [{"id": "x", "titulo": "t" * 25}]}},              # título > 24
+                 {"lista": {"botao": "Ver", "linhas": [{"id": "x", "titulo": "t", "descricao": "d" * 73}]}},
+                 {"lista": {"botao": "b" * 21, "linhas": [{"id": "x", "titulo": "t"}]}},                # botão > 20
+                 {"lista": {"botao": "Ver", "secao": "s" * 25, "linhas": [{"id": "x", "titulo": "t"}]}},
+                 {"lista": {"botao": "Ver", "linhas": []}},
+                 {"lista": {"botao": "Ver", "linhas": [{"id": "x", "titulo": "a"}, {"id": "x", "titulo": "b"}]}},
+                 {"lista": {"botao": "Ver", "linhas": [{"id": "i" * 81, "titulo": "t"}]}},              # id > 80
+                 {}):
+        assert cliente.post("/interno/conteudo", headers=h, json={**base, **ruim}).status_code in (400, 422), ruim
+    assert len(enviados) == 1
+
+
 def test_formulario_de_marcar_sai_como_flow_da_meta(cliente, credencial, monkeypatch, db):
     """Dono (29/10/2026): "não tem como ele enviar a lista e eu clico só nas que quero?" — as opções vão no formulário
     publicado (`gs_escolha_multipla`), com as já marcadas pré-marcadas; o que volta é o índice."""
