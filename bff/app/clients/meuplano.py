@@ -855,6 +855,12 @@ class MeuPlanoClient:
         r = await self._req("POST", f"/api/v1/meuacesso/word/documentos/{doc_id}/relatorio-pdf", timeout=120.0)
         return r.json()
 
+    async def link_publico_relatorio(self, rid: int) -> dict[str, Any]:
+        """O link que abre SEM login só este relatório (a Central de lá); pedir de novo devolve o mesmo link com o PDF
+        de agora."""
+        r = await self._req("POST", f"/api/v1/meuacesso/word/relatorios/{rid}/link-publico", timeout=60.0)
+        return r.json()
+
     async def assistente_run(self, token: str | None, run_id: int) -> dict[str, Any]:
         return await self._get(f"/api/v1/meuacesso/assistant/runs/{run_id}", token=token)
 

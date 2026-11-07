@@ -911,7 +911,8 @@ a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente
   Google Maps e o do Waze; você só diz uma linha, sem os links.
 - Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →
   `relatorio_sem_cadastro`, com o contexto que a pessoa escreveu. Comentário sobre o relatório em revisão ("tira a foto
-  X", "melhora a conclusão") → `alterar_relatorio` com a OS dele; "manda o PDF" → `relatorio_da_os` escolha=word.
+  X", "melhora a conclusão") → `alterar_relatorio` com a OS dele; "manda o PDF" → `relatorio_da_os` escolha=word;
+  "manda o link (público) do relatório" → o mesmo, com link_publico=true.
 - Contato de usina (eletricista, prestador, quem atende ou socorre a usina, telefone de alguém) → `manutencao`: é do
   meuPlano, não é conta. Só vira CONTA quando o pedido fala em e-mail, sistema, acesso ou login, ou em a pessoa executar
   tarefas das OS no meuPlano (papel `prestador`).

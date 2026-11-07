@@ -63,6 +63,10 @@ class MP:
         self.pedidos.append(("publicar", doc_id))
         return {"id": 99, "titulo": "Relatório técnico — OS #1878"}
 
+    async def link_publico_relatorio(self, rid):
+        self.pedidos.append(("link", rid))
+        return {"url": f"https://app.meuplano.solar/publico/compartilhamento/tok{rid}"}
+
 
 SALVOS = [{"id": 7, "titulo": "Relatório para a diretoria", "atualizado_em": "2026-11-04T17:20:00", "criado_por": "Renan"},
           {"id": 5, "titulo": "Relatório técnico — OS #1878", "atualizado_em": "2026-11-03T12:00:00", "criado_por": "Renan"}]
@@ -432,6 +436,18 @@ async def test_manda_o_pdf_e_o_word_de_agora(monkeypatch, chat):
     r, _ = await _rodar(monkeypatch, mp, escolha="word")
     assert ("publicar", 71) in mp.pedidos and chat[-1]["arquivo"] == b"%PDF-99" and r["versao_do_word"] == 5
     assert not [p for p in mp.pedidos if p[0] == "gerar"]
+
+
+async def test_o_link_publico_vai_no_lugar_do_arquivo_com_qualquer_escolha(monkeypatch, chat):
+    """Dono, 07/11/2026: "quero opção de enviar o relatório com link público"."""
+    mp = MPDrive(docs_word=WORDS)
+    r, ctx = await _rodar(monkeypatch, mp, escolha="word", link_publico=True)
+    assert ("publicar", 71) in mp.pedidos and ("link", 99) in mp.pedidos and not chat and "link_publico" in r
+    assert ctx.rodape == ["🔗 Link público: https://app.meuplano.solar/publico/compartilhamento/tok99"]
+    assert not [p for p in mp.pedidos if p[0] == "pdf"]
+    mp = MP(SALVOS)
+    r, ctx = await _rodar(monkeypatch, mp, escolha="salvo", relatorio_id=5, link_publico=True)
+    assert ("link", 5) in mp.pedidos and not chat and ctx.rodape[0].endswith("/tok5")
 
 
 def test_as_ferramentas_novas_sao_de_quem_tem_o_meuplano():

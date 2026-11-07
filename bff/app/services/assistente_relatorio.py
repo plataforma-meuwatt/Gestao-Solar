@@ -51,13 +51,15 @@ FERRAMENTA = {"type": "function", "function": {
                     "fotos_de_apoio=true — entram nas informações do relatório da OS e a IA as analisa; com fotos, "
                     "vira uma ação que a pessoa confirma no botão Sim (as fotos sobem e o relatório é gerado depois "
                     "dele). Não é `anexar_fotos`, que é a ficha de uma tarefa. Só registrar informação, sem gerar, é "
-                    "`informacoes_do_relatorio`."),
+                    "`informacoes_do_relatorio`. link_publico=true quando a pessoa pede o LINK (público, para o cliente, "
+                    "sem login) em vez do arquivo: vale com qualquer escolha, e o sistema põe o link embaixo."),
     "parameters": {"type": "object", "properties": {
         "os": {"type": "integer", "description": "o número da OS"},
         "escolha": {"type": "string", "enum": ["auto", "salvo", "word", "novo"]},
         "relatorio_id": {"type": "integer", "description": "qual relatório salvo (o id da lista); vazio = o mais recente"},
         "instrucao": {"type": "string", "description": "como a pessoa quer o relatório NOVO (o prompt dela, inteiro); vazio = o salvo ou o padrão"},
-        "fotos_de_apoio": {"type": "boolean", "description": "as fotos que ela mandou por aqui vão às informações do relatório da OS antes de gerar"}},
+        "fotos_de_apoio": {"type": "boolean", "description": "as fotos que ela mandou por aqui vão às informações do relatório da OS antes de gerar"},
+        "link_publico": {"type": "boolean", "description": "manda o link público do relatório (abre sem login) em vez do PDF"}},
         "required": ["os"]}}}
 
 
@@ -91,6 +93,16 @@ async def _mandar(ctx, raw: bytes, titulo: str) -> dict:
     if ok:
         ctx.enviados.append(nome)
     return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro") or "o WhatsApp recusou"}
+
+
+async def _entregar(ctx, mp, r: dict, publico: bool) -> dict:
+    """O relatório `r` (da lista de lá) no chat: o PDF, ou (`publico`) o link que abre sem login, para o cliente — o
+    sistema o põe ao pé da resposta (dono, 07/11/2026: "quero opção de enviar o relatório com link público")."""
+    if publico:
+        link = (await mp.link_publico_relatorio(int(r["id"])))["url"]
+        ctx.rodape.append(f"🔗 Link público: {link}")
+        return {"link_publico": "vai embaixo, pelo sistema (abre sem login; pedir de novo atualiza o PDF no mesmo link)"}
+    return await _mandar(ctx, await mp.relatorio_pdf(r["id"]), r.get("titulo") or f"Relatório da OS #{r.get('dono_id')}")
 
 
 async def _esperar(mp, job: str, prazo_s: int | None = None) -> dict:
@@ -202,6 +214,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
     escolha = (a.get("escolha") or "auto").lower()
     if escolha == "auto" and ((a.get("instrucao") or "").strip() or a.get("fotos_de_apoio")):
         escolha = "novo"            # mandou o prompt ou imagens de apoio: é um relatório novo, não o salvo
+    publico = bool(a.get("link_publico"))
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao as e:
@@ -220,14 +233,13 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
             if doc is None:
                 return {"erro": f"A OS #{os_id} não tem relatório em Word. Ofereça gerar um novo agora."}
             r = await mp.publicar_relatorio(int(doc["id"]))
-            raw = await mp.relatorio_pdf(r["id"])
+            entrega = await _entregar(ctx, mp, r, publico)
         except httpx.HTTPStatusError as e:
-            return {"erro": _motivo(e, os_id, "exporta o relatório da OS em PDF (precisa poder editar a OS)")}
+            return {"erro": _motivo(e, os_id, "exporta e compartilha o relatório da OS (precisa poder editar a OS)")}
         except httpx.HTTPError:
             return {"erro": "O meuPlano não respondeu enquanto o PDF era feito. Nada foi enviado."}
         return {"os": os_id, "relatorio": "o Word atual em PDF", "titulo": r.get("titulo"),
-                "versao_do_word": doc.get("versao_atual"),
-                **(await _mandar(ctx, raw, r.get("titulo") or f"Relatório da OS #{os_id}"))}
+                "versao_do_word": doc.get("versao_atual"), **entrega}
     if escolha != "novo" and salvos:
         if escolha == "auto":
             return {"os": os_id, "relatorios_salvos": [
@@ -238,11 +250,13 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         pedido = str(a.get("relatorio_id") or "")
         r = next((x for x in salvos if pedido.isdigit() and x["id"] == int(pedido)), salvos[0])
         try:
-            raw = await mp.relatorio_pdf(r["id"])
+            entrega = await _entregar(ctx, mp, r, publico)
+        except httpx.HTTPStatusError as e:
+            return {"erro": _motivo(e, os_id, "compartilha o relatório da OS")}
         except httpx.HTTPError:
             return {"erro": "Não consegui baixar o relatório salvo no meuPlano agora. Nada foi enviado."}
         return {"os": os_id, "relatorio": "salvo", "titulo": r.get("titulo"),
-                "de": _de(r.get("atualizado_em") or r.get("created_at")), **(await _mandar(ctx, raw, r.get("titulo") or f"Relatório da OS #{os_id}"))}
+                "de": _de(r.get("atualizado_em") or r.get("created_at")), **entrega}
     if escolha == "salvo":
         return {"erro": f"A OS #{os_id} não tem relatório salvo. Ofereça gerar um novo agora."}
 
@@ -254,7 +268,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         if a.get("fotos_de_apoio") else {}
     try:
         rel = await _gerar(mp, os_id, instrucao)
-        raw = await mp.relatorio_pdf(rel["id"])
+        entrega = await _entregar(ctx, mp, rel, publico)
     except httpx.HTTPStatusError as e:
         return {"erro": _motivo(e, os_id, "gera relatório de OS (precisa poder editar a OS)")}
     except httpx.HTTPError:
@@ -264,7 +278,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         return {"erro": f"Não consegui gerar o relatório: {e}."}
     return {"os": os_id, "relatorio": "novo", "titulo": rel.get("titulo"), **apoio,
             "salvo_na_os": "o rascunho Word e o PDF ficaram na aba Relatórios da OS; o prompt, na conversa do relatório",
-            **(await _mandar(ctx, raw, rel.get("titulo") or f"Relatório da OS #{os_id}"))}
+            **entrega}
 
 
 # --------------------------------------------------------------------------- usina SEM CADASTRO e o ajuste do Word
@@ -398,7 +412,7 @@ async def relatorio_sem_cadastro(ctx, a: dict) -> dict:
                     f"já vieram ficam na OS; peça «gera o relatório da OS {os_id}» para tentar de novo.")
         return (f"✅ Relatório pronto, na OS #{os_id} «{nome}»: {e.get('link')}\n"
                 "As fotos da pasta ficaram nos anexos da OS, com a legenda da IA. Diga o que mudar (ou mude no Word e "
-                "salve), e peça o PDF quando estiver bom.")
+                "salve). Quando estiver bom, peça o PDF ou o link público para o cliente.")
 
     return helper.propor(ctx, resumo, PRAZO_INFO_S, executar, [], parte="bot_meuplano", confirmacao="sim")
 
