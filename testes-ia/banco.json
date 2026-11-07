@@ -167,5 +167,18 @@
 {"frase": "Tira a foto do marimbondo do relatório da OS 1900 e deixa a conclusão mais curta", "espera": ["alterar_relatorio"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
 {"frase": "Manda o pdf do relatório da OS 1900", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
 {"frase": "Manda o link público do relatório da OS 1995", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"},
-{"frase": "Gera um link do relatório da OS 1900 pra eu mandar pro cliente", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"}
+{"frase": "Gera um link do relatório da OS 1900 pra eu mandar pro cliente", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"},
+{"frase": "Qual a coordenada de tiete", "espera": ["local_da_usina"], "origem": "log #92"},
+{"frase": "Me de a coordenada da usina de pereiras", "espera": ["local_da_usina"], "origem": "log #265"},
+{"frase": "Me de a coordenada da usina de tiete", "espera": ["local_da_usina"], "origem": "log #312"},
+{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #139"},
+{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #148"},
+{"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles", "usina_helper"], "origem": "log #179"},
+{"frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?", "espera": ["usina_helper"], "origem": "log #223"},
+{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233"},
+{"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #315"},
+{"frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete", "espera": ["gravar_coordenada"], "origem": "log #319"},
+{"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #322"},
+{"frase": "Na tmOS 1840, abra as seguintes tarefas\nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #303"},
+{"frase": "Me de o relatorio de geracao de outubro de porto ferreira", "espera": ["relatorio_pdf", "geracao"], "origem": "log #305"}
 ]
