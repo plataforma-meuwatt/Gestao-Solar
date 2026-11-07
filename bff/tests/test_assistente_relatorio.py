@@ -23,6 +23,7 @@ class MP:
     def __init__(self, salvos=(), estados=("rodando", "pronto"), falha=None, falha_gerar=None):
         self.salvos, self.estados, self.falha, self.falha_gerar = list(salvos), list(estados), falha, falha_gerar
         self.pedidos = []
+        self.com_modelo = True              # o Word nasceu do template da empresa (o meuPlano decide)
 
     async def relatorios_da_os(self, os_id):
         self.pedidos.append(("lista", os_id))
@@ -61,15 +62,17 @@ class MP:
 
     async def publicar_relatorio(self, doc_id):
         self.pedidos.append(("publicar", doc_id))
-        return {"id": 99, "titulo": "Relatório técnico — OS #1878"}
+        return {"id": 99, "titulo": "Relatório técnico — OS #1878", "com_modelo": self.com_modelo}
 
     async def link_publico_relatorio(self, rid):
         self.pedidos.append(("link", rid))
         return {"url": f"https://app.meuplano.solar/publico/compartilhamento/tok{rid}"}
 
 
-SALVOS = [{"id": 7, "titulo": "Relatório para a diretoria", "atualizado_em": "2026-11-04T17:20:00", "criado_por": "Renan"},
-          {"id": 5, "titulo": "Relatório técnico — OS #1878", "atualizado_em": "2026-11-03T12:00:00", "criado_por": "Renan"}]
+SALVOS = [{"id": 7, "titulo": "Relatório para a diretoria", "atualizado_em": "2026-11-04T17:20:00", "criado_por": "Renan",
+           "com_modelo": True},
+          {"id": 5, "titulo": "Relatório técnico — OS #1878", "atualizado_em": "2026-11-03T12:00:00", "criado_por": "Renan",
+           "com_modelo": True}]
 
 
 @pytest.fixture
@@ -417,8 +420,8 @@ async def test_sem_cadastro_sem_a_usina_guarda_ou_com_o_relatorio_que_falha(monk
     assert msg.startswith("⚠️ A OS #1900") and "a IA caiu" in msg and "gera o relatório da OS 1900" in msg
 
 
-WORDS = [{"id": 70, "formato": "docx", "updated_at": "2026-11-07T10:00:00", "versao_atual": 2},
-         {"id": 71, "formato": "docx", "updated_at": "2026-11-07T12:30:00", "versao_atual": 5},
+WORDS = [{"id": 70, "formato": "docx", "updated_at": "2026-11-07T10:00:00", "versao_atual": 2, "com_modelo": True},
+         {"id": 71, "formato": "docx", "updated_at": "2026-11-07T12:30:00", "versao_atual": 5, "com_modelo": True},
          {"id": 72, "formato": "xlsx", "updated_at": "2026-11-07T13:00:00"}]
 
 
@@ -452,6 +455,28 @@ async def test_o_link_publico_vai_no_lugar_do_arquivo_com_qualquer_escolha(monke
     mp = MP(SALVOS)
     r, ctx = await _rodar(monkeypatch, mp, escolha="salvo", relatorio_id=5, link_publico=True)
     assert ("link", 5) in mp.pedidos and not chat and ctx.rodape[0].endswith("/tok5")
+
+
+async def test_nunca_manda_relatorio_sem_template(monkeypatch, chat):
+    """Dono, 07/11/2026: "esse demônio me enviou um PDF sem template. Regra: nunca enviar sem template" — o Word 233
+    da OS 1995 (de antes do template) foi alterado por último e saiu no lugar do 378."""
+    mp = MPDrive(docs_word=[{"id": 233, "formato": "docx", "updated_at": "2026-11-07T18:20:00", "versao_atual": 3,
+                             "com_modelo": False},
+                            {"id": 378, "formato": "docx", "updated_at": "2026-11-07T17:47:00", "versao_atual": 2,
+                             "com_modelo": True}])
+    r, _ = await _rodar(monkeypatch, mp, escolha="word")
+    assert ("publicar", 378) in mp.pedidos and ("publicar", 233) not in mp.pedidos and chat
+    chat.clear()
+    sem = [{**x, "com_modelo": False} for x in SALVOS]
+    r, _ = await _rodar(monkeypatch, MP(sem), escolha="salvo")
+    assert "template" in r["erro"] and not chat
+    r, _ = await _rodar(monkeypatch, MP(sem + [{**SALVOS[1], "id": 8}]), escolha="salvo", relatorio_id=7)
+    assert chat[-1]["arquivo"] == b"%PDF-8"                  # o pedido sem template cai no salvo com template
+    chat.clear()
+    mp = MP()
+    mp.com_modelo = False                                     # a empresa sem o modelo: o novo também sai sem
+    r, _ = await _rodar(monkeypatch, mp, escolha="novo")
+    assert "template" in r["erro"] and not chat
 
 
 def test_as_ferramentas_novas_sao_de_quem_tem_o_meuplano():

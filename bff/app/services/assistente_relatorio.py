@@ -95,9 +95,16 @@ async def _mandar(ctx, raw: bytes, titulo: str) -> dict:
     return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro") or "o WhatsApp recusou"}
 
 
+SEM_TEMPLATE = ("não mandei: ele foi feito sem o template da empresa (o Modelo dos documentos do meuPlano), e relatório "
+                "sem template nunca é enviado")
+
+
 async def _entregar(ctx, mp, r: dict, publico: bool) -> dict:
     """O relatório `r` (da lista de lá) no chat: o PDF, ou (`publico`) o link que abre sem login, para o cliente — o
-    sistema o põe ao pé da resposta (dono, 07/11/2026: "quero opção de enviar o relatório com link público")."""
+    sistema o põe ao pé da resposta (dono, 07/11/2026: "quero opção de enviar o relatório com link público"). Nunca
+    o que nasceu sem o template (dono, 07/11/2026: "nunca enviar sem template"; quem decide é o meuPlano)."""
+    if not r.get("com_modelo"):
+        return {"erro": f"O relatório «{r.get('titulo')}»: {SEM_TEMPLATE}."}
     if publico:
         link = (await mp.link_publico_relatorio(int(r["id"])))["url"]
         ctx.rodape.append(f"🔗 Link público: {link}")
@@ -129,8 +136,10 @@ async def _gerar(mp, os_id: int, instrucao: str) -> dict:
 
 
 async def _word_mais_recente(mp, os_id: int) -> dict | None:
-    """O rascunho Word mais recente da OS (o que está sendo ajustado), ou None."""
-    docs = [d for d in await mp.documentos_word_da_os(os_id) if (d.get("formato") or "docx") == "docx"]
+    """O rascunho Word mais recente da OS (o que está sendo ajustado) feito com o template da empresa, ou None: o Word
+    antigo, de antes do template, nunca é o escolhido (o PDF dele saiu para o dono em 07/11/2026)."""
+    docs = [d for d in await mp.documentos_word_da_os(os_id)
+            if (d.get("formato") or "docx") == "docx" and d.get("com_modelo")]
     return max(docs, key=lambda d: d.get("updated_at") or "", default=None)
 
 
@@ -196,6 +205,8 @@ def _propor_com_fotos(ctx, os_id: int, instrucao: str, lista: list[dict]) -> dic
         except RuntimeError as e:
             return f"⚠️ {entrou}, mas não consegui gerar o relatório: {e}.{motivos}"
         titulo = r.get("titulo") or f"Relatório da OS #{os_id}"
+        if not r.get("com_modelo"):
+            return f"⚠️ {entrou} e o relatório «{titulo}» foi gerado, mas {SEM_TEMPLATE}.{motivos}"
         env = await _mandar(SimpleNamespace(telefone=telefone, enviados=[]), raw, titulo)
         fim = "" if env["enviado_no_chat"] else f" Não consegui mandar o PDF aqui ({env['erro']}): ele está na aba Relatórios da OS."
         sinal = "✅" if env["enviado_no_chat"] and not falhas else "⚠️"
@@ -221,7 +232,7 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         return {"erro": f"Manutenção indisponível: {e}"}
     ctx.db.commit()                                       # solta a conexão: gerar leva até 2 min
     try:
-        salvos = await mp.relatorios_da_os(os_id)
+        salvos = [r for r in await mp.relatorios_da_os(os_id) if r.get("com_modelo")]   # sem template: nunca
     except httpx.HTTPStatusError as e:
         return {"erro": _motivo(e, os_id, "lê relatório de OS")}
     except httpx.HTTPError:
@@ -231,7 +242,8 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         try:
             doc = await _word_mais_recente(mp, os_id)
             if doc is None:
-                return {"erro": f"A OS #{os_id} não tem relatório em Word. Ofereça gerar um novo agora."}
+                return {"erro": f"A OS #{os_id} não tem relatório em Word feito com o template da empresa. Ofereça "
+                                "gerar um novo agora (sai com o template)."}
             r = await mp.publicar_relatorio(int(doc["id"]))
             entrega = await _entregar(ctx, mp, r, publico)
         except httpx.HTTPStatusError as e:
@@ -258,7 +270,8 @@ async def relatorio_da_os(ctx, a: dict) -> dict:
         return {"os": os_id, "relatorio": "salvo", "titulo": r.get("titulo"),
                 "de": _de(r.get("atualizado_em") or r.get("created_at")), **entrega}
     if escolha == "salvo":
-        return {"erro": f"A OS #{os_id} não tem relatório salvo. Ofereça gerar um novo agora."}
+        return {"erro": f"A OS #{os_id} não tem relatório salvo feito com o template da empresa. Ofereça gerar um novo "
+                        "agora."}
 
     instrucao = (a.get("instrucao") or "").strip()[:MAX_INSTRUCAO]
     lista = fotos.recebidas(ctx.telefone, sem_video=True) if a.get("fotos_de_apoio") else []
