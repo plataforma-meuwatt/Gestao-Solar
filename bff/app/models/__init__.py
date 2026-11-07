@@ -10,6 +10,7 @@ from app.models.billing import Invoice, Subscription
 from app.models.contato import ContatoPreferencia, ContatoUsina
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 from app.models.empresa import Empresa, MembroDaEmpresa
+from app.models.fluxo_paradas import FluxoParadas
 from app.models.integracao import EstadoTeste, Integracao, Produto
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.pessoa import Pessoa
@@ -28,6 +29,7 @@ __all__ = [
     "Empresa",
     "MembroDaEmpresa",
     "RegistroBot",
+    "FluxoParadas",
     "Pessoa",
     "User",
     "Perfil",
