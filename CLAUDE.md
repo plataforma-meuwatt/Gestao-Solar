@@ -779,7 +779,7 @@ fluxo lê o texto MASCARADO (sem a senha de atuação; o número de 6 a 8 dígit
 tentativa) e a cópia do gateway passa pelo `_guardado`, cortada no teto de 4.096 dele. Resumo
 por usina → cartão de cada parada → motivo › origem › causa › causa raiz (o `/breakdown-options`, o filho pelo
 `parent_ids` do pai; até 3 opções botões, até 10 LISTA interativa — tipo `lista` do gateway, o toque volta no `botao` —,
-mais o Flow `gs_escolha_uma`; uma opção só é escolhida sozinha e dita) → causa externa (padrão do motivo) → observação
+mais o Flow `gs_escolha_uma`; uma opção só é escolhida sozinha e dita) → "afeta a disponibilidade contratual?" (Passo 5 de 5, botões Sim, afeta / Não afeta = o "Causa externa" do meuWatt; a sugestão do motivo vai no texto — dono, 07/11: o «Causa externa? … Confere?» não dizia que era a disponibilidade) → observação
 → OS → confere → Confirmar. Grava com o token DA PESSOA em `POST /breakdowns/classify-bulk`, nos `live_id` da parada AO
 VIVO casada (nunca no id do detector), relendo o `/compare` antes para não sobrescrever o que o site classificou (sem
 conseguir reler, NÃO grava; e a usina tem de seguir no alcance da pessoa — a janela de segundos entre reler e gravar só

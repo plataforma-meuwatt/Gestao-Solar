@@ -603,7 +603,8 @@ def _cartao(estado: dict) -> list[dict]:
               *([f"O detector viu: {_detector(u)}"] if _detector(u) else []),
               ("Juntei os inversores que caíram ao mesmo tempo: a classificação vale para todos. "
                if len(u["membros"]) > 1 else "")
-              + "Vou te perguntar 4 coisas: o que aconteceu, onde, como e por quê. No fim você confere e confirma."]
+              + "Vou te perguntar 5 coisas: o que aconteceu, onde, como, por quê e se afeta a disponibilidade contratual. "
+              "No fim você confere e confirma."]
     if i == 0 and estado["placar"] == _PLACAR:
         linhas.append("Em qualquer pergunta: «voltar», «pular» (esta parada) ou «parar».")
     terceiro = ("sep", "Um por um") if len(u["membros"]) > 1 else ("pular", "Pular")
@@ -626,7 +627,7 @@ def _caminho(estado: dict, ate: int) -> str:
 def _nivel(estado: dict, k: int) -> list[dict]:
     campo = CAMPOS[k]
     ops = _opcoes(estado, k)
-    texto = f"{_caminho(estado, k)}*Passo {k + 1} de 4 · {NOME[campo]}:* {PERGUNTA[campo]}"
+    texto = f"{_caminho(estado, k)}*Passo {k + 1} de 5 · {NOME[campo]}:* {PERGUNTA[campo]}"
     if not ops and k == 0:
         return [_msg("O meuWatt não tem motivo de parada cadastrado: cadastre na tela de Paradas de lá.",
                      _ids(estado, [("pular", "Pular"), ("parar", "Parar")]))]
@@ -646,21 +647,27 @@ def _externa_padrao(estado: dict) -> bool:
 
 
 def _externa(estado: dict) -> list[dict]:
-    m = estado["esc"].get("motivo")
-    if _externa_padrao(estado):
-        return [_msg(f"*Causa externa?* Pelo motivo «{m}», esta parada é de causa EXTERNA: ela NÃO conta contra a "
-                     "disponibilidade do contrato. Confere?", _ids(estado, [("ext1", "Sim, externa"),
-                                                                            ("ext0", "Não, conta")]))]
-    return [_msg(f"*Causa externa?* Pelo motivo «{m}», esta parada CONTA na disponibilidade do contrato (não é causa "
-                 "externa). Confere?", _ids(estado, [("ext0", "Sim, conta"), ("ext1", "Não, é externa")]))]
+    """A pergunta da disponibilidade contratual, com as palavras do contrato (dono, 07/11/2026: "faltou perguntar se
+    afeta a disponibilidade contratual"; o «Causa externa? … Confere?» não dizia isso). No meuWatt é o "Causa externa"
+    (`is_external_cause`): NÃO afeta = causa externa. Os botões ficam sempre na mesma ordem; a sugestão do motivo
+    (`isExternalMotivo` do site) vai no texto."""
+    sugere = "*não afeta* (causa externa)" if _externa_padrao(estado) else "*afeta*"
+    return [_msg("*Passo 5 de 5 · Disponibilidade contratual:* esta parada afeta a disponibilidade do contrato?\n"
+                 "• *Sim, afeta*: conta contra a disponibilidade (a perda é da operação).\n"
+                 "• *Não afeta*: causa externa (concessionária, clima etc.), fica fora do cálculo.\n"
+                 f"Pelo motivo «{estado['esc'].get('motivo')}», o meuWatt sugere: {sugere}.",
+                 _ids(estado, [("ext0", "Sim, afeta"), ("ext1", "Não afeta")]))]
+
+
+def _disponibilidade(externa: bool) -> str:
+    return "não afeta (causa externa)" if externa else "afeta"
 
 
 def _conferir(estado: dict) -> list[dict]:
     u, esc = estado["fila"][estado["i"]], estado["esc"]
     linhas = ["📋 *Confere antes de gravar*", _cabecalho(estado, u),
               *[f"• {NO_RESUMO[c]}: {esc[c]}" for c in CAMPOS],
-              "• Causa externa: " + ("sim, NÃO conta na disponibilidade" if esc["externa"]
-                                     else "não, conta na disponibilidade"),
+              "• Disponibilidade contratual: " + _disponibilidade(esc["externa"]),
               f"• Observação: {esc.get('obs') or 'nenhuma'}", f"• OS: {esc.get('os') or 'nenhuma'}",
               f"Grava no meuWatt, em {len(u['live_ids'])} parada(s) ao vivo."]
     return [_msg("\n".join(linhas), _ids(estado, [("ok", "Confirmar"), ("corr", "Corrigir"), ("canc", "Cancelar")]))]
@@ -682,7 +689,7 @@ def _pergunta_outras(estado: dict) -> list[dict]:
               *([f"• e mais {len(outras) - 5}"] if len(outras) > 5 else []),
               "Aplicar a mesma classificação a elas, inclusive a observação e a OS?",
               "• " + " › ".join(esc[c] for c in CAMPOS),
-              "• Causa externa: " + ("sim" if esc["externa"] else "não"),
+              "• Disponibilidade contratual: " + _disponibilidade(esc["externa"]),
               f"• Observação: {esc.get('obs') or 'nenhuma'}", f"• OS: {esc.get('os') or 'nenhuma'}"]
     return [_msg("\n".join(linhas), _ids(estado, [("apl", f"Aplicar às {len(outras)}"), ("uma", "Uma a uma")]))]
 
@@ -989,16 +996,11 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
         if t in {"um por um", "separar", "separado", "separa", "um a um"}:
             return "sep"
         return None
-    if etapa == "externa":
-        padrao = _externa_padrao(estado)
-        if t in {"sim", "confere", "isso", "ok"}:
-            return "ext1" if padrao else "ext0"
-        if t in {"nao", "n"}:
-            return "ext0" if padrao else "ext1"
-        if t in {"externa", "e externa", "causa externa"}:
-            return "ext1"
-        if t in {"nao e externa", "interna", "nao externa"}:
+    if etapa == "externa":                                 # "afeta a disponibilidade contratual?"
+        if t in {"sim", "s", "afeta", "sim afeta", "conta", "interna", "nao e externa", "nao externa"}:
             return "ext0"
+        if t in {"nao", "n", "nao afeta", "nao conta", "externa", "e externa", "causa externa"}:
+            return "ext1"
         return None
     if etapa in ("conferir", "naoparada_conferir"):
         if "?" not in cru and t in _CONFIRMA:

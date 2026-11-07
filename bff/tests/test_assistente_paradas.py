@@ -262,17 +262,17 @@ async def _ate_o_motivo(c):
     await c.diz("classificar paradas")
     await c.toca("Classificar agora")
     assert "*Parada 1 de 3*" in c.texto and "INV-01, INV-02 e INV-03 (Skid 1)" in c.texto
-    assert "Juntei os inversores que caíram ao mesmo tempo" in c.texto and "4 coisas" in c.texto
+    assert "Juntei os inversores que caíram ao mesmo tempo" in c.texto and "5 coisas" in c.texto
     await c.toca("Classificar")
 
 
 async def test_a_cascata_filtra_pelo_pai(db, dono, mw):
     c = Conversa(db, dono)
     await _ate_o_motivo(c)
-    assert "*Passo 1 de 4 · Motivo:* o que aconteceu?" in c.texto
+    assert "*Passo 1 de 5 · Motivo:* o que aconteceu?" in c.texto
     assert list(c.opcoes()) == ["Falta de rede", "Falha em equipamento"]
     await c.toca("Falha em equipamento")
-    assert "*Passo 2 de 4 · Origem:* onde aconteceu?" in c.texto
+    assert "*Passo 2 de 5 · Origem:* onde aconteceu?" in c.texto
     assert list(c.opcoes()) == ["Inversor", "Transformador"]                  # nunca a Concessionária (pai 1)
 
 
@@ -281,7 +281,7 @@ async def test_uma_opcao_so_escolhe_sozinha_e_diz(db, dono, mw):
     await _ate_o_motivo(c)
     await c.toca("Falta de rede")
     assert "✔️ Origem: Concessionária (a única opção para «Falta de rede»)." in c.texto
-    assert "*Passo 3 de 4 · Causa:*" in c.texto and list(c.opcoes()) == ["Desligamento programado", "Queda de tensão"]
+    assert "*Passo 3 de 5 · Causa:*" in c.texto and list(c.opcoes()) == ["Desligamento programado", "Queda de tensão"]
 
 
 async def test_confirmar_grava_nos_live_ids_e_oferece_as_outras(db, dono, mw):
@@ -289,9 +289,11 @@ async def test_confirmar_grava_nos_live_ids_e_oferece_as_outras(db, dono, mw):
     await _ate_o_motivo(c)
     await c.toca("Falta de rede")
     await c.diz("DESLIGAMENTO programado")                                   # digitado, com caixa trocada
-    assert "✔️ Causa raiz: Manutenção da rede" in c.texto and "*Causa externa?*" in c.texto
-    assert "NÃO conta contra a disponibilidade" in c.texto                   # o motivo é externo no cadastro
-    await c.toca("Sim, externa")
+    assert "✔️ Causa raiz: Manutenção da rede" in c.texto
+    assert "*Passo 5 de 5 · Disponibilidade contratual:* esta parada afeta a disponibilidade do contrato?" in c.texto
+    assert "o meuWatt sugere: *não afeta* (causa externa)" in c.texto       # o motivo é externo no cadastro
+    assert list(c.opcoes()) == ["Sim, afeta", "Não afeta"]                    # sempre na mesma ordem
+    await c.toca("Não afeta")
     await c.diz("a rede caiu e religou sozinha")
     await c.toca("Sem OS")
     assert "📋 *Confere antes de gravar*" in c.texto and "• Observação: a rede caiu e religou sozinha" in c.texto
@@ -318,16 +320,16 @@ async def test_corrigir_e_cancelar_no_confere(db, dono, mw):
         await c.toca(passo)
     assert "✔️ Causa: IGBT queimado" in c.texto and set(c.opcoes()) == {"Descarga atmosférica", "Desgaste"}
     await c.diz("2")                                                          # o número da opção
-    assert "CONTA na disponibilidade" in c.texto
+    assert "o meuWatt sugere: *afeta*." in c.texto
     await c.diz("sim")
     await c.toca("Sem observação")
     await c.diz("OS 1638")
-    assert "• OS: OS 1638" in c.texto and "• Causa externa: não, conta na disponibilidade" in c.texto
+    assert "• OS: OS 1638" in c.texto and "• Disponibilidade contratual: afeta" in c.texto
     await c.toca("Corrigir")
-    assert "Vamos refazer esta parada." in c.texto and "*Passo 1 de 4 · Motivo:*" in c.texto
+    assert "Vamos refazer esta parada." in c.texto and "*Passo 1 de 5 · Motivo:*" in c.texto
     await c.toca("Falta de rede")
     await c.toca("Queda de tensão")
-    await c.toca("Sim, externa")
+    await c.toca("Não afeta")
     await c.toca("Sem observação")
     await c.toca("Sem OS")
     await c.toca("Cancelar")
@@ -340,7 +342,7 @@ async def test_voltar_pular_e_parar(db, dono, mw):
     await _ate_o_motivo(c)
     await c.toca("Falha em equipamento")
     await c.diz("voltar")
-    assert "*Passo 1 de 4 · Motivo:*" in c.texto and "(Falha em equipamento)" not in c.texto
+    assert "*Passo 1 de 5 · Motivo:*" in c.texto and "(Falha em equipamento)" not in c.texto
     await c.toca("Voltar") if "Voltar" in c.opcoes() else await c.diz("voltar")
     assert "*Parada 1 de 3*" in c.texto
     await c.diz("voltar")
@@ -363,7 +365,7 @@ async def test_um_por_um_grava_so_no_inversor_da_vez(db, dono, mw):
     await c.toca("Um por um")
     assert "INV-01 (Skid 1)" in c.texto and "INV-02" not in c.texto
     await c.toca("Classificar")
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS", "Confirmar"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS", "Confirmar"):
         await c.toca(passo)
     assert [ids for ids, _ in mw.gravadas] == [[5001]]
     assert "Gravado no meuWatt: INV-01 (Skid 1), UFV Pereiras (1 parada(s) ao vivo)" in c.texto
@@ -375,7 +377,7 @@ async def test_resposta_digitada_que_nao_casa(db, dono, mw):
     await _ate_o_motivo(c)
     assert await c.diz("xyz") is None                                         # não é desta pergunta: vai à IA
     await c.diz("falha")                                                      # pedaço: casa só uma
-    assert "*Passo 2 de 4 · Origem:*" in c.texto
+    assert "*Passo 2 de 5 · Origem:*" in c.texto
     await c.diz("voltar")
     assert await c.diz("fa") is None                                          # curto demais para pedaço
     # pergunta de outro assunto, com a classificação aberta: vai à IA (o fluxo continua esperando)
@@ -406,7 +408,7 @@ async def test_403_do_meuwatt_explicado_e_encerra(db, dono, mw):
     mw.recusa = _recusa_403()
     c = Conversa(db, dono)
     await _ate_o_motivo(c)
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS", "Confirmar"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS", "Confirmar"):
         await c.toca(passo)
     assert c.texto.startswith("❌ Nada foi gravado: o meuWatt recusou («Seu papel nesta usina não altera")
     assert "administrador do sistema e o operador da usina" in c.texto and "⏸️ Parei aqui" in c.texto
@@ -417,7 +419,7 @@ async def test_gravacao_parcial_diz_quantas_ficaram_de_fora(db, dono, mw):
     mw.so_grava = 2
     c = Conversa(db, dono)
     await _ate_o_motivo(c)
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS", "Confirmar"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS", "Confirmar"):
         await c.toca(passo)
     assert "⚠️ Gravei em 2 de 3" in c.texto
 
@@ -425,7 +427,7 @@ async def test_gravacao_parcial_diz_quantas_ficaram_de_fora(db, dono, mw):
 async def test_ja_classificada_no_site_nao_e_sobrescrita(db, dono, mw):
     c = Conversa(db, dono)
     await _ate_o_motivo(c)
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS"):
         await c.toca(passo)
     mw.pares[9378] = {**PEREIRAS_PARES, "pairs": [{**p, "live_classified_at": _hoje(18, 0)}
                                                   for p in PEREIRAS_PARES["pairs"]]}
@@ -466,7 +468,7 @@ async def test_mais_de_3_opcoes_vao_em_lista_e_mais_de_10_no_formulario(db, dono
     c.ultima, _ = await par.tratar(db, dono, TEL, {"tipo": "interactive", "texto": None, "wamid": "w",
                                                    "midia": {"formulario": {"escolhido": "12",
                                                                             "flow_token": form["token"]}}}, "")
-    assert "*Passo 3 de 4 · Causa:*" in c.texto and "(Falta de rede › Concessionária)" in c.texto
+    assert "*Passo 3 de 5 · Causa:*" in c.texto and "(Falta de rede › Concessionária)" in c.texto
 
 
 # --------------------------------------------------------------------------------------------- dentro do bot
@@ -541,22 +543,32 @@ async def _ate_o_confere(c, *passos):
         await (c.toca(passo) if passo in c.opcoes() else c.diz(passo))
 
 
-async def test_1_digitar_o_titulo_do_botao_da_causa_externa_nao_inverte(db, dono, mw):
-    """O texto alternativo do bot manda digitar «Não, conta»: com motivo externo, isso é NÃO externa (conta na
-    disponibilidade). As palavras soltas ("não" + "conta") gravavam o contrário."""
+async def test_1_digitar_o_titulo_do_botao_da_disponibilidade_nao_inverte(db, dono, mw):
+    """A pergunta é "afeta a disponibilidade contratual?": «Sim, afeta» (ou «sim») = conta = NÃO é causa externa, e
+    «Não afeta» (ou «não») = causa externa — seja qual for a sugestão do motivo."""
     c = Conversa(db, dono)
     await _ate_o_confere(c, "Falta de rede", "Queda de tensão")
-    await c.diz("Não, conta")                                                 # o motivo é externo no cadastro
+    await c.diz("Sim, afeta")                                                 # o motivo é externo no cadastro
     for passo in ("Sem observação", "Sem OS", "Confirmar"):
         await c.toca(passo)
     assert mw.gravadas[-1][1]["is_external_cause"] is False
     await c.diz("parar")
     c2 = Conversa(db, dono)
     await _ate_o_confere(c2, "Falha em equipamento", "Inversor", "Desgaste")
-    await c2.diz("Não, é externa")                                            # o motivo NÃO é externo
+    await c2.diz("Não afeta")                                                 # o motivo NÃO é externo
     for passo in ("Sem observação", "Sem OS", "Confirmar"):
         await c2.toca(passo)
     assert mw.gravadas[-1][1]["is_external_cause"] is True
+    # «sim»/«não» respondem à PERGUNTA (afeta?), não à sugestão do motivo: antes, «sim» confirmava a sugestão
+    for motivo, resposta, externa in ((("Falta de rede", "Queda de tensão"), "sim", False),
+                                      (("Falha em equipamento", "Inversor", "Desgaste"), "não", True)):
+        await c2.diz("parar")
+        c3 = Conversa(db, dono)
+        await _ate_o_confere(c3, *motivo)
+        await c3.diz(resposta)
+        for passo in ("Sem observação", "Sem OS", "Confirmar"):
+            await c3.toca(passo)
+        assert mw.gravadas[-1][1]["is_external_cause"] is externa, (motivo, resposta)
 
 
 class PeloBot:
@@ -601,7 +613,7 @@ async def test_2_a_senha_de_atuacao_na_observacao_nao_vai_ao_meuwatt_nem_ao_gate
     db.commit()
     bot = PeloBot(db, monkeypatch)
     await bot.manda("classificar paradas")
-    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa"):
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Não afeta"):
         await bot.toca(passo)
     await bot.manda("religou depois que digitei 482913 no painel")
     await bot.toca("Sem OS")
@@ -610,7 +622,7 @@ async def test_2_a_senha_de_atuacao_na_observacao_nao_vai_ao_meuwatt_nem_ao_gate
     assert not [e for e in bot.enviados if "482913" in (e.get("texto") or "") + (e.get("guardar") or "")]
     # o que a pessoa escreveu e não é a senha de atuação chega a ela inteiro, e a cópia guardada sai sem o número
     await bot.toca("Uma a uma")
-    for passo in ("Classificar", "Falta de rede", "Queda de tensão", "Sim, externa"):
+    for passo in ("Classificar", "Falta de rede", "Queda de tensão", "Não afeta"):
         await bot.toca(passo)
     await bot.manda("a senha do portão é 4321")
     await bot.toca("Sem OS")
@@ -621,7 +633,7 @@ async def test_2_a_senha_de_atuacao_na_observacao_nao_vai_ao_meuwatt_nem_ao_gate
 async def test_3_sem_reler_o_meuwatt_nao_grava(db, dono, mw):
     """O /compare não respondeu na releitura: gravar por cima do que o site classificou é pior que pedir de novo."""
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS")
     mw.compare_falha = True
     await c.toca("Confirmar")
     assert mw.gravadas == [] and c.texto.startswith("❌ Não consegui conferir no meuWatt")
@@ -666,7 +678,7 @@ async def test_5_com_a_classificacao_aberta_a_conversa_vai_a_ia(db, dono, mw):
     await c.toca("Classificar")
     for conversa in ("bom dia", "obrigado", "geração de hoje", "e Tietê?"):
         assert await c.diz(conversa) is None, conversa
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta"):
         await c.toca(passo)
     assert await c.diz("qual a geração de Pereiras hoje?") is None            # pergunta não é observação
     await c.toca("Sem observação")
@@ -711,7 +723,7 @@ async def test_6_pergunta_e_data_incerta_nao_comecam(db, dono, mw):
 
 async def test_7_aplicar_as_outras_mostra_a_observacao_e_a_os(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta")
     await c.diz("trip do religador 52")
     await c.diz("OS 1638")
     await c.toca("Confirmar")
@@ -721,7 +733,7 @@ async def test_7_aplicar_as_outras_mostra_a_observacao_e_a_os(db, dono, mw):
 
 async def test_8_pular_depois_de_gravar_e_uma_a_uma(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS",
                          "Confirmar")
     await c.diz("pular")                                                      # a gravada não vira pulada
     assert "*Parada 2 de 3*" in c.texto
@@ -731,7 +743,7 @@ async def test_8_pular_depois_de_gravar_e_uma_a_uma(db, dono, mw):
 
 async def test_9_usina_que_saiu_do_alcance_nao_e_gravada(db, dono, mw, monkeypatch):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS")
     monkeypatch.setattr(ger, "usinas_do_bot", lambda db, user: [PlantLink(mw_plant_slug="tiete", nome="UFV Tietê")])
     await c.toca("Confirmar")
     assert mw.gravadas == [] and "UFV Pereiras não está mais liberada para você" in c.texto
@@ -768,7 +780,7 @@ async def test_a_contar_as_pendentes_tem_o_mesmo_teto(db, dono, mw):
 
 async def test_b_observacao_em_duas_mensagens_nao_vira_os(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta")
     await c.diz("a rede caiu")
     await c.diz("e voltou sozinha 10 min depois")
     assert c.texto.startswith("Juntei à observação: «a rede caiu e voltou sozinha 10 min depois».")
@@ -778,7 +790,7 @@ async def test_b_observacao_em_duas_mensagens_nao_vira_os(db, dono, mw):
 
 async def test_c_nada_gravado_nao_sai_como_feito(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS",
                          "Confirmar")
     mw.pares[9378] = {**PEREIRAS_PARES, "pairs": [{**p, "live_classified_at": _hoje(18, 0)}
                                                   for p in PEREIRAS_PARES["pairs"]]}
@@ -838,7 +850,7 @@ async def test_r1_numero_que_nao_e_a_senha_e_a_os_e_nao_conta_erro(db, dono, mw,
     db.commit()
     bot = PeloBot(db, monkeypatch)
     await bot.manda("classificar paradas")
-    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Não afeta",
                   "Sem observação"):
         await bot.toca(passo)
     await bot.manda("482913")                                                 # a senha certa: não é a OS
@@ -857,7 +869,7 @@ async def test_r2_observacao_que_comeca_com_palavra_de_pedido_e_observacao(db, d
               "Faz 2 dias que o disjuntor desarma", "Me avisaram que foi raio", "manda o relatório de outubro")
     for frase in frases:
         c = Conversa(db, dono)
-        await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+        await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta")
         assert await c.diz(frase) is not None, frase
         await c.toca("Sem OS")
         assert f"• Observação: {frase}" in c.texto
@@ -868,7 +880,7 @@ async def test_r3_na_pergunta_da_os_o_numero_e_a_os_e_concordancia_nao_vira_obse
     """Depois de «a rede caiu», dentro dos 60 s: «sim» e «ok» não são o resto da observação; o número é a OS («a OS é a
     1638», «nº 1638»; «1638 e 1640» guarda as duas — o campo do meuWatt é texto, e a pessoa confere)."""
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta")
     await c.diz("a rede caiu")
     await c.diz("sim")                                                        # «tem OS?» — sim: qual?
     assert c.texto.startswith("Qual o número da OS?")
@@ -877,7 +889,7 @@ async def test_r3_na_pergunta_da_os_o_numero_e_a_os_e_concordancia_nao_vira_obse
     assert "• Observação: a rede caiu\n" in c.texto and "• OS: 1638" in c.texto
     for frase, os_ in (("nº 1638", "1638"), ("1638 e 1640", "1638, 1640"), ("OS 1638", "OS 1638")):
         await c.toca("Corrigir")
-        for passo in ("Falta de rede", "Queda de tensão", "Sim, externa"):
+        for passo in ("Falta de rede", "Queda de tensão", "Não afeta"):
             await c.toca(passo)
         await c.diz("trip no religador")
         await c.diz(frase)
@@ -891,8 +903,8 @@ async def test_r4_titulo_opcao_parar_e_sim_nao_valem_as_12h(db, dono, mw):
     await _ate_o_motivo(c)
     _envelhece(db)
     await c.diz("Falta de rede")                                              # opção exata, 31 min depois
-    assert "*Passo 3 de 4 · Causa:*" in c.texto
-    for passo in ("Queda de tensão", "Sim, externa"):
+    assert "*Passo 3 de 5 · Causa:*" in c.texto
+    for passo in ("Queda de tensão", "Não afeta"):
         await c.toca(passo)
     _envelhece(db)
     assert await c.diz("a rede caiu") is None                                 # texto livre velho: conversa
@@ -903,7 +915,7 @@ async def test_r4_titulo_opcao_parar_e_sim_nao_valem_as_12h(db, dono, mw):
     await c.diz("sim")                                                        # o sim das outras aplica
     assert len(mw.gravadas) == 2
     await c.diz("sim")                                                        # o sim do cartão classifica
-    assert "*Passo 1 de 4 · Motivo:*" in c.texto
+    assert "*Passo 1 de 5 · Motivo:*" in c.texto
     _envelhece(db, 60 * 11)
     await c.diz("parar")
     assert c.texto.startswith("⏸️ Parei aqui") and db.query(FluxoParadas).count() == 0
@@ -911,11 +923,11 @@ async def test_r4_titulo_opcao_parar_e_sim_nao_valem_as_12h(db, dono, mw):
 
 async def test_r4_nao_no_confere_e_nas_outras(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS")
     await c.diz("não")                                                        # o não do Confere cancela
     assert mw.gravadas == [] and "Cancelado: nada foi gravado" in c.texto and "*Parada 2 de 3*" in c.texto
     await c.diz("parar")
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS",
                          "Confirmar")
     assert "Há mais 1 parada(s)" in c.texto
     await c.diz("não")                                                        # o não das outras é «Uma a uma»
@@ -951,7 +963,7 @@ async def test_copia_do_gateway_no_teto_dele(monkeypatch):
 # ============================================================================================= 3ª revisão
 async def _ate_o_confere_pelo_bot(bot):
     await bot.manda("classificar paradas")
-    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Não afeta",
                   "Sem observação", "Sem OS"):
         await bot.toca(passo)
     assert "📋 *Confere antes de gravar*" in bot.enviados[-1]["texto"]
@@ -1017,7 +1029,7 @@ async def test_2_quase_senha_com_acao_de_equipamento_vencida_nao_vira_os(db, don
     db.commit()
     bot = PeloBot(db, monkeypatch)
     await bot.manda("classificar paradas")
-    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Não afeta",
                   "Sem observação"):
         await bot.toca(passo)
 
@@ -1044,7 +1056,7 @@ def test_resumo_so_escolhe_usina_pelo_nome_exato():
 
 async def test_horario_logo_depois_da_observacao_nao_e_os(db, dono, mw):
     c = Conversa(db, dono)
-    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Não afeta")
     await c.diz("a rede caiu")
     await c.diz("10:42")
     assert "OS" not in c.texto.split("\n")[0] and c.texto.startswith("Juntei à observação: «a rede caiu 10:42».")
@@ -1076,7 +1088,7 @@ async def test_4_aviso_do_motor_depois_da_pergunta_tira_a_validade_do_sim_solto(
     assert len(mw.gravadas) == 1                                              # não aplicou às outras
     await bot.toca("Uma a uma")
     await bot.toca("Classificar")
-    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS"):
+    for passo in ("Falta de rede", "Queda de tensão", "Não afeta", "Sem observação", "Sem OS"):
         await bot.toca(passo)
     _aviso_do_motor(db, datetime.now(UTC) + timedelta(seconds=1), user_id=dono.id, chave="parada:tiete:2")
     await bot.manda("ok")                                                     # o «ok» é para o aviso
