@@ -1628,9 +1628,15 @@ async def _atender(evento: dict) -> None:
         # O fluxo lê o texto MASCARADO (a senha de atuação escrita no meio da observação não vai ao meuWatt) e a
         # mensagem que é só a senha nunca é resposta dele. Só o toque VÁLIDO (o fluxo andou) derruba a ação esperando:
         # botão antigo não confirma nem cancela nada (avaliações 13 e 14).
+        # O número de 6 a 8 dígitos que NÃO é a senha (conferido) é resposta do fluxo (a OS «202611»): tratá-lo como
+        # tentativa contava erro de senha e bloqueava as ações. A senha certa, ou o número que nem foi conferido
+        # (bloqueio), nunca vai ao fluxo.
         esperando = helper.PENDENTES.get(user.id)
-        fluxo = await par.tratar(db, user, telefone, evento, (seguro or "").removeprefix("🎙️ "),
-                                 pendente=(esperando is not None and monotonic() <= esperando.expira) or analise.pura)
+        numero_livre = analise.pura and not analise.acertou and not analise.bloqueada
+        fluxo = await par.tratar(db, user, telefone, evento,
+                                 texto if numero_livre else (seguro or "").removeprefix("🎙️ "),
+                                 pendente=(esperando is not None and monotonic() <= esperando.expira)
+                                 or (analise.pura and not numero_livre))
         if fluxo is not None:
             saidas, avancou = fluxo
             derrubada = helper.desarmar(user.id, seguro or "[botão]") if avancou else None

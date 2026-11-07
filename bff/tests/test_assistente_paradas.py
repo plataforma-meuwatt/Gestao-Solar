@@ -668,22 +668,19 @@ async def test_5_com_a_classificacao_aberta_a_conversa_vai_a_ia(db, dono, mw):
     for passo in ("Falta de rede", "Queda de tensão", "Sim, externa"):
         await c.toca(passo)
     assert await c.diz("qual a geração de Pereiras hoje?") is None            # pergunta não é observação
-    assert await c.diz("manda o relatório de outubro") is None
     await c.toca("Sem observação")
     assert await c.diz("religou às 11h") is None                              # não é número de OS
     await c.diz("classificar as paradas de hoje")                             # nem isso: é começar de novo
     assert c.texto.startswith("(Comecei de novo") and "Paradas a classificar · hoje" in c.texto
-    # meia hora depois da última pergunta, o texto já não é resposta dela (os toques seguem valendo)
-    await c.toca("Classificar agora")
-    await c.toca("Classificar")
+
+
+def _envelhece(db, minutos=31):
+    """A última pergunta do fluxo foi há `minutos`."""
     f = db.query(FluxoParadas).one()
     estado = par.json.loads(f.estado)
-    estado["em"] = (datetime.now(UTC) - timedelta(minutes=31)).isoformat()
+    estado["em"] = (datetime.now(UTC) - timedelta(minutes=minutos)).isoformat()
     f.estado = par.json.dumps(estado)
     db.commit()
-    assert await c.diz("Falta de rede") is None
-    await c.toca("Falta de rede")
-    assert "*Passo 3 de 4 · Causa:*" in c.texto
 
 
 async def test_5_sem_o_meuwatt_so_responde_o_que_e_da_classificacao(db, dono, mw):
@@ -827,3 +824,124 @@ async def test_e_acao_armada_junto_com_a_classificacao_nao_fica_esperando(db, do
     r = await assistente.responder(ctx, [{"role": "user", "content": "crie a OS e classifique as paradas"}])
     assert ctx.proposta is None and dono.id not in helper.PENDENTES
     assert "Paradas a classificar" in r and "A ação «Criar a OS em Pereiras» não ficou esperando o seu Sim" in r
+
+
+# ============================================================================================= 2ª revisão (regressões)
+async def test_r1_numero_que_nao_e_a_senha_e_a_os_e_nao_conta_erro(db, dono, mw, monkeypatch):
+    """Quem tem senha de atuação e digita «202611» na pergunta da OS: o número não é a senha (conferido), então é a OS —
+    tratá-lo como tentativa contava erro de senha («Não há ação esperando senha») e, em 5, bloqueava as ações. A senha
+    CERTA nunca vira OS."""
+    from app.core.security import gerar_hash_senha
+
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    bot = PeloBot(db, monkeypatch)
+    await bot.manda("classificar paradas")
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+                  "Sem observação"):
+        await bot.toca(passo)
+    await bot.manda("482913")                                                 # a senha certa: não é a OS
+    assert "• OS:" not in bot.enviados[-1]["texto"]
+    await bot.manda("202611")
+    assert "• OS: 202611" in bot.enviados[-1]["texto"]
+    assert not [e for e in bot.enviados if helper.NADA_ESPERANDO[:30] in (e.get("texto") or "")][1:]
+    assert dono.id not in helper._ERROS
+    await bot.toca("Confirmar")
+    assert mw.gravadas[-1][1]["ordem_servico"] == "202611"
+
+
+async def test_r2_observacao_que_comeca_com_palavra_de_pedido_e_observacao(db, dono, mw):
+    """Só a pergunta («?») ou o pedido de começar a classificar desviam o texto da observação — nunca a 1ª palavra."""
+    frases = ("Quando a equipe chegou o inversor já tinha religado", "Como sempre, a concessionária desligou",
+              "Faz 2 dias que o disjuntor desarma", "Me avisaram que foi raio", "manda o relatório de outubro")
+    for frase in frases:
+        c = Conversa(db, dono)
+        await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+        assert await c.diz(frase) is not None, frase
+        await c.toca("Sem OS")
+        assert f"• Observação: {frase}" in c.texto
+        await c.diz("parar")
+
+
+async def test_r3_na_pergunta_da_os_o_numero_e_a_os_e_concordancia_nao_vira_observacao(db, dono, mw):
+    """Depois de «a rede caiu», dentro dos 60 s: «sim» e «ok» não são o resto da observação; o número é a OS («a OS é a
+    1638», «nº 1638»; «1638 e 1640» guarda as duas — o campo do meuWatt é texto, e a pessoa confere)."""
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await c.diz("a rede caiu")
+    await c.diz("sim")                                                        # «tem OS?» — sim: qual?
+    assert c.texto.startswith("Qual o número da OS?")
+    assert await c.diz("ok") is None                                          # concordância não é observação
+    await c.diz("a OS é a 1638")
+    assert "• Observação: a rede caiu\n" in c.texto and "• OS: 1638" in c.texto
+    for frase, os_ in (("nº 1638", "1638"), ("1638 e 1640", "1638, 1640"), ("OS 1638", "OS 1638")):
+        await c.toca("Corrigir")
+        for passo in ("Falta de rede", "Queda de tensão", "Sim, externa"):
+            await c.toca(passo)
+        await c.diz("trip no religador")
+        await c.diz(frase)
+        assert "• Observação: trip no religador\n" in c.texto and f"• OS: {os_}" in c.texto, frase
+
+
+async def test_r4_titulo_opcao_parar_e_sim_nao_valem_as_12h(db, dono, mw):
+    """A janela de 30 min é só do TEXTO LIVRE. O título do botão, a opção exata, «parar» e o sim/não da pergunta da vez
+    valem enquanto o fluxo vale — senão a resposta certa ia à IA sem contexto e o fluxo não parava por texto."""
+    c = Conversa(db, dono)
+    await _ate_o_motivo(c)
+    _envelhece(db)
+    await c.diz("Falta de rede")                                              # opção exata, 31 min depois
+    assert "*Passo 3 de 4 · Causa:*" in c.texto
+    for passo in ("Queda de tensão", "Sim, externa"):
+        await c.toca(passo)
+    _envelhece(db)
+    assert await c.diz("a rede caiu") is None                                 # texto livre velho: conversa
+    await c.diz("Sem observação")                                             # o título do botão vale
+    await c.diz("Sem OS")
+    await c.diz("sim")                                                        # o sim do Confere grava
+    assert len(mw.gravadas) == 1 and "Há mais 1 parada(s)" in c.texto
+    await c.diz("sim")                                                        # o sim das outras aplica
+    assert len(mw.gravadas) == 2
+    await c.diz("sim")                                                        # o sim do cartão classifica
+    assert "*Passo 1 de 4 · Motivo:*" in c.texto
+    _envelhece(db, 60 * 11)
+    await c.diz("parar")
+    assert c.texto.startswith("⏸️ Parei aqui") and db.query(FluxoParadas).count() == 0
+
+
+async def test_r4_nao_no_confere_e_nas_outras(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    await c.diz("não")                                                        # o não do Confere cancela
+    assert mw.gravadas == [] and "Cancelado: nada foi gravado" in c.texto and "*Parada 2 de 3*" in c.texto
+    await c.diz("parar")
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+                         "Confirmar")
+    assert "Há mais 1 parada(s)" in c.texto
+    await c.diz("não")                                                        # o não das outras é «Uma a uma»
+    assert len(mw.gravadas) == 1 and "*Parada 2 de 3*" in c.texto
+
+
+async def test_usina_no_resumo_so_pelo_nome_inteiro(db, dono, mw):
+    c = Conversa(db, dono)
+    await c.diz("classificar paradas")
+    assert await c.diz("pere") is None                                        # pedaço não escolhe usina
+    await c.diz("pereiras")
+    assert "*Parada 1 de 2*" in c.texto and "UFV Pereiras" in c.texto
+
+
+async def test_copia_do_gateway_no_teto_dele(monkeypatch):
+    """A máscara troca «123» por «••••»: num texto perto de 4.096 a cópia passava do teto do gateway (422) e a mensagem
+    inteira caía."""
+    chamadas = []
+
+    async def _enviar(**k):
+        chamadas.append(k)
+        return {"ok": True}
+
+    monkeypatch.setattr(par.whatsapp, "enviar_conteudo", _enviar)
+    texto = "• senha 123 " * 340
+    await par.enviar(TEL, [{"texto": texto, "lista": {"botao": "Ver", "secao": "x", "linhas": []}}],
+                     guardar=lambda t: assistente._guardado(t, []))
+    await par.enviar(TEL, [{"texto": texto}], guardar=lambda t: assistente._guardado(t, []))
+    assert chamadas and all(len(c.get("guardar") or "") <= 4096 for c in chamadas)
+    assert all("123" not in (c.get("guardar") or "") for c in chamadas)

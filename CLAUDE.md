@@ -768,9 +768,12 @@ O passo a passo é do SISTEMA, não da IA: só o pedido CLARO começa sem ela ("
 paradas de ontem/da semana", "paradas de hoje", "o que caiu hoje", com a usina exata no fim); pergunta ("quantas faltam
 classificar?", "a de ontem já foi classificada?") e data que não se lê com certeza ("anteontem", "do dia 03/11", "mês
 passado") vão à IA, que chama `classificar_paradas` ou `paradas_a_classificar` (só conta) com as datas. Com a
-classificação aberta, o texto que não é resposta da pergunta de agora, ou que chega mais de 30 min depois dela, vai à
-IA (os toques valem as 12 h); observação que é pedido e OS que não é número também. O fluxo lê o texto MASCARADO (sem a
-senha de atuação) e a cópia do gateway passa pelo `_guardado`, como toda resposta do bot. Resumo
+classificação aberta, o texto que não é resposta da pergunta de agora vai à IA; o título do botão, a opção exata,
+«parar» e o sim/não da pergunta da vez valem as 12 h, e o TEXTO LIVRE (observação, OS, motivo) só até 30 min depois da
+pergunta. Na observação só desvia a pergunta («?») ou o pedido de começar a classificar, nunca a 1ª palavra; na OS vale
+o número dito numa frase («a OS é a 1638», «nº 1638»; «1638 e 1640» guarda as duas) e sim/ok não viram observação. O
+fluxo lê o texto MASCARADO (sem a senha de atuação; o número de 6 a 8 dígitos que NÃO é a senha é resposta, não
+tentativa) e a cópia do gateway passa pelo `_guardado`, cortada no teto de 4.096 dele. Resumo
 por usina → cartão de cada parada → motivo › origem › causa › causa raiz (o `/breakdown-options`, o filho pelo
 `parent_ids` do pai; até 3 opções botões, até 10 LISTA interativa — tipo `lista` do gateway, o toque volta no `botao` —,
 mais o Flow `gs_escolha_uma`; uma opção só é escolhida sozinha e dita) → causa externa (padrão do motivo) → observação

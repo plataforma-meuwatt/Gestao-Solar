@@ -445,13 +445,20 @@ def texto_de(saidas: list[dict]) -> str:
 Guardar = Callable[[str], "str | None"]
 
 
+def _guardada(guardar: Guardar | None, texto: str) -> str | None:
+    """O que a cópia do gateway guarda no lugar do texto, no teto dele (4.096): a máscara troca «123» por «••••» e o
+    texto no limite passaria — o gateway recusaria a mensagem inteira."""
+    g = guardar(texto) if guardar else None
+    return g[:4096] if g else None
+
+
 async def _so_texto(telefone: str, texto: str, guardar: Guardar | None = None) -> bool:
     ok = True
     for i in range(0, len(texto), 3900):
         pedaco = texto[i:i + 3900]
         try:
             r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=pedaco,
-                                               guardar=guardar(pedaco) if guardar else None)
+                                               guardar=_guardada(guardar, pedaco))
         except whatsapp.GatewayIndisponivel:
             r = None
         ok = ok and bool((r or {}).get("ok"))
@@ -460,7 +467,7 @@ async def _so_texto(telefone: str, texto: str, guardar: Guardar | None = None) -
 
 async def _uma(telefone: str, s: dict, texto: str, guardar: Guardar | None) -> bool:
     r = None
-    g = (lambda x: guardar(x) if guardar else None)        # noqa: E731
+    g = (lambda x: _guardada(guardar, x))                  # noqa: E731
     try:
         if s.get("botoes") or s.get("formulario"):
             limite = 1024
@@ -845,23 +852,35 @@ async def comecar(ctx: ger.Contexto, ini: date, fim: date, usina: str | None = N
 _PARAR = {"parar", "para", "pare", "sair", "encerrar", "encerra", "chega", "terminar", "fim", "parar tudo"}
 _PULAR = {"pular", "pula", "pule", "proxima", "pular essa", "pula essa", "pular esta", "proxima parada"}
 _VOLTAR = {"voltar", "volta", "volte", "anterior", "voltar um passo"}
-_CONFIRMA = {"confirmar", "confirmo", "confirma", "pode gravar", "grava", "gravar"}
+_CONFIRMA = {"confirmar", "confirmo", "confirma", "pode gravar", "grava", "gravar", "sim", "ok", "pode", "isso"}
 _NENHUMA = {"nao", "n", "sem", "nenhuma", "nenhum", "nada", "nao tem", "sem observacao", "sem obs", "sem os",
             "sem ordem", "sem ordem de servico"}
-#: O começo de mensagem que é PEDIDO ou conversa, não a resposta de texto livre (observação, motivo): vai à IA.
-_PEDIDO = {"qual", "quais", "quanto", "quanta", "quantos", "quantas", "como", "onde", "quando", "quem", "me", "manda",
-           "mande", "envia", "envie", "mostra", "mostre", "gera", "gere", "lista", "liste", "abre", "abra", "cria",
-           "crie", "faz", "faca", "quero", "preciso", "consegue", "classificar", "classifica", "classifique"}
-_CONVERSA = {"oi", "ola", "bom dia", "boa tarde", "boa noite", "obrigado", "obrigada", "valeu", "ok", "blz", "beleza"}
-#: A OS digitada: o número (ou código com número), com ou sem "OS", "nº" ou "#" na frente.
-_OS = re.compile(r"(?i)^(?:(?:os|o\.s\.?|ordem(?:\s+de\s+servi[cç]o)?)\s*(?:n[º°o]?\.?\s*)?[:#-]?\s*)?#?\s*"
-                 r"[a-z]{0,4}-?\d[\w\-/.]{0,20}$")
+#: O que é concordância e nunca é o RESTO de uma observação.
+_CURTAS = {"sim", "nao", "n", "ok", "isso", "pode", "beleza", "blz", "valeu", "obrigado", "obrigada", "certo"}
+#: A OS digitada inteira como código (com ou sem "OS" na frente): "OS 1638", "os-2026-001", "#1638".
+_OS = re.compile(r"(?i)^(?:(?:os|o\.s\.?|ordem(?:\s+de\s+servi[cç]o)?)\s*[:#-]?\s*)?#?\s*[a-z]{0,4}-?\d[\w\-/.]{0,20}$")
+#: As palavras que acompanham o número da OS numa frase: "a OS é a 1638", "nº 1638", "1638 e 1640".
+_PALAVRAS_DE_OS = {"a", "o", "os", "e", "n", "no", "numero", "num", "ordem", "de", "servico", "da", "do", "eh", "s"}
+#: As ações de TEXTO LIVRE (observação, OS, motivo de não ser parada): só valem até `TEXTO_VALE` depois da pergunta.
+_LIVRES = ("txt", "obs+", "os:")
 
 
-def _parece_pedido(cru: str, t: str) -> bool:
+def _desvia(cru: str) -> bool:
+    """O texto livre que NÃO é a resposta: uma pergunta ("?") ou o pedido explícito de começar a classificar. Nunca pela
+    1ª palavra — "Quando a equipe chegou o inversor já tinha religado" é observação."""
+    return "?" in cru or _pedido_de_comecar(cru) is not None
+
+
+def _numeros_de_os(cru: str, t: str) -> str | None:
+    """A OS que o texto diz: o código inteiro ("OS 1638", "os-2026-001") ou os números de uma frase que só fala da OS
+    ("a OS é a 1638", "nº 1638"; "1638 e 1640" guarda as duas, o campo do meuWatt é texto e a pessoa confere)."""
+    if _OS.match(cru.strip()):
+        return cru.strip()[:60]
     palavras = t.split()
-    return ("?" in cru or not palavras or palavras[0] in _PEDIDO or t in _CONVERSA or t.startswith("o que ")
-            or _pedido_de_comecar(cru) is not None)
+    numeros = [p for p in palavras if p.isdigit()]
+    if numeros and all(p.isdigit() or p in _PALAVRAS_DE_OS for p in palavras):
+        return ", ".join(numeros)[:60]
+    return None
 
 
 def _texto_vale(estado: dict) -> bool:
@@ -870,8 +889,9 @@ def _texto_vale(estado: dict) -> bool:
 
 
 def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
-    """O texto digitado como a ação da etapa de agora, ou `None`: não é resposta desta pergunta (vai à IA). Nada de
-    "não entendi" — com a classificação aberta a pessoa continua conversando com o bot."""
+    """O texto digitado como a ação da etapa de agora, ou `None`: não é resposta desta pergunta (vai à IA). O título de
+    um botão, a opção exata, «parar» e o sim/não da pergunta da vez valem enquanto o fluxo vale; o texto LIVRE
+    (`_LIVRES`) só até `TEXTO_VALE` depois da pergunta (quem confere é `tratar`)."""
     etapa = estado["etapa"]
     if t in estado.get("titulos", {}):                     # o título de um botão desta pergunta, digitado
         acao = estado["titulos"][t]
@@ -883,14 +903,16 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
     if t in _PULAR:
         return {"resumo": None, "usina": None, "outras": "uma"}.get(etapa, "pular")   # "outras": a de agora já foi
     if etapa == "obs":
-        return "obs0" if t in _NENHUMA else (None if _parece_pedido(cru, t) else "txt")
+        return "obs0" if t in _NENHUMA else (None if _desvia(cru) else "txt")
     if etapa == "os":
         if t in _NENHUMA:
             return "os0"
-        if _OS.match(cru.strip()):
-            return "txt"
+        if t == "sim":
+            return "os?"                                   # "tem OS?" — "sim": qual o número?
+        if (os_ := _numeros_de_os(cru, t)) is not None:
+            return "os:" + os_
         junta = _dt(estado.get("obs_em"))                  # a 2ª mensagem da observação, logo depois da 1ª
-        if junta and datetime.now(UTC) - junta <= JUNTA_OBS and not _parece_pedido(cru, t):
+        if junta and datetime.now(UTC) - junta <= JUNTA_OBS and t not in _CURTAS and not _desvia(cru):
             return "obs+"
         return None
     if etapa in ("naoparada", "naoparada_nota"):
@@ -901,7 +923,7 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
                 return "np:s"
             if t in {"outro", "outro motivo"}:
                 return "np:o"
-        return None if _parece_pedido(cru, t) else "txt"
+        return None if _desvia(cru) or t in _CURTAS else "txt"
     if etapa == "resumo":
         if t in {"classificar", "classificar agora", "comecar", "todas"}:
             return "todas"
@@ -910,13 +932,13 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
         if t in {"so uma usina", "uma usina", "so uma"}:
             return "uma"
         slugs = list(dict.fromkeys(u["usina"] for u in estado["todas"]))
-        achada = _casar([estado["usinas"][x]["nome"] for x in slugs], t)
+        achada = _casar([estado["usinas"][x]["nome"] for x in slugs], t, pedaco=False)   # "boa" não é Boa Esperança
         if len(achada) == 1:
             estado["oferecidas"] = slugs
             return f"o{achada[0]}"
         return None
     if etapa == "cartao":
-        if t in {"classificar", "classifica"}:
+        if t in {"classificar", "classifica", "sim"}:
             return "cl"
         if t in {"nao foi parada", "nao foi", "nao e parada", "nao parou", "nao era parada"}:
             return "np"
@@ -925,7 +947,7 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
         return None
     if etapa == "externa":
         padrao = _externa_padrao(estado)
-        if t in {"sim", "confere", "isso"}:
+        if t in {"sim", "confere", "isso", "ok"}:
             return "ext1" if padrao else "ext0"
         if t in {"nao", "n"}:
             return "ext0" if padrao else "ext1"
@@ -939,13 +961,13 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
             return "ok"
         if t in {"corrigir", "corrige", "refazer"} and etapa == "conferir":
             return "corr"
-        if t in {"cancelar", "cancela"}:
+        if t in {"cancelar", "cancela", "nao", "n"}:
             return "canc"
         return None
     if etapa == "outras":
-        if "?" not in cru and t.startswith("aplica"):
+        if "?" not in cru and (t.startswith("aplica") or t in {"sim", "pode", "ok"}):
             return "apl"
-        if t in {"uma a uma", "uma por uma", "um a um"}:
+        if t in {"uma a uma", "uma por uma", "um a um", "nao", "n"}:
             return "uma"
         return None
     if etapa == "usina" or (etapa.startswith("n") and etapa[1:].isdigit()):
@@ -953,7 +975,7 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
                    [o["label"] for o in _opcoes(estado, int(etapa[1:]))])
         if etapa == "usina":
             rotulos = [estado["usinas"][x]["nome"] for x in rotulos]
-        achadas = _casar(rotulos, t)
+        achadas = _casar(rotulos, t, pedaco=etapa != "usina")
         if len(achadas) == 1:
             return f"o{achadas[0]}"
         if len(achadas) > 1:
@@ -962,9 +984,9 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
     return None
 
 
-def _casar(rotulos: list[str], t: str) -> list[int]:
-    """Os índices das opções que o texto nomeia: o nome exato (sem acento nem caixa), o número dela, ou um pedaço que
-    só ela tem."""
+def _casar(rotulos: list[str], t: str, pedaco: bool = True) -> list[int]:
+    """Os índices das opções que o texto nomeia: o nome exato (sem acento nem caixa), o número dela, ou (`pedaco`) um
+    pedaço que só ela tem. Sem `pedaco` (usina), o pedaço tem de ser o COMEÇO do nome, em palavras inteiras."""
     if not t:
         return []
     nomes = [_n(r) for r in rotulos]
@@ -973,6 +995,8 @@ def _casar(rotulos: list[str], t: str) -> list[int]:
         return exatas[:1]
     if t.isdigit() and 1 <= int(t) <= len(rotulos):
         return [int(t) - 1]
+    if not pedaco:
+        return [i for i, n in enumerate(nomes) if len(t) >= 3 and re.match(rf"{re.escape(ger._norm(t))}\b", ger._norm(n))]
     return [i for i, n in enumerate(nomes) if len(t) >= 3 and t in n]
 
 
@@ -1269,6 +1293,12 @@ async def _passo(ctx: ger.Contexto, estado: dict, acao: str) -> list[dict]:
         estado["esc"]["externa"] = acao == "ext1"
         _ir(estado, "obs")
         return _render(estado)
+    elif etapa == "os" and acao.startswith("os:"):
+        estado["esc"]["os"] = acao[3:] or None
+        _ir(estado, "conferir")
+        return _render(estado)
+    elif etapa == "os" and acao == "os?":
+        return _antes(_render(estado), "Qual o número da OS?")
     elif etapa == "os" and acao == "obs+":
         mais = (estado.pop("_cru", "") or "").strip()
         estado["esc"]["obs"] = f"{estado['esc'].get('obs') or ''} {mais}".strip()[:500]
@@ -1349,11 +1379,11 @@ async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pen
             return None
         pedido = _pedido_de_comecar(texto)
         if pedido is None:
-            if estado is None or not _texto_vale(estado):
+            if estado is None:
                 return None
             acao = _acao_do_texto(estado, t, texto)
-            if acao is None:
-                return None
+            if acao is None or (acao.startswith(_LIVRES) and not _texto_vale(estado)):
+                return None                                # texto livre horas depois da pergunta: é conversa
     if evento.get("wamid"):
         try:
             await whatsapp.digitando(evento["wamid"])      # "digitando…": ler as usinas e gravar levam segundos
