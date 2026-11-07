@@ -488,6 +488,14 @@ Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tu
 suspensa pesquisável ou controle segmentado. Nunca uma fileira de botõezinhos pill.
 Exceções: tags informativas read-only e botões de ação.
 
+### ⛔ Texto NUNCA é cortado (regra do Renan, 07/11/2026)
+
+Vale para PDF, app, portal, painel e bot: texto quebra linha ou reduz a fonte, **nunca trunca**. Nada de sair da
+página ou da tela, de ficar escondido atrás de uma borda, de reticências no lugar do resto (`numberOfLines` sem como
+ver o resto, `text-overflow: ellipsis`), nem de fatiar a string para caber. O caso: a capa do relatório da OS 1995
+cortava o "Documento:" em "proteção 51/5" na borda da folha (no meuPlano, `modelos._caber` garante que tabela
+nenhuma passa da margem). No bot, uma lista longa demais vira "… e mais N, veja no meuPlano", nunca uma frase cortada.
+
 ### Números em pt-BR
 
 Ponto de milhar, vírgula decimal (`13.800`, `29,87`). Use os helpers de
