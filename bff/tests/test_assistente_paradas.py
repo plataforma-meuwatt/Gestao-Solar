@@ -1088,3 +1088,27 @@ async def test_4_aviso_do_motor_depois_da_pergunta_tira_a_validade_do_sim_solto(
     _aviso_do_motor(db, datetime.now(UTC) + timedelta(seconds=1), user_id=dono.id, chave="parada:tiete:3")
     await bot.manda("sim")
     assert mw.desclassificadas == []
+
+
+def test_texto_nunca_e_cortado():
+    """Regra do dono (07/11/2026): texto nunca é cortado — nada de reticências no lugar do resto. A Meta limita o
+    título da linha (24) e o do formulário (30): o título é o começo em palavras inteiras e a opção INTEIRA vai na
+    descrição; o que não cabe na descrição da lista (72) vai ao formulário (descrição até 300)."""
+    estado = {"tok": "t"}
+    curta, media = "Falta de rede", "Desligamento da concessionária por manutenção programada"
+    longa = "Atuação da proteção do religador da concessionária na subestação de distribuição, sem aviso prévio"
+    for rotulos in ([curta, media, "Outro", "Mais um"], [curta, longa, "Outro", "Mais um"],
+                    [f"{media} {i}" for i in range(12)]):
+        m = par._escolha(estado, "Motivo?", rotulos, "Motivo")
+        tudo = repr(m)
+        assert "…" not in tudo
+        if "lista" in m:
+            for r, li in zip(rotulos, m["lista"]["linhas"]):
+                assert len(li["titulo"]) <= 24 and r.startswith(li["titulo"]) and (li["descricao"] or li["titulo"]) == r
+        else:
+            f = m["formulario"]
+            assert f["opcoes"] == rotulos and all(len(t) <= 30 and r.startswith(t) for r, t in zip(rotulos, f["rotulos"]))
+    assert "lista" in par._escolha(estado, "?", [curta, media, "Outro", "Mais um"], "Motivo")
+    assert "formulario" in par._escolha(estado, "?", [curta, longa, "Outro", "Mais um"], "Motivo")
+    u = {"membros": [{"inversor": f"INV {i}"} for i in range(1, 9)]}
+    assert par._inversores(u) == "8 inversores (INV 1, INV 2, INV 3 e mais 5)"

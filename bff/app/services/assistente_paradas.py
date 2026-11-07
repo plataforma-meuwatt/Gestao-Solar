@@ -55,6 +55,8 @@ PREFIXO = "pc:"
 MAX_DIAS = 31
 LOTE = 500                                                 # o teto do classify-bulk
 CAMPOS = ("motivo", "origem", "causa", "causa_raiz")
+#: O `note` do suppress do meuWatt (`alerts/schemas.py`, max_length=2000).
+NOTA_MAX = 2000
 NOME = {"motivo": "Motivo", "origem": "Origem", "causa": "Causa", "causa_raiz": "Causa raiz"}
 PERGUNTA = {"motivo": "o que aconteceu?", "origem": "onde aconteceu?", "causa": "como aconteceu?",
             "causa_raiz": "por que aconteceu?"}
@@ -361,7 +363,7 @@ def _e(itens: list[str]) -> str:
 def _inversores(u: dict) -> str:
     nomes = [m["inversor"] for m in u["membros"]]
     skids = sorted({m["skid"] for m in u["membros"] if m.get("skid")})
-    txt = _e(nomes) if len(nomes) <= 6 else f"{len(nomes)} inversores ({', '.join(nomes[:3])}…)"
+    txt = _e(nomes) if len(nomes) <= 6 else f"{len(nomes)} inversores ({', '.join(nomes[:3])} e mais {len(nomes) - 3})"
     return txt + (f" ({', '.join(skids)})" if skids else "")
 
 
@@ -413,8 +415,17 @@ def _ids(estado: dict, botoes: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(f"{PREFIXO}{estado['tok']}:{a}", t) for a, t in botoes]
 
 
-def _corta(s: str, n: int) -> str:
-    return s if len(s) <= n else s[:n - 1] + "…"
+def _titulo(s: str, n: int) -> str:
+    """O começo de `s` que cabe nos `n` do título da Meta, em palavras inteiras e sem reticências: quem chama põe o
+    texto INTEIRO na descrição da linha (regra do dono, 07/11/2026: texto nunca é cortado)."""
+    if len(s) <= n:
+        return s
+    t = ""
+    for p in s.split():
+        if len(t) + len(p) + bool(t) > n:
+            break
+        t = f"{t} {p}".strip()
+    return t or s[:n]                                      # uma palavra só maior que o título: a descrição a traz inteira
 
 
 def _escolha(estado: dict, texto: str, rotulos: list[str], secao: str) -> dict:
@@ -425,14 +436,14 @@ def _escolha(estado: dict, texto: str, rotulos: list[str], secao: str) -> dict:
                    else "São muitas opções: escreva o nome da que quer.")
     if len(rotulos) <= 3 and all(len(r) <= 20 for r in rotulos):
         return _msg(texto, _ids(estado, [(f"o{i}", r) for i, r in enumerate(rotulos)]), alternativa=alternativa)
-    if len(rotulos) <= 10:
-        linhas = [{"id": f"{PREFIXO}{estado['tok']}:o{i}", "titulo": _corta(r, 24),
-                   "descricao": _corta(r, 72) if len(r) > 24 else ""} for i, r in enumerate(rotulos)]
-        return _msg(texto, lista={"botao": "Ver opções", "secao": _corta(secao, 24), "linhas": linhas},
+    if len(rotulos) <= 10 and all(len(r) <= 72 for r in rotulos):      # a descrição (72) traz a opção inteira
+        linhas = [{"id": f"{PREFIXO}{estado['tok']}:o{i}", "titulo": _titulo(r, 24),
+                   "descricao": r if len(r) > 24 else ""} for i, r in enumerate(rotulos)]
+        return _msg(texto, lista={"botao": "Ver opções", "secao": _titulo(secao, 24), "linhas": linhas},
                     alternativa=alternativa)
     estado["form"] = secrets.token_urlsafe(12)
     return _msg(texto, formulario={"token": estado["form"], "titulo": secao[:300], "uma": True,
-                                   "opcoes": rotulos[:200], "rotulos": [_corta(r, 30) for r in rotulos[:200]],
+                                   "opcoes": rotulos[:200], "rotulos": [_titulo(r, 30) for r in rotulos[:200]],
                                    "marcados": []},
                 alternativa=alternativa)
 
@@ -883,11 +894,11 @@ def _numeros_de_os(cru: str, t: str) -> str | None:
     if _HORA.search(cru):
         return None
     if _OS.match(cru.strip()):
-        return cru.strip()[:60]
+        return cru.strip()
     palavras = t.split()
     numeros = [p for p in palavras if p.isdigit()]
     if numeros and all(p.isdigit() or p in _PALAVRAS_DE_OS for p in palavras):
-        return ", ".join(numeros)[:60]
+        return ", ".join(numeros)
     return None
 
 
@@ -1335,11 +1346,11 @@ async def _passo(ctx: ger.Contexto, estado: dict, acao: str) -> list[dict]:
         return _antes(_render(estado), "Qual o número da OS?")
     elif etapa == "os" and acao == "obs+":
         mais = (estado.pop("_cru", "") or "").strip()
-        estado["esc"]["obs"] = f"{estado['esc'].get('obs') or ''} {mais}".strip()[:500]
+        estado["esc"]["obs"] = f"{estado['esc'].get('obs') or ''} {mais}".strip()
         estado["obs_em"] = datetime.now(UTC).isoformat()
         return _antes(_render(estado), f"Juntei à observação: «{estado['esc']['obs']}».")
     elif etapa in ("obs", "os") and acao in ("obs0", "os0", "txt"):
-        valor = None if acao != "txt" else (estado.pop("_cru", "") or "").strip()[:500 if etapa == "obs" else 60]
+        valor = None if acao != "txt" else (estado.pop("_cru", "") or "").strip()
         estado["esc"][etapa] = valor or None
         if etapa == "obs":
             estado["obs_em"] = datetime.now(UTC).isoformat() if valor else None
@@ -1365,7 +1376,10 @@ async def _passo(ctx: ger.Contexto, estado: dict, acao: str) -> list[dict]:
             _ir(estado, "naoparada_nota")
             return _render(estado)
         if acao in notas or acao == "txt":
-            nota = notas.get(acao) or (estado.pop("_cru", "") or "").strip()[:500]
+            nota = notas.get(acao) or (estado.pop("_cru", "") or "").strip()
+            if len(nota) > NOTA_MAX:                       # o meuWatt recusa: pedir a nota mais curta, nunca cortar
+                return _antes(_render(estado), "A nota passa de 2.000 letras, o limite do meuWatt. Mande uma mais "
+                                               "curta.")
             if nota:
                 estado["esc"]["nota"] = nota
                 _ir(estado, "naoparada_conferir")
