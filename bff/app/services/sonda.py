@@ -154,6 +154,23 @@ MEUWATT: list[Rota] = [
              "rows[].loss_method",
          ),
          exige_itens=True),
+    # A classificação de paradas pelo bot do WhatsApp (`assistente_paradas`): o par detector × ao vivo diz o que
+    # ainda falta classificar e em QUAL parada ao vivo gravar (`live_id`); a cascata vem do vocabulário de lá.
+    Rota("mw.shadow_compare", "GET", "/shadow-breakdowns/compare",
+         "O que falta classificar e onde gravar, na classificação de paradas pelo bot do WhatsApp",
+         essencial=False,
+         params={"plantId": "{mw_plant_id}", "start": "{semana_passada}", "end": "{hoje}"},
+         campos_exigidos=("pairs", "live_suppressed_rows")),
+    Rota("mw.breakdown_options", "GET", "/breakdown-options",
+         "As opções da cascata (motivo, origem, causa, causa raiz) na classificação de paradas pelo bot",
+         essencial=False,
+         campos_exigidos=("motivo[].id", "motivo[].label", "motivo[].is_external", "origem[].parent_ids")),
+    Rota("mw.classificar_paradas", "POST", "/breakdowns/classify-bulk",
+         "Grava a classificação das paradas que a pessoa confirmou pelo bot do WhatsApp", essencial=False,
+         sonda=False, nao_sondada_porque="Escreve: a sonda só lê. Roda só com o Confirmar de quem classifica."),
+    Rota("mw.desclassificar_parada", "POST", "/plants/{slug}/alerts/{alert_id}/suppress",
+         "\"Não foi parada\" pelo bot do WhatsApp (desclassifica a parada ao vivo)", essencial=False,
+         sonda=False, nao_sondada_porque="Escreve: a sonda só lê. Roda só com o Confirmar de quem classifica."),
     # As duas seções do fechamento do mês (`/energia/usinas/{id}/relatorio-mes`): as
     # considerações escritas pela operação e a timeline curada das paradas. Mês sem
     # curadoria responde 200 com `show_in_report=false` — estado normal, não erro: a seção

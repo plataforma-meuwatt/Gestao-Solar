@@ -148,6 +148,12 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/grandezas/series").respond(200, json={"timestamps": [], "series": []})
     # A fila do detector de paradas — a forma medida em Porto Ferreira em 24/10/2026.
     mock.get(f"{BASE}/shadow-breakdowns/queue").respond(200, json=FILA_COMO_HOJE)
+    # A classificação de paradas pelo bot: o par detector × ao vivo e a cascata de opções.
+    mock.get(f"{BASE}/shadow-breakdowns/compare").respond(200, json={"pairs": [], "live_suppressed_rows": []})
+    mock.get(f"{BASE}/breakdown-options").respond(200, json={
+        "motivo": [{"id": 1, "label": "Falta de rede", "parent_ids": [], "is_external": True}],
+        "origem": [{"id": 10, "label": "Concessionária", "parent_ids": [1], "is_external": False}],
+        "causa": [], "causa_raiz": []})
     # MICRO: a forma medida em 28/09/2026 — envelope `{plants, errors}` no catálogo e lista
     # na raiz nos alertas (vazia é o normal: nenhuma micro usina parada).
     mock.get(f"{BASE}/micro/plants").respond(
@@ -196,6 +202,9 @@ async def test_sem_slug_as_dependentes_ficam_puladas_e_nao_falhadas(db, conectad
     # Nem as empresas de O&M: elas existem antes de qualquer usina, e é justamente isso
     # que uma conta nova enxerga primeiro.
     respx.mock.get(f"{BASE}/enterprises").respond(200, json=[])
+    # Nem a cascata de classificação de paradas: é o vocabulário da plataforma, não de uma usina.
+    respx.mock.get(f"{BASE}/breakdown-options").respond(200, json={"motivo": [], "origem": [], "causa": [],
+                                                                     "causa_raiz": []})
 
     v = await sonda.varrer(db, Produto.MEUWATT, EMPRESA)
 

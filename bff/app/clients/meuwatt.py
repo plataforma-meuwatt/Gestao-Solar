@@ -561,6 +561,30 @@ class MeuWattClient:
         (`api/v1/paradas.py`) e do bot; o coletor antigo (`breakdowns/range`) não serve."""
         return await self._get("/shadow-breakdowns/queue", plantId=plant_id, start=inicio, end=fim)
 
+    # ------------------------- classificar paradas pelo bot (o token é o DA PESSOA; o meuWatt aplica o papel dela)
+
+    async def paradas_casadas(self, plant_id: int, inicio: str, fim: str) -> dict[str, Any]:
+        """O detector × as paradas AO VIVO da mesma janela (`pairs[]`: `shadow_id` ↔ `live_id`, a classificação já feita
+        em `live_classified_at`/`live_motivo`…, o agrupamento manual; `live_suppressed_rows[]`: as desclassificadas).
+        A classificação grava na parada ao vivo (`live_id`), nunca no id do detector, que muda a cada rodada."""
+        return await self._get("/shadow-breakdowns/compare", plantId=plant_id, start=inicio, end=fim)
+
+    async def opcoes_de_parada(self) -> dict[str, Any]:
+        """A cascata de classificação: `{motivo, origem, causa, causa_raiz}`, cada uma `[{id, label, parent_ids,
+        is_external}]`. O filho vale para o pai cujo id está em `parent_ids`."""
+        return await self._get("/breakdown-options")
+
+    async def classificar_paradas(self, ids: list[int], classificacao: dict[str, Any]) -> dict[str, Any]:
+        """Grava a MESMA classificação nas paradas ao vivo `ids` (até 500): `{updated}`. Paradas de usina onde o
+        papel da pessoa não opera ficam de fora EM SILÊNCIO (quem chama compara `updated` com o pedido); quem não
+        opera usina nenhuma leva 403."""
+        return await self._enviar("POST", "/breakdowns/classify-bulk",
+                                  json={"ids": [int(i) for i in ids], "classification": classificacao})
+
+    async def desclassificar_parada(self, slug: str, live_id: int, nota: str | None) -> None:
+        """"Não foi parada": a parada ao vivo sai da conta (a desclassificação da tela de Paradas), com a nota."""
+        await self._enviar("POST", f"/plants/{slug}/alerts/{int(live_id)}/suppress", json={"note": nota})
+
     async def relatorio_existente(self, slug: str, periodo: str, de: date) -> dict[str, Any] | None:
         """O relatório já emitido daquele período (com `files[]`), ou `null`."""
         return await self._get("/reports/existing", plant_slug=slug, period=periodo, date_from=de.isoformat())
