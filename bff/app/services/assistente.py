@@ -1037,7 +1037,16 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
         msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": chamadas})
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
         if ctx.fluxo:                                     # a classificação de paradas começou: o passo a passo é do
-            return par.texto_de(ctx.fluxo)                # sistema, e a resposta é o resumo dele (com os botões)
+            if ctx.proposta is not None:                  # sistema, e a resposta é o resumo dele (com os botões).
+                # A IA armou uma ação no mesmo turno: uma coisa por vez. A ação NÃO fica esperando o Sim (o resumo
+                # dela nem sairia, e o 1º toque na classificação a derrubaria), e a pessoa fica sabendo.
+                if helper.PENDENTES.get(ctx.user.id) is ctx.proposta:
+                    del helper.PENDENTES[ctx.user.id]
+                ctx.fluxo[0] = {**ctx.fluxo[0], "texto": ctx.fluxo[0]["texto"] + (
+                    f"\n\n(A ação «{ctx.proposta.resumo}» não ficou esperando o seu Sim: uma coisa por vez. Peça de "
+                    "novo depois da classificação.)")}
+                ctx.proposta = None
+            return par.texto_de(ctx.fluxo)
         # Atalho de velocidade: só o meuPlano foi chamado e respondeu → a resposta dele É a resposta.
         # Menos com foto esperando: só a IA daqui anexa, e o "(Sim/Não)" de lá ia à pessoa no lugar do anexo (04/11/2026).
         # Nem quando a consulta é o 1º passo de uma ferramenta daqui (`continuar`): "registra nas informações do relatório
@@ -1616,16 +1625,18 @@ async def _atender(evento: dict) -> None:
         # A classificação de PARADAS (`assistente_paradas`): o passo a passo é do SISTEMA. O toque nos botões e nas
         # listas dela, e o texto com ela aberta, vêm para cá ANTES do "botão de resumo antigo" (que engolia todo toque
         # que não fosse o Sim/Não da ação esperando). Com uma ação esperando, só o toque `pc:` é do fluxo — e a derruba.
-        # A senha de atuação digitada sozinha nunca vira resposta do fluxo (iria ao meuWatt como número de OS).
+        # O fluxo lê o texto MASCARADO (a senha de atuação escrita no meio da observação não vai ao meuWatt) e a
+        # mensagem que é só a senha nunca é resposta dele. Só o toque VÁLIDO (o fluxo andou) derruba a ação esperando:
+        # botão antigo não confirma nem cancela nada (avaliações 13 e 14).
         esperando = helper.PENDENTES.get(user.id)
-        saidas = await par.tratar(db, user, telefone, evento, texto,
-                                  pendente=(esperando is not None and monotonic() <= esperando.expira)
-                                  or (analise.pura and analise.acertou))
-        if saidas is not None:
-            derrubada = helper.desarmar(user.id, seguro or "[botão]") if par.e_do_fluxo(evento) else None
+        fluxo = await par.tratar(db, user, telefone, evento, (seguro or "").removeprefix("🎙️ "),
+                                 pendente=(esperando is not None and monotonic() <= esperando.expira) or analise.pura)
+        if fluxo is not None:
+            saidas, avancou = fluxo
+            derrubada = helper.desarmar(user.id, seguro or "[botão]") if avancou else None
             nota = helper.cancelada(derrubada) if derrubada is not None else ""
             fim.set()
-            saiu = await par.enviar(telefone, saidas, nota)
+            saiu = await par.enviar(telefone, saidas, nota, guardar=lambda t: _guardado(t, []))
             _registrar(db, telefone, user, "respondeu" if saiu else "erro",
                        pergunta=("🔘 " if evento.get("botao") else "") + (seguro or "[formulário]"),
                        resposta=par.texto_de(saidas) + (f"\n\n{nota}" if nota else ""),
@@ -1812,7 +1823,8 @@ async def _atender(evento: dict) -> None:
         elif ctx is not None and ctx.fluxo:
             # a classificação de paradas que a IA começou: o resumo sai com os botões; o resto (o aviso da ação
             # cancelada, os do sistema) vai ao pé dele
-            saiu = await par.enviar(telefone, ctx.fluxo, resposta[len(livre):].strip())
+            saiu = await par.enviar(telefone, ctx.fluxo, resposta[len(livre):].strip(),
+                                    guardar=lambda t: _guardado(t, valores))
         else:
             saiu = await _texto(telefone, para_whatsapp(resposta), valores, como=resposta_log if omitir else None)
             if ctx is not None and ctx.escolha is not None and ctx.proposta is None \

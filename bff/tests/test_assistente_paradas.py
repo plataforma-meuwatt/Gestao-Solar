@@ -87,6 +87,8 @@ class MeuWattFalso(MeuWattClient):
         self.desclassificadas: list[tuple[str, int, str]] = []
         self.recusa: Exception | None = None
         self.so_grava: int | None = None                   # quantas o meuWatt grava (escopo da pessoa)
+        self.compare_falha = False                         # o /compare não responde (na releitura antes de gravar)
+        self.sumiu = False                                 # o suppress responde 404 (a parada sumiu do meuWatt)
 
     async def usinas(self, token=None):
         return [{"slug": "pereiras", "name": "UFV Pereiras", "id": 9378},
@@ -96,6 +98,8 @@ class MeuWattFalso(MeuWattClient):
         return self.filas[plant_id]
 
     async def paradas_casadas(self, plant_id, inicio, fim):
+        if self.compare_falha:
+            raise httpx.ReadTimeout("o meuWatt demorou")
         return self.pares[plant_id]
 
     async def opcoes_de_parada(self):
@@ -110,6 +114,9 @@ class MeuWattFalso(MeuWattClient):
     async def desclassificar_parada(self, slug, live_id, nota):
         if self.recusa:
             raise self.recusa
+        if self.sumiu:
+            pedido = httpx.Request("POST", "https://api.meuwatt.test/x")
+            raise httpx.HTTPStatusError("404", request=pedido, response=httpx.Response(404, request=pedido))
         self.desclassificadas.append((slug, live_id, nota))
 
 
@@ -162,8 +169,9 @@ class Conversa:
     async def diz(self, texto):
         r = await par.tratar(self.db, self.user, TEL, {"tipo": "text", "texto": texto, "wamid": "w"}, texto)
         if r is not None:
-            self.ultima = r
-        return r
+            self.ultima, self.avancou = r
+            return self.ultima
+        return None
 
     def opcoes(self) -> dict[str, str]:
         """Título → id de tudo o que dá para tocar na última leva de mensagens."""
@@ -175,8 +183,8 @@ class Conversa:
 
     async def toca(self, titulo, botao=None):
         ident = botao or self.opcoes()[titulo]
-        self.ultima = await par.tratar(self.db, self.user, TEL,
-                                       {"tipo": "interactive", "texto": titulo, "botao": ident, "wamid": "w"}, titulo)
+        self.ultima, self.avancou = await par.tratar(
+            self.db, self.user, TEL, {"tipo": "interactive", "texto": titulo, "botao": ident, "wamid": "w"}, titulo)
         return self.ultima
 
     @property
@@ -216,7 +224,8 @@ def test_grupo_manual_junta_e_baixa_geracao_nao_entra():
 # --------------------------------------------------------------------------------------------- o começo
 async def test_o_resumo_do_dia_por_usina_com_os_botoes(db, dono, mw):
     c = Conversa(db, dono)
-    await c.diz("O que caiu hoje?")
+    assert await c.diz("O que caiu hoje?") is None                          # pergunta: vai à IA
+    await c.diz("o que caiu hoje")
     t = c.texto
     assert "*2* parada(s) em 2 usina(s)" not in t and "*3* parada(s) em 2 usina(s)" in t
     assert "*UFV Pereiras*: 2 · INV-01, INV-02 e INV-03 (Skid 1) 10:42; INV-07 (Skid 2) 14:10" in t
@@ -364,13 +373,11 @@ async def test_um_por_um_grava_so_no_inversor_da_vez(db, dono, mw):
 async def test_resposta_digitada_que_nao_casa(db, dono, mw):
     c = Conversa(db, dono)
     await _ate_o_motivo(c)
-    await c.diz("xyz")
-    assert c.texto.startswith("Não entendi.") and "*Passo 1 de 4 · Motivo:*" in c.texto
+    assert await c.diz("xyz") is None                                         # não é desta pergunta: vai à IA
     await c.diz("falha")                                                      # pedaço: casa só uma
     assert "*Passo 2 de 4 · Origem:*" in c.texto
     await c.diz("voltar")
-    await c.diz("fa")                                                         # curto demais para pedaço
-    assert c.texto.startswith("Não entendi.")
+    assert await c.diz("fa") is None                                          # curto demais para pedaço
     # pergunta de outro assunto, com a classificação aberta: vai à IA (o fluxo continua esperando)
     assert await c.diz("qual foi a geração de Pereiras ontem comparada com o mês passado?") is None
     assert db.query(FluxoParadas).count() == 1
@@ -456,9 +463,9 @@ async def test_mais_de_3_opcoes_vao_em_lista_e_mais_de_10_no_formulario(db, dono
     form = c.ultima[0]["formulario"]
     assert form["uma"] and len(form["opcoes"]) == 14 and "1. Motivo 1" in c.ultima[0]["alternativa"]
     # a resposta do formulário (Flow `gs_escolha_uma`) volta com o token DESTE fluxo e o índice
-    c.ultima = await par.tratar(db, dono, TEL, {"tipo": "interactive", "texto": None, "wamid": "w",
-                                                "midia": {"formulario": {"escolhido": "12", "flow_token": form["token"]}}},
-                                "")
+    c.ultima, _ = await par.tratar(db, dono, TEL, {"tipo": "interactive", "texto": None, "wamid": "w",
+                                                   "midia": {"formulario": {"escolhido": "12",
+                                                                            "flow_token": form["token"]}}}, "")
     assert "*Passo 3 de 4 · Causa:*" in c.texto and "(Falta de rede › Concessionária)" in c.texto
 
 
@@ -522,6 +529,301 @@ async def test_a_ia_comeca_o_fluxo_e_o_resumo_sai_pelo_sistema(db, dono, mw, mon
 async def test_sem_o_meuwatt_liberado_explica(db, dono, mw):
     dono.bot_meuwatt = False
     db.commit()
-    r = await par.tratar(db, dono, TEL, {"tipo": "text", "texto": "classificar paradas"}, "classificar paradas")
+    r, _ = await par.tratar(db, dono, TEL, {"tipo": "text", "texto": "classificar paradas"}, "classificar paradas")
     assert "não está liberada para você" in par.texto_de(r)
     assert await par.tratar(db, dono, TEL, {"tipo": "text", "texto": "oi"}, "oi") is None   # o resto vai à IA
+
+
+# ============================================================================================= revisão adversarial
+async def _ate_o_confere(c, *passos):
+    await _ate_o_motivo(c)
+    for passo in passos:
+        await (c.toca(passo) if passo in c.opcoes() else c.diz(passo))
+
+
+async def test_1_digitar_o_titulo_do_botao_da_causa_externa_nao_inverte(db, dono, mw):
+    """O texto alternativo do bot manda digitar «Não, conta»: com motivo externo, isso é NÃO externa (conta na
+    disponibilidade). As palavras soltas ("não" + "conta") gravavam o contrário."""
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão")
+    await c.diz("Não, conta")                                                 # o motivo é externo no cadastro
+    for passo in ("Sem observação", "Sem OS", "Confirmar"):
+        await c.toca(passo)
+    assert mw.gravadas[-1][1]["is_external_cause"] is False
+    await c.diz("parar")
+    c2 = Conversa(db, dono)
+    await _ate_o_confere(c2, "Falha em equipamento", "Inversor", "Desgaste")
+    await c2.diz("Não, é externa")                                            # o motivo NÃO é externo
+    for passo in ("Sem observação", "Sem OS", "Confirmar"):
+        await c2.toca(passo)
+    assert mw.gravadas[-1][1]["is_external_cause"] is True
+
+
+class PeloBot:
+    """Fala com o bot inteiro (`assistente.atender`), como o gateway: texto ou toque no botão/linha mais recente."""
+
+    def __init__(self, db, monkeypatch):
+        self.enviados, self.n = [], 0
+
+        async def _enviar(**k):
+            self.enviados.append(k)
+            return {"ok": True}
+
+        monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+        monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
+        monkeypatch.setattr(db, "close", lambda: None)
+
+    async def manda(self, texto):
+        self.n += 1
+        await assistente.atender({"telefone": TEL, "tipo": "text", "texto": texto, "wamid": f"w{self.n}",
+                                  "id": self.n})
+
+    def botao(self, titulo):
+        for e in reversed(self.enviados):
+            for b in [*(e.get("botoes") or []), *((e.get("lista") or {}).get("linhas") or [])]:
+                if b["titulo"] == titulo:
+                    return b["id"]
+        raise KeyError(titulo)
+
+    async def toca(self, titulo, botao=None):
+        self.n += 1
+        await assistente.atender({"telefone": TEL, "tipo": "interactive", "texto": titulo,
+                                  "botao": botao or self.botao(titulo), "wamid": f"w{self.n}", "id": self.n})
+
+
+async def test_2_a_senha_de_atuacao_na_observacao_nao_vai_ao_meuwatt_nem_ao_gateway(db, dono, mw, monkeypatch):
+    """«religou depois que digitei 482913 no painel», com 482913 a senha de atuação: ia em claro na observação do
+    meuWatt e no Confere guardado pelo gateway. E a cópia do gateway passa pela máscara de sempre (`_guardado`)."""
+    from app.core.security import gerar_hash_senha
+
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    bot = PeloBot(db, monkeypatch)
+    await bot.manda("classificar paradas")
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa"):
+        await bot.toca(passo)
+    await bot.manda("religou depois que digitei 482913 no painel")
+    await bot.toca("Sem OS")
+    await bot.toca("Confirmar")
+    assert mw.gravadas[-1][1]["observacoes"] == "religou depois que digitei [senha oculta] no painel"
+    assert not [e for e in bot.enviados if "482913" in (e.get("texto") or "") + (e.get("guardar") or "")]
+    # o que a pessoa escreveu e não é a senha de atuação chega a ela inteiro, e a cópia guardada sai sem o número
+    await bot.toca("Uma a uma")
+    for passo in ("Classificar", "Falta de rede", "Queda de tensão", "Sim, externa"):
+        await bot.toca(passo)
+    await bot.manda("a senha do portão é 4321")
+    await bot.toca("Sem OS")
+    confere = bot.enviados[-1]
+    assert "a senha do portão é 4321" in confere["texto"] and "4321" not in (confere.get("guardar") or "4321")
+
+
+async def test_3_sem_reler_o_meuwatt_nao_grava(db, dono, mw):
+    """O /compare não respondeu na releitura: gravar por cima do que o site classificou é pior que pedir de novo."""
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    mw.compare_falha = True
+    await c.toca("Confirmar")
+    assert mw.gravadas == [] and c.texto.startswith("❌ Não consegui conferir no meuWatt")
+    assert "Confirmar" in c.opcoes()                                          # a mesma pergunta, para tentar de novo
+    mw.compare_falha = False
+    await c.toca("Confirmar")
+    assert len(mw.gravadas) == 1 and "Há mais 1 parada(s)" in c.texto
+    mw.compare_falha = True
+    await c.toca("Aplicar às 1")
+    assert len(mw.gravadas) == 1 and c.texto.startswith("❌ Não consegui conferir no meuWatt")
+
+
+async def test_4_toque_velho_nao_derruba_a_acao_que_espera(db, dono, mw, monkeypatch):
+    """Botão de pergunta anterior, ou de classificação vencida, não confirma nem cancela nada (avaliações 13 e 14)."""
+    bot = PeloBot(db, monkeypatch)
+    await bot.manda("classificar paradas")
+    velho = bot.botao("Classificar agora")
+    await bot.toca("Classificar agora")
+
+    class _Ctx:
+        user, pedido, proposta = dono, "crie a OS", None
+
+    async def _nada(*a):
+        return "✅ feito"
+
+    helper.propor(_Ctx(), "Criar a OS em Pereiras", 600, _nada, parte=None, confirmacao="sim")
+    helper.mostrada(dono.id, datetime.now(UTC) - timedelta(seconds=5))
+    await bot.toca("Classificar agora", botao=velho)                          # pergunta anterior
+    assert "pergunta anterior" in bot.enviados[-1]["texto"] and dono.id in helper.PENDENTES
+    assert helper.ACAO_CANCELADA_SIM not in bot.enviados[-1]["texto"]
+    db.query(FluxoParadas).delete()
+    db.commit()
+    await bot.toca("Classificar", botao=bot.botao("Classificar"))             # classificação vencida
+    assert bot.enviados[-1]["texto"] == par.VENCIDO and dono.id in helper.PENDENTES
+
+
+async def test_5_com_a_classificacao_aberta_a_conversa_vai_a_ia(db, dono, mw):
+    c = Conversa(db, dono)
+    await c.diz("classificar paradas")
+    assert await c.diz("sim") is None                                         # «sim» solto não começa a classificar
+    await c.toca("Classificar agora")
+    await c.toca("Classificar")
+    for conversa in ("bom dia", "obrigado", "geração de hoje", "e Tietê?"):
+        assert await c.diz(conversa) is None, conversa
+    for passo in ("Falta de rede", "Queda de tensão", "Sim, externa"):
+        await c.toca(passo)
+    assert await c.diz("qual a geração de Pereiras hoje?") is None            # pergunta não é observação
+    assert await c.diz("manda o relatório de outubro") is None
+    await c.toca("Sem observação")
+    assert await c.diz("religou às 11h") is None                              # não é número de OS
+    await c.diz("classificar as paradas de hoje")                             # nem isso: é começar de novo
+    assert c.texto.startswith("(Comecei de novo") and "Paradas a classificar · hoje" in c.texto
+    # meia hora depois da última pergunta, o texto já não é resposta dela (os toques seguem valendo)
+    await c.toca("Classificar agora")
+    await c.toca("Classificar")
+    f = db.query(FluxoParadas).one()
+    estado = par.json.loads(f.estado)
+    estado["em"] = (datetime.now(UTC) - timedelta(minutes=31)).isoformat()
+    f.estado = par.json.dumps(estado)
+    db.commit()
+    assert await c.diz("Falta de rede") is None
+    await c.toca("Falta de rede")
+    assert "*Passo 3 de 4 · Causa:*" in c.texto
+
+
+async def test_5_sem_o_meuwatt_so_responde_o_que_e_da_classificacao(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_motivo(c)
+    dono.bot_meuwatt = False
+    db.commit()
+    assert await c.diz("oi") is None                                          # o resto (meuPlano…) segue para a IA
+    r = await c.diz("Falta de rede")
+    assert "não está liberada para você" in par.texto_de(r)
+
+
+async def test_6_pergunta_e_data_incerta_nao_comecam(db, dono, mw):
+    c = Conversa(db, dono)
+    for frase in ("quantas paradas faltam classificar hoje?", "o que caiu hoje?",
+                  "classificar as paradas de anteontem", "classificar as paradas do dia 03/11",
+                  "classificar as paradas do mês passado", "paradas de Pereiras"):
+        assert await c.diz(frase) is None, frase
+    assert db.query(FluxoParadas).count() == 0
+    await c.diz("classificar as paradas de ontem")
+    assert c.texto.startswith("✅ Nenhuma parada a classificar · ontem")     # o período lido é ontem
+    await c.diz("classificar paradas")
+    tok = par.json.loads(db.query(FluxoParadas).one().estado)["tok"]
+    assert await c.diz("a parada de ontem já foi classificada?") is None      # não reinicia a aberta
+    assert par.json.loads(db.query(FluxoParadas).one().estado)["tok"] == tok
+
+
+async def test_7_aplicar_as_outras_mostra_a_observacao_e_a_os(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await c.diz("trip do religador 52")
+    await c.diz("OS 1638")
+    await c.toca("Confirmar")
+    assert "• Observação: trip do religador 52" in c.texto and "• OS: OS 1638" in c.texto
+    assert "inclusive a observação e a OS" in c.texto
+
+
+async def test_8_pular_depois_de_gravar_e_uma_a_uma(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+                         "Confirmar")
+    await c.diz("pular")                                                      # a gravada não vira pulada
+    assert "*Parada 2 de 3*" in c.texto
+    await c.diz("parar")
+    assert "1 classificada(s), 0 marcada(s) como não-parada, 0 pulada(s)" in c.texto and "Ficaram 2" in c.texto
+
+
+async def test_9_usina_que_saiu_do_alcance_nao_e_gravada(db, dono, mw, monkeypatch):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS")
+    monkeypatch.setattr(ger, "usinas_do_bot", lambda db, user: [PlantLink(mw_plant_slug="tiete", nome="UFV Tietê")])
+    await c.toca("Confirmar")
+    assert mw.gravadas == [] and "UFV Pereiras não está mais liberada para você" in c.texto
+    assert "Pulei as 2 parada(s) dela" in c.texto and "INV-1.1" in c.texto    # segue na usina que ela ainda vê
+
+
+def test_10_linha_ao_vivo_absorvida_e_desclassificada_sem_par():
+    """Duas regras da porta que nenhum teste vigiava: a linha ao vivo que o detector ABSORVEU (`covered_by_shadow_id`)
+    é desta parada (grava nela, e se estiver classificada a parada está classificada); e a desclassificação que cobre
+    só parte de uma parada SEM par ao vivo já a tira da fila."""
+    absorvida = _par(None, 5010, 7, "INV-07", "Skid 2", _hoje(14, 15), _hoje(14, 25), covered_by_shadow_id=104)
+    pares = {**PEREIRAS_PARES, "pairs": [*PEREIRAS_PARES["pairs"], absorvida]}
+    pend = par.a_classificar(par.unidades(PEREIRAS_FILA, pares))
+    assert [u["live_ids"] for u in pend] == [[5001, 5002, 5003], [5004, 5010]]
+    pares["pairs"][-1] = {**absorvida, "live_classified_at": _hoje(18, 0)}
+    assert [u["live_ids"] for u in par.a_classificar(par.unidades(PEREIRAS_FILA, pares))] == [[5001, 5002, 5003]]
+    # INV-07 sem par ao vivo e 1/3 dele desclassificado: fora da fila; COM par, 1/3 não basta
+    sem_par = {"pairs": [p for p in PEREIRAS_PARES["pairs"] if p["shadow_id"] != 104],
+               "live_suppressed_rows": [{"live_id": 4999, "slot_id": 7, "stopped_at": _hoje(14, 10),
+                                         "resolved_at": _hoje(14, 20)}]}
+    assert "s104" not in [u["chave"] for u in par.a_classificar(par.unidades(PEREIRAS_FILA, sem_par))]
+    com_par = {**sem_par, "pairs": PEREIRAS_PARES["pairs"]}
+    assert "s104" in [u["chave"] for u in par.a_classificar(par.unidades(PEREIRAS_FILA, com_par))]
+
+
+async def test_a_contar_as_pendentes_tem_o_mesmo_teto(db, dono, mw):
+    ctx = ger.Contexto(db=db, user=dono, telefone=TEL)
+    await ger.preparar(ctx)
+    hoje = ger.hoje()
+    with pytest.raises(ger.Recusa):
+        await par.paradas_a_classificar(ctx, {"inicio": (hoje - timedelta(days=60)).isoformat(),
+                                              "fim": hoje.isoformat()})
+
+
+async def test_b_observacao_em_duas_mensagens_nao_vira_os(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await c.diz("a rede caiu")
+    await c.diz("e voltou sozinha 10 min depois")
+    assert c.texto.startswith("Juntei à observação: «a rede caiu e voltou sozinha 10 min depois».")
+    await c.toca("Sem OS")
+    assert "• Observação: a rede caiu e voltou sozinha 10 min depois" in c.texto and "• OS: nenhuma" in c.texto
+
+
+async def test_c_nada_gravado_nao_sai_como_feito(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa", "Sem observação", "Sem OS",
+                         "Confirmar")
+    mw.pares[9378] = {**PEREIRAS_PARES, "pairs": [{**p, "live_classified_at": _hoje(18, 0)}
+                                                  for p in PEREIRAS_PARES["pairs"]]}
+    await c.toca("Aplicar às 1")
+    assert c.texto.startswith("Nada foi gravado: as 1 já tinham sido classificadas") and "✅" not in c.texto
+    mw.sumiu = True
+    await c.toca("Não foi parada")                                            # a de Tietê
+    await c.toca("Comunicação")
+    await c.toca("Confirmar")
+    assert c.texto.startswith("Nada foi desclassificado") and "✅" not in c.texto
+
+
+async def test_d_um_por_um_deixa_de_fora_a_piscada(db, dono, mw):
+    fila = {**PEREIRAS_FILA, "rows": [*PEREIRAS_FILA["rows"][:2],
+                                      {**PEREIRAS_FILA["rows"][2], "materiality": "blip"}, *PEREIRAS_FILA["rows"][3:]]}
+    mw.filas[9378] = fila
+    c = Conversa(db, dono)
+    await c.diz("classificar paradas")
+    await c.toca("Classificar agora")
+    await c.toca("Um por um")
+    assert "Separei em 2 parada(s), uma por inversor. 1 só piscou (não é parada) e ficou de fora." in c.texto
+    assert "*Parada 1 de 4*" in c.texto
+
+
+async def test_e_acao_armada_junto_com_a_classificacao_nao_fica_esperando(db, dono, mw, monkeypatch):
+    async def _llm(msgs, ferramentas=None, **k):
+        return {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "manutencao", "arguments": '{"pergunta": "x"}'}},
+            {"id": "c2", "type": "function", "function": {"name": "classificar_paradas", "arguments": "{}"}}]}
+
+    async def _manutencao(ctx, a):
+        async def _nada(*x):
+            return "✅"
+        return helper.propor(ctx, "Criar a OS em Pereiras", 600, _nada, parte=None, confirmacao="sim")
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    monkeypatch.setitem(assistente.FERRAMENTAS, "manutencao", (_manutencao, assistente._MANUTENCAO))
+    dono.bot_meuplano = True
+    db.add(VinculoProduto(gs_user_id=dono.id, produto="meuplano", usuario_remoto_id="1", token_cifrado="x"))
+    db.commit()
+    db.refresh(dono)
+    ctx = ger.Contexto(db=db, user=dono, telefone=TEL)
+    await ger.preparar(ctx)
+    r = await assistente.responder(ctx, [{"role": "user", "content": "crie a OS e classifique as paradas"}])
+    assert ctx.proposta is None and dono.id not in helper.PENDENTES
+    assert "Paradas a classificar" in r and "A ação «Criar a OS em Pereiras» não ficou esperando o seu Sim" in r

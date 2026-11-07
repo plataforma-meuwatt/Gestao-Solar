@@ -30,6 +30,7 @@ import logging
 import re
 import secrets
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -45,6 +46,11 @@ from app.services import assistente_geracao as ger
 log = logging.getLogger("gs.assistente.paradas")
 
 VALIDADE = timedelta(hours=12)
+#: Quanto tempo depois da última pergunta o TEXTO digitado ainda é lido como resposta dela. Depois disso só os toques
+#: valem (o fluxo vale 12 h): uma mensagem horas depois ("bom dia", "e Tietê?") é conversa, vai à IA.
+TEXTO_VALE = timedelta(minutes=30)
+#: A 2ª mensagem que chega até isto depois da observação é o resto dela, não a OS.
+JUNTA_OBS = timedelta(seconds=60)
 PREFIXO = "pc:"
 MAX_DIAS = 31
 LOTE = 500                                                 # o teto do classify-bulk
@@ -154,7 +160,8 @@ def unidades(fila: dict, casadas: dict, agora: datetime | None = None) -> list[d
         return {"inversor": _rotulo(r.get("slot_label"), r.get("slot_id"), r.get("serial_number")),
                 "skid": r.get("transformer_name"), "inicio": r.get("stopped_at"), "fim": r.get("resolved_at"),
                 "perda": None if r.get("loss_method") in SEM_CONTA else ger._r(r.get("shadow_loss_kwh"), 2),
-                "causa": r.get("cause"), "resolucao": r.get("resolution_reason"), "live_ids": ids(vivos(r["id"]))}
+                "causa": r.get("cause"), "resolucao": r.get("resolution_reason"), "live_ids": ids(vivos(r["id"])),
+                "material": r.get("materiality") == "material"}
 
     def de_grupo(chave: str, ms: list, g: dict | None, manual_gid: Any = None) -> dict:
         tipo = "manual" if manual_gid is not None else ((g or {}).get("group_kind") or "temporal_succession")
@@ -205,7 +212,7 @@ def unidades(fila: dict, casadas: dict, agora: datetime | None = None) -> list[d
     def membro_vivo(p: dict) -> dict:
         return {"inversor": _rotulo(p.get("slot_label"), p.get("slot_id")), "skid": p.get("transformer_name"),
                 "inicio": p.get("live_stopped_at"), "fim": p.get("live_resolved_at"), "perda": None,
-                "causa": p.get("live_cause"), "resolucao": None, "live_ids": [p["live_id"]]}
+                "causa": p.get("live_cause"), "resolucao": None, "live_ids": [p["live_id"]], "material": True}
 
     def so_vivo(chave: str, ps: list) -> dict:
         abertas = any(p.get("live_resolved_at") is None for p in ps)
@@ -400,6 +407,9 @@ def _msg(texto: str, botoes: list[tuple[str, str]] | None = None, lista: dict | 
 
 
 def _ids(estado: dict, botoes: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Os ids dos botões desta pergunta; o TÍTULO de cada um vale também digitado ("Não, conta"), e vale antes de
+    qualquer palavra solta — o texto alternativo do próprio bot manda digitar o título."""
+    estado.setdefault("titulos", {}).update({_n(t): a for a, t in botoes})
     return [(f"{PREFIXO}{estado['tok']}:{a}", t) for a, t in botoes]
 
 
@@ -432,48 +442,56 @@ def texto_de(saidas: list[dict]) -> str:
     return "\n\n".join(s["texto"] for s in saidas)
 
 
-async def _so_texto(telefone: str, texto: str) -> bool:
+Guardar = Callable[[str], "str | None"]
+
+
+async def _so_texto(telefone: str, texto: str, guardar: Guardar | None = None) -> bool:
     ok = True
     for i in range(0, len(texto), 3900):
+        pedaco = texto[i:i + 3900]
         try:
-            r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=texto[i:i + 3900])
+            r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="text", texto=pedaco,
+                                               guardar=guardar(pedaco) if guardar else None)
         except whatsapp.GatewayIndisponivel:
             r = None
         ok = ok and bool((r or {}).get("ok"))
     return ok
 
 
-async def _uma(telefone: str, s: dict, texto: str) -> bool:
+async def _uma(telefone: str, s: dict, texto: str, guardar: Guardar | None) -> bool:
     r = None
+    g = (lambda x: guardar(x) if guardar else None)        # noqa: E731
     try:
         if s.get("botoes") or s.get("formulario"):
             limite = 1024
             if len(texto) > limite:                        # o corpo da interativa vai até 1024: o resto antes
-                await _so_texto(telefone, texto)
+                await _so_texto(telefone, texto, guardar)
                 texto = "Escolha:"
             if s.get("botoes"):
-                r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="botoes", texto=texto,
+                r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="botoes", texto=texto, guardar=g(texto),
                                                    botoes=[{"id": i, "titulo": t} for i, t in s["botoes"]])
             else:
                 r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="formulario", texto=texto,
-                                                   formulario=s["formulario"])
+                                                   guardar=g(texto), formulario=s["formulario"])
         elif s.get("lista"):
-            r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="lista", texto=texto[:4096], lista=s["lista"])
+            r = await whatsapp.enviar_conteudo(telefone=telefone, tipo="lista", texto=texto[:4096],
+                                               guardar=g(texto[:4096]), lista=s["lista"])
         else:
-            return await _so_texto(telefone, texto)
+            return await _so_texto(telefone, texto, guardar)
     except whatsapp.GatewayIndisponivel:
         log.warning("paradas: o gateway recusou a interativa; vai em texto", exc_info=True)
     if (r or {}).get("ok"):
         return True
-    return await _so_texto(telefone, texto + (f"\n\n{s['alternativa']}" if s.get("alternativa") else ""))
+    return await _so_texto(telefone, texto + (f"\n\n{s['alternativa']}" if s.get("alternativa") else ""), guardar)
 
 
-async def enviar(telefone: str, saidas: list[dict], nota: str = "") -> bool:
+async def enviar(telefone: str, saidas: list[dict], nota: str = "", guardar: Guardar | None = None) -> bool:
     """Manda as mensagens do passo, na ordem. `nota`: o aviso do sistema ao pé da primeira (a ação que este toque
-    cancelou)."""
+    cancelou). `guardar(texto)`: o que a cópia do gateway guarda no lugar do texto (sem a senha que a observação
+    trouxer; a pessoa recebe o inteiro) — o `assistente._guardado`, como em toda resposta do bot."""
     ok = True
     for k, s in enumerate(saidas):
-        ok = await _uma(telefone, s, s["texto"] + (f"\n\n{nota}" if nota and k == 0 else "")) and ok
+        ok = await _uma(telefone, s, s["texto"] + (f"\n\n{nota}" if nota and k == 0 else ""), guardar) and ok
     return ok
 
 
@@ -644,8 +662,10 @@ def _pergunta_outras(estado: dict) -> list[dict]:
               f"{_dia(u['inicio']):%d/%m} esperando classificação:",
               *[f"• {_inversores(x)} · {_hora(x['inicio'])}" for x in outras[:5]],
               *([f"• e mais {len(outras) - 5}"] if len(outras) > 5 else []),
-              "Aplicar a mesma classificação a elas? (" + " › ".join(esc[c] for c in CAMPOS)
-              + (", externa" if esc["externa"] else "") + ")"]
+              "Aplicar a mesma classificação a elas, inclusive a observação e a OS?",
+              "• " + " › ".join(esc[c] for c in CAMPOS),
+              "• Causa externa: " + ("sim" if esc["externa"] else "não"),
+              f"• Observação: {esc.get('obs') or 'nenhuma'}", f"• OS: {esc.get('os') or 'nenhuma'}"]
     return [_msg("\n".join(linhas), _ids(estado, [("apl", f"Aplicar às {len(outras)}"), ("uma", "Uma a uma")]))]
 
 
@@ -665,7 +685,7 @@ def _naoparada_conferir(estado: dict) -> list[dict]:
 def _render(estado: dict) -> list[dict]:
     """A pergunta da etapa de agora, com um `tok` novo: os botões das perguntas anteriores deixam de valer."""
     estado["tok"] = secrets.token_hex(3)
-    estado["form"] = None
+    estado["form"], estado["titulos"], estado["em"] = None, {}, datetime.now(UTC).isoformat()
     etapa = estado["etapa"]
     if etapa == "resumo":
         return _resumo(estado)
@@ -716,7 +736,7 @@ def _placar(p: dict) -> str:
     partes = [f"{p['classificadas']} classificada(s)", f"{p['nao']} marcada(s) como não-parada",
               f"{p['puladas']} pulada(s)"]
     extra = [*([f"{p['ja']} já classificada(s) no site enquanto isso"] if p["ja"] else []),
-             *([f"{p['fora']} fora do seu papel no meuWatt"] if p["fora"] else [])]
+             *([f"{p['fora']} sem permissão para gravar"] if p["fora"] else [])]
     return ", ".join(partes) + (f" ({'; '.join(extra)})" if extra else "")
 
 
@@ -756,20 +776,38 @@ def _rotulo_periodo(ini: date, fim: date) -> str:
     return f"{ini:%d/%m} a {fim:%d/%m}"
 
 
-def _periodo_do_texto(t: str) -> tuple[date, date]:
+#: O pedido de COMEÇAR reconhecido sem a IA: só a forma imperativa, sem pergunta, com o período que se lê com certeza
+#: (hoje, ontem, a semana) e, no fim, a usina exata. Pergunta ("quantas faltam classificar?", "a de ontem já foi
+#: classificada?") e data que não se lê com certeza ("anteontem", "do dia 03/11", "do mês passado") vão à IA, que
+#: chama `paradas_a_classificar` ou `classificar_paradas` com as datas.
+_COMECO = re.compile(r"^(?:(?:vamos|bora|quero|preciso)\s+)?classific(?:ar|a|e)\s+(?:as\s+)?paradas?(?P<a>.*)$"
+                     r"|^(?:e\s+)?(?:as\s+)?paradas(?P<b>\s+.+)$"
+                     r"|^(?:e\s+)?o\s+que\s+caiu(?P<c>.*)$")
+_RESTO = re.compile(r"^(?P<per>de hoje|hoje|de ontem|ontem|da semana|desta semana|dessa semana)?\s*"
+                    r"(?:(?:de|da|do|em|na|no)\s+(?P<us>.+))?$")
+
+
+def _pedido_de_comecar(cru: str) -> tuple[date, date, str | None] | None:
+    """(início, fim, o texto da usina) do pedido de começar, ou `None` (não é, ou não dá para ler com certeza)."""
+    if "?" in (cru or ""):
+        return None
+    m = _COMECO.match(_n(cru))
+    if m is None:
+        return None
+    resto = (m.group("a") or m.group("b") or m.group("c") or "").strip()
+    r = _RESTO.match(resto)
+    if r is None or (m.group("b") is not None and not r.group("per")):   # "paradas de X" sozinho é leitura
+        return None
     h = ger.hoje()
-    if re.search(r"\bontem\b", t):
-        return h - timedelta(days=1), h - timedelta(days=1)
-    if re.search(r"\bsemana\b", t):
-        return h - timedelta(days=6), h
-    if re.search(r"\bmes\b", t):
-        return h.replace(day=1), h
-    return h, h
+    per = r.group("per") or "hoje"
+    ini, fim = {"hoje": (h, h), "ontem": (h - timedelta(days=1), h - timedelta(days=1))}.get(
+        per.split()[-1], (h - timedelta(days=6), h))
+    return ini, fim, r.group("us")
 
 
-def _usina_do_texto(ctx: ger.Contexto, t: str) -> str | None:
-    achadas = [s for s, u in ctx.usinas.items()
-               if (n := ger._norm(u["nome"])) and re.search(rf"(?<!\w){re.escape(n)}(?!\w)", ger._norm(t))]
+def _usina_exata(ctx: ger.Contexto, texto: str) -> str | None:
+    alvo = ger._norm(texto)
+    achadas = [s for s, u in ctx.usinas.items() if alvo in (ger._norm(u["nome"]), ger._norm(s))]
     return achadas[0] if len(achadas) == 1 else None
 
 
@@ -804,96 +842,123 @@ async def comecar(ctx: ger.Contexto, ini: date, fim: date, usina: str | None = N
 
 
 # =========================================================================== o que a pessoa disse
-_COMECAR = re.compile(r"\bclassific\w*\b.*\bparad\w*|\bparad\w*\b.*\bclassific\w*"
-                      r"|^(?:e\s+)?(?:as\s+)?paradas\s+d[aeo]s?\s+(?:hoje|ontem|semana|mes)\b"
-                      r"|^(?:e\s+)?o\s+que\s+caiu\b")
 _PARAR = {"parar", "para", "pare", "sair", "encerrar", "encerra", "chega", "terminar", "fim", "parar tudo"}
 _PULAR = {"pular", "pula", "pule", "proxima", "pular essa", "pula essa", "pular esta", "proxima parada"}
 _VOLTAR = {"voltar", "volta", "volte", "anterior", "voltar um passo"}
-#: As etapas em que o texto é a RESPOSTA (observação, OS, motivo de não ser parada): nunca recomeça o fluxo.
-_TEXTO_LIVRE = ("obs", "os", "naoparada", "naoparada_nota")
-_SIM = {"sim", "confirmar", "confirmo", "confirma", "pode gravar", "grava", "gravar", "pode", "ok", "isso"}
-_NAO = {"nao", "n", "sem", "nenhuma", "nenhum", "nada"}
+_CONFIRMA = {"confirmar", "confirmo", "confirma", "pode gravar", "grava", "gravar"}
+_NENHUMA = {"nao", "n", "sem", "nenhuma", "nenhum", "nada", "nao tem", "sem observacao", "sem obs", "sem os",
+            "sem ordem", "sem ordem de servico"}
+#: O começo de mensagem que é PEDIDO ou conversa, não a resposta de texto livre (observação, motivo): vai à IA.
+_PEDIDO = {"qual", "quais", "quanto", "quanta", "quantos", "quantas", "como", "onde", "quando", "quem", "me", "manda",
+           "mande", "envia", "envie", "mostra", "mostre", "gera", "gere", "lista", "liste", "abre", "abra", "cria",
+           "crie", "faz", "faca", "quero", "preciso", "consegue", "classificar", "classifica", "classifique"}
+_CONVERSA = {"oi", "ola", "bom dia", "boa tarde", "boa noite", "obrigado", "obrigada", "valeu", "ok", "blz", "beleza"}
+#: A OS digitada: o número (ou código com número), com ou sem "OS", "nº" ou "#" na frente.
+_OS = re.compile(r"(?i)^(?:(?:os|o\.s\.?|ordem(?:\s+de\s+servi[cç]o)?)\s*(?:n[º°o]?\.?\s*)?[:#-]?\s*)?#?\s*"
+                 r"[a-z]{0,4}-?\d[\w\-/.]{0,20}$")
+
+
+def _parece_pedido(cru: str, t: str) -> bool:
+    palavras = t.split()
+    return ("?" in cru or not palavras or palavras[0] in _PEDIDO or t in _CONVERSA or t.startswith("o que ")
+            or _pedido_de_comecar(cru) is not None)
+
+
+def _texto_vale(estado: dict) -> bool:
+    em = _dt(estado.get("em"))
+    return em is not None and datetime.now(UTC) - em <= TEXTO_VALE
 
 
 def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
-    """O texto digitado como a ação da etapa de agora. `None` = não é desta conversa (vai à IA); "?" = parece resposta
-    e não casou (pergunto de novo)."""
+    """O texto digitado como a ação da etapa de agora, ou `None`: não é resposta desta pergunta (vai à IA). Nada de
+    "não entendi" — com a classificação aberta a pessoa continua conversando com o bot."""
+    etapa = estado["etapa"]
+    if t in estado.get("titulos", {}):                     # o título de um botão desta pergunta, digitado
+        acao = estado["titulos"][t]
+        return "uma" if acao == "pular" and etapa == "outras" else acao
     if t in _PARAR:
         return "parar"
     if t in _VOLTAR:
         return "voltar"
-    etapa = estado["etapa"]
-    if t in _PULAR and etapa not in ("resumo", "usina"):
-        return "pular"
-    curta = len(t.split()) <= 3
-    if etapa in ("obs", "os", "naoparada_nota"):
-        sem = t in _NAO or t in {"sem observacao", "sem obs", "sem os", "nao tem", "sem ordem"}
-        return {"obs": "obs0", "os": "os0"}.get(etapa) if sem and etapa != "naoparada_nota" else "txt"
+    if t in _PULAR:
+        return {"resumo": None, "usina": None, "outras": "uma"}.get(etapa, "pular")   # "outras": a de agora já foi
+    if etapa == "obs":
+        return "obs0" if t in _NENHUMA else (None if _parece_pedido(cru, t) else "txt")
+    if etapa == "os":
+        if t in _NENHUMA:
+            return "os0"
+        if _OS.match(cru.strip()):
+            return "txt"
+        junta = _dt(estado.get("obs_em"))                  # a 2ª mensagem da observação, logo depois da 1ª
+        if junta and datetime.now(UTC) - junta <= JUNTA_OBS and not _parece_pedido(cru, t):
+            return "obs+"
+        return None
+    if etapa in ("naoparada", "naoparada_nota"):
+        if etapa == "naoparada":
+            if "comunic" in t:
+                return "np:c"
+            if t in {"sem sol", "noite", "sem sol noite", "de noite", "a noite"}:
+                return "np:s"
+            if t in {"outro", "outro motivo"}:
+                return "np:o"
+        return None if _parece_pedido(cru, t) else "txt"
     if etapa == "resumo":
-        if t in {"classificar", "classificar agora", "agora", "sim", "comecar", "vamos", "bora", "todas"}:
+        if t in {"classificar", "classificar agora", "comecar", "todas"}:
             return "todas"
-        if t in {"depois", "agora nao", "nao", "mais tarde"}:
+        if t in {"depois", "agora nao", "mais tarde"}:
             return "depois"
         if t in {"so uma usina", "uma usina", "so uma"}:
             return "uma"
-        achada = _casar([estado["usinas"][s]["nome"] for s in dict.fromkeys(u["usina"] for u in estado["todas"])], t)
+        slugs = list(dict.fromkeys(u["usina"] for u in estado["todas"]))
+        achada = _casar([estado["usinas"][x]["nome"] for x in slugs], t)
         if len(achada) == 1:
-            estado["oferecidas"] = list(dict.fromkeys(u["usina"] for u in estado["todas"]))
+            estado["oferecidas"] = slugs
             return f"o{achada[0]}"
-        return "?" if curta else None
+        return None
     if etapa == "cartao":
-        if t in {"classificar", "sim", "classifica"}:
+        if t in {"classificar", "classifica"}:
             return "cl"
         if t in {"nao foi parada", "nao foi", "nao e parada", "nao parou", "nao era parada"}:
             return "np"
         if t in {"um por um", "separar", "separado", "separa", "um a um"}:
             return "sep"
-        return "?" if curta else None
+        return None
     if etapa == "externa":
         padrao = _externa_padrao(estado)
-        if t in {"sim", "confere", "isso", "ok"}:
+        if t in {"sim", "confere", "isso"}:
             return "ext1" if padrao else "ext0"
         if t in {"nao", "n"}:
             return "ext0" if padrao else "ext1"
-        if "extern" in t:
-            return "ext0" if "nao" in t.split() else "ext1"
-        if "conta" in t:
-            return "ext1" if "nao" in t.split() else "ext0"
-        return "?" if curta else None
+        if t in {"externa", "e externa", "causa externa"}:
+            return "ext1"
+        if t in {"nao e externa", "interna", "nao externa"}:
+            return "ext0"
+        return None
     if etapa in ("conferir", "naoparada_conferir"):
-        if "?" not in cru and t in _SIM:
+        if "?" not in cru and t in _CONFIRMA:
             return "ok"
         if t in {"corrigir", "corrige", "refazer"} and etapa == "conferir":
             return "corr"
-        if t in {"cancelar", "cancela", "nao"}:
+        if t in {"cancelar", "cancela"}:
             return "canc"
-        return "?" if curta else None
+        return None
     if etapa == "outras":
-        if "?" not in cru and (t in {"aplicar", "aplica", "sim", "aplicar a todas", "todas"} or t.startswith("aplicar")):
+        if "?" not in cru and t.startswith("aplica"):
             return "apl"
-        if t in {"uma a uma", "nao", "uma por uma", "um a um"}:
+        if t in {"uma a uma", "uma por uma", "um a um"}:
             return "uma"
-        return "?" if curta else None
-    if etapa == "naoparada":
-        if "comunic" in t:
-            return "np:c"
-        if t in {"sem sol", "noite", "sem sol noite", "de noite", "a noite"}:
-            return "np:s"
-        if t in {"outro", "outro motivo"}:
-            return "np:o"
-        return "txt"
+        return None
     if etapa == "usina" or (etapa.startswith("n") and etapa[1:].isdigit()):
         rotulos = (list(estado["oferecidas"]) if etapa == "usina" else
                    [o["label"] for o in _opcoes(estado, int(etapa[1:]))])
         if etapa == "usina":
-            rotulos = [estado["usinas"][s]["nome"] for s in rotulos]
+            rotulos = [estado["usinas"][x]["nome"] for x in rotulos]
         achadas = _casar(rotulos, t)
         if len(achadas) == 1:
             return f"o{achadas[0]}"
         if len(achadas) > 1:
             return "amb:" + "|".join(rotulos[i] for i in achadas[:6])
-        return "?" if curta else None
+        return None
     return None
 
 
@@ -912,17 +977,44 @@ def _casar(rotulos: list[str], t: str) -> list[int]:
 
 
 # =========================================================================== gravar
+class _SemConferir(Exception):
+    """Não deu para reler o meuWatt antes de gravar: nada é gravado."""
+
+
 async def _ainda_pendentes(ctx: ger.Contexto, estado: dict, slug: str, ids: list[int]) -> list[int]:
     """Os `live_id` que seguem sem classificação e sem desclassificação AGORA (o site pode ter classificado enquanto a
-    pessoa respondia). Sem conseguir ler, vão todos: é o que ela confirmou, e o site também grava por cima."""
+    pessoa respondia, e o estado vale até 12 h). Sem conseguir reler, NÃO grava (`_SemConferir`): gravar por cima do
+    que o site fez é pior do que pedir o Confirmar de novo.
+
+    ponytail: entre esta leitura e a gravação sobra uma janela de segundos — o classify-bulk do meuWatt não exige
+    `classified_at IS NULL`, e só lá dá para fechá-la."""
     try:
-        c = await ctx.mw.paradas_casadas(estado["usinas"][slug]["id"], *estado["janela"])
-    except Exception:                                      # noqa: BLE001
-        log.warning("paradas: não reli o par antes de gravar; grava o que a pessoa confirmou", exc_info=True)
-        return list(ids)
+        c = await ctx.mw.paradas_casadas(ctx.usinas[slug]["id"], *estado["janela"])
+    except Exception as e:                                 # noqa: BLE001
+        log.warning("paradas: não reli o par antes de gravar; nada gravado", exc_info=True)
+        raise _SemConferir(_motivo_http(e)) from e
     livres = {p["live_id"] for p in c.get("pairs") or [] if p.get("live_id") is not None
               and p.get("live_classified_at") is None}
     return [i for i in ids if i in livres]
+
+
+def _sem_conferir(estado: dict, e: _SemConferir, botao: str) -> list[dict]:
+    return _antes(_render(estado), f"❌ Não consegui conferir no meuWatt se ela ainda está sem classificação ({e}): "
+                                   f"nada foi gravado. Toque em {botao} para tentar de novo.")
+
+
+def _fora_da_concessao(ctx: ger.Contexto, estado: dict) -> list[dict] | None:
+    """A usina saiu do alcance da pessoa no meio do fluxo (concessão tirada no GS, ou o token dela não a vê mais): as
+    paradas dela que faltam não são gravadas — o estado guardado não é autorização."""
+    slug = estado["fila"][estado["i"]]["usina"]
+    if slug in ctx.usinas:
+        return None
+    dela = [x for x in estado["fila"][estado["i"]:] if x["usina"] == slug and not x.get("feita")]
+    for x in dela:
+        x["feita"] = True
+    estado["placar"]["fora"] += len(dela)
+    return _proxima(estado, f"❌ Nada foi gravado: {estado['usinas'][slug]['nome']} não está mais liberada para você "
+                            f"(no Gestão Solar ou no seu token do meuWatt). Pulei as {len(dela)} parada(s) dela.")
 
 
 def _classificacao(esc: dict) -> dict:
@@ -956,9 +1048,14 @@ def _sem_papel(estado: dict, e: Exception) -> list[dict]:
 
 
 async def _gravar(ctx: ger.Contexto, estado: dict) -> list[dict]:
+    if (fora := _fora_da_concessao(ctx, estado)) is not None:
+        return fora
     u = estado["fila"][estado["i"]]
     nome = estado["usinas"][u["usina"]]["nome"]
-    ids = await _ainda_pendentes(ctx, estado, u["usina"], u["live_ids"])
+    try:
+        ids = await _ainda_pendentes(ctx, estado, u["usina"], u["live_ids"])
+    except _SemConferir as e:
+        return _sem_conferir(estado, e, "Confirmar")
     if not ids:
         u["feita"] = True
         estado["placar"]["ja"] += 1
@@ -991,9 +1088,14 @@ async def _gravar(ctx: ger.Contexto, estado: dict) -> list[dict]:
 
 
 async def _aplicar(ctx: ger.Contexto, estado: dict) -> list[dict]:
+    if (fora := _fora_da_concessao(ctx, estado)) is not None:
+        return fora
     outras = _outras(estado)
     u = estado["fila"][estado["i"]]
-    pendentes = await _ainda_pendentes(ctx, estado, u["usina"], [i for x in outras for i in x["live_ids"]])
+    try:
+        pendentes = await _ainda_pendentes(ctx, estado, u["usina"], [i for x in outras for i in x["live_ids"]])
+    except _SemConferir as e:
+        return _sem_conferir(estado, e, f"Aplicar às {len(outras)}")
     vale = [x for x in outras if set(x["live_ids"]) & set(pendentes)]
     try:
         feitas = await _classificar(ctx, pendentes, _classificacao(estado["esc"])) if pendentes else 0
@@ -1006,7 +1108,10 @@ async def _aplicar(ctx: ger.Contexto, estado: dict) -> list[dict]:
     for x in outras:
         x["feita"] = True
     estado["placar"]["ja"] += len(outras) - len(vale)
-    if pendentes and feitas == 0:
+    if not pendentes:
+        return _proxima(estado, f"Nada foi gravado: as {len(outras)} já tinham sido classificadas (ou desclassificadas) "
+                                "no meuWatt enquanto conversávamos.")
+    if feitas == 0:
         estado["placar"]["fora"] += len(vale)
         return _proxima(estado, f"❌ Nada foi gravado: o seu papel no meuWatt nesta usina não classifica paradas. "
                                 f"{PAPEL}")
@@ -1020,8 +1125,13 @@ async def _aplicar(ctx: ger.Contexto, estado: dict) -> list[dict]:
 
 
 async def _desclassificar(ctx: ger.Contexto, estado: dict) -> list[dict]:
+    if (fora := _fora_da_concessao(ctx, estado)) is not None:
+        return fora
     u = estado["fila"][estado["i"]]
-    ids = await _ainda_pendentes(ctx, estado, u["usina"], u["live_ids"])
+    try:
+        ids = await _ainda_pendentes(ctx, estado, u["usina"], u["live_ids"])
+    except _SemConferir as e:
+        return _sem_conferir(estado, e, "Confirmar")
     if not ids:
         u["feita"] = True
         estado["placar"]["ja"] += 1
@@ -1043,6 +1153,10 @@ async def _desclassificar(ctx: ger.Contexto, estado: dict) -> list[dict]:
             return _antes(_render(estado), f"❌ O meuWatt não desclassificou agora ({_motivo_http(e)}); fiz {feitas} de "
                                            f"{len(ids)}. Toque em Confirmar para tentar o resto.")
     u["feita"] = True
+    if feitas == 0:
+        estado["placar"]["ja"] += 1
+        return _proxima(estado, "Nada foi desclassificado: o meuWatt não achou mais essas paradas (sumiram ou foram "
+                                "refeitas pelo detector).")
     estado["placar"]["nao"] += 1
     return _proxima(estado, f"✅ Marcada como NÃO foi parada no meuWatt ({feitas} parada(s) ao vivo): saiu da conta "
                             "de paradas e de perdas.")
@@ -1130,15 +1244,20 @@ async def _passo(ctx: ger.Contexto, estado: dict, acao: str) -> list[dict]:
             return _render(estado)
         if acao == "sep":
             u = estado["fila"][estado["i"]]
+            # só o inversor que PAROU (a piscada que o detector juntou ao grupo não é parada a classificar) e que tem
+            # parada ao vivo onde gravar
             novos = [{**u, "chave": f"{u['chave']}.{k}", "grupo": None, "inicio": m["inicio"], "fim": m["fim"],
-                      "live_ids": m["live_ids"], "membros": [m]} for k, m in enumerate(u["membros"]) if m["live_ids"]]
-            fora = len(u["membros"]) - len(novos)
+                      "live_ids": m["live_ids"], "membros": [m]} for k, m in enumerate(u["membros"])
+                     if m["live_ids"] and m.get("material", True)]
+            piscadas = sum(1 for m in u["membros"] if not m.get("material", True))
+            sem_vivo = len(u["membros"]) - len(novos) - piscadas
             estado["fila"][estado["i"]:estado["i"] + 1] = novos
             if not novos:
                 return _proxima(estado, "Nenhum inversor desta parada tem registro ao vivo no meuWatt: não dá para "
                                         "classificar um por um. Pulei.")
             return _antes(_render(estado), f"Separei em {len(novos)} parada(s), uma por inversor." + (
-                f" {fora} inversor(es) sem registro ao vivo no meuWatt ficaram de fora." if fora else ""))
+                f" {piscadas} só piscou (não é parada) e ficou de fora." if piscadas else "") + (
+                f" {sem_vivo} sem registro ao vivo no meuWatt ficou(aram) de fora." if sem_vivo else ""))
     elif etapa.startswith("n") and etapa[1:].isdigit() and escolhida is not None:
         k = int(etapa[1:])
         if escolhida < len(estado["oferecidas"]):
@@ -1150,9 +1269,16 @@ async def _passo(ctx: ger.Contexto, estado: dict, acao: str) -> list[dict]:
         estado["esc"]["externa"] = acao == "ext1"
         _ir(estado, "obs")
         return _render(estado)
+    elif etapa == "os" and acao == "obs+":
+        mais = (estado.pop("_cru", "") or "").strip()
+        estado["esc"]["obs"] = f"{estado['esc'].get('obs') or ''} {mais}".strip()[:500]
+        estado["obs_em"] = datetime.now(UTC).isoformat()
+        return _antes(_render(estado), f"Juntei à observação: «{estado['esc']['obs']}».")
     elif etapa in ("obs", "os") and acao in ("obs0", "os0", "txt"):
         valor = None if acao != "txt" else (estado.pop("_cru", "") or "").strip()[:500 if etapa == "obs" else 60]
         estado["esc"][etapa] = valor or None
+        if etapa == "obs":
+            estado["obs_em"] = datetime.now(UTC).isoformat() if valor else None
         _ir(estado, "os" if etapa == "obs" else "conferir")
         return _render(estado)
     elif etapa == "conferir":
@@ -1204,24 +1330,30 @@ def e_do_fluxo(evento: dict) -> bool:
 
 
 async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pendente: bool = False
-                 ) -> list[dict] | None:
-    """A mensagem é da classificação de paradas? Devolve as mensagens a mandar, ou `None` (segue o caminho de sempre:
-    a IA). `pendente`: há uma ação do helper/meuPlano esperando a confirmação — aí só o toque deste fluxo é dele; o
-    texto ("sim") é da ação."""
+                 ) -> tuple[list[dict], bool] | None:
+    """A mensagem é da classificação de paradas? Devolve (as mensagens a mandar, se um toque VÁLIDO fez o fluxo
+    andar), ou `None` (segue o caminho de sempre: a IA). `texto` é o MASCARADO (sem a senha de atuação). `pendente`:
+    há uma ação do helper/meuPlano esperando a confirmação — aí só o toque deste fluxo é dele; o texto ("sim") é da
+    ação. O texto que não é desta pergunta (ou que chega mais de `TEXTO_VALE` depois dela) vai à IA: a pessoa continua
+    conversando com o bot com a classificação aberta."""
     botao = str(evento.get("botao") or "")
     form = (evento.get("midia") or {}).get("formulario")
     estado = _carregar(db, user.id)
     nosso_form = (isinstance(form, dict) and estado is not None and bool(estado.get("form"))
                   and form.get("flow_token") == estado["form"])
+    toque = e_do_fluxo(evento)
     t = _n(texto)
-    comeca = False
-    if not (e_do_fluxo(evento) or nosso_form):
+    pedido = acao = None
+    if not (toque or nosso_form):
         if pendente or not t or evento.get("tipo") not in ("text", "audio", "voice"):
             return None
-        comeca = (bool(_COMECAR.search(t)) and len(t.split()) <= 14
-                  and not (estado is not None and estado["etapa"] in _TEXTO_LIVRE))
-        if not comeca and estado is None:
-            return None
+        pedido = _pedido_de_comecar(texto)
+        if pedido is None:
+            if estado is None or not _texto_vale(estado):
+                return None
+            acao = _acao_do_texto(estado, t, texto)
+            if acao is None:
+                return None
     if evento.get("wamid"):
         try:
             await whatsapp.digitando(evento["wamid"])      # "digitando…": ler as usinas e gravar levam segundos
@@ -1230,25 +1362,25 @@ async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pen
     ctx = ger.Contexto(db=db, user=user, telefone=telefone)
     await ger.preparar(ctx)
     if ctx.mw is None or not ctx.usinas:
-        return [_msg(_sem_meuwatt(ctx))]
-    if comeca:
-        ini, fim = _periodo_do_texto(t)
-        return await comecar(ctx, ini, fim, _usina_do_texto(ctx, texto))
+        return [_msg(_sem_meuwatt(ctx))], False
+    if pedido is not None:
+        ini, fim, us = pedido
+        slug = _usina_exata(ctx, us) if us else None
+        if us and slug is None:
+            return None                                    # "de <algo que não é usina>": a IA lê melhor
+        return await comecar(ctx, ini, fim, slug), False
     if estado is None:
-        return [_msg(VENCIDO)]
+        return [_msg(VENCIDO)], False
     if nosso_form:
         i = str(form.get("escolhido") or "")
         acao = f"o{i}" if i.isdigit() else "?"
-    elif e_do_fluxo(evento):
+    elif toque:
         tok, _, acao = botao[len(PREFIXO):].partition(":")
         if tok != estado.get("tok"):
             saidas = _antes(_render(estado), "Esse botão é de uma pergunta anterior. Sigo daqui:")
             _salvar(db, user.id, estado)
-            return saidas
+            return saidas, False
     else:
-        acao = _acao_do_texto(estado, t, texto)
-        if acao is None:
-            return None
         estado["_cru"] = texto
     saidas = await _passo(ctx, estado, acao)
     estado.pop("_cru", None)
@@ -1256,7 +1388,7 @@ async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pen
         _apagar(db, user.id)
     else:
         _salvar(db, user.id, estado)
-    return saidas
+    return saidas, toque or nosso_form
 
 
 # =========================================================================== as ferramentas da IA
@@ -1278,6 +1410,8 @@ async def paradas_a_classificar(ctx: ger.Contexto, a: dict) -> dict:
     if ctx.mw is None or not ctx.usinas:
         raise ger.Recusa(_sem_meuwatt(ctx))
     ini, fim = ger._periodo(a.get("inicio"), a.get("fim"))
+    if (fim - ini).days >= MAX_DIAS:
+        raise ger.Recusa(f"Conto as paradas a classificar de até {MAX_DIAS} dias por vez.")
     slug = ger._usina(ctx, a["usina"])["slug"] if (a.get("usina") or "").strip() else None
     todas, extras = await _ler(ctx, ini, fim, slug)
     return {"inicio": ini.isoformat(), "fim": fim.isoformat(), "usinas": [
