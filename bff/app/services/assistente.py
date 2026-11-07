@@ -1630,13 +1630,13 @@ async def _atender(evento: dict) -> None:
         # botão antigo não confirma nem cancela nada (avaliações 13 e 14).
         # O número de 6 a 8 dígitos que NÃO é a senha (conferido) é resposta do fluxo (a OS «202611»): tratá-lo como
         # tentativa contava erro de senha e bloqueava as ações. A senha certa, ou o número que nem foi conferido
-        # (bloqueio), nunca vai ao fluxo.
+        # (bloqueio), nunca vai ao fluxo. Com uma ação na fila — VENCIDA inclusive, como o helper a vê (`espera_sim`:
+        # o "sim" tardio ouve que venceu) —, o texto solto é dela: nem o "sim" nem a quase-senha («482914») vão ao fluxo.
         esperando = helper.PENDENTES.get(user.id)
         numero_livre = analise.pura and not analise.acertou and not analise.bloqueada
         fluxo = await par.tratar(db, user, telefone, evento,
                                  texto if numero_livre else (seguro or "").removeprefix("🎙️ "),
-                                 pendente=(esperando is not None and monotonic() <= esperando.expira)
-                                 or (analise.pura and not numero_livre))
+                                 pendente=esperando is not None or (analise.pura and not numero_livre))
         if fluxo is not None:
             saidas, avancou = fluxo
             derrubada = helper.desarmar(user.id, seguro or "[botão]") if avancou else None

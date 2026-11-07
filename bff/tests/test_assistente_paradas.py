@@ -570,6 +570,7 @@ class PeloBot:
             return {"ok": True}
 
         monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+        monkeypatch.setattr(assistente, "ESPERA_TEXTO_S", 0.0)          # sem esperar a mensagem seguinte
         monkeypatch.setattr(assistente, "SessionLocal", lambda: db)
         monkeypatch.setattr(db, "close", lambda: None)
 
@@ -945,3 +946,106 @@ async def test_copia_do_gateway_no_teto_dele(monkeypatch):
     await par.enviar(TEL, [{"texto": texto}], guardar=lambda t: assistente._guardado(t, []))
     assert chamadas and all(len(c.get("guardar") or "") <= 4096 for c in chamadas)
     assert all("123" not in (c.get("guardar") or "") for c in chamadas)
+
+
+# ============================================================================================= 3ª revisão
+async def _ate_o_confere_pelo_bot(bot):
+    await bot.manda("classificar paradas")
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+                  "Sem observação", "Sem OS"):
+        await bot.toca(passo)
+    assert "📋 *Confere antes de gravar*" in bot.enviados[-1]["texto"]
+
+
+async def test_3a_sim_solto_depois_de_outra_resposta_do_bot_nao_grava(db, dono, mw, monkeypatch):
+    """(A) O Confere aberto; a pessoa pergunta outra coisa, o bot responde, e o «sim» seguinte é para ELE — não grava
+    nem o «não» descarta. O toque no botão Confirmar continua valendo."""
+    async def _llm(msgs, ferramentas=None, **k):
+        return {"content": "Hoje gerou bem."}
+
+    monkeypatch.setattr(assistente, "_llm", _llm)
+    bot = PeloBot(db, monkeypatch)
+    await _ate_o_confere_pelo_bot(bot)
+    await bot.manda("e a geração de hoje?")                                   # vai à IA: o bot responde outra coisa
+    await bot.manda("sim")
+    await bot.manda("não")
+    assert mw.gravadas == [] and par.json.loads(db.query(FluxoParadas).one().estado)["etapa"] == "conferir"
+    await bot.toca("Confirmar")
+    assert len(mw.gravadas) == 1
+
+
+async def test_3a_sim_solto_horas_depois_nao_grava_nem_aplica(db, dono, mw, monkeypatch):
+    bot = PeloBot(db, monkeypatch)
+    await _ate_o_confere_pelo_bot(bot)
+    _envelhece(db, 120)
+    await bot.manda("sim")                                                    # 2 h depois
+    assert mw.gravadas == []
+    await bot.toca("Confirmar")
+    assert len(mw.gravadas) == 1 and "Há mais 1 parada(s)" in bot.enviados[-1]["texto"]
+    _envelhece(db, 90)
+    await bot.manda("ok")                                                     # 90 min depois, nas outras
+    assert len(mw.gravadas) == 1
+
+
+async def test_3b_acao_vencida_fica_com_o_sim(db, dono, mw, monkeypatch):
+    """(B) A ação do meuPlano VENCEU sem resposta; o «sim» é para ela (o helper diz que venceu), não grava as paradas.
+    (2, abaixo) A ação de equipamento vencida e a senha com um dígito errado («482914») na pergunta da OS: não vira a
+    OS — a quase-senha iria ao meuWatt e o erro de senha não contaria."""
+    from time import monotonic
+
+    bot = PeloBot(db, monkeypatch)
+    await _ate_o_confere_pelo_bot(bot)
+
+    class _Ctx:
+        user, pedido, proposta = dono, "crie a OS", None
+
+    async def _nada(*a):
+        return "✅ feito"
+
+    helper.propor(_Ctx(), "Criar a OS em Pereiras", 600, _nada, parte=None, confirmacao="sim")
+    helper.mostrada(dono.id, datetime.now(UTC) - timedelta(minutes=11))
+    helper.PENDENTES[dono.id].expira = monotonic() - 1                       # venceu
+    await bot.manda("sim")
+    assert mw.gravadas == [] and "venceu" in bot.enviados[-1]["texto"]
+
+
+async def test_2_quase_senha_com_acao_de_equipamento_vencida_nao_vira_os(db, dono, mw, monkeypatch):
+    from app.core.security import gerar_hash_senha
+    from time import monotonic
+
+    dono.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    bot = PeloBot(db, monkeypatch)
+    await bot.manda("classificar paradas")
+    for passo in ("Classificar agora", "Classificar", "Falta de rede", "Queda de tensão", "Sim, externa",
+                  "Sem observação"):
+        await bot.toca(passo)
+
+    class _Ctx:
+        user, pedido, proposta = dono, "desliga o 3", None
+
+    async def _nada(*a):
+        return "✅ feito"
+
+    helper.propor(_Ctx(), "Desligar o inversor 3", 120, _nada, parte=None, confirmacao="senha")
+    helper.mostrada(dono.id, datetime.now(UTC) - timedelta(minutes=3))
+    helper.PENDENTES[dono.id].expira = monotonic() - 1
+    await bot.manda("482914")
+    assert not [e for e in bot.enviados if "482914" in (e.get("texto") or "") + (e.get("guardar") or "")]
+    assert par.json.loads(db.query(FluxoParadas).one().estado)["etapa"] == "os"
+
+
+def test_resumo_so_escolhe_usina_pelo_nome_exato():
+    estado = {"etapa": "resumo", "titulos": {}, "todas": [{"usina": "boa"}],
+              "usinas": {"boa": {"nome": "UFV Boa Esperança"}}}
+    assert par._acao_do_texto(estado, "boa", "boa") is None and par._acao_do_texto(estado, "1", "1") is None
+    assert par._acao_do_texto(estado, "boa esperanca", "Boa Esperança") == "o0"
+
+
+async def test_horario_logo_depois_da_observacao_nao_e_os(db, dono, mw):
+    c = Conversa(db, dono)
+    await _ate_o_confere(c, "Falta de rede", "Queda de tensão", "Sim, externa")
+    await c.diz("a rede caiu")
+    await c.diz("10:42")
+    assert "OS" not in c.texto.split("\n")[0] and c.texto.startswith("Juntei à observação: «a rede caiu 10:42».")
+    assert await c.diz("11h") is not None and "a rede caiu 10:42 11h" in c.texto

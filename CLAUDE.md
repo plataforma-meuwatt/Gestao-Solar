@@ -768,9 +768,11 @@ O passo a passo é do SISTEMA, não da IA: só o pedido CLARO começa sem ela ("
 paradas de ontem/da semana", "paradas de hoje", "o que caiu hoje", com a usina exata no fim); pergunta ("quantas faltam
 classificar?", "a de ontem já foi classificada?") e data que não se lê com certeza ("anteontem", "do dia 03/11", "mês
 passado") vão à IA, que chama `classificar_paradas` ou `paradas_a_classificar` (só conta) com as datas. Com a
-classificação aberta, o texto que não é resposta da pergunta de agora vai à IA; o título do botão, a opção exata,
-«parar» e o sim/não da pergunta da vez valem as 12 h, e o TEXTO LIVRE (observação, OS, motivo) só até 30 min depois da
-pergunta. Na observação só desvia a pergunta («?») ou o pedido de começar a classificar, nunca a 1ª palavra; na OS vale
+classificação aberta, o texto que não é resposta da pergunta de agora vai à IA; o título do botão, a opção exata e
+«parar» valem as 12 h (o toque no botão também), o TEXTO LIVRE (observação, OS, motivo) só até 30 min depois da
+pergunta, e o sim/não SOLTO só dentro desses 30 min e se a última mensagem do bot à pessoa foi a pergunta do fluxo
+(a última linha dela no Log do bot, `gs_bot_registros`, com `classificar_paradas`) — senão o «sim» que respondia a
+IA gravava a classificação. Com uma ação na fila (vencida inclusive), o texto solto é dela. Na observação só desvia a pergunta («?») ou o pedido de começar a classificar, nunca a 1ª palavra; na OS vale
 o número dito numa frase («a OS é a 1638», «nº 1638»; «1638 e 1640» guarda as duas) e sim/ok não viram observação. O
 fluxo lê o texto MASCARADO (sem a senha de atuação; o número de 6 a 8 dígitos que NÃO é a senha é resposta, não
 tentativa) e a cópia do gateway passa pelo `_guardado`, cortada no teto de 4.096 dele. Resumo

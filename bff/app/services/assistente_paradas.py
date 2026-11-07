@@ -863,6 +863,12 @@ _OS = re.compile(r"(?i)^(?:(?:os|o\.s\.?|ordem(?:\s+de\s+servi[cç]o)?)\s*[:#-]?
 _PALAVRAS_DE_OS = {"a", "o", "os", "e", "n", "no", "numero", "num", "ordem", "de", "servico", "da", "do", "eh", "s"}
 #: As ações de TEXTO LIVRE (observação, OS, motivo de não ser parada): só valem até `TEXTO_VALE` depois da pergunta.
 _LIVRES = ("txt", "obs+", "os:")
+#: O sim/não SOLTO: só é do fluxo dentro da janela E se a última mensagem do bot à pessoa foi a pergunta do fluxo
+#: (`_ultima_foi_do_fluxo`). Senão é resposta a outra coisa: 2 h depois, ou depois de a IA perguntar algo, um "sim"
+#: gravava a classificação; um "não" a descartava.
+_SOLTAS = {"sim", "s", "ok", "pode", "isso", "nao", "n", "confere", "certo", "beleza", "blz"}
+#: O horário solto («10:42», «11h») não é número de OS.
+_HORA = re.compile(r"(?i)\b\d{1,2}(?::\d{2}|h\d{0,2})\b")
 
 
 def _desvia(cru: str) -> bool:
@@ -874,6 +880,8 @@ def _desvia(cru: str) -> bool:
 def _numeros_de_os(cru: str, t: str) -> str | None:
     """A OS que o texto diz: o código inteiro ("OS 1638", "os-2026-001") ou os números de uma frase que só fala da OS
     ("a OS é a 1638", "nº 1638"; "1638 e 1640" guarda as duas, o campo do meuWatt é texto e a pessoa confere)."""
+    if _HORA.search(cru):
+        return None
     if _OS.match(cru.strip()):
         return cru.strip()[:60]
     palavras = t.split()
@@ -881,6 +889,16 @@ def _numeros_de_os(cru: str, t: str) -> str | None:
     if numeros and all(p.isdigit() or p in _PALAVRAS_DE_OS for p in palavras):
         return ", ".join(numeros)[:60]
     return None
+
+
+def _ultima_foi_do_fluxo(db: Session, user_id: int) -> bool:
+    """A última mensagem do bot a esta pessoa foi da classificação (o Log do bot, `gs_bot_registros`, onde todo turno
+    entra: o do fluxo com a ferramenta `classificar_paradas`)? Sem linha nenhuma, sim."""
+    from app.models.conversa_whatsapp import RegistroBot
+
+    ultima = db.execute(select(RegistroBot.ferramentas).where(RegistroBot.gs_user_id == user_id)
+                        .order_by(RegistroBot.id.desc()).limit(1)).first()
+    return ultima is None or "classificar_paradas" in (ultima[0] or "").split(",")
 
 
 def _texto_vale(estado: dict) -> bool:
@@ -932,7 +950,7 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
         if t in {"so uma usina", "uma usina", "so uma"}:
             return "uma"
         slugs = list(dict.fromkeys(u["usina"] for u in estado["todas"]))
-        achada = _casar([estado["usinas"][x]["nome"] for x in slugs], t, pedaco=False)   # "boa" não é Boa Esperança
+        achada = _casar([estado["usinas"][x]["nome"] for x in slugs], t, pedaco="")      # "boa" não é Boa Esperança
         if len(achada) == 1:
             estado["oferecidas"] = slugs
             return f"o{achada[0]}"
@@ -975,7 +993,7 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
                    [o["label"] for o in _opcoes(estado, int(etapa[1:]))])
         if etapa == "usina":
             rotulos = [estado["usinas"][x]["nome"] for x in rotulos]
-        achadas = _casar(rotulos, t, pedaco=etapa != "usina")
+        achadas = _casar(rotulos, t, pedaco="comeco" if etapa == "usina" else "trecho")
         if len(achadas) == 1:
             return f"o{achadas[0]}"
         if len(achadas) > 1:
@@ -984,18 +1002,19 @@ def _acao_do_texto(estado: dict, t: str, cru: str) -> str | None:
     return None
 
 
-def _casar(rotulos: list[str], t: str, pedaco: bool = True) -> list[int]:
-    """Os índices das opções que o texto nomeia: o nome exato (sem acento nem caixa), o número dela, ou (`pedaco`) um
-    pedaço que só ela tem. Sem `pedaco` (usina), o pedaço tem de ser o COMEÇO do nome, em palavras inteiras."""
+def _casar(rotulos: list[str], t: str, pedaco: str = "trecho") -> list[int]:
+    """Os índices das opções que o texto nomeia: o nome exato (sem acento nem caixa) e, se a pergunta é sobre elas,
+    o número dela ou um pedaço — `trecho` (qualquer pedaço, a cascata), `comeco` (o começo do nome em palavras
+    inteiras, a lista de usinas) ou "" (só o nome exato: o resumo não perguntou nada, e «boa» não é Boa Esperança)."""
     if not t:
         return []
     nomes = [_n(r) for r in rotulos]
     exatas = [i for i, n in enumerate(nomes) if n == t or ger._norm(n) == ger._norm(t)]
-    if exatas:
+    if exatas or not pedaco:
         return exatas[:1]
     if t.isdigit() and 1 <= int(t) <= len(rotulos):
         return [int(t) - 1]
-    if not pedaco:
+    if pedaco == "comeco":
         return [i for i, n in enumerate(nomes) if len(t) >= 3 and re.match(rf"{re.escape(ger._norm(t))}\b", ger._norm(n))]
     return [i for i, n in enumerate(nomes) if len(t) >= 3 and t in n]
 
@@ -1384,6 +1403,8 @@ async def tratar(db: Session, user, telefone: str, evento: dict, texto: str, pen
             acao = _acao_do_texto(estado, t, texto)
             if acao is None or (acao.startswith(_LIVRES) and not _texto_vale(estado)):
                 return None                                # texto livre horas depois da pergunta: é conversa
+            if t in _SOLTAS and not (_texto_vale(estado) and _ultima_foi_do_fluxo(db, user.id)):
+                return None                                # o sim/não solto responde a outra coisa
     if evento.get("wamid"):
         try:
             await whatsapp.digitando(evento["wamid"])      # "digitando…": ler as usinas e gravar levam segundos
