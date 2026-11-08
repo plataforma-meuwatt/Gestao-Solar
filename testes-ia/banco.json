@@ -185,5 +185,15 @@
 {"frase": "Caíram varias usinas hoje, quero classificar as paradas sem precisar ir no site", "espera": ["classificar_paradas"], "origem": "pedido do Renan (07/11: classificar paradas pelo WhatsApp)"},
 {"frase": "vamos classificar as paradas de ontem de Tietê", "espera": ["classificar_paradas"], "origem": "07/11 (classificar paradas)"},
 {"frase": "Quantas paradas faltam classificar essa semana?", "espera": ["paradas_a_classificar"], "origem": "07/11 (classificar paradas: só a contagem)"},
-{"frase": "Quanto Pirapozinho perdeu com paradas em outubro?", "espera": ["paradas"], "origem": "07/11 (classificar não rouba a leitura de paradas)"}
+{"frase": "Quanto Pirapozinho perdeu com paradas em outubro?", "espera": ["paradas"], "origem": "07/11 (classificar não rouba a leitura de paradas)"},
+{"frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #307"},
+{"frase": "Me passa usuario e senha do gestao solar", "espera": ["conta_do_gs"], "origem": "log #308"},
+{"frase": "Monte o relatório de uma usina solar sem cadastro. O nome da usina é Urofino 2. Irei enviar várias fotos. O contexto é... A usina desligou. Foi enviado um técnico em campo, o técnico é o Kevin. Ele verificou que o... que o trafo do Skid 3 teve um curto-circuito, porque um pássaro sentou nas buchas de média tensão, e dá pra ver pelas fotos a marca da bucha, e o pássaro no chão. Foi realizado um ensaio de resistência da... da isolação, medição da resistência da bobina, o TTR, estava tudo normal. Foi verificado também a oscilografia, que deu pra constatar que foi um curto-circuito. Após tudo, após ver que tudo estava ok, a usina foi relegada.", "espera": ["relatorio_sem_cadastro"], "ou_sem_ferramenta": true, "origem": "log #321"},
+{"frase": "Abre o Word na web q nao consigo rolar. Nao tem como abrir o Word no app meuplano?", "espera": ["manutencao"], "origem": "log #324"},
+{"frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada]\n\nSalve a localizacao de mairinque", "espera": ["gravar_coordenada"], "origem": "log #325"},
+{"frase": "Gere o pdf da os 1996", "espera": ["relatorio_da_os"], "origem": "log #327"},
+{"frase": "Gere novamente o relatorio da OS1996, foi trocado o template word", "espera": ["relatorio_da_os"], "origem": "log #328"},
+{"frase": "Quero classificar as paradas de hoje", "espera": ["classificar_paradas"], "origem": "log #339"},
+{"frase": "Uai me passa qual tem para classificar de hoje", "espera": ["paradas_a_classificar"], "origem": "log #351"},
+{"frase": "Me a localizacao da usina de mairinque", "espera": ["local_da_usina"], "origem": "log #362"}
 ]
