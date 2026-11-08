@@ -26,7 +26,10 @@ MES = {
                "incerteza_regua_pct": -1.87, "incerteza_regua_mwh": 4.7, "poa_real": 176.2, "poa_tempo": 189.6, "poa_pvsyst": 233.9,
                "ghi_real": 155.8, "ghi_pvsyst": 173.6, "t_amb_media": 24.3, "t_amb_pvsyst": 23.9, "pr_real": 0.746,
                "pr_pvsyst": 0.826, "corte_mwh": 19.4, "dias_travados": 0, "paradas": {"n": 2, "minutos": 51},
-               "inmet": {"codigo": "A737", "nome": "IBITINGA", "km": 11.1, "dias": 1}},
+               "inmet": {"codigo": "A737", "nome": "IBITINGA", "km": 11.1, "dias": 1},
+               "fonte_sol": {"margem_pct": 3.2, "dentro_da_margem": False, "margens": {"estacao": 3.0, "inmet": 10.0, "open-meteo": 20.0},
+                             "fontes": [{"tipo": "estacao", "dias": 30, "margem_pct": 3.0},
+                                        {"tipo": "inmet", "codigo": "A737", "cidade": "Ibitinga", "km": 11.1, "dias": 1, "margem_pct": 10.0}]}},
     "hora_a_hora": {"leitura": {"tipo": "sol_direto", "titulo": "A perda cresce com o sol direto…", "inversor": None},
                     "perfil": [{"hora": 9, "pct": -8.0, "pct_fora_limite": -10.5}, {"hora": 5, "pct": None, "pct_fora_limite": None}],
                     "rendimento": [{"dia": "2026-10-22", "pct": -1.7, "chuva_mm": 6.6, "minutos": 385, "inversores": {}},
@@ -97,9 +100,11 @@ async def test_o_mes_no_gemeo_resumido_para_a_ia():
     assert r["limites"]["por_inversor"] == [{"inversor": "Inv 1", "limite_kw": 252.5, "comando_lido_kw": 252.5, "fonte": "leitura"}]
     assert r["paradas"]["maiores"][0] == {"inversor": "Inv 1", "inicio": "10-08 16:39", "minutos": 7, "perda_kwh": 27.7}
     assert "Números só daqui" in r["como_explicar"]
-    # de onde veio o sol: a estação da usina, o INMET (a API antiga manda só `inmet`) e o satélite
-    assert r["fonte_do_sol"] == {"estacao_da_usina_dias": 1, "inmet": [{"estacao": "Ibitinga (A737, 11.1 km)", "dias": 1}],
-                                 "satelite_dias": 0}
+    # de onde veio o sol e a margem de erro do mês: o que o módulo decidiu (o mesmo do relatório)
+    f = r["fonte_do_sol"]
+    assert f["fontes"] == [{"fonte": "estação solarimétrica da usina", "dias": 30, "margem_pct": 3.0},
+                           {"fonte": "estação do INMET em Ibitinga (A737, a 11.1 km da usina)", "dias": 1, "margem_pct": 10.0}]
+    assert f["margem_de_erro_do_mes_pct"] == 3.2 and f["dentro_da_margem"] is False and "INMET ±10.0%" in f["como_ler"]
     assert len(json.dumps(r, ensure_ascii=False)) < ger_teto()
 
 

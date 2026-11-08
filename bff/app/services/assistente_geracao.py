@@ -638,6 +638,20 @@ def _mes_gemeo(mes: str | None) -> str:
     return d.strftime("%Y-%m")
 
 
+def _fonte_do_sol(f: dict) -> dict:
+    """De onde veio o sol do mês e a margem de erro dele — a decisão é do módulo (`fonte_sol`), como no relatório."""
+    m = f.get("margens") or {}
+    nome = {"estacao": lambda x: "estação solarimétrica da usina",
+            "inmet": lambda x: f"estação do INMET em {x.get('cidade')} ({x.get('codigo')}, a {x.get('km')} km da usina)",
+            "open-meteo": lambda x: f"satélite: {x.get('nome')}"}
+    return {"fontes": [{"fonte": nome[x["tipo"]](x), "dias": x["dias"], "margem_pct": x["margem_pct"]} for x in f.get("fontes") or []],
+            "margem_de_erro_do_mes_pct": f.get("margem_pct"), "dentro_da_margem": f.get("dentro_da_margem"),
+            "como_ler": (f"Margem = o quanto o sol pode errar no mês: estação da usina ±{m.get('estacao')}%, INMET "
+                         f"±{m.get('inmet')}%, satélite ±{m.get('open-meteo')}% (o maior erro de mês medido trocando a estação "
+                         "de Ibitinga e a de Porto Ferreira pela de fora); a do mês é a média pelos dias. dentro_da_margem = "
+                         "o desvio da usina não passa dela: não afirme que a usina gerou mal, diga que está dentro da margem.")}
+
+
 async def gemeo(ctx: Contexto, a: dict) -> dict:
     """O mês no gêmeo digital: foi o clima ou a usina? (placar, cascata, dia a dia, hora a hora, inversores, limites)."""
     u = _usina(ctx, a.get("usina"))
@@ -650,10 +664,7 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
     paradas = d.get("paradas")
     return {
         "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
-        "fonte_do_sol": {"estacao_da_usina_dias": sum(1 for x in d.get("dias") or [] if x.get("poa_fonte") == "estacao"),
-                         "inmet": [{"estacao": f"{e['nome'].title()} ({e['codigo']}, {e['km']} km)", "dias": e["dias"]}
-                                   for e in (s["inmet_estacoes"] if "inmet_estacoes" in s else [s["inmet"]] if s.get("inmet") else [])],
-                         "satelite_dias": sum(1 for x in d.get("dias") or [] if x.get("poa_fonte") == "open-meteo")},
+        "fonte_do_sol": _fonte_do_sol(s.get("fonte_sol") or {}),
         "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
         "geometria": {"do_pdf": f.get("geometria"), "pdf": f.get("geometria_pdf"), "construida": f.get("geometria_real"),
                       "controlador": f.get("geometria_controlador")},
