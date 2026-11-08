@@ -691,7 +691,10 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
                        "gemeo_no_ano_tipico_regua": s.get("regua_mwh")},
         "usina_x_previsto_pct": s["desvio_previsto_pct"],
         "cascata_mwh": {"regua": s.get("efeito_regua_mwh"), "clima": s["efeito_clima_mwh"],
-                        "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"],
+                        "geometria": s.get("efeito_geometria_mwh"),
+                        # o desgaste dos módulos pela garantia, além do que o PDF já desconta (mw-analise fator_desgaste)
+                        "desgaste_dos_modulos": s.get("efeito_desgaste_mwh"), "desgaste": s.get("desgaste"),
+                        "limitacao": s["efeito_limitacao_mwh"],
                         "recuo_a_mais": s.get("efeito_trackers_mwh"),
                         "sol_no_plano": s["efeito_plano_mwh"], "sol_no_plano_pelo_isotropico": s.get("efeito_plano_iso_mwh"),
                         "paradas": s.get("efeito_paradas_mwh"),
