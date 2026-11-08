@@ -603,7 +603,8 @@ COMO_EXPLICAR_GEMEO = (
     "Quem decide é sol_no_plano_situacao (o mesmo que a tela mostra; NUNCA compare os números você mesmo): dentro = não "
     "dá para afirmar que faltou sol; abaixo = faltou sol no plano (tracker, sombra ou o sensor); sensor_mede_baixo = o "
     "sensor inclinado mede baixo (sujeira ou calibração), não os módulos — a usina gerou o esperado; acima; sem_sensor = "
-    "o sol veio do satélite), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
+    "a usina não tem sensor no mês: o sol veio da estação do INMET mais perto — medida, mas longe da usina — ou do "
+    "satélite (fonte_do_sol diz qual), no_plano_medido é conta e não medida, e o degrau não diz nada), paradas e conversão (o resto: sujeira, módulos, inversores, trackers que o sensor "
     "não vê). parte_clima_pct = quanto da diferença para o PVsyst foi o tempo. hora_a_hora.leitura já traz o padrão "
     "(perda que cresce com o sol direto → posição de tracker, sombra ou temperatura: hipótese, quem prova a posição é o "
     "ângulo dos controladores; parecida com sol e nuvem → sujeira; um inversor que descola). Números só daqui; None = sem dado.")
@@ -649,6 +650,10 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
     paradas = d.get("paradas")
     return {
         "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
+        "fonte_do_sol": {"estacao_da_usina_dias": sum(1 for x in d.get("dias") or [] if x.get("poa_fonte") == "estacao"),
+                         "inmet": [{"estacao": f"{e['nome'].title()} ({e['codigo']}, {e['km']} km)", "dias": e["dias"]}
+                                   for e in (s["inmet_estacoes"] if "inmet_estacoes" in s else [s["inmet"]] if s.get("inmet") else [])],
+                         "satelite_dias": sum(1 for x in d.get("dias") or [] if x.get("poa_fonte") == "open-meteo")},
         "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
         "geometria": {"do_pdf": f.get("geometria"), "pdf": f.get("geometria_pdf"), "construida": f.get("geometria_real"),
                       "controlador": f.get("geometria_controlador")},
@@ -825,7 +830,8 @@ FERRAMENTAS = {
         "inversor). Sem datas = mês atual até hoje.", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "resumo_executivo": (resumo_executivo, _f("resumo_executivo", "Texto do resumo executivo do mês (veredito, "
         "destaques, perdas, ações e a observação da O&M).", {"usina": _USINA, "mes": _MES}, ["mes"])),
-    "gemeo": (gemeo, _f("gemeo", "GÊMEO DIGITAL de uma usina com estação (hoje Ibitinga e Porto Ferreira) num mês: "
+    "gemeo": (gemeo, _f("gemeo", "GÊMEO DIGITAL de uma usina (hoje Ibitinga, Porto Ferreira, Pirapozinho, Tietê, Ouro Fino e "
+        "Pereiras) num mês: "
         "'foi o clima ou a usina?' — o real × o previsto pelo gêmeo (com o tempo que fez) × o PVsyst, a cascata (régua, "
         "clima, limitação, sol no plano, paradas, conversão), dia a dia, o hora a hora (padrão de tracker × sujeira × "
         "inversor), inversores, limites de potência lidos nos inversores e paradas. Para essas usinas, prefira esta a "

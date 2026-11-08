@@ -25,13 +25,16 @@ MES = {
                "efeito_paradas_mwh": -0.06, "efeito_conversao_mwh": -16.7, "efeito_usina_mwh": -27.0, "parte_clima_pct": 63,
                "incerteza_regua_pct": -1.87, "incerteza_regua_mwh": 4.7, "poa_real": 176.2, "poa_tempo": 189.6, "poa_pvsyst": 233.9,
                "ghi_real": 155.8, "ghi_pvsyst": 173.6, "t_amb_media": 24.3, "t_amb_pvsyst": 23.9, "pr_real": 0.746,
-               "pr_pvsyst": 0.826, "corte_mwh": 19.4, "dias_travados": 0, "paradas": {"n": 2, "minutos": 51}},
+               "pr_pvsyst": 0.826, "corte_mwh": 19.4, "dias_travados": 0, "paradas": {"n": 2, "minutos": 51},
+               "inmet": {"codigo": "A737", "nome": "IBITINGA", "km": 11.1, "dias": 1}},
     "hora_a_hora": {"leitura": {"tipo": "sol_direto", "titulo": "A perda cresce com o sol direto…", "inversor": None},
                     "perfil": [{"hora": 9, "pct": -8.0, "pct_fora_limite": -10.5}, {"hora": 5, "pct": None, "pct_fora_limite": None}],
                     "rendimento": [{"dia": "2026-10-22", "pct": -1.7, "chuva_mm": 6.6, "minutos": 385, "inversores": {}},
                                    {"dia": "2026-10-23", "pct": None, "chuva_mm": 0.0, "minutos": 0, "inversores": {}}]},
-    "dias": [{"dia": "2026-10-01", "previsto_kwh": 2580, "real_kwh": 2260, "desvio_pct": -12.4, "poa": 2.1, "corte_kwh": 10, "paradas_n": 0},
-             {"dia": "2026-10-02", "previsto_kwh": 0, "real_kwh": 0, "desvio_pct": None, "poa": 0.0, "corte_kwh": 0, "paradas_n": 0}],
+    "dias": [{"dia": "2026-10-01", "previsto_kwh": 2580, "real_kwh": 2260, "desvio_pct": -12.4, "poa": 2.1, "corte_kwh": 10, "paradas_n": 0,
+              "poa_fonte": "estacao"},
+             {"dia": "2026-10-02", "previsto_kwh": 0, "real_kwh": 0, "desvio_pct": None, "poa": 0.0, "corte_kwh": 0, "paradas_n": 0,
+              "poa_fonte": "inmet", "inmet_estacao": "A737"}],
     "inversores": [{"sn": "ES1", "rotulo": "Inv 1", "real_kwh": 42659, "previsto_kwh": 49601, "desvio_pct": -14.0,
                     "paradas_n": 2, "paradas_kwh": 27.8}],
     "limites": {"projeto_kw": 1000.0, "usina_configurado_kw": 1027.0, "usina_teto_medido_kw": None, "dias": [
@@ -94,6 +97,9 @@ async def test_o_mes_no_gemeo_resumido_para_a_ia():
     assert r["limites"]["por_inversor"] == [{"inversor": "Inv 1", "limite_kw": 252.5, "comando_lido_kw": 252.5, "fonte": "leitura"}]
     assert r["paradas"]["maiores"][0] == {"inversor": "Inv 1", "inicio": "10-08 16:39", "minutos": 7, "perda_kwh": 27.7}
     assert "Números só daqui" in r["como_explicar"]
+    # de onde veio o sol: a estação da usina, o INMET (a API antiga manda só `inmet`) e o satélite
+    assert r["fonte_do_sol"] == {"estacao_da_usina_dias": 1, "inmet": [{"estacao": "Ibitinga (A737, 11.1 km)", "dias": 1}],
+                                 "satelite_dias": 0}
     assert len(json.dumps(r, ensure_ascii=False)) < ger_teto()
 
 
