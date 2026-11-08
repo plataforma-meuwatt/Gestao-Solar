@@ -694,7 +694,12 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
                         "geometria": s.get("efeito_geometria_mwh"), "limitacao": s["efeito_limitacao_mwh"],
                         "recuo_a_mais": s.get("efeito_trackers_mwh"),
                         "sol_no_plano": s["efeito_plano_mwh"], "sol_no_plano_pelo_isotropico": s.get("efeito_plano_iso_mwh"),
-                        "paradas": s.get("efeito_paradas_mwh"), "conversao": s["efeito_conversao_mwh"],
+                        "paradas": s.get("efeito_paradas_mwh"),
+                        # o inversor sem gerar com sol num dia inteiro que o detector não contou (parado ou sem comunicação),
+                        # pelo rendimento dele nos outros dias: sai da conversão (mw-analise paradas_pelo_gemeo)
+                        "paradas_pelo_gemeo": s.get("efeito_paradas_gemeo_mwh"),
+                        "paradas_pelo_gemeo_inversor_dias": (s.get("paradas_gemeo") or {}).get("inversor_dias"),
+                        "conversao": s["efeito_conversao_mwh"],
                         "usina_total": s["efeito_usina_mwh"]},
         "parte_clima_pct": s["parte_clima_pct"],
         "incerteza_regua": {"pct": s["incerteza_regua_pct"], "mwh": s["incerteza_regua_mwh"]},
