@@ -27,6 +27,9 @@ MES = {
                "ghi_real": 155.8, "ghi_pvsyst": 173.6, "t_amb_media": 24.3, "t_amb_pvsyst": 23.9, "pr_real": 0.746,
                "pr_pvsyst": 0.826, "corte_mwh": 19.4, "dias_travados": 0, "paradas": {"n": 2, "minutos": 51},
                "inmet": {"codigo": "A737", "nome": "IBITINGA", "km": 11.1, "dias": 1},
+               "tratamentos": [{"dia": "2026-10-25", "sol": None, "sol_kwh_m2": None, "energia": None, "energia_kwh": None,
+                                "descartar": True, "motivo": "coleta parada", "aviso": None}],
+               "dias_na_conta": 30, "dias_do_mes": 31,
                "fonte_sol": {"margem_pct": 3.2, "dentro_da_margem": False, "margens": {"estacao": 3.0, "inmet": 10.0, "open-meteo": 20.0},
                              "fontes": [{"tipo": "estacao", "dias": 30, "margem_pct": 3.0},
                                         {"tipo": "inmet", "codigo": "A737", "cidade": "Ibitinga", "km": 11.1, "dias": 1, "margem_pct": 10.0}]}},
@@ -105,6 +108,9 @@ async def test_o_mes_no_gemeo_resumido_para_a_ia():
     assert f["fontes"] == [{"fonte": "estação solarimétrica da usina", "dias": 30, "margem_pct": 3.0},
                            {"fonte": "estação do INMET em Ibitinga (A737, a 11.1 km da usina)", "dias": 1, "margem_pct": 10.0}]
     assert f["margem_de_erro_do_mes_pct"] == 3.2 and f["dentro_da_margem"] is False and "INMET ±10.0%" in f["como_ler"]
+    t = r["dias_tratados"]
+    assert t["dias"] == [{"dia": "2026-10-25", "o_que": ["fora da conta"], "motivo": "coleta parada", "aviso": None}]
+    assert (t["dias_na_conta"], t["dias_do_mes"]) == (30, 31)
     assert len(json.dumps(r, ensure_ascii=False)) < ger_teto()
 
 

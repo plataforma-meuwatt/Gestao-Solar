@@ -652,6 +652,24 @@ def _fonte_do_sol(f: dict) -> dict:
                          "o desvio da usina não passa dela: não afirme que a usina gerou mal, diga que está dentro da margem.")}
 
 
+def _dias_tratados(s: dict) -> dict | None:
+    """Os dias que a equipe tratou na tela do gêmeo (o sol escolhido ou informado, a energia completada ou informada, o
+    dia fora da conta) — o relatório imprime os mesmos."""
+    ts = s.get("tratamentos") or []
+    if not ts:
+        return None
+    o_que = lambda t: (["fora da conta"] if t.get("descartar") else [  # noqa: E731
+        *([f"sol informado à mão ({t.get('sol_kwh_m2')} kWh/m²)"] if t.get("sol") == "manual" else
+          ["sol do satélite"] if t.get("sol") == "satelite" else
+          [f"sol da estação do INMET {t['sol'][6:]}"] if (t.get("sol") or "").startswith("inmet:") else []),
+        *(["energia dos inversores sem dado completada pelos outros do dia"] if t.get("energia") == "completar" else
+          [f"energia informada à mão ({t.get('energia_kwh')} kWh)"] if t.get("energia") == "manual" else [])])
+    return {"dias": [{"dia": t["dia"], "o_que": o_que(t), "motivo": t.get("motivo"), "aviso": t.get("aviso")} for t in ts],
+            "dias_na_conta": s.get("dias_na_conta"), "dias_do_mes": s.get("dias_do_mes"),
+            "como_ler": "Os números do mês já são só dos dias na conta; o projeto (PVsyst) e a régua entram na mesma proporção "
+                        "dos dias. Diga quais dias foram tratados e por quê."}
+
+
 async def gemeo(ctx: Contexto, a: dict) -> dict:
     """O mês no gêmeo digital: foi o clima ou a usina? (placar, cascata, dia a dia, hora a hora, inversores, limites)."""
     u = _usina(ctx, a.get("usina"))
@@ -665,6 +683,7 @@ async def gemeo(ctx: Contexto, a: dict) -> dict:
     return {
         "usina": u["nome"], "mes": mes, "estacao": d.get("estacao"),
         "fonte_do_sol": _fonte_do_sol(s.get("fonte_sol") or {}),
+        "dias_tratados": _dias_tratados(s),
         "modelo": f"módulo {f.get('modelo_modulo')}; inversor {f.get('modelo_inversor')}",
         "geometria": {"do_pdf": f.get("geometria"), "pdf": f.get("geometria_pdf"), "construida": f.get("geometria_real"),
                       "controlador": f.get("geometria_controlador")},
