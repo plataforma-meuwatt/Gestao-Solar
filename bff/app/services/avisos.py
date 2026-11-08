@@ -28,7 +28,7 @@ from app.models.integracao import Produto
 from app.models.permissao import Dispositivo
 from app.models.plant import PlantLink
 from app.models.user import User
-from app.core.datas import hora_brt
+from app.core.datas import hoje as hoje_brt, hora_brt
 from app.services import integracoes, permissoes, vinculos
 from app.services.vocabulario_mw import causa_em_portugues
 
@@ -419,6 +419,125 @@ def texto_sem_comunicacao(aviso: AvisoSemComunicacao) -> tuple[str, str, dict[st
     return (f"{aviso.usina.nome} · sem comunicação",
             f"Sem dado desde {hora_brt(aviso.desde)}. Pode ser a comunicação ou falta de energia na usina.",
             {"tipo": SUBCATEGORIA_SEM_DADO, "usina_id": aviso.usina.id})
+
+
+# ── tracker travado ─────────────────────────────────────────────────────────────────────────
+#
+# O meuWatt detecta e guarda os travamentos (o bit de falha do controlador ligado 10 min seguidos) e os comandos do
+# helper (mw-api 4b9fadb, 08/11/2026). Daqui sai o push de quem o gestor deu o aviso: travou, o reset não destravou
+# ("agir manualmente") e a volta. Pedido do dono, 08/11/2026; hoje só Ibitinga tem trackers.
+
+SUBCATEGORIA_TRACKER = "tracker_travado"
+#: A volta e o "não voltou" são notícia por um dia; depois é histórico (a tela do meuWatt tem).
+VOLTA_HORAS = 24
+
+
+@dataclass
+class AvisoDeTracker:
+    usuario: User
+    usina: PlantLink
+    chave: str
+    titulo: str
+    corpo: str
+    #: A volta só sai para quem recebeu o "travou" (ou quando falta classificar): a volta automática de um travamento
+    #: que ninguém viu não acorda ninguém.
+    depois_de: str | None = None
+
+
+def _instante(iso: Any) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(str(iso).replace("Z", "+00:00")) if iso else None
+    except ValueError:
+        return None
+    return (t if t.tzinfo else t.replace(tzinfo=UTC)) if t else None
+
+
+def _duracao(minutos: Any) -> str:
+    m = int(minutos or 0)
+    return f"{m // 60}h{m % 60:02d}" if m >= 60 else f"{m} min"
+
+
+def avisos_de_tracker(usina_id: int, nome: str, incidentes: Any, eventos: Any,
+                      agora: datetime | None = None) -> list[tuple[str, str, str, str | None]]:
+    """(chave, título, corpo, depois_de) dos travamentos de UMA usina, pela leitura do meuWatt
+    (`trackers/incidents` e `trackers/events`). Puro."""
+    agora = agora or datetime.now(UTC)
+    saida: list[tuple[str, str, str, str | None]] = []
+    lista = incidentes.get("incidents") if isinstance(incidentes, dict) else None
+    abertos: list[dict[str, Any]] = []
+    for i in lista or []:
+        if not isinstance(i, dict) or i.get("id") is None:
+            continue
+        rotulo, base = str(i.get("label") or "Tracker"), f"{usina_id}:tracker:{i['id']}"
+        inicio, fim = _instante(i.get("started_at")), _instante(i.get("ended_at"))
+        if fim is None:
+            if inicio is None or agora - inicio > timedelta(hours=JANELA_HORAS):
+                continue                                  # aberto há dias: histórico, não notícia
+            abertos.append(i)
+            ang = i.get("angle_start")
+            a = f" a {ang:.1f}°".replace(".", ",") if isinstance(ang, (int, float)) else ""
+            saida.append((f"{base}:travado", f"{nome} · tracker travado",
+                          f"{rotulo} em falha{a} desde {hora_brt(i.get('started_at'))}.", None))
+            continue
+        if agora - fim > timedelta(hours=VOLTA_HORAS):
+            continue
+        situacao, ev, dur = i.get("situacao"), i.get("evento") or {}, _duracao(i.get("duration_min"))
+        if situacao == "automatico":
+            corpo = f"{rotulo} destravado automático pelo helper às {hora_brt(ev.get('enviado_em'))}; ficou travado {dur}."
+        elif situacao == "helper_manual":
+            quem = f" por {ev['por']}" if ev.get("por") else ""
+            corpo = f"{rotulo} destravado pelo helper{quem} às {hora_brt(ev.get('enviado_em'))}; ficou travado {dur}."
+        elif situacao == "pendente":
+            corpo = (f"{rotulo} voltou sem comando do helper depois de {dur} travado. "
+                     "Falta classificar no meuWatt (Trackers › Travamentos).")
+        else:                                             # classificado | rocagem
+            corpo = f"{rotulo} voltou depois de {dur} travado."
+        titulo = f"{nome} · tracker {'voltou' if situacao not in ('automatico', 'helper_manual') else 'destravado'}"
+        saida.append((f"{base}:volta", titulo, corpo, None if situacao == "pendente" else f"{base}:travado"))
+
+    # "Não voltou": o comando do helper não destravou. Só do que AINDA está travado (a volta já conta o resto).
+    evs = eventos.get("events") if isinstance(eventos, dict) else None
+    for e in evs or []:
+        if not isinstance(e, dict) or e.get("acao") != "nao_voltou" or e.get("id") is None:
+            continue
+        quando = _instante(e.get("enviado_em"))
+        if quando is None or agora - quando > timedelta(hours=VOLTA_HORAS):
+            continue
+        dele = next((i for i in abertos if i.get("slave_id") == e.get("slave_id")
+                     and (e.get("row") is None or i.get("row") == e.get("row"))
+                     and (_instante(i.get("started_at")) or quando) <= quando), None)
+        if dele is None:
+            continue
+        saida.append((f"{usina_id}:tracker_evento:{e['id']}:nao_voltou", f"{nome} · tracker não voltou",
+                      f"{dele.get('label') or 'Tracker'}: o comando do helper não destravou. Agir manualmente.", None))
+    return saida
+
+
+async def trackers_por_usuario(db: Session) -> list[AvisoDeTracker]:
+    """Os avisos de tracker que cabem agora, um por (pessoa, aviso). Cada usina é lida uma vez, com o token de alguém
+    que a enxerga; os comandos do helper só quando há tracker travado."""
+    pessoas = permissoes.usuarios_com_permissao(db, CATEGORIA, SUBCATEGORIA_TRACKER)
+    escopos = {p.id: [u for u in usinas_do_usuario(db, p) if u.mw_plant_slug] for p in pessoas}
+    leitor_da_usina = _leitores(db, pessoas, escopos)
+    alvos = {u.id: u for lista in escopos.values() for u in lista}
+    ontem, hoje = (hoje_brt() - timedelta(days=1)).isoformat(), hoje_brt().isoformat()
+    clientes: dict[int, Any] = {}
+    da_usina: dict[int, list[tuple[str, str, str, str | None]]] = {}
+    for link in alvos.values():
+        dono = leitor_da_usina.get(link.id)
+        if dono is None:
+            continue
+        try:
+            if dono not in clientes:
+                clientes[dono] = vinculos.cliente_meuwatt(db, dono)
+            incidentes = await clientes[dono].trackers_travamentos(link.mw_plant_slug, ontem, hoje)
+            eventos = (await clientes[dono].trackers_comandos(link.mw_plant_slug, ontem, hoje)
+                       if isinstance(incidentes, dict) and incidentes.get("travados") else None)
+        except Exception:  # noqa: BLE001 (meuWatt fora, ou usina sem tracker: sem aviso)
+            continue
+        da_usina[link.id] = avisos_de_tracker(link.id, link.nome, incidentes, eventos)
+    return [AvisoDeTracker(usuario=p, usina=link, chave=c, titulo=t, corpo=b, depois_de=d)
+            for p in pessoas for link in escopos[p.id] for c, t, b, d in da_usina.get(link.id, [])]
 
 
 def tokens_do_usuario(db: Session, usuario: User) -> list[str]:

@@ -792,6 +792,14 @@ e o toque `pc:` é tratado ANTES do "botão de resumo antigo" do helper; só o t
 ação que esperava o Sim, e a ação que a IA arma junto com o começo da classificação não fica esperando. 403 do
 meuWatt = o papel da pessoa na usina não classifica (só admin, admin do sistema e operador): o bot diz e encerra.
 
+**Tracker travado** (dono, 08/11/2026; push do aplicativo, `services/avisos.trackers_por_usuario`): o meuWatt detecta
+o travamento (bit de falha do controlador 10 min seguidos) e guarda os comandos do helper (mw-api 4b9fadb); daqui se
+lê `GET /plants/{slug}/trackers/incidents` com o token de quem enxerga a usina (e `…/trackers/events` só com tracker
+travado) e sai um toque por aviso: travou, "não voltou" (o comando do helper não destravou, agir manualmente) e a
+volta (automática, pelo helper por X, ou sem comando: falta classificar no meuWatt). Só para quem o gestor deu
+`notificacao.tracker_travado` (adm-gs → permissões do cliente); a volta só sai para quem recebeu o "travou", menos a
+pendência de classificar, que sempre sai. Trava de repetição em `gs_avisos_enviados`, como as paradas.
+
 ---
 
 ## 9. Git e deploy

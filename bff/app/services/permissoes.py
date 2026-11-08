@@ -50,6 +50,15 @@ CATALOGO: list[ItemDoCatalogo] = [
             "mesmo com o aplicativo fechado."
         ),
     ),
+    ItemDoCatalogo(
+        categoria="notificacao",
+        subcategoria="tracker_travado",
+        rotulo="Tracker travado",
+        descricao=(
+            "Avisa no celular quando um tracker da usina trava (10 min em falha), quando o comando do helper não o "
+            "destrava e quando ele volta."
+        ),
+    ),
 ]
 
 

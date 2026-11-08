@@ -292,6 +292,16 @@ class MeuWattClient:
         """
         return await self._get(f"/plants/{slug}/relays/{relay_id}/trip-events", limit=limite)
 
+    async def trackers_travamentos(self, slug: str, inicio: str, fim: str) -> dict[str, Any]:
+        """Os travamentos dos trackers nos dias [inicio, fim] (BRT), mais os abertos: `{travados, pendentes,
+        incidents[]}`, cada um com `situacao` (travado | automatico | helper_manual | pendente | classificado |
+        rocagem)."""
+        return await self._get(f"/plants/{slug}/trackers/incidents", start=inicio, end=fim)
+
+    async def trackers_comandos(self, slug: str, inicio: str, fim: str) -> dict[str, Any]:
+        """Os comandos que o helper mandou aos trackers (`events[]`; `acao` "nao_voltou" = o reset não destravou)."""
+        return await self._get(f"/plants/{slug}/trackers/events", start=inicio, end=fim)
+
     async def alertas(
         self, slug: str, status: str = "active", limit: int = 500, offset: int = 0
     ) -> dict[str, Any]:

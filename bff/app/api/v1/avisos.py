@@ -66,6 +66,7 @@ async def disparar_avisos_de_parada(
     saida = DisparoOut()
     await _paradas(db, simular, saida)
     await _sem_comunicacao(db, simular, saida)
+    await _trackers(db, simular, saida)
     return saida
 
 
@@ -164,6 +165,37 @@ async def _sem_comunicacao(db: Session, simular: bool, saida: DisparoOut) -> Non
             saida.enviados += 1
             continue
         resultado = await push.enviar(tokens, *avisos.texto_sem_comunicacao(aviso))
+        saida.enviados += resultado.enviados
+        saida.erros.extend(resultado.erros)
+        db.add(AvisoEnviado(user_id=aviso.usuario.id, chave=aviso.chave))
+        for token in resultado.invalidos:
+            db.execute(Dispositivo.__table__.delete().where(Dispositivo.token == token))
+        saida.dispositivos_removidos += len(resultado.invalidos)
+    if not simular:
+        db.commit()
+
+
+async def _trackers(db: Session, simular: bool, saida: DisparoOut) -> None:
+    """Tracker travado, não voltou e a volta (`avisos.trackers_por_usuario`): um toque por pessoa e por aviso, com a
+    trava de repetição de sempre; a volta só para quem recebeu o "travou" (`depois_de`)."""
+    candidatos = await avisos.trackers_por_usuario(db)
+    chaves = [c.chave for c in candidatos] + [c.depois_de for c in candidatos if c.depois_de]
+    ja = set(db.execute(select(AvisoEnviado.user_id, AvisoEnviado.chave).where(
+        AvisoEnviado.chave.in_(chaves))).all()) if candidatos else set()
+    candidatos = [c for c in candidatos if not c.depois_de or (c.usuario.id, c.depois_de) in ja]
+    saida.candidatos += len(candidatos)
+    novos = [c for c in candidatos if (c.usuario.id, c.chave) not in ja]
+    saida.repetidos += len(candidatos) - len(novos)
+    for aviso in novos:
+        tokens = avisos.tokens_do_usuario(db, aviso.usuario)
+        if not tokens:
+            saida.sem_destino += 1
+            continue
+        if simular:
+            saida.enviados += 1
+            continue
+        resultado = await push.enviar(tokens, aviso.titulo, aviso.corpo,
+                                      {"tipo": avisos.SUBCATEGORIA_TRACKER, "usina_id": aviso.usina.id})
         saida.enviados += resultado.enviados
         saida.erros.extend(resultado.erros)
         db.add(AvisoEnviado(user_id=aviso.usuario.id, chave=aviso.chave))
