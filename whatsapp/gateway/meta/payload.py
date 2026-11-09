@@ -269,6 +269,8 @@ def ler(corpo: dict[str, Any]) -> Leitura:
                 if not wamid or not wa_id:
                     continue
                 tipo = str(m.get("type") or "text")
+                if tipo == "unsupported" and _campo(m.get("unsupported"), "type") == "album":
+                    tipo = "album"   # a capa do álbum: as fotos chegam logo depois, uma por mensagem
                 saida.mensagens.append(
                     MensagemRecebida(
                         wamid=wamid,

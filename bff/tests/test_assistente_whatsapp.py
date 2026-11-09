@@ -4126,3 +4126,46 @@ async def test_o_contato_compartilhado_e_o_pedido_logo_depois_vao_juntos_a_ia(db
     vistas.clear()
     await assistente.atender({**contato, "id": 3, "midia": None})
     assert vistas == [] and "Outro tipo de arquivo" in bot_local.enviados[-1]
+
+
+def test_o_feito_que_so_repete_a_proposta_nao_se_repete():
+    """09/11/2026: "✅ Feito no meuPlano: Alterar a OS (…). Resultado: Feito: Alterar a OS (…)." — o resultado de lá
+    era a proposta com "Feito:" na frente. O resultado que diz outra coisa continua."""
+    proposta = "Alterar a OS (data, técnico, responsáveis…)."
+    assert assistente._desfecho_do_meuplano(proposta, {"resumo": "Feito: Alterar a OS (data, técnico, responsáveis…)."}
+                                            ) == f"✅ Feito no meuPlano: {proposta}"
+    assert assistente._desfecho_do_meuplano(proposta, {"resumo": "2 campos alterados."}).endswith("Resultado: 2 campos alterados.")
+
+
+async def test_o_pdf_que_o_meuplano_devolve_como_link_vai_como_arquivo(monkeypatch):
+    """09/11/2026, o dono: "eu pedi pdf da OS, ele me mandou link. Mas eu quero receber o pdf". O link de fora do
+    meuPlano não é baixado; sem o WhatsApp aceitar o arquivo, o link fica."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    from app.clients import whatsapp as wa
+    from app.core.config import get_settings
+    url = get_settings().meuplano_api_url.rstrip("/") + "/api/public/share/abc_D-1/items/7/view"
+    fora = "https://outro.example/api/public/share/x/items/1/view"
+    resp = httpx.Response(200, content=b"%PDF-1.4", request=httpx.Request("GET", url), headers={
+        "content-type": "application/pdf", "content-disposition": 'inline; filename="os_2020_capacitores.pdf"'})
+    baixados, mandados, aceita = [], [], [True]
+
+    async def _baixar(u):
+        baixados.append(u)
+        return resp
+
+    async def _enviar(**k):
+        mandados.append(k)
+        return {"ok": aceita[0]}
+
+    monkeypatch.setattr(assistente, "_baixar", _baixar)
+    monkeypatch.setattr(wa, "enviar_conteudo", _enviar)
+    ctx = SimpleNamespace(telefone="+5517997377626", enviados=[])
+    texto = f"PDF da OS pronto: {url}\nOutro: {fora}"
+    assert await assistente._pdfs_dos_links(ctx, texto) == f"PDF da OS pronto: (o PDF vai aqui no chat)\nOutro: {fora}"
+    assert baixados == [url] and mandados[0]["arquivo"] == b"%PDF-1.4"
+    assert mandados[0]["filename"] == "os_2020_capacitores.pdf" and ctx.enviados == ["os_2020_capacitores.pdf"]
+    aceita[0] = False
+    assert await assistente._pdfs_dos_links(ctx, texto) == texto

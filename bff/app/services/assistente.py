@@ -157,6 +157,8 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
         return _assinatura_com_senha(ctx, pedido, mensagens)
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     r = await _perguntar_ao_meuplano(mp, mensagens)
+    if r.get("texto"):
+        r["texto"] = await _pdfs_dos_links(ctx, r["texto"])
     ctx.segredos.extend(str(v) for v in r.pop("segredos", None) or [] if v)
     if formulario.valida(r.get("escolha")):
         ctx.escolha = r.pop("escolha")
@@ -166,6 +168,38 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
         return r
     proposta = _proposta_do_meuplano(ctx, r, mensagens)
     return {**proposta, "formulario": r["formulario"]} if "formulario" in r else proposta
+
+
+#: O link público de um PDF que o assistente do meuPlano gerou (PDF da OS, da tarefa, spare parts, estoque).
+_LINK_DE_PDF = re.compile(r"https?://[^\s/]+/api/public/share/[\w-]+/items/\d+/(?:view|download)")
+
+
+async def _baixar(url: str) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=60) as c:
+        return (await c.get(url)).raise_for_status()
+
+
+async def _pdfs_dos_links(ctx: ger.Contexto, texto: str) -> str:
+    """O PDF que o meuPlano devolve como LINK vai como ARQUIVO no chat: lá o arquivo só sai no bot DELE (09/11/2026,
+    o dono: "eu pedi pdf da OS, ele me mandou link. Mas eu quero receber o pdf"). Só do endereço do meuPlano; sem
+    conseguir mandar, o link fica."""
+    from urllib.parse import urlsplit
+    meuplano = urlsplit(get_settings().meuplano_api_url).netloc
+    for url in dict.fromkeys(_LINK_DE_PDF.findall(texto)):
+        if urlsplit(url).netloc != meuplano:
+            continue
+        try:
+            resp = await _baixar(url)
+        except httpx.HTTPError:
+            log.warning("assistente: não baixei o PDF do meuPlano", exc_info=True)
+            continue
+        if "pdf" not in resp.headers.get("content-type", ""):
+            continue
+        nome = re.search(r'filename="([^"]+)"', resp.headers.get("content-disposition", ""))
+        titulo = re.sub(r"(?i)\.pdf$", "", nome.group(1)) if nome else "Documento"
+        if (await relatorio._mandar(ctx, resp.content, titulo))["enviado_no_chat"]:
+            texto = texto.replace(url, "(o PDF vai aqui no chat)")
+    return texto
 
 
 async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
@@ -200,7 +234,7 @@ def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict])
             return f"❌ {r['erro']} Nada foi assinado."
         if r.get("type") == "proposal":
             return "O meuPlano pediu outra confirmação para isso: peça de novo, em partes. Nada foi assinado."
-        return r.get("texto") or "O meuPlano não respondeu nada."
+        return await _pdfs_dos_links(ctx, r.get("texto") or "") or "O meuPlano não respondeu nada."
 
     resumo = f"Assinar com o seu certificado (ASSINATURA DIGITAL) o que você pediu ao meuPlano: «{pedido[:300]}»"
     return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano", confirmacao="sim")
@@ -239,8 +273,10 @@ def _desfecho_do_meuplano(resumo: str, dados: Any) -> str:
     if dados.get("erro"):
         return f"❌ O meuPlano recusou: {str(dados['erro']).rstrip('. ')}. Nada foi feito."
     texto = resumo + _o_que_nasceu(dados, resumo)
-    if dados.get("resumo"):
-        texto = f"{resumo.rstrip('. ')}{_o_que_nasceu(dados, resumo)}. Resultado: {str(dados['resumo']).rstrip('. ')}."
+    resultado = str(dados.get("resumo") or "").rstrip(". ")
+    # o "Feito: <a proposta>" de lá não se repete (09/11/2026: "Alterar a OS (…). Resultado: Feito: Alterar a OS (…)")
+    if resultado and re.sub(r"(?i)^feito:\s*", "", resultado) != resumo.rstrip(". "):
+        texto = f"{resumo.rstrip('. ')}{_o_que_nasceu(dados, resumo)}. Resultado: {resultado}."
     erros = dados.get("erros") or []
     if erros:
         if not dados.get("resumo"):
@@ -1167,8 +1203,10 @@ _TRAVAS: dict[str, asyncio.Lock] = {}
 
 #: O que não é mensagem para o bot: reação (👍 no resumo), figurinha e avisos do próprio
 #: WhatsApp. Não responde e NÃO cancela a ação que espera a senha — o 👍 no resumo cancelava, e
-#: a senha mandada em seguida recebia "não há ação esperando" (avaliação 11).
-IGNORADOS = {"reaction", "sticker", "system", "ephemeral", "request_welcome"}
+#: a senha mandada em seguida recebia "não há ação esperando" (avaliação 11). E a capa do álbum (`album`, o gateway
+#: lê do "unsupported" da Meta): as fotos chegam logo atrás, uma por mensagem; ela respondia "Outro tipo de arquivo
+#: ainda não" no meio das 8 fotos da OS 2020 (09/11/2026).
+IGNORADOS = {"reaction", "sticker", "system", "ephemeral", "request_welcome", "album"}
 #: As mensagens já atendidas (id do gateway): o aviso imediato e a varredura de lá podem repetir
 #: uma entrega, e a mesma mensagem não pode ser respondida (nem confirmada) duas vezes.
 _ATENDIDAS: OrderedDict[Any, None] = OrderedDict()

@@ -99,6 +99,18 @@ def test_tipo_sem_texto_entra_com_o_tipo_preenchido():
     assert m.midia == {"id": "midia-123", "mime": None, "nome": None, "legenda": None}
 
 
+def test_capa_do_album_vira_album_e_o_resto_do_unsupported_fica():
+    """Várias fotos de uma vez: a Meta manda a capa do álbum como "unsupported" e cada foto depois (09/11/2026)."""
+    erro = [{"code": 131051, "title": "Message type unknown"}]
+    corpo = _entrega({"messages": [
+        {"from": "5516999998888", "id": "wamid.ALB", "timestamp": "1789000000", "type": "unsupported",
+         "errors": erro, "unsupported": {"type": "album", "raw_type": "album"}},
+        {"from": "5516999998888", "id": "wamid.ENQ", "timestamp": "1789000001", "type": "unsupported", "errors": erro},
+    ]})
+    album, outro = payload.ler(corpo).mensagens
+    assert album.tipo == "album" and outro.tipo == "unsupported"
+
+
 def test_documento_guarda_nome_e_legenda_e_reacao_nao_tem_arquivo():
     corpo = _entrega({"messages": [
         {"from": "5516999998888", "id": "wamid.DOC", "timestamp": "1789000000", "type": "document",
