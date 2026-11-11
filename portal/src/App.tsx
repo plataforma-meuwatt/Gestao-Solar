@@ -153,11 +153,7 @@ export function App() {
             <Route path="/entrar" element={<Entrar />} />
             <Route
               path="/entrar/:produto"
-              element={
-                <Protegido>
-                  <EntrarNoProduto />
-                </Protegido>
-              }
+              element={<EntrarNoProduto />}
             />
 
             <Route

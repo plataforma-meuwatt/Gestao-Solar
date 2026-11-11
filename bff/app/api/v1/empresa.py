@@ -22,6 +22,7 @@ recusa esta sessão em qualquer rota de painel.
 """
 
 import asyncio
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -44,6 +45,7 @@ from app.services import clientes, conciliacao, pessoas, vinculos
 from app.services import empresas as svc
 from app.services import integracoes
 
+log = logging.getLogger("gs.empresa")
 router = APIRouter(prefix="/api/empresa", tags=["empresa · O&M"])
 
 
@@ -1628,6 +1630,7 @@ async def editar_conta_da_empresa(
         await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
                               email=str(body.email) if body.email else None, telefone=body.telefone)
     from app.services import cadastro
+    tirar_do_meuguarda = body.meuguarda_liberado is False and conta.meuguarda_liberado
     if body.meuguarda_liberado is not None:             # antes da atuação: ligar os dois juntos vale
         cadastro.liberar_meuguarda(conta, body.meuguarda_liberado)
     if body.termovision_liberado is not None:
@@ -1636,6 +1639,8 @@ async def editar_conta_da_empresa(
         if getattr(body, campo) is not None:
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
+    if tirar_do_meuguarda:
+        await _tirar_do_meuguarda(gerente, conta.apelido)
 
     return UsuarioDetalhado(
         id=conta.id,
@@ -1677,6 +1682,24 @@ def _cameras_no_whatsapp(c: User, tokens: list[str]) -> str | None:
     if not any(getattr(c, campo) and (p is None or p in tokens) for campo, p in BOT_TOKEN.items()):
         return "ligar uma chave do WhatsApp (geração, manutenção, helper ou atuar)"
     return None
+
+
+async def _tirar_do_meuguarda(gerente: User, apelido: str) -> None:
+    """Desligou o acesso: a pessoa sai do meuGuarda NA HORA (a sessão de lá não vence sozinha; decisão do dono,
+    11/11/2026). Com a sessão do gerente (lá ele é Gestor). Falhar aqui não desfaz o desligar: o `/eu` com
+    `meuguarda: false` já barra o próximo pedido e a próxima entrada; fica no log."""
+    import httpx
+
+    from app.services import assistente_meuguarda as amg
+    if not amg.disponivel(gerente):
+        return
+    try:
+        await amg.cliente(gerente).encerrar_sessoes(apelido)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code != 404:                # 404 = nunca entrou lá: não há o que derrubar
+            log.warning("meuGuarda: não encerrou as sessões de %s (%s)", apelido, e.response.status_code)
+    except httpx.HTTPError:
+        log.warning("meuGuarda: não encerrou as sessões de %s (sem resposta)", apelido)
 
 
 class PessoaNoMeuGuarda(BaseModel):

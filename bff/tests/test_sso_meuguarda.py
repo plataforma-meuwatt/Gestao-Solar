@@ -188,3 +188,27 @@ def test_os_botoes_dos_portoes_so_mostram_o_que_o_gerente_liberou(db):
     tecnico.termovision_liberado = True
     db.commit()
     assert [p.url for p in sessao.produtos_da_sessao(cred, db)][-1] == "https://termovision.gestao.solar/entrar.html"
+
+
+def test_a_entrada_unica_aceita_qualquer_conta_com_a_senha_do_gs(db, publica):
+    """gestao.solar/entrar/<produto> sem sessão: equipe, dono de usina ou plataforma, com o apelido e a senha do GS."""
+    from app.core.security import gerar_hash_senha
+
+    contas = [(_conta(db, "dono.unico", Perfil.CLIENTE), "cliente"), (_conta(db, "tecnico.unico", Perfil.TECNICO), "tecnico"),
+              (_conta(db, "adm.unico", Perfil.ADMINISTRADOR, empresa=False), "painel")]
+    for conta, _ in contas:
+        conta.senha_hash = gerar_hash_senha("senha-forte-1")
+    db.commit()
+    for conta, portao in contas:
+        url = sessao.entrar_no_produto_com_senha("termovision", sessao.EntrarComSenhaIn(
+            apelido=conta.apelido, senha="senha-forte-1", volta="https://termovision.gestao.solar/entrar.html"), db).url
+        c = jwt.decode(url.partition("#assercao=")[2], publica, algorithms=["RS256"], audience="termovision")
+        assert (c["apelido"], c["portao"]) == (conta.apelido, portao)
+    with pytest.raises(HTTPException) as e:
+        sessao.entrar_no_produto_com_senha("termovision", sessao.EntrarComSenhaIn(
+            apelido="dono.unico", senha="errada", volta="https://termovision.gestao.solar/"), db)
+    assert e.value.status_code == 401
+    with pytest.raises(HTTPException) as e:               # a volta é conferida ANTES da senha
+        sessao.entrar_no_produto_com_senha("termovision", sessao.EntrarComSenhaIn(
+            apelido="dono.unico", senha="senha-forte-1", volta="https://evil.com/"), db)
+    assert e.value.status_code == 400

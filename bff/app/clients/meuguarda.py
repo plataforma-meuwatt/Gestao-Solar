@@ -8,7 +8,7 @@ que a pessoa tem LÁ; a recusa (403/404/422) volta com a frase dele em `detail`.
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -36,6 +36,11 @@ class MeuGuarda:
         """Quem é da empresa lá (só o Gestor lê): `{apelido, papel, usinas[ids], telegram, ultimo_acesso}`. A pessoa da
         O&M aparece depois do 1º acesso; usinas vazio = todas, menos no papel Cliente (= nenhuma)."""
         return (await self._req("GET", "/api/pessoas")).json()
+
+    async def encerrar_sessoes(self, apelido: str) -> dict[str, Any]:
+        """Derruba na hora as sessões da pessoa no meuGuarda (só o Gestor da empresa dela): `{encerradas: n}`; 404 se
+        ela não é da empresa (ou nunca entrou)."""
+        return (await self._req("POST", f"/api/pessoas/{quote(apelido, safe='')}/encerrar-sessoes")).json()
 
     async def papeis(self) -> dict[str, Any]:
         """`{papeis: [{nome, permissoes[]}], catalogo: {permissão: rótulo}}`: as permissões são do papel."""

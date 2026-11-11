@@ -11,7 +11,7 @@ sustenta a separação. Uma quarta guarda que aceita todas não a enfraquece **p
 serve dado**; o que ela faz é dizer quem está falando.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -317,6 +317,39 @@ class EntrarOut(BaseModel):
     url: str
 
 
+class EntrarComSenhaIn(BaseModel):
+    apelido: str
+    senha: str
+    volta: str
+
+
+@router.post("/{produto}/com-senha", response_model=EntrarOut)
+def entrar_no_produto_com_senha(produto: str, body: EntrarComSenhaIn, db: Session = Depends(get_db)) -> EntrarOut:
+    """A entrada ÚNICA do produto, para QUALQUER conta (equipe da O&M, dono de usina, plataforma), em
+    `gestao.solar/entrar/<produto>` sem sessão: o apelido e a senha do GS, e a asserção já na `volta`. Pedido do dono
+    (pelo TermoVision, 11/11/2026): "no final é tudo o mesmo login: a tela principal deve aceitar todos". O portão vem
+    do perfil, como na tela de entrar do próprio produto (`auth.assercao_para_produto`)."""
+    from app.core.security import _empresa_ativa
+    from app.services import login_externo, pessoas
+
+    if produto not in VOLTAS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    volta = _volta(produto, body.volta)
+    usuario = db.scalar(select(User).where(User.apelido == (body.apelido or "").strip().lower()))
+    if usuario is None or not usuario.ativo or not conferir_senha(body.senha, usuario.senha_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+    _empresa_ativa(db, usuario)
+    try:
+        assercao = login_externo.assinar_login(
+            usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id,
+            login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None)
+    except login_externo.SemChave as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    usuario.ultimo_login = datetime.now(UTC)
+    db.commit()
+    return EntrarOut(url=f"{volta}#assercao={assercao}")
+
+
 @router.post("/{produto}", response_model=EntrarOut)
 def entrar_no_produto(
     produto: str,
@@ -326,15 +359,14 @@ def entrar_no_produto(
 ) -> EntrarOut:
     """A asserção do produto (meuGuarda, TermoVision) para quem está logado aqui, no endereço de volta dele. Declarada
     por ÚLTIMO neste arquivo: as rotas fixas de cima (`/trocar`, `/senha`…) vêm antes dela."""
-    from app.services import cadastro, login_externo
+    from app.services import login_externo
 
     if produto not in VOLTAS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     volta = _volta(produto, body.volta)
     usuario, portao = _conta_do_portao(cred, db)
     empresa = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
-    v = cadastro.vinculo_meuplano(db, usuario.id) if produto == login_externo.TERMOVISION else None
-    meuplano_id = int(v.usuario_remoto_id) if v and str(v.usuario_remoto_id).isdigit() else None
+    meuplano_id = login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None
     try:
         assercao = login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id)
     except login_externo.SemChave as exc:

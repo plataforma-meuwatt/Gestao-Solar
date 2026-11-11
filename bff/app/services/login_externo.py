@@ -119,6 +119,14 @@ def assinar(usuario: User, produto: Produto) -> str:
     return _assinar(usuario, AUDIENCIA[produto])
 
 
+def meuplano_id_de(db: Session, usuario_id: int) -> int | None:
+    """O id da pessoa no meuPlano a que o cadastro do GS está ligado (o TermoVision reconhecia quem entrava por ele)."""
+    from app.services import cadastro  # noqa: PLC0415 — circular no topo
+
+    v = cadastro.vinculo_meuplano(db, usuario_id)
+    return int(v.usuario_remoto_id) if v and str(v.usuario_remoto_id).isdigit() else None
+
+
 def assinar_login(usuario: User, produto: str, portao: str, empresa_id: int | None,
                   meuplano_id: int | None = None) -> str:
     """A asserção do "Entrar com o Gestão Solar" de um produto de `SO_LOGIN`. `portao`: cliente, empresa, tecnico ou

@@ -355,3 +355,25 @@ async def test_a_tela_diz_pronto_se_o_bot_consulta_cameras(db):
     # e é a mesma régua do bot
     assert ("cameras" in assistente.permitidas(atua)) and atua.bot_liberado
     assert not so_celular.bot_liberado and sem_acesso.meuguarda_liberado is False
+
+
+async def test_tirar_o_acesso_derruba_as_sessoes_no_meuguarda_na_hora(db, meuguarda):
+    from app.api.v1 import empresa as rotas
+
+    encerradas = []
+
+    async def encerrar(apelido):
+        encerradas.append(apelido)
+        if apelido == "nunca.entrou":
+            raise _recusa(404, "Pessoa não encontrada")
+        return {"encerradas": 2}
+
+    meuguarda.encerrar_sessoes = encerrar
+    gerente = _conta(db, "gerente.tira", Perfil.GESTOR_EMPRESA, "+5517997371212")
+    tecnico = _conta(db, "tecnico.tira", meuguarda_liberado=True, telefone="+5517997371313")
+    novato = _conta(db, "nunca.entrou", meuguarda_liberado=True, telefone="+5517997371414")
+    await rotas.editar_conta_da_empresa(tecnico.id, rotas.ContaPatch(meuguarda_liberado=False), db, gerente)
+    await rotas.editar_conta_da_empresa(novato.id, rotas.ContaPatch(meuguarda_liberado=False), db, gerente)   # 404 calado
+    await rotas.editar_conta_da_empresa(tecnico.id, rotas.ContaPatch(meuguarda_liberado=False), db, gerente)  # já fora
+    await rotas.editar_conta_da_empresa(tecnico.id, rotas.ContaPatch(meuguarda_liberado=True), db, gerente)   # ligar não
+    assert encerradas == ["tecnico.tira", "nunca.entrou"]

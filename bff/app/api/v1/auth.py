@@ -288,14 +288,13 @@ def assercao_para_produto(
         # o apelido e a senha do GS valham direto lá). A mesma asserção do redirecionamento, com o portão do perfil; a
         # empresa desligada não entra, como nos portões.
         from app.core.security import _empresa_ativa
-        from app.services import cadastro, pessoas
+        from app.services import pessoas
 
         _empresa_ativa(db, usuario)
-        v = cadastro.vinculo_meuplano(db, usuario.id) if produto == login_externo.TERMOVISION else None
         try:
             assercao = login_externo.assinar_login(
                 usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id,
-                int(v.usuario_remoto_id) if v and str(v.usuario_remoto_id).isdigit() else None)
+                login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None)
         except login_externo.SemChave as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     else:

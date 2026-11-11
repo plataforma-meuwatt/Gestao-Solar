@@ -511,7 +511,7 @@ function Acessos({
             nota={
               u.meuguarda_liberado
                 ? 'entra com a conta do Gestão Solar, sem token'
-                : 'fica fora do meuGuarda e das câmeras no WhatsApp (quem já estiver lá dentro sai quando a sessão de lá vencer)'
+                : 'fica fora do meuGuarda e das câmeras no WhatsApp; quem estiver lá dentro sai na hora'
             }
           >
             <Chave
