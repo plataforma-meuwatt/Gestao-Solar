@@ -860,11 +860,17 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 
 | App | Pasta | Endereço |
 |---|---|---|
-| `gestaosolar-api` | `bff/` | `https://api-gs.meuplano.solar` |
-| `gestaosolar-portal` | `portal/` | `https://gs.meuplano.solar` — o CLIENTE (dono de usina) |
-| `gestaosolar-painel` | `painel/`, `PORTAO=plataforma` | `https://adm-gs.meuplano.solar` — SÓ a administração da plataforma |
-| `gestaosolar-adm-oem` | `painel/`, `PORTAO=empresa` | `https://oem-gs.meuplano.solar` — SÓ o gerente (e o técnico) da O&M |
-| `gestaosolar-whatsapp` | `whatsapp/` | `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io` (callback da Meta: `/webhook`) |
+| `gestaosolar-api` | `bff/` | `https://api.gestao.solar` |
+| `gestaosolar-portal` | `portal/` | `https://app.gestao.solar` (e `gestao.solar`; `www` vai para ele) — o CLIENTE (dono de usina) |
+| `gestaosolar-painel` | `painel/`, `PORTAO=plataforma` | `https://adm.gestao.solar` — SÓ a administração da plataforma |
+| `gestaosolar-adm-oem` | `painel/`, `PORTAO=empresa` | `https://oem.gestao.solar` — SÓ o gerente (e o técnico) da O&M |
+| `gestaosolar-whatsapp` | `whatsapp/` | `https://wa.gestao.solar` (callback da Meta: `/webhook`; a Meta ainda chama o sslip `https://xkbj6oglr7ge4ggl9wptuoai.177.153.20.214.sslip.io`) |
+
+**Domínio próprio `gestao.solar` desde 11/11/2026** (DNS na Hostinger, todos A → 177.153.20.214; CAA só Let's Encrypt;
+SPF `-all` e DMARC `reject`, porque o domínio não manda e-mail). Os endereços `*.meuplano.solar` e os sslip SEGUEM
+valendo em cada app (o Coolify aceita vários): ninguém cai na troca. A API, os fronts (`API_URL`), as origens do CORS
+(`GS_CORS_ORIGENS`) e os `ENDERECO_GS`/`ENDERECO_OEM` do painel já são os novos. Falta: o aplicativo (`app/app.json` →
+`apiUrl`, com OTA) e o callback da Meta (o painel da Meta, não o código).
 
 Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM
 srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco é o Supabase BR (sa-east-1) desde 04/11/2026 (`/root/bin/gestaosolar-migra-banco.sh`; o de us-west-1 ficou só leitura).

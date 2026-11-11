@@ -923,6 +923,8 @@ export type UsuarioDetalhado = {
   bot_meuguarda: boolean
   /** O ACESSO ao meuGuarda: entra com a conta do GS; as permissões são dadas lá. */
   meuguarda_liberado: boolean
+  /** O que falta para o bot CONSULTAR câmeras para a pessoa, ou nulo (consulta). Vem pronto da API. */
+  cameras_no_whatsapp_falta: string | null
   /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com Sim. */
   tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */

@@ -56,7 +56,12 @@ export function UsuariosDaEmpresa() {
   })
   // O que cada pessoa tem NO meuGuarda, lido com a sessão deste gerente (lá ele é Gestor). Falhar aqui não derruba a
   // lista: cada pessoa diz que não deu para ler.
-  const { data: meuGuarda } = useQuery({ queryKey: ['empresa', 'meuguarda-pessoas'], queryFn: meuGuardaDaEmpresa })
+  const { data: lidoDoMeuGuarda, error: erroDoMeuGuarda } = useQuery({
+    queryKey: ['empresa', 'meuguarda-pessoas'],
+    queryFn: meuGuardaDaEmpresa,
+  })
+  const meuGuarda: MeuGuardaDaEmpresa | undefined =
+    lidoDoMeuGuarda ?? (erroDoMeuGuarda ? { erro: mensagemDeErro(erroDoMeuGuarda), pessoas: {}, endereco: '' } : undefined)
   const [usinasDe, setUsinasDe] = useState<UsuarioDetalhado | null>(null)
   const [tokensDe, setTokensDe] = useState<UsuarioDetalhado | null>(null)
   const [novo, setNovo] = useState(false)
@@ -72,6 +77,14 @@ export function UsuariosDaEmpresa() {
         </button>
       }
     >
+      <div className="mb-4">
+        <Aviso>
+          Toque numa pessoa para ver os acessos dela, um sistema por linha. As marcas: verde funciona, amarelo
+          funciona em parte, vazio está desligado. <strong>Aqui</strong> você libera quem entra em cada sistema e o
+          que o bot faz pelo WhatsApp. <strong>No meuGuarda</strong> ficam o papel, as usinas, as permissões e o
+          Telegram de cada pessoa: aqui eles só aparecem, para conferir.
+        </Aviso>
+      </div>
       {isLoading ? (
         <Carregando />
       ) : error ? (
@@ -200,7 +213,8 @@ function Linha({
             </p>
             <p className="text-sm text-rotulo mt-0.5 break-words">
               <span className="mono text-xs text-fraco">{usuario.apelido}</span> · {PAPEL[usuario.perfil] ?? usuario.perfil}
-              {usuario.email ? ` · ${usuario.email}` : ''} · {usuario.telefone ?? 'sem celular'}
+              {usuario.email ? ` · ${usuario.email}` : ''} ·{' '}
+              <span className="whitespace-nowrap">{usuario.telefone ?? 'sem celular'}</span>
               {usuario.perfil === 'cliente'
                 ? ` · ${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
                 : ''}
@@ -310,7 +324,7 @@ function Linha({
   )
 }
 
-type TomDaMarca = 'ok' | 'alerta' | 'desligado'
+type TomDaMarca = 'ok' | 'alerta' | 'desligado' | 'neutro'
 
 /** Uma marca por sistema, com a pessoa fechada: verde funciona, amarelo funciona em parte, vazio é desligado. */
 function resumoDosAcessos(
@@ -319,13 +333,16 @@ function resumoDosAcessos(
   noMg: PessoaNoMeuGuarda | undefined,
 ): { rotulo: string; tom: TomDaMarca }[] {
   const temMw = u.produtos.includes('meuwatt')
+  const atua = u.bot_meuguarda ? ' · atua' : ''
   const guarda: { rotulo: string; tom: TomDaMarca } = !u.meuguarda_liberado
     ? { rotulo: 'meuGuarda', tom: 'desligado' }
     : noMg
-      ? { rotulo: `meuGuarda · ${noMg.papel}${u.bot_meuguarda ? ' · atua' : ''}`, tom: 'ok' }
-      : mg && !mg.erro
-        ? { rotulo: 'meuGuarda · ainda não entrou', tom: 'alerta' }
-        : { rotulo: `meuGuarda · liberado${u.bot_meuguarda ? ' · atua' : ''}`, tom: 'ok' }
+      ? { rotulo: `meuGuarda · ${noMg.papel}${atua}`, tom: 'ok' }
+      : !mg
+        ? { rotulo: `meuGuarda · liberado${atua}`, tom: 'neutro' }
+        : mg.erro
+          ? { rotulo: `meuGuarda · liberado${atua} · não deu para ler`, tom: 'alerta' }
+          : { rotulo: `meuGuarda · ainda não entrou${atua}`, tom: 'alerta' }
   return [
     { rotulo: 'meuWatt', tom: temMw ? 'ok' : 'desligado' },
     { rotulo: 'meuPlano', tom: u.produtos.includes('meuplano') ? 'ok' : 'desligado' },
@@ -339,12 +356,13 @@ function resumoDosAcessos(
 }
 
 function Marca({ tom, children }: { tom: TomDaMarca; children: React.ReactNode }) {
-  const ponto = tom === 'ok' ? 'bg-ok' : tom === 'alerta' ? 'bg-alerta' : 'border border-fraco'
+  const ponto =
+    tom === 'ok' ? 'bg-ok' : tom === 'alerta' ? 'bg-alerta' : tom === 'neutro' ? 'bg-fraco' : 'border border-fraco'
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border border-borda bg-afundado px-2.5 py-0.5 text-xs whitespace-nowrap ${tom === 'desligado' ? 'text-fraco' : 'text-corpo'}`}
+      className={`inline-flex items-center gap-1.5 max-w-full rounded-full border border-borda bg-afundado px-2.5 py-0.5 text-xs break-words ${tom === 'desligado' ? 'text-fraco' : 'text-corpo'}`}
     >
-      <i className={`inline-block h-[7px] w-[7px] rounded-full ${ponto}`} />
+      <i className={`inline-block h-[7px] w-[7px] shrink-0 rounded-full ${ponto}`} />
       {children}
     </span>
   )
@@ -491,14 +509,20 @@ function Acessos({
             nota={
               u.meuguarda_liberado
                 ? 'entra com a conta do Gestão Solar, sem token'
-                : 'fica fora do meuGuarda (e das câmeras no WhatsApp)'
+                : 'fica fora do meuGuarda e das câmeras no WhatsApp (quem já estiver lá dentro sai quando a sessão de lá vencer)'
             }
           >
             <Chave
               ligada={u.meuguarda_liberado}
               rotulo="Acesso ao meuGuarda"
               travada={mudando}
-              aoMudar={(v) => aoMudar({ meuguarda_liberado: v })}
+              aoMudar={(v) =>
+                (v ||
+                  window.confirm(
+                    `Tirar o meuGuarda de ${u.nome}? A pessoa fica fora do meuGuarda e perde a atuação pelo WhatsApp. Ao liberar de novo, a atuação volta desligada.`,
+                  )) &&
+                aoMudar({ meuguarda_liberado: v })
+              }
             />
           </Opcao>
           {u.meuguarda_liberado ? <NoMeuGuarda meuGuarda={meuGuarda} pessoa={noMg} /> : null}
@@ -506,9 +530,13 @@ function Acessos({
         <div className="grid gap-2.5 content-start">
           <Opcao
             titulo="Consultar câmeras"
-            nota="estado, foto de agora, link ao vivo · vem com o acesso e segue as permissões do meuGuarda"
+            nota={
+              u.cameras_no_whatsapp_falta
+                ? `Falta ${u.cameras_no_whatsapp_falta}.`
+                : 'estado, foto de agora, link ao vivo · vem com o acesso e segue as permissões do meuGuarda'
+            }
           >
-            <Chave ligada={u.meuguarda_liberado && Boolean(u.telefone)} rotulo="Consultar câmeras" travada />
+            <Chave ligada={u.cameras_no_whatsapp_falta === null} rotulo="Consultar câmeras" travada />
           </Opcao>
           {caixa(
             'bot_meuguarda',
@@ -525,7 +553,7 @@ function Acessos({
 function NoMeuGuarda({ meuGuarda, pessoa }: { meuGuarda: MeuGuardaDaEmpresa | undefined; pessoa: PessoaNoMeuGuarda | undefined }) {
   const titulo = <p className="text-[11px] uppercase tracking-[0.06em] text-tempo-ruim">Definido no meuGuarda</p>
   const link = meuGuarda?.endereco ? (
-    <a className="text-xs font-semibold text-tempo-ruim hover:underline" href={meuGuarda.endereco} target="_blank" rel="noopener noreferrer">
+    <a className="text-xs font-semibold text-tempo-ruim hover:underline" href={`${meuGuarda.endereco.replace(/\/$/, '')}/#pessoas`} target="_blank" rel="noopener noreferrer">
       Mudar permissões no meuGuarda ↗
     </a>
   ) : null
@@ -537,7 +565,10 @@ function NoMeuGuarda({ meuGuarda, pessoa }: { meuGuarda: MeuGuardaDaEmpresa | un
       ) : meuGuarda.erro ? (
         <p className="text-xs text-alerta">Não deu para ler o meuGuarda: {meuGuarda.erro}</p>
       ) : !pessoa ? (
-        <p className="text-sm text-corpo">Ainda não entrou no meuGuarda. O papel e as usinas aparecem aqui depois do primeiro acesso.</p>
+        <p className="text-sm text-corpo">
+          Ainda não entrou no meuGuarda. O papel, as usinas, as permissões e o Telegram são definidos lá e aparecem
+          aqui depois do primeiro acesso.
+        </p>
       ) : (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
           <dt className="text-fraco">Papel</dt>

@@ -1377,6 +1377,8 @@ class UsuarioDetalhado(BaseModel):
     bot_meuguarda: bool = False
     #: O acesso ao meuGuarda (as permissões são dadas lá; `bot_meuguarda` é só a atuação pelo WhatsApp).
     meuguarda_liberado: bool = False
+    #: O que falta para o bot CONSULTAR câmeras para esta pessoa, ou nulo (consulta). A tela mostra pronto, não deduz.
+    cameras_no_whatsapp_falta: str | None = None
     #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com SIM.
     tem_senha_atuacao: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
@@ -1480,6 +1482,7 @@ async def usuarios_detalhados(
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
             bot_meuguarda=c.bot_meuguarda, meuguarda_liberado=c.meuguarda_liberado,
+            cameras_no_whatsapp_falta=_cameras_no_whatsapp(c, conectados.get(c.id, [])),
             tem_senha_atuacao=bool(c.senha_atuacao_hash),
             meuplano=ligado_mp.get(c.id),
             cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
@@ -1643,9 +1646,29 @@ async def editar_conta_da_empresa(
         telefone=exibir_telefone(conta.telefone),
         bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
         bot_meuguarda=conta.bot_meuguarda, meuguarda_liberado=conta.meuguarda_liberado,
+        cameras_no_whatsapp_falta=_cameras_no_whatsapp(
+            conta, [v.produto for v in conta.vinculos if v.token_cifrado]),
         tem_senha_atuacao=bool(conta.senha_atuacao_hash),
         meuplano=_nome_no_meuplano(db, conta.id),
     )
+
+
+def _cameras_no_whatsapp(c: User, tokens: list[str]) -> str | None:
+    """Por que o bot NÃO consulta câmeras para esta pessoa, ou nulo. Consultar vem com o acesso ao meuGuarda (decisão do
+    dono, 11/11/2026), para quem o bot já atende: o acesso sozinho não faz o bot responder a quem não usa o WhatsApp.
+    É a mesma régua de `assistente_meuguarda.permitidas` e de `User.bot_liberado`, com os tokens já lidos (sem uma ida
+    ao banco por pessoa)."""
+    from app.models.user import BOT_TOKEN
+    from app.services import assistente_meuguarda as amg
+    if not c.meuguarda_liberado:
+        return "o acesso ao meuGuarda"
+    if not c.telefone:
+        return "o celular"
+    if not amg.disponivel(c):
+        return "o meuGuarda neste servidor"
+    if not any(getattr(c, campo) and (p is None or p in tokens) for campo, p in BOT_TOKEN.items()):
+        return "o bot do WhatsApp ligado para esta pessoa (ao menos uma parte)"
+    return None
 
 
 class PessoaNoMeuGuarda(BaseModel):

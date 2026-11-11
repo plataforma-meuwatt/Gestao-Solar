@@ -339,3 +339,19 @@ async def test_a_tela_usuarios_le_o_que_cada_pessoa_tem_no_meuguarda(db, meuguar
     meuguarda.pessoas = recusa
     out = await rotas.meuguarda_da_empresa(gerente)
     assert out.erro == "O meuGuarda recusou: Seu papel não permite: Gerenciar clientes, pessoas e acessos." and not out.pessoas
+
+
+async def test_a_tela_diz_pronto_se_o_bot_consulta_cameras(db):
+    from app.api.v1 import empresa as rotas
+
+    gerente = _conta(db, "gerente.cam", Perfil.GESTOR_EMPRESA, "+5517997377777")
+    so_celular = _conta(db, "so.celular", telefone="+5517997378888", meuguarda_liberado=True)
+    atua = _conta(db, "atua.um", telefone="+5517997379999", meuguarda_liberado=True, bot_meuguarda=True)
+    sem_acesso = _conta(db, "sem.acesso", telefone="+5517997370000")
+    falta = {u.apelido: u.cameras_no_whatsapp_falta for u in await rotas.usuarios_detalhados(db, gerente)}
+    # o acesso sozinho não faz o bot responder a quem não usa o WhatsApp (o bot só atende quem tem uma parte ligada)
+    assert falta["so.celular"] == "o bot do WhatsApp ligado para esta pessoa (ao menos uma parte)"
+    assert falta["atua.um"] is None and falta["sem.acesso"] == "o acesso ao meuGuarda"
+    # e é a mesma régua do bot
+    assert ("cameras" in assistente.permitidas(atua)) and atua.bot_liberado
+    assert not so_celular.bot_liberado and sem_acesso.meuguarda_liberado is False
