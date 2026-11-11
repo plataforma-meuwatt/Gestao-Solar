@@ -12,6 +12,7 @@ Duas coisas do meuPlano que este cliente respeita e não tenta contornar:
   resposta chega por polling em `GET /assistant/runs/{id}`. Não existe versão síncrona.
 """
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -739,6 +740,19 @@ class MeuPlanoClient:
         r = await self._req("POST", "/api/v1/meuacesso/assistant/transcribe", timeout=120,
                             files={"file": ("audio.ogg", conteudo, tipo or "audio/ogg")})
         return (r.json().get("text") or "").strip()
+
+    async def meu_certificado(self) -> dict[str, Any]:
+        """Se a pessoa tem certificado digital cadastrado (`{configurado, filename, uploaded_at}`)."""
+        return (await self._req("GET", "/api/v1/meuacesso/auth/me/certificado")).json()
+
+    async def assinar_pdf(self, conteudo: bytes, nome: str, pin: str) -> tuple[bytes, str]:
+        """O PDF assinado com o certificado da pessoa — o meuPlano confere o PIN de assinatura dela —, e o nome que ele
+        deu ao arquivo ("x (assinado).pdf")."""
+        from urllib.parse import unquote
+        r = await self._req("POST", "/api/v1/meuacesso/auth/me/certificado/assinar", timeout=120,
+                            files={"file": (nome, conteudo, "application/pdf")}, data={"pin": pin})
+        m = re.search(r"filename\*=UTF-8''([^;]+)", r.headers.get("content-disposition", ""))
+        return r.content, unquote(m.group(1)) if m else f"{nome.removesuffix('.pdf')} (assinado).pdf"
 
     async def anexar_na_tarefa(self, task_id: int, nome: str, conteudo: bytes, tipo: str | None,
                                descricao: str, autor: str) -> dict[str, Any]:

@@ -1831,9 +1831,10 @@ async def test_audio_sem_token_do_meuplano_explica_e_cancela_a_acao(db, bot_loca
 
 async def test_arquivo_recebido_diz_o_nome_e_que_ainda_nao_abre(db, bot_local, monkeypatch):
     dono = _dono_com_usina(db)
+    # (o PDF vai à IA desde 11/11/2026: ela o assina com o certificado da pessoa — `test_assistente_pdf.py`)
     await assistente.atender({"id": 1, "telefone": dono.telefone, "wa_id": "1", "tipo": "document", "texto": None,
-                              "midia": {"mime": "application/pdf", "nome": "projeto.pdf"}})
-    assert "«projeto.pdf»" in bot_local.enviados[0] and "ainda não abro arquivos" in bot_local.enviados[0]
+                              "midia": {"mime": "application/acad", "nome": "projeto.dwg"}})
+    assert "«projeto.dwg»" in bot_local.enviados[0] and "ainda não abro esse tipo de arquivo" in bot_local.enviados[0]
 
 
 async def test_a_senha_soletrada_com_barra_ou_por_extenso_e_reconhecida(db, monkeypatch):
@@ -1933,15 +1934,21 @@ def test_o_log_nao_estraga_o_marcador_nem_esconde_dado_tecnico():
     assert _sem_segredos("minha senha é: 4821x") == "minha senha é: ••••"
 
 
-async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
-    """No meuPlano a ferramenta de PDF assina com o certificado da pessoa dentro de uma LEITURA
-    — "me manda o PDF da OS assinado" saía sem confirmação nenhuma (avaliação 11). O pedido de
-    assinatura só vai ao meuPlano depois do SIM da pessoa."""
-    from app.core.security import gerar_hash_senha
+async def test_documento_do_meuplano_pedido_assinado_so_sai_com_o_pin(db, monkeypatch):
+    """No meuPlano a ferramenta de PDF assinava com o certificado da pessoa dentro de uma LEITURA (avaliação 11), e o
+    bot passou a pedir o Sim antes. O Sim não bastava: quem trocasse o celular da conta no oem-gs levava a assinatura
+    dela com um toque (revisão adversarial de 11/11/2026). Agora o meuPlano entrega o PDF SEM assinar e o bot o assina
+    pela porta única do PIN de assinatura."""
+    from datetime import UTC, datetime
+    from time import monotonic
+    from types import SimpleNamespace
+
     from app.services import assistente_helper as h
+    from app.services import assistente_pdf as pdf
     from app.services import vinculos
 
-    pedidos = []
+    pedidos, assinados = [], []
+    link = "http://127.0.0.1:9/api/public/share/abc/items/5/view"
 
     class _MP:
         async def assistente_chat(self, token, mensagens):
@@ -1949,31 +1956,106 @@ async def test_documento_assinado_no_meuplano_so_sai_com_o_sim(db, monkeypatch):
             return 7
 
         async def assistente_run(self, token, run_id):
-            return {"status": "DONE", "type": "message", "text": "PDF da OS 1639 assinado: https://x/pdf"}
+            return {"status": "DONE", "type": "message", "text": f"PDF da OS 1639 pronto: {link}"}
+
+        async def meu_certificado(self):
+            return {"configurado": True, "pin_configurado": True}
+
+        async def assinar_pdf(self, conteudo, nome, pin):
+            assinados.append((conteudo, nome, pin))
+            return b"ASSINADO", "OS 1639 (assinado).pdf"
 
     async def _sem_espera(_):
         return None
 
+    async def _baixar(url):
+        return SimpleNamespace(content=b"%PDF-OS", headers={"content-type": "application/pdf",
+                                                            "content-disposition": 'inline; filename="os_1639_rocagem.pdf"'})
+
+    async def _enviar(**k):
+        return {"ok": True}
+
+    async def _ocultar():
+        return None
+
     monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: _MP())
     monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_baixar", _baixar)
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
     dono = _conta(db, "dono", "+5517997377626")
-    dono.bot_meuplano, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
-    db.commit()
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
     r = await assistente.manutencao(ctx, {"pergunta": "me manda o PDF da OS 1639 assinado"})
-    assert "NADA foi executado" in r["instrucao"] and pedidos == []
-    assert "ASSINATURA DIGITAL" in h.PENDENTES[dono.id].resumo
-    # Sem a palavra na pergunta da IA, mas com ela no pedido da pessoa: também.
-    h.PENDENTES.clear()
-    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone, pedido="quero com meu certificado digital")
-    r = await assistente.manutencao(ctx, {"pergunta": "PDF da OS 1639"})
-    assert "NADA foi executado" in r["instrucao"] and pedidos == []
-    h.mostrada(dono.id)
-    feito = await h.confirmar_por_mensagem(db, dono, dono.telefone, "sim")
-    assert feito.startswith("PDF da OS 1639 assinado") and pedidos == ["PDF da OS 1639" + assistente.PARA_O_WHATSAPP]
-    # Leitura comum continua sem senha.
-    r = await assistente.manutencao(ger.Contexto(db=db, user=dono, telefone=dono.telefone), {"pergunta": "OS abertas?"})
-    assert r == {"texto": "PDF da OS 1639 assinado: https://x/pdf"} and len(pedidos) == 2
+    assert len(pedidos) == 1 and "NADA foi assinado" in r["instrucao"] and link not in r["texto"]
+    assert pdf._ESPERANDO[dono.id].pdfs == [{"bytes": b"%PDF-OS", "nome": "os_1639_rocagem.pdf"}] and assinados == []
+    assert "PIN de assinatura" in ctx.rodape[-1] and dono.id not in h.PENDENTES          # nenhum Sim armado
+    pdf.pedido_saiu(dono.id, True, lambda: datetime.now(UTC))
+    feito = await pdf.receber_pin(db, dono, dono.telefone, {"tipo": "text", "_chegou": monotonic()}, "482913", _ocultar)
+    assert assinados == [(b"%PDF-OS", "os_1639_rocagem.pdf", "482913")] and feito[0].startswith("✅ Assinado")
+
+    # sem o PIN criado, o PDF não some: vai sem assinatura, e a pessoa sabe por quê
+    pdf._ESPERANDO.clear()
+    enviados = []
+
+    async def _enviar_registrando(**k):
+        enviados.append(k.get("filename"))
+        return {"ok": True}
+
+    async def _sem_pin():
+        return {"configurado": True, "pin_configurado": False}
+
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar_registrando)
+    mp_sem_pin = _MP()
+    mp_sem_pin.meu_certificado = _sem_pin
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: mp_sem_pin)
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    r = await assistente.manutencao(ctx, {"pergunta": "me manda o PDF da OS 1639 assinado"})
+    assert "SEM assinatura" in r["erro"] and enviados == ["os_1639_rocagem.pdf"] and dono.id not in pdf._ESPERANDO
+
+
+async def test_o_manual_pedido_junto_nao_vai_para_assinar(db, monkeypatch):
+    """"Quando vence meu certificado digital? E me manda o manual do inversor": só o PDF de OS/tarefa vai à espera do
+    PIN; o manual vai como sempre (antes ele saía assinado com o certificado da pessoa)."""
+    from types import SimpleNamespace
+
+    from app.services import assistente_pdf as pdf
+    from app.services import vinculos
+
+    os_link = "http://127.0.0.1:9/api/public/share/abc/items/5/view"
+    manual = "http://127.0.0.1:9/api/public/documents/modelo/7?t=xyz"
+    enviados = []
+
+    class _MP:
+        async def assistente_chat(self, token, mensagens):
+            return 1
+
+        async def assistente_run(self, token, run_id):
+            return {"status": "DONE", "type": "message", "text": f"OS: {os_link} Manual: {manual}"}
+
+        async def meu_certificado(self):
+            return {"configurado": True, "pin_configurado": True}
+
+    async def _sem_espera(_):
+        return None
+
+    async def _baixar(url):
+        nome = "os_1638_rocagem.pdf" if "/share/" in url else "Manual SUN2000.pdf"
+        return SimpleNamespace(content=nome.encode(), headers={"content-type": "application/pdf",
+                                                               "content-disposition": f'inline; filename="{nome}"'})
+
+    async def _enviar(**k):
+        enviados.append(k.get("filename"))
+        return {"ok": True}
+
+    monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: _MP())
+    monkeypatch.setattr(assistente.asyncio, "sleep", _sem_espera)
+    monkeypatch.setattr(assistente, "_baixar", _baixar)
+    monkeypatch.setattr(assistente.whatsapp, "enviar_conteudo", _enviar)
+    dono = _conta(db, "dono", "+5517997377626")
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone,
+                       pedido="quando vence meu certificado digital? e me manda o manual do inversor e a OS 1638")
+    r = await assistente.manutencao(ctx, {"pergunta": ctx.pedido})
+    assert [x["nome"] for x in pdf._ESPERANDO[dono.id].pdfs] == ["os_1638_rocagem.pdf"]
+    assert enviados == ["Manual SUN2000.pdf"] and manual not in r["texto"] and os_link not in r["texto"]
 
 
 async def test_o_botao_nao_cancela_a_acao_do_meuplano(db, bot_local, monkeypatch):

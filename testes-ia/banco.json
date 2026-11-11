@@ -216,5 +216,10 @@
 {"frase": "Replique as tarefas da OS 1005 para pereiras, data de hoje, prioridade media, responsável técnico diogo", "espera": ["manutencao"], "origem": "log #417", "como": "kewyn"},
 {"frase": "Tem OS aberta para pereiras inversor 18 ensaio cc das strings?", "espera": ["manutencao"], "origem": "log #419", "como": "kewyn"},
 {"frase": "Me de a localizacao de mairinque", "espera": ["local_da_usina"], "origem": "log #415"},
-{"frase": "as usinas geraram bem hoje?", "espera": ["comparar_usinas"], "origem": "log #420", "como": "marcos"}
+{"frase": "as usinas geraram bem hoje?", "espera": ["comparar_usinas"], "origem": "log #420", "como": "marcos"},
+{"frase": "[📄 PDF recebido: «Contrato Cliente.pdf»] assina", "espera": ["assinar_pdf"], "origem": "11/11 (PDF encaminhado com a legenda assina)"},
+{"frase": "[📄 PDF recebido: «Aditivo 02.pdf»]\nassina pra mim", "espera": ["assinar_pdf"], "origem": "11/11 (PDF encaminhado e depois \"assina pra mim\")"},
+{"frase": "Pode assinar esse aqui com meu certificado?\n[📄 PDF recebido: «Proposta Splendor.pdf»]", "espera": ["assinar_pdf"], "origem": "11/11 (o pedido escrito antes do PDF)"},
+{"frase": "[📄 PDF recebido: «Termo de entrega.pdf»]", "espera": [], "origem": "11/11 (PDF sozinho: pergunta se é para assinar)"},
+{"frase": "Me manda o PDF da OS 1638 assinado", "espera": ["manutencao"], "origem": "11/11 (o PDF da OS continua indo ao meuPlano)"}
 ]

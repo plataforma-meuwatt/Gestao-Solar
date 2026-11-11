@@ -855,6 +855,9 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
     - O texto que a pessoa confirma é do SISTEMA, não da IA: `bloco_da_proposta` é acrescentado
       ao pé da resposta, com o resumo exato, os avisos e o prazo (`assistente._atender`)."""
     user = ctx.user
+    from app.services import assistente_pdf
+    if assistente_pdf.esperando(user.id):               # a assinatura armada nesta mensagem espera o PIN
+        return {"erro": "Uma ação por vez: há uma assinatura esperando o PIN da pessoa nesta mensagem. Fale só dela."}
     if confirmacao == "senha" and not user.senha_atuacao_hash:
         PENDENTES.pop(user.id, None)
         return {"proposta_pendente": resumo, "sem_senha_de_atuacao": True,

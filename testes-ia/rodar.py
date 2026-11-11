@@ -53,6 +53,11 @@ async def _turno(apelido: str, frase: str, inteira: bool) -> dict:
             from app.services import assistente_fotos as fotos
             fotos._RECEBIDAS[ctx.telefone] = [{"id": f"teste-{i}", "legenda": "", "em": fotos.monotonic()}
                                               for i in range(int(m.group(1)))]
+        if nomes := re.findall(r"\[📄 PDF recebido: «([^»]+)»\]", frase):
+            # o PDF ESPERANDO, como no bot: sem ele, `assinar_pdf` diz que não há PDF e a IA escolhe outro caminho
+            from app.services import assistente_pdf as pdf
+            pdf._RECEBIDOS[ctx.telefone] = [{"id": f"teste-{i}", "nome": n, "em": pdf.monotonic()}
+                                            for i, n in enumerate(nomes)]
         if inteira:
             texto = await a.responder(ctx, [{"role": "user", "content": frase}])
             if ctx.rodape:                                  # os links do mapa, como no bot

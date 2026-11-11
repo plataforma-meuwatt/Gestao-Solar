@@ -54,9 +54,10 @@ def _memoria_do_bot_limpa():
     """O bot guarda em memória (por id de conta) a ação esperando senha, as senhas erradas e
     a lista de usinas do meuWatt. Cada teste tem banco novo e os ids recomeçam: sem limpar,
     o que um teste deixou valeria para a conta de mesmo id do seguinte."""
-    from app.services import assistente, assistente_geracao, assistente_helper
+    from app.services import assistente, assistente_fotos, assistente_geracao, assistente_helper, assistente_pdf
 
-    for guardado in (assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
+    for guardado in (assistente_fotos._RECEBIDAS, assistente_pdf._ESPERANDO, assistente_pdf._ZONA_ATE, assistente_pdf._AVISAR, assistente_pdf._RECEBIDOS,
+                     assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
                      assistente_helper._CONFERENCIAS, assistente_helper._CONFIRMADAS, assistente_helper._CANCELADAS,
                      assistente_geracao._USINAS_MW, assistente._ATENDIDAS,
                      # a trava por número presa ao laço de eventos do teste anterior estoura no seguinte

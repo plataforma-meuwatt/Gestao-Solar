@@ -39,6 +39,7 @@ from app.models.user import Perfil, User
 from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
+from app.services import assistente_pdf as pdf
 from app.services import assistente_local as local
 from app.services import assistente_relatorio as relatorio
 from app.services import assistente_formulario as formulario
@@ -120,6 +121,11 @@ _SIGNATARIO = re.compile(r"(?i)\bquem\s+(?:\w+\s+){0,2}?assin\w*|\bdatas?\s+d[ae
 #: deles não é assinatura digital: "vigência, valor, documento e assinatura ficam pendentes" virou "Assinar com o
 #: seu certificado… Criar o contrato" de novo (29/10/2026, Mairinque).
 _CONTRATO = re.compile(r"(?i)\bcontratos?\b")
+#: "o PDF da OS sem assinatura" é o contrário do pedido (revisão de 11/11/2026: ia esperar o PIN) — mas só quando
+#: não sobra negação nem julgamento: "sem assinatura não vale / o cliente recusa / não tem validade" é o pedido.
+_SEM_ASSINATURA = re.compile(r"(?i)\bsem\s+(?:a\s+)?assin\w*|\bn[ãa]o\s+(?:precisa\s+(?:ser\s+)?)?assin\w*")
+_JULGAMENTO = re.compile(r"(?i)\b(?:n[ãa]o|nem|nunca)\s+(?:\w+\s+){0,2}?(?:vale\w*|serv\w*|aceit\w*|prest\w*|d[áa]|adianta|"
+                         r"rola|tem\s+validade)\b|recus\w*|inv[áa]lid\w*|sem\s+validade")
 _ASSINAVEL = re.compile(r"\bOS\b|(?i:\bpdf\b|\btarefas?\b|\bensaios?\b|\brelat[óo]rios?\b|\bordens?\s+de\s+servi[çc]o\b)")
 
 
@@ -128,6 +134,9 @@ def _pede_assinatura(texto: str) -> bool:
     pergunta sobre o estado da assinatura ("a OS 1638 já foi assinada?" — avaliação 12). Na dúvida,
     é pedido: o que custa é um SIM a mais, e não um documento assinado sem a pessoa saber."""
     t = _SIGNATARIO.sub(" ", texto or "")
+    sem = _SEM_ASSINATURA.sub(" ", t)
+    if not _JULGAMENTO.search(sem):                       # na dúvida, é pedido
+        t = sem
     if _CONTRATO.search(t) and not _ASSINAVEL.search(t):
         return False
     return bool(ASSINATURA.search(t)) and not (_ESTADO.search(t) and not _PEDIDO.search(t))
@@ -153,8 +162,13 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
     # A API de lá é sem estado: a conversa vai junto. Sem ela, o "sim" a uma proposta do próprio
     # meuPlano ("Confirma que eu crie assim?") chegava lá sozinho, e ele recomeçava do zero.
     mensagens = [*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": pergunta}]
+    if (pdf.do_pedido(ctx) and (_pede_assinatura(pedido) or _pede_assinatura(ctx.pedido))
+            and not re.search(r"\bOS\b|(?i:\btarefas?\b|\bensaios?\b|\bordens?\s+de\s+servi[çc]o\b)", pedido)):
+        # o PDF que ela encaminhou não está no meuPlano: lá a assinatura é a do PDF de OS e de tarefa
+        return {"erro": "A pessoa mandou um PDF por aqui: se o pedido é assinar esse PDF, use `assinar_pdf` (o meuPlano "
+                        "não tem o arquivo); se é um documento do meuPlano, peça com o número da OS ou da tarefa."}
     if _pede_assinatura(pedido) or _pede_assinatura(ctx.pedido):
-        return _assinatura_com_senha(ctx, pedido, mensagens)
+        return await _assinatura_com_pin(ctx, mp, mensagens)
     ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
     r = await _perguntar_ao_meuplano(mp, mensagens)
     if r.get("texto"):
@@ -182,7 +196,7 @@ async def _baixar(url: str) -> httpx.Response:
         return (await c.get(url)).raise_for_status()
 
 
-async def _pdfs_dos_links(ctx: ger.Contexto, texto: str) -> str:
+async def _pdfs_dos_links(ctx: ger.Contexto, texto: str, para_assinar: list | None = None) -> str:
     """O PDF que o meuPlano devolve como LINK vai como ARQUIVO no chat: lá o arquivo só sai no bot DELE (09/11/2026,
     o dono: "eu pedi pdf da OS, ele me mandou link. Mas eu quero receber o pdf"). Vale também para o documento anexado
     (11/11/2026, o dono: "quero poder pedir o manual dos equipamentos para o bot"). Só do endereço do meuPlano; sem
@@ -196,11 +210,18 @@ async def _pdfs_dos_links(ctx: ger.Contexto, texto: str) -> str:
             resp = await _baixar(url + "&arquivo=1" if "/api/public/documents/" in url else url)
         except httpx.HTTPError:
             log.warning("assistente: não baixei o PDF do meuPlano", exc_info=True)
+            if para_assinar is not None:                  # o link do PDF SEM assinatura não sai como se fosse o pedido
+                texto = texto.replace(url, "(não consegui baixar o PDF para assinar: peça de novo)")
             continue
         if "pdf" not in resp.headers.get("content-type", ""):
             continue
         nome = re.search(r'filename="([^"]+)"', resp.headers.get("content-disposition", ""))
         titulo = re.sub(r"(?i)\.pdf$", "", nome.group(1)) if nome else "Documento"
+        # o PDF de OS e de tarefa pedido assinado vai à espera do PIN; o manual, o estoque etc. vão como sempre
+        if para_assinar is not None and re.match(r"(?i)(?:os|ensaio)_\d+", nome.group(1) if nome else ""):
+            para_assinar.append({"bytes": resp.content, "nome": f"{titulo}.pdf"})
+            texto = texto.replace(url, "(o PDF, para assinar com o seu PIN)")
+            continue
         if (await relatorio._mandar(ctx, resp.content, titulo))["enviado_no_chat"]:
             texto = texto.replace(url, "(o PDF vai aqui no chat)")
     return texto
@@ -223,25 +244,32 @@ async def _perguntar_ao_meuplano(mp, mensagens: list[dict]) -> dict:
     return {"erro": "O meuPlano demorou demais para responder."}
 
 
-def _assinatura_com_senha(ctx: ger.Contexto, pedido: str, mensagens: list[dict]) -> dict:
-    """O pedido com assinatura digital só vai ao meuPlano depois de a pessoa CONFIRMAR (SIM)."""
-    from app.services.vinculos import SemConexao, cliente_meuplano
-
-    async def executar(db: Session, user: User, telefone: str) -> str:
-        try:
-            mp = cliente_meuplano(db, user.id, so_proprio=True)
-        except SemConexao as e:
-            return f"❌ Não executado: {e}"
-        db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
-        r = await _perguntar_ao_meuplano(mp, mensagens)
-        if r.get("erro"):
-            return f"❌ {r['erro']} Nada foi assinado."
-        if r.get("type") == "proposal":
-            return "O meuPlano pediu outra confirmação para isso: peça de novo, em partes. Nada foi assinado."
-        return await _pdfs_dos_links(ctx, r.get("texto") or "") or "O meuPlano não respondeu nada."
-
-    resumo = f"Assinar com o seu certificado (ASSINATURA DIGITAL) o que você pediu ao meuPlano: «{pedido[:300]}»"
-    return helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, parte="bot_meuplano", confirmacao="sim")
+async def _assinatura_com_pin(ctx: ger.Contexto, mp, mensagens: list[dict]) -> dict:
+    """O documento do meuPlano pedido ASSINADO ("me manda o PDF da OS 1638 assinado"). Antes ia ao meuPlano depois de
+    um Sim, e lá saía assinado com o certificado da pessoa — quem trocasse o celular da conta dela no oem-gs levava a
+    assinatura dela com um toque (revisão adversarial de 11/11/2026). Agora o meuPlano o entrega SEM assinar (por
+    token pessoal ele não assina sem o PIN) e o bot o assina pela porta única do PDF encaminhado: o PIN."""
+    ctx.db.commit()                                       # solta a conexão: o meuPlano leva até 2 min
+    r = await _perguntar_ao_meuplano(mp, mensagens)
+    if r.get("erro"):
+        return {"erro": f"{r['erro']} Nada foi assinado."}
+    if r.get("type") == "proposal":
+        return {"erro": "O meuPlano pediu uma confirmação para isso: peça de novo, em partes. Nada foi assinado."}
+    ctx.segredos.extend(str(v) for v in r.get("segredos") or [] if v)
+    arquivos: list[dict] = []
+    texto = await _pdfs_dos_links(ctx, r.get("texto") or "", para_assinar=arquivos)
+    if not arquivos:
+        return {"texto": texto}                           # o meuPlano não entregou documento: nada a assinar
+    pin = await pdf.pedir_pin(ctx, arquivos)
+    if "erro" in pin:
+        # sem o PIN criado (ou sem certificado): o PDF não some — vai sem assinatura, e a pessoa sabe por quê
+        foram = sum([(await relatorio._mandar(ctx, a["bytes"], a["nome"].removesuffix(".pdf")))["enviado_no_chat"]
+                     for a in arquivos])
+        dito = (" O PDF foi mandado aqui SEM assinatura (não peça de novo)." if foram == len(arquivos) else
+                " Nem o PDF sem assinatura saiu: o WhatsApp não aceitou o arquivo." if not foram else
+                f" Mandei aqui {foram} de {len(arquivos)} PDFs SEM assinatura; os outros o WhatsApp não aceitou.")
+        return {"erro": pin["erro"] + dito}
+    return {"texto": texto, **pin}
 
 
 #: Quantas mensagens da conversa vão ao meuPlano junto com a pergunta.
@@ -374,6 +402,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "alterar_relatorio": (relatorio.alterar_relatorio, relatorio.FERRAMENTA_ALTERAR),
                "os_sem_cadastro": (relatorio.os_sem_cadastro, relatorio.FERRAMENTA_LISTA),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
+               "assinar_pdf": (pdf.assinar_pdf, pdf.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS,
                **par.FERRAMENTAS}
@@ -883,7 +912,8 @@ def permitidas(user) -> list[str]:
     if "bot_meuwatt" in ativo:
         nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
     if "bot_meuplano" in ativo:
-        nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "gravar_coordenada",
+        nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "assinar_pdf",
+                  "gravar_coordenada",
                   "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
@@ -954,6 +984,8 @@ de memória.
   ou a OS (da legenda ou da conversa); pediu NA OS, não numa tarefa → `anexos_da_os`. Disse a usina e o
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
+- «[📄 PDF recebido: «nome»]» = um arquivo que a pessoa mandou aqui (você não o lê). Pedido de assinar ESSE arquivo
+  → `assinar_pdf`; sem pedido junto, pergunte se é para assinar.
 - «[👤 contato compartilhado: nome · telefone…]» = a pessoa mandou um contato pelo botão do WhatsApp: são os dados de
   quem ela chama de "este contato". Siga a regra de sempre para o pedido e use o nome, o telefone e o e-mail EXATOS
   dele. Sem pedido junto, pergunte o que fazer com o contato.
@@ -1241,9 +1273,11 @@ async def atender(evento: dict) -> None:
     chave = evento.get("wa_id") or evento.get("telefone") or ""
     if fotos.e_foto(evento):                               # na chegada: a foto anterior do álbum sabe que veio outra
         fotos.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
+    if pdf.e_pdf(evento):                                  # o "assina" que vem logo depois já acha o PDF
+        pdf.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     texto = (evento.get("texto") or "").strip()
-    item = {"juntavel": fotos.e_foto(evento) or evento.get("tipo") == "contacts" or (
+    item = {"juntavel": fotos.e_foto(evento) or pdf.e_pdf(evento) or evento.get("tipo") == "contacts" or (
         evento.get("tipo") == "text" and not evento.get("botao") and bool(texto) and not helper.parece_senha(texto))}
     fila = _FILA.setdefault(chave, [])
     fila.append(item)
@@ -1309,6 +1343,7 @@ def _resumo_saiu(db: Session, user: User, saiu: bool) -> None:
     """A ação NOVA desta pessoa (o resumo acabou de ir): a senha/o SIM só valem depois da saída,
     marcada na hora do banco; se a mensagem não saiu, a pessoa não viu o resumo, e nada fica
     esperando."""
+    pdf.pedido_saiu(user.id, saiu, lambda: _agora_do_banco(db))      # o pedido do PIN de assinatura, idem
     p = helper.PENDENTES.get(user.id)
     if p is None or p.mostrada_em is not None:
         return
@@ -1611,6 +1646,26 @@ async def _atender(evento: dict) -> None:
                 _registrar(db, telefone, user, "respondeu", pergunta="[reação ao resumo]", resposta=de_novo,
                            ferramentas=["confirmacao"], inicio=inicio, em=enviada)
             return
+        # O PIN de assinatura (`assistente_pdf`): antes de tudo, para não ir à IA, ao log, à conversa guardada, nem
+        # contar como erro da senha de atuação. A parte do meuPlano desligada no meio derruba a espera.
+        pin_cancelado = False
+        if user is not None and pdf.interessa(user.id):
+            ativo = user.bot_liberado and "bot_meuplano" in user.bot_ativo and _empresa_fora(db, user) is None
+            tinha = pdf.esperando(user.id)
+            recebido = await pdf.receber_pin(db, user, telefone, evento, texto,
+                                             lambda: _ocultar_no_gateway(evento.get("id"), pdf.PIN), enviada,
+                                             ativo=ativo)
+            if isinstance(recebido, tuple):
+                resposta_pin, era_o_pin = recebido
+                await _texto(telefone, resposta_pin)
+                _registrar(db, telefone, user, "respondeu", pergunta=pdf.PIN if era_o_pin else "[áudio]",
+                           resposta=resposta_pin, ferramentas=["assinar_pdf"], inicio=inicio, em=enviada)
+                return
+            pin_cancelado = tinha and not pdf.esperando(user.id)
+            if isinstance(recebido, str):
+                # a frase com um número que podia ser o PIN: ele some (gateway, IA, log) e o resto segue
+                texto = pergunta = recebido
+                await _ocultar_no_gateway(evento.get("id"), recebido)
         # A senha, conferida UMA vez e fora do laço da API, antes de qualquer saída: a mensagem
         # que É a senha some inteira; numa frase, só a senha some ("[senha oculta]") — e do
         # gateway sai só ela, não a frase. Com uma ação do meuPlano esperando o SIM, o número
@@ -1653,6 +1708,7 @@ async def _atender(evento: dict) -> None:
             # A nota de voz vira texto e segue como texto — inclusive a senha dita em voz alta,
             # que nunca é repetida em claro (avaliação 11: o bot anterior no número ouvia áudio).
             texto, falha = await _ouvir(db, user, evento)
+            texto = pdf.sem_o_pin(user.id, texto)        # o PIN dito em voz alta, na zona do PIN, nem ecoa
             if texto:
                 tentativa = helper.e_tentativa(user, texto)
                 analise = await helper.analisar(user, texto, tentativa)
@@ -1718,6 +1774,9 @@ async def _atender(evento: dict) -> None:
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
         nota = f"\n\n{helper.cancelada(desarmada)}" if esperava else ""
+        aviso_pin = pin_cancelado or pdf.tirar_aviso(user.id)   # o de uma mensagem juntada a esta também
+        if aviso_pin:
+            nota += f"\n\n{pdf.CANCELADA}"
         cadastro_dados = None
         if not texto and formulario.e_resposta(evento):
             texto = seguro = pergunta = formulario.texto_da_resposta(telefone, evento)   # o que marcou, em palavras
@@ -1738,12 +1797,20 @@ async def _atender(evento: dict) -> None:
             texto = seguro = pergunta = local.mensagem(telefone)
         if not texto and evento.get("tipo") == "contacts":
             texto = seguro = pergunta = _contatos_em_texto(evento)
+        if not texto and pdf.e_pdf(evento):
+            texto = seguro = pergunta = pdf.mensagem(evento)   # a IA não lê o PDF: só sabe que chegou (e a legenda)
+        if texto and (sem := pdf.sem_o_pin(user.id, seguro)) != seguro:
+            # a legenda do PDF ou da foto com o PIN, na zona do PIN: some antes da IA, do log e da conversa (o gateway
+            # guarda a legenda como a Meta a entregou — lá ela não se reescreve)
+            texto = seguro = pergunta = sem
+            for f in fotos.recebidas(telefone):           # e não vira a descrição da foto anexada
+                f["legenda"] = pdf.sem_o_pin(user.id, f["legenda"])
         if texto:
             seguro = await local.do_link(telefone, seguro)   # o link do Google Maps vira a localização, lida pelo sistema
         if not texto:
             nome = (evento.get("midia") or {}).get("nome")
-            aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro arquivos. Se era um pedido, "
-                     "escreva ou mande em áudio." if nome else
+            aviso = (f"Recebi o arquivo «{nome}», mas pelo WhatsApp eu ainda não abro esse tipo de arquivo (de PDF, eu "
+                     "assino com o seu certificado). Se era um pedido, escreva ou mande em áudio." if nome else
                      "Por enquanto eu entendo texto, áudio, foto e vídeo. Outro tipo de arquivo ainda não.")
             await _texto(telefone, aviso + nota)
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", resposta=aviso,
@@ -1795,6 +1862,8 @@ async def _atender(evento: dict) -> None:
 
             async def juntar(*, ferramentas=None, mais_revelados=(), mais_digitados=()) -> None:
                 """Esta mensagem fica no histórico, sem resposta: a seguinte responde as duas."""
+                if aviso_pin:                             # o aviso da assinatura cancelada vai na resposta das duas
+                    pdf.lembrar_cancelada(user.id)
                 _gravar_conversa(conv, historico, [*revelados, *mais_revelados], [*digitados, *mais_digitados])
                 conv.gs_user_id = user.id
                 _guardar(db)
@@ -1808,7 +1877,8 @@ async def _atender(evento: dict) -> None:
                 db.commit()                               # solta a conexão durante a espera
                 # a foto sem legenda espera mais: o pedido costuma vir num texto logo depois
                 sem_legenda = evento.get("tipo") == "contacts" or local.so_link(texto) or (
-                    fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone)))
+                    fotos.e_foto(evento) and not any(f["legenda"] for f in fotos.recebidas(telefone))) or (
+                    pdf.e_pdf(evento) and pdf.sem_legenda(evento))
                 if await _esperar_a_seguinte(evento, ESPERA_FOTO_S if sem_legenda else ESPERA_TEXTO_S):
                     return await juntar()
             n = _do_pedido(historico)
