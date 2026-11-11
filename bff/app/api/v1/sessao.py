@@ -247,21 +247,25 @@ def trocar_de_empresa(
 # asserção no FRAGMENTO (`#assercao=`), como o `entrar_no_produto` do meuWatt e do meuPlano. Mora aqui porque é a rota
 # que atravessa os portões e não devolve dado: só diz QUEM está falando — e de qual portão.
 
-#: Para onde a asserção pode ir. Lista FIXA: um `volta` livre seria redirecionamento aberto, e a asserção (dois minutos,
-#: uso único) iria parar no site de quem montou o link.
-VOLTAS_DO_MEUGUARDA = frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})
+#: Para onde a asserção de cada produto pode ir. Lista FIXA: um `volta` livre seria redirecionamento aberto, e a
+#: asserção (dois minutos, uso único) iria parar no site de quem montou o link.
+VOLTAS = {
+    "meuguarda": ("meuGuarda", frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
+    "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech"})),
+}
 
 
-def _volta_do_meuguarda(volta: str) -> str:
+def _volta(produto: str, volta: str) -> str:
     from urllib.parse import urlsplit, urlunsplit
 
+    nome, hosts = VOLTAS[produto]
     try:
         u = urlsplit((volta or "").strip())
-        valida = u.scheme == "https" and u.netloc in VOLTAS_DO_MEUGUARDA
+        valida = u.scheme == "https" and u.netloc in hosts
     except ValueError:
         valida = False
     if not valida:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Esse endereço de volta não é do meuGuarda.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Esse endereço de volta não é do {nome}.")
     return urlunsplit(("https", u.netloc, u.path or "/", u.query, ""))
 
 
@@ -279,28 +283,60 @@ def _conta_do_portao(cred: HTTPAuthorizationCredentials | None, db: Session) -> 
     return guarda(cred, db), escopo or "cliente"
 
 
-class MeuGuardaIn(BaseModel):
-    volta: str
+def _entradas() -> dict[str, str]:
+    """Onde cada produto recebe a asserção (o botão dos portões manda para cá, já logado)."""
+    s = get_settings()
+    return {"meuguarda": f"{s.meuguarda_web_url.rstrip('/')}/",
+            "termovision": f"{s.termovision_web_url.rstrip('/')}/entrar.html"}
 
 
-class MeuGuardaOut(BaseModel):
+class ProdutoOut(BaseModel):
+    produto: str
+    nome: str
+    #: A `volta` para o `POST /api/sessao/{produto}`: a entrada do produto.
     url: str
 
 
-@router.post("/meuguarda", response_model=MeuGuardaOut)
-def entrar_no_meuguarda(
-    body: MeuGuardaIn,
+@router.get("/produtos", response_model=list[ProdutoOut])
+def produtos_da_sessao(
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)
+) -> list[ProdutoOut]:
+    """Os produtos que esta pessoa abre pelo Gestão Solar (o gerente liberou): os botões dos três portões."""
+    usuario, _ = _conta_do_portao(cred, db)
+    entradas = _entradas()
+    return [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p])
+            for p, liberado in (("meuguarda", usuario.entra_no_meuguarda), ("termovision", usuario.entra_no_termovision))
+            if liberado]
+
+
+class EntrarIn(BaseModel):
+    volta: str
+
+
+class EntrarOut(BaseModel):
+    url: str
+
+
+@router.post("/{produto}", response_model=EntrarOut)
+def entrar_no_produto(
+    produto: str,
+    body: EntrarIn,
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
-) -> MeuGuardaOut:
-    """A asserção do meuGuarda para quem está logado aqui, no endereço de volta dele."""
-    from app.services import login_externo
+) -> EntrarOut:
+    """A asserção do produto (meuGuarda, TermoVision) para quem está logado aqui, no endereço de volta dele. Declarada
+    por ÚLTIMO neste arquivo: as rotas fixas de cima (`/trocar`, `/senha`…) vêm antes dela."""
+    from app.services import cadastro, login_externo
 
-    volta = _volta_do_meuguarda(body.volta)
+    if produto not in VOLTAS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    volta = _volta(produto, body.volta)
     usuario, portao = _conta_do_portao(cred, db)
     empresa = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
+    v = cadastro.vinculo_meuplano(db, usuario.id) if produto == login_externo.TERMOVISION else None
+    meuplano_id = int(v.usuario_remoto_id) if v and str(v.usuario_remoto_id).isdigit() else None
     try:
-        assercao = login_externo.assinar_meuguarda(usuario, portao, empresa)
+        assercao = login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id)
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    return MeuGuardaOut(url=f"{volta}#assercao={assercao}")
+    return EntrarOut(url=f"{volta}#assercao={assercao}")

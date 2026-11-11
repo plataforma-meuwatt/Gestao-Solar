@@ -18,6 +18,7 @@
 import {
   Bot,
   Building2,
+  ExternalLink,
   KeyRound,
   Link2,
   Repeat,
@@ -38,8 +39,10 @@ import React from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
 import {
+  entrarNoProduto,
   meuAcesso,
   meusPapeis,
+  produtosDaSessao,
   minhasEmpresas,
   trocarDeEmpresa,
   trocarDePapel,
@@ -638,6 +641,7 @@ export function Layout() {
               "Gestor_empresa" na tela — código de banco lido por gente é o mesmo defeito
               que o CLAUDE.md nomeia. */}
           <p className="text-[11px] text-fraco px-1 mb-2">{perfil ? PAPEL[perfil] : ''}</p>
+          <AbrirProdutos />
           <button onClick={() => setTrocandoSenha(true)} className="btn-fantasma w-full mb-1.5">
             <KeyRound size={13} />
             Trocar minha senha
@@ -719,6 +723,34 @@ function SemAcesso() {
       <p className="text-sm text-rotulo mt-2">
         Seu acesso não inclui esta tela. Quem administra o painel concede em Usuários.
       </p>
+    </div>
+  )
+}
+
+
+/**
+ * Os botões do meuGuarda e do TermoVision: abrem o produto já logado, em aba nova (a asserção vai no fragmento). Só
+ * aparecem os que o gerente liberou para esta pessoa (`GET /api/sessao/produtos`). Pedido do dono, 11/11/2026.
+ */
+function AbrirProdutos() {
+  const { data } = useQuery({ queryKey: ['sessao', 'produtos'], queryFn: produtosDaSessao, staleTime: 300_000 })
+  const [erro, setErro] = React.useState('')
+  if (!data?.length) return null
+  const abrir = (produto: string, url: string) => {
+    setErro('')
+    entrarNoProduto(produto, url)
+      .then((r) => window.open(r.url, '_blank', 'noopener,noreferrer'))
+      .catch((e) => setErro(mensagemDeErro(e)))
+  }
+  return (
+    <div className="mb-1.5 grid gap-1.5">
+      {data.map((p) => (
+        <button key={p.produto} onClick={() => abrir(p.produto, p.url)} className="btn-fantasma w-full">
+          <ExternalLink size={13} />
+          Abrir o {p.nome}
+        </button>
+      ))}
+      {erro ? <p className="text-[11px] text-parado px-1 break-words">{erro}</p> : null}
     </div>
   )
 }

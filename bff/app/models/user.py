@@ -120,6 +120,9 @@ class User(Base):
     #: O ACESSO ao meuGuarda (CFTV das usinas): o gerente libera aqui, as permissões são dadas lá. Falso = a pessoa fica
     #: fora do meuGuarda (vai no `/eu` dos portões e na asserção do SSO, e o meuGuarda recusa). Migração `d1f3a5b7c9e2`.
     meuguarda_liberado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    #: O ACESSO ao TermoVision (inspeção térmica) pelo "Entrar com o Gestão Solar", como o do meuGuarda: vai na asserção
+    #: e o TermoVision recusa o falso. O que a pessoa vê lá é decidido lá. Migração `e4a6c8d0f2b4`.
+    termovision_liberado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     #: A senha que o bot pede antes de AÇÃO no equipamento (helper: ligar, desligar, gravar) — só
     #: números, 6 a 8, e nunca a de login. Ação do meuPlano (criar/fechar OS) confirma com SIM.
     senha_atuacao_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -139,6 +142,10 @@ class User(Base):
     def entra_no_meuguarda(self) -> bool:
         """O que vai no `/eu` e na asserção do meuGuarda. A plataforma sempre (combinado com o meuGuarda)."""
         return self.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO) or bool(self.meuguarda_liberado)
+
+    @property
+    def entra_no_termovision(self) -> bool:
+        return self.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO) or bool(self.termovision_liberado)
 
     @property
     def bot_liberado(self) -> bool:

@@ -825,11 +825,18 @@ atuação junto com as outras partes. Além disso, valem as permissões da pesso
 `alarmes.tratar`): a recusa de lá vai como veio. Rotas no catálogo da sonda (`MEUGUARDA`, todas
 `sonda=False`: exigem a sessão de uma pessoa) e na tela Rotas do adm, com o `/api/saude` no alto. Base:
 `MEUGUARDA_API_URL`, padrão `http://meuguarda-api:8000` (apelido fixo na rede interna, como o gateway). **"Entrar com o
-Gestão Solar" no meuGuarda**: a página `/entrar/meuguarda?volta=` do portal, do oem-gs e do adm-gs (sem sessão, entra
-e volta para ela) chama `POST /api/sessao/meuguarda`, que confere a sessão pela GUARDA do próprio portão e devolve a
-`volta` com a asserção no fragmento (`login_externo.assinar_meuguarda`: audiência `meuguarda`, mais apelido, perfil,
-portão e empresa; o meuGuarda casa pelo apelido). A `volta` só vai para `VOLTAS_DO_MEUGUARDA` (lista fixa: senão,
-redirecionamento aberto). O meuGuarda não é um `Produto` daqui (não tem token nem conexão), só recebe o login.
+Gestão Solar" no meuGuarda e no TermoVision** (o TermoVision "igual meuguarda", pedido do dono, 11/11/2026: o login de
+lá, que era pelo meuPlano, passa a ser pelo GS): a página `/entrar/<produto>?volta=` do portal, do oem-gs e do adm-gs
+(sem sessão, entra e volta para ela) chama `POST /api/sessao/<produto>`, que confere a sessão pela GUARDA do próprio
+portão e devolve a `volta` com a asserção no fragmento (`login_externo.assinar_login`: audiência = o produto, mais
+apelido, perfil, portão, empresa e se o gerente liberou — `meuguarda`/`termovision`; o do TermoVision leva também o
+`meuplano_id`, como ele reconhecia quem já entrava). A `volta` só vai para `sessao.VOLTAS` (lista fixa por produto:
+senão, redirecionamento aberto); a rota genérica é a ÚLTIMA do arquivo (há teste de que as fixas vêm antes). A tela de
+entrar do PRÓPRIO produto também aceita o apelido e a senha do GS, servidor a servidor: `POST
+/api/v1/auth/produtos/<produto>/assercao` devolve a mesma asserção. Botões "Abrir o meuGuarda/TermoVision" nos três
+portões (`GET /api/sessao/produtos`: só os liberados). O acesso ao TermoVision é `gs_users.termovision_liberado`
+(migração `e4a6c8d0f2b4`, linha TermoVision na tela Usuários; quem existia ficou liberado). Os dois não são `Produto`
+daqui (não têm token nem conexão), só recebem o login.
 Banco de perguntas: os casos com `origem`
 "meuGuarda"; `"sem": ["bot_meuguarda"]` (a atuação) ou `["meuguarda_liberado"]` (o acesso) num caso tira só naquele
 processo (`testes-ia/rodar.py`).

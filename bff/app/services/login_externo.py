@@ -104,11 +104,14 @@ def _privada() -> str:
     return (get_settings().gs_sso_private_key or "").replace("\\n", "\n")
 
 
-#: O meuGuarda (CFTV das usinas, da família GS) só RECEBE o login: não é um `Produto` (não tem token nem conexão
-#: aqui), então a audiência dele mora fora de `AUDIENCIA`. Ele casa a pessoa pelo APELIDO e decide o que ela pode pelos
-#: vínculos de lá; por isso a asserção dele leva também o perfil, o portão e a empresa (spec em
-#: `/root/DEVV/CFTV/docs/bot-gs.md`, "Pedido 2").
+#: O meuGuarda (CFTV das usinas) e o TermoVision (inspeção térmica) só RECEBEM o login: não são um `Produto` (não têm
+#: token nem conexão aqui), então a audiência deles mora fora de `AUDIENCIA`. Eles casam a pessoa pelo APELIDO e
+#: decidem o que ela pode lá; por isso a asserção leva também o perfil, o portão, a empresa e se o gerente liberou o
+#: acesso (spec do meuGuarda em `/root/DEVV/CFTV/docs/bot-gs.md`, "Pedido 2"; o TermoVision, pedido do dono 11/11/2026,
+#: "igual meuguarda"). O do TermoVision leva também o id da pessoa no meuPlano: é como ele reconhecia quem já entrava.
 MEUGUARDA = "meuguarda"
+TERMOVISION = "termovision"
+SO_LOGIN = (MEUGUARDA, TERMOVISION)
 
 
 def assinar(usuario: User, produto: Produto) -> str:
@@ -116,11 +119,19 @@ def assinar(usuario: User, produto: Produto) -> str:
     return _assinar(usuario, AUDIENCIA[produto])
 
 
-def assinar_meuguarda(usuario: User, portao: str, empresa_id: int | None) -> str:
-    """A asserção do "Entrar com o Gestão Solar" do meuGuarda. `portao`: cliente, empresa, tecnico ou painel — o da
-    sessão que pediu; `empresa_id`: a empresa em que ela está operando."""
-    return _assinar(usuario, MEUGUARDA, {"apelido": usuario.apelido, "perfil": usuario.perfil.value, "portao": portao,
-                                         "empresa_id": empresa_id, "meuguarda": usuario.entra_no_meuguarda})
+def assinar_login(usuario: User, produto: str, portao: str, empresa_id: int | None,
+                  meuplano_id: int | None = None) -> str:
+    """A asserção do "Entrar com o Gestão Solar" de um produto de `SO_LOGIN`. `portao`: cliente, empresa, tecnico ou
+    painel — o da sessão que pediu; `empresa_id`: a empresa em que ela está operando; `<produto>`: se o gerente
+    liberou o acesso (falso = o produto recusa)."""
+    extra = {"apelido": usuario.apelido, "perfil": usuario.perfil.value, "portao": portao, "empresa_id": empresa_id}
+    if produto == MEUGUARDA:
+        extra[MEUGUARDA] = usuario.entra_no_meuguarda
+    elif produto == TERMOVISION:
+        extra.update({TERMOVISION: usuario.entra_no_termovision, "meuplano_id": meuplano_id})
+    else:
+        raise ValueError(produto)
+    return _assinar(usuario, produto, extra)
 
 
 def _assinar(usuario: User, audiencia: str, extra: dict | None = None) -> str:

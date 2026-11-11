@@ -19,6 +19,7 @@
  */
 
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2 } from 'lucide-react'
 
 import { api, mensagemDeErro } from '@/lib/api'
@@ -28,24 +29,34 @@ type Produto = 'meuwatt' | 'meuplano'
 
 const ROTULO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
 
+/** O meuGuarda e o TermoVision que o gerente liberou para esta conta (`GET /api/sessao/produtos`): entram pela
+ *  asserção do "Entrar com o Gestão Solar", no endereço de entrada deles. */
+type DaSessao = { produto: string; nome: string; url: string }
+
 export function AbrirProduto() {
   const usuario = useAuth((s) => s.usuario)
-  const [abrindo, setAbrindo] = useState<Produto | null>(null)
+  const [abrindo, setAbrindo] = useState<string | null>(null)
   const [erro, setErro] = useState<string | null>(null)
+  const { data: daSessao } = useQuery({
+    queryKey: ['sessao', 'produtos'],
+    queryFn: () => api.get<DaSessao[]>('/api/sessao/produtos').then((r) => r.data),
+    staleTime: 300_000,
+  })
 
   const disponiveis: Produto[] = [
     ...(usuario?.tem_meuwatt ? (['meuwatt'] as const) : []),
     ...(usuario?.tem_meuplano ? (['meuplano'] as const) : []),
   ]
-  if (disponiveis.length === 0) return null
+  const outros = daSessao ?? []
+  if (disponiveis.length === 0 && outros.length === 0) return null
 
-  async function abrir(produto: Produto) {
+  async function abrir(produto: string, entrada?: string) {
     setAbrindo(produto)
     setErro(null)
     try {
-      const { data } = await api.post<{ url: string; nome: string }>(
-        `/api/v1/auth/produtos/${produto}/entrar`,
-      )
+      const { data } = entrada
+        ? await api.post<{ url: string }>(`/api/sessao/${encodeURIComponent(produto)}`, { volta: entrada })
+        : await api.post<{ url: string; nome: string }>(`/api/v1/auth/produtos/${produto}/entrar`)
       // `noopener` corta o acesso da página nova à que a abriu (`window.opener`), que é a
       // higiene padrão de qualquer link para fora.
       window.open(data.url, '_blank', 'noopener,noreferrer')
@@ -58,21 +69,24 @@ export function AbrirProduto() {
 
   return (
     <div className="flex items-center gap-1.5">
-      {disponiveis.map((p) => (
+      {[
+        ...disponiveis.map((p) => ({ chave: p as string, nome: ROTULO[p], entrada: undefined as string | undefined })),
+        ...outros.map((o) => ({ chave: o.produto, nome: o.nome, entrada: o.url })),
+      ].map((p) => (
         <button
-          key={p}
+          key={p.chave}
           type="button"
-          onClick={() => void abrir(p)}
+          onClick={() => void abrir(p.chave, p.entrada)}
           disabled={abrindo !== null}
-          title={`Abrir o ${ROTULO[p]} já conectado`}
+          title={`Abrir o ${p.nome} já conectado`}
           className="flex items-center gap-1.5 rounded-campo border border-borda px-2.5 py-1.5 text-xs font-semibold text-fraco transition-colors hover:border-ambar/40 hover:text-corpo disabled:opacity-50"
         >
-          {abrindo === p ? (
+          {abrindo === p.chave ? (
             <Loader2 size={13} className="animate-spin" aria-hidden />
           ) : (
             <ExternalLink size={13} aria-hidden />
           )}
-          <span className="hidden sm:inline">{ROTULO[p]}</span>
+          <span className="hidden sm:inline">{p.nome}</span>
         </button>
       ))}
       {/* A falha fica ao lado do botão, e não numa página de erro: o portal não quebrou —

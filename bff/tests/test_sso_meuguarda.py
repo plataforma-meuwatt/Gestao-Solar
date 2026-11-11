@@ -39,9 +39,9 @@ def _conta(db, apelido, perfil, empresa=True):
     return u
 
 
-def _entrar(db, token, volta="https://meuguarda.gestao.solar/painel?x=1"):
+def _entrar(db, token, volta="https://meuguarda.gestao.solar/painel?x=1", produto="meuguarda"):
     cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    return sessao.entrar_no_meuguarda(sessao.MeuGuardaIn(volta=volta), cred, db).url
+    return sessao.entrar_no_produto(produto, sessao.EntrarIn(volta=volta), cred, db).url
 
 
 def test_cada_portao_leva_o_apelido_o_perfil_o_portao_e_a_empresa(db, publica):
@@ -105,3 +105,86 @@ def test_a_guarda_do_portao_vale(db, publica):
     with pytest.raises(HTTPException) as e:
         _entrar(db, "nao-e-token")
     assert e.value.status_code == 401
+
+
+
+def test_o_termovision_entra_pelo_gestao_solar_igual_ao_meuguarda(db, publica):
+    """Pedido do dono (11/11/2026): "login do termovision pelo GESTÃO SOLAR igual tem no meuguarda"."""
+    from app.models.user import VinculoProduto
+
+    tecnico = _conta(db, "tecnico.tv", Perfil.TECNICO)
+    db.add(VinculoProduto(gs_user_id=tecnico.id, produto="meuplano", usuario_remoto_id="88"))
+    db.commit()
+    url = _entrar(db, security.criar_token_tecnico(tecnico.id)[0], "https://termovision.gestao.solar/entrar.html",
+                  "termovision")
+    volta, _, frag = url.partition("#assercao=")
+    assert volta == "https://termovision.gestao.solar/entrar.html"
+    c = jwt.decode(frag, publica, algorithms=["RS256"], audience="termovision", issuer="gestao-solar")
+    # o id da pessoa no meuPlano: é como o TermoVision reconhecia quem já entrava; e o acesso que o gerente liberou
+    assert (c["apelido"], c["portao"], c["meuplano_id"], c["termovision"]) == ("tecnico.tv", "tecnico", 88, False)
+    tecnico.termovision_liberado = True
+    db.commit()
+    c = jwt.get_unverified_claims(_entrar(db, security.criar_token_tecnico(tecnico.id)[0],
+                                          "https://app.termovision.tech/", "termovision").partition("#assercao=")[2])
+    assert c["termovision"] is True and "meuguarda" not in c
+    # a asserção de um produto não vale no outro; a volta de um não serve ao outro
+    with pytest.raises(Exception):
+        jwt.decode(frag, publica, algorithms=["RS256"], audience="meuguarda")
+    for produto, ruim in (("termovision", "https://meuguarda.gestao.solar/"), ("meuguarda", "https://termovision.gestao.solar/")):
+        with pytest.raises(HTTPException) as e:
+            _entrar(db, security.criar_token_tecnico(tecnico.id)[0], ruim, produto)
+        assert e.value.status_code == 400
+    with pytest.raises(HTTPException) as e:                # produto que não existe
+        _entrar(db, security.criar_token_tecnico(tecnico.id)[0], "https://termovision.gestao.solar/", "outro")
+    assert e.value.status_code == 404
+
+
+def test_a_rota_de_cada_produto_nao_engole_as_rotas_fixas_da_sessao():
+    from starlette.routing import Match
+
+    from app.main import app
+
+    def primeira(caminho):
+        escopo = {"type": "http", "path": caminho, "method": "POST"}
+        return next(r for r in app.routes if r.matches(escopo)[0] == Match.FULL).endpoint.__name__
+
+    assert [primeira(f"/api/sessao/{x}") for x in ("trocar", "senha", "empresa", "meuguarda", "termovision")] == \
+        ["trocar", "trocar_a_propria_senha", "trocar_de_empresa", "entrar_no_produto", "entrar_no_produto"]
+
+
+def test_o_apelido_e_a_senha_do_gs_valem_direto_na_tela_do_termovision(db, publica):
+    """O TermoVision pediu (11/11/2026): a tela de entrar dele confere o apelido e a senha do GS, servidor a servidor,
+    e recebe a MESMA asserção do redirecionamento."""
+    from app.api.v1 import auth
+    from app.core.security import gerar_hash_senha
+
+    gerente = _conta(db, "gerente.tv", Perfil.GESTOR_EMPRESA)
+    gerente.senha_hash, gerente.termovision_liberado = gerar_hash_senha("senha-forte-1"), True
+    db.commit()
+    r = auth.assercao_para_produto("termovision", auth.AssercaoIn(apelido="gerente.tv", senha="senha-forte-1"), db)
+    c = jwt.decode(r.assertion, publica, algorithms=["RS256"], audience="termovision", issuer="gestao-solar")
+    assert (c["apelido"], c["portao"], c["termovision"], c["empresa_id"]) == ("gerente.tv", "empresa", True,
+                                                                               gerente.empresa_id)
+    with pytest.raises(HTTPException) as e:
+        auth.assercao_para_produto("termovision", auth.AssercaoIn(apelido="gerente.tv", senha="errada"), db)
+    assert e.value.status_code == 401
+    with pytest.raises(HTTPException) as e:                # produto que não existe: antes de olhar a senha
+        auth.assercao_para_produto("outro", auth.AssercaoIn(apelido="gerente.tv", senha="errada"), db)
+    assert e.value.status_code == 404
+    db.get(Empresa, gerente.empresa_id).ativa = False      # empresa desligada não entra, como nos portões
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        auth.assercao_para_produto("termovision", auth.AssercaoIn(apelido="gerente.tv", senha="senha-forte-1"), db)
+    assert e.value.status_code == 403
+
+
+def test_os_botoes_dos_portoes_so_mostram_o_que_o_gerente_liberou(db):
+    tecnico = _conta(db, "tecnico.botoes", Perfil.TECNICO)
+    tecnico.meuguarda_liberado = True
+    db.commit()
+    cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=security.criar_token_tecnico(tecnico.id)[0])
+    assert [(p.produto, p.url) for p in sessao.produtos_da_sessao(cred, db)] == [
+        ("meuguarda", "https://meuguarda.gestao.solar/")]
+    tecnico.termovision_liberado = True
+    db.commit()
+    assert [p.url for p in sessao.produtos_da_sessao(cred, db)][-1] == "https://termovision.gestao.solar/entrar.html"

@@ -82,7 +82,8 @@ export function UsuariosDaEmpresa() {
           Toque numa pessoa para ver os acessos dela, um sistema por linha. As marcas: verde funciona, amarelo
           funciona em parte, vazio está desligado. <strong>Aqui</strong> você libera quem entra em cada sistema e o
           que o bot faz pelo WhatsApp. <strong>No meuGuarda</strong> ficam o papel, as usinas, as permissões e o
-          Telegram de cada pessoa: aqui eles só aparecem, para conferir.
+          Telegram de cada pessoa: aqui eles só aparecem, para conferir. No TermoVision, o que a pessoa vê também é
+          decidido lá.
         </Aviso>
       </div>
       {isLoading ? (
@@ -352,6 +353,7 @@ function resumoDosAcessos(
         ? { rotulo: 'Helper · senha definida', tom: 'ok' }
         : { rotulo: temMw ? 'Helper · sem senha' : 'Helper · falta o token', tom: 'alerta' },
     guarda,
+    { rotulo: 'TermoVision', tom: u.termovision_liberado ? 'ok' : 'desligado' },
   ]
 }
 
@@ -544,6 +546,33 @@ function Acessos({
             'desarmar e rearmar alarme, classificar eventos em massa · confirma com Sim · só com "Tratar alarme" no meuGuarda',
           )}
         </div>
+      </div>
+
+      <div className={linha}>
+        {sistema('TermoVision', 'Inspeção térmica')}
+        <div className="min-w-0 grid gap-1.5">
+          <Opcao
+            titulo={u.termovision_liberado ? 'Liberado' : 'Não liberado'}
+            nota={
+              u.termovision_liberado
+                ? 'entra com a conta do Gestão Solar, sem token'
+                : 'fica fora do TermoVision (quem já estiver lá dentro sai quando a sessão de lá vencer)'
+            }
+          >
+            <Chave
+              ligada={u.termovision_liberado}
+              rotulo="Acesso ao TermoVision"
+              travada={mudando}
+              aoMudar={(v) =>
+                (v ||
+                  window.confirm(`Tirar o TermoVision de ${u.nome}? A pessoa deixa de entrar lá pelo Gestão Solar.`)) &&
+                aoMudar({ termovision_liberado: v })
+              }
+            />
+          </Opcao>
+          <p className="text-xs text-fraco">O que a pessoa vê lá (empresa, usinas, papel) é decidido no TermoVision.</p>
+        </div>
+        <p className="text-sm text-fraco">Sem WhatsApp</p>
       </div>
     </div>
   )

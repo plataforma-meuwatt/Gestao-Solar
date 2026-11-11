@@ -48,7 +48,7 @@ import { useAuth } from '@/store/auth'
 
 const Entrar = lazyRetry(() => import('@/features/entrar/Pagina'))
 const Conta = lazyRetry(() => import('@/features/conta/Pagina'))
-const EntrarNoMeuGuarda = lazyRetry(() => import('@/features/meuguarda/Pagina'))
+const EntrarNoProduto = lazyRetry(() => import('@/features/entrar-produto/Pagina'))
 const VisaoGeral = lazyRetry(() => import('@/features/visao-geral/Pagina'))
 // Geração de energia. A pasta leva o nome do ASSUNTO, que é o que a rota diz — e não o nome do
 // lugar onde a tela morava, que envelhece na primeira reorganização de menu.
@@ -152,10 +152,10 @@ export function App() {
           <Routes>
             <Route path="/entrar" element={<Entrar />} />
             <Route
-              path="/entrar/meuguarda"
+              path="/entrar/:produto"
               element={
                 <Protegido>
-                  <EntrarNoMeuGuarda />
+                  <EntrarNoProduto />
                 </Protegido>
               }
             />

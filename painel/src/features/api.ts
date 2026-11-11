@@ -631,9 +631,13 @@ export const meusPapeis = () => sessao.get<Papel[]>('/papeis').then((r) => r.dat
 export const trocarDePapel = (apelido: string, senha?: string) =>
   sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null }).then((r) => r.data)
 
-/** A asserção do meuGuarda para a sessão deste portão, já no endereço de volta (`#assercao=`). */
-export const entrarNoMeuGuarda = (volta: string) =>
-  sessao.post<{ url: string }>('/meuguarda', { volta }).then((r) => r.data)
+/** Os produtos que esta sessão abre pelo Gestão Solar (o gerente liberou): os botões do menu. */
+export type ProdutoDaSessao = { produto: string; nome: string; url: string }
+export const produtosDaSessao = () => sessao.get<ProdutoDaSessao[]>('/produtos').then((r) => r.data)
+
+/** A asserção do produto (meuGuarda, TermoVision) para a sessão deste portão, já no endereço de volta (`#assercao=`). */
+export const entrarNoProduto = (produto: string, volta: string) =>
+  sessao.post<{ url: string }>(`/${encodeURIComponent(produto)}`, { volta }).then((r) => r.data)
 
 /* ------------------------------------------- agrupar contas (administrador) */
 
@@ -925,6 +929,8 @@ export type UsuarioDetalhado = {
   meuguarda_liberado: boolean
   /** O que falta para o bot CONSULTAR câmeras para a pessoa, ou nulo (consulta). Vem pronto da API. */
   cameras_no_whatsapp_falta: string | null
+  /** O acesso ao TermoVision pelo "Entrar com o Gestão Solar" (o que a pessoa vê lá é decidido lá). */
+  termovision_liberado: boolean
   /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com Sim. */
   tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
@@ -1003,6 +1009,8 @@ export const editarContaDaEmpresa = (
     senha_atuacao?: string
     /** O acesso ao meuGuarda. Desligar tira a atuação pelo WhatsApp junto. */
     meuguarda_liberado?: boolean
+    /** O acesso ao TermoVision pelo Gestão Solar. */
+    termovision_liberado?: boolean
   } & Partial<Record<ProdutoDoBot, boolean>>,
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 

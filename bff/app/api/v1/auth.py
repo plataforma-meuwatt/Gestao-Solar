@@ -255,7 +255,7 @@ def entrar_no_produto(
 
 @router.post("/produtos/{produto}/assercao", response_model=AssercaoOut)
 def assercao_para_produto(
-    produto: Produto, body: AssercaoIn, db: Session = Depends(get_db)
+    produto: str, body: AssercaoIn, db: Session = Depends(get_db)
 ) -> AssercaoOut:
     """Confere a senha do Gestão Solar e assina quem é esta conta, para aquele produto.
 
@@ -269,6 +269,8 @@ def assercao_para_produto(
     """
     from app.services import login_externo
 
+    if produto not in login_externo.SO_LOGIN and produto not in {p.value for p in Produto}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     usuario = db.scalar(
         select(User).where(User.apelido == (body.apelido or "").strip().lower())
     )
@@ -281,12 +283,28 @@ def assercao_para_produto(
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
 
-    try:
-        assercao = login_externo.assinar(usuario, produto)
-    except login_externo.SemChave as exc:
-        # 503 e não 500: não é defeito, é uma instalação sem a chave configurada, e a
-        # frase diz qual variável falta.
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    if produto in login_externo.SO_LOGIN:
+        # O meuGuarda e o TermoVision (a tela de entrar deles, servidor a servidor: o TermoVision pediu, 11/11/2026, que
+        # o apelido e a senha do GS valham direto lá). A mesma asserção do redirecionamento, com o portão do perfil; a
+        # empresa desligada não entra, como nos portões.
+        from app.core.security import _empresa_ativa
+        from app.services import cadastro, pessoas
+
+        _empresa_ativa(db, usuario)
+        v = cadastro.vinculo_meuplano(db, usuario.id) if produto == login_externo.TERMOVISION else None
+        try:
+            assercao = login_externo.assinar_login(
+                usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id,
+                int(v.usuario_remoto_id) if v and str(v.usuario_remoto_id).isdigit() else None)
+        except login_externo.SemChave as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    else:
+        try:
+            assercao = login_externo.assinar(usuario, Produto(produto))
+        except login_externo.SemChave as exc:
+            # 503 e não 500: não é defeito, é uma instalação sem a chave configurada, e a
+            # frase diz qual variável falta.
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
