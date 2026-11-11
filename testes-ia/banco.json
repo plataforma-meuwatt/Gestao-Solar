@@ -211,5 +211,10 @@
 {"frase": "Salve a senha do cadeado de tiete ••••", "espera": ["manutencao"], "origem": "log #316"},
 {"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #333"},
 {"frase": "Abra uma os para porto ferreira corretiva barramento principal cabine primária, designar técnico diogo e michel, responsáveis kewyn e renan", "espera": ["manutencao"], "origem": "log #393"},
-{"frase": "Já tem OS aberta para o inversor 42 e para o problema de comunicação de rede em porto ferreira?", "espera": ["manutencao"], "origem": "log #397"}
+{"frase": "Já tem OS aberta para o inversor 42 e para o problema de comunicação de rede em porto ferreira?", "espera": ["manutencao"], "origem": "log #397"},
+{"frase": "Já tem os aberta para roçagem de pereiras?", "espera": ["manutencao"], "origem": "log #416", "como": "kewyn"},
+{"frase": "Replique as tarefas da OS 1005 para pereiras, data de hoje, prioridade media, responsável técnico diogo", "espera": ["manutencao"], "origem": "log #417", "como": "kewyn"},
+{"frase": "Tem OS aberta para pereiras inversor 18 ensaio cc das strings?", "espera": ["manutencao"], "origem": "log #419", "como": "kewyn"},
+{"frase": "Me de a localizacao de mairinque", "espera": ["local_da_usina"], "origem": "log #415"},
+{"frase": "as usinas geraram bem hoje?", "espera": ["comparar_usinas"], "origem": "log #420", "como": "marcos"}
 ]
