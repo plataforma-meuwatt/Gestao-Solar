@@ -792,6 +792,14 @@ e o toque `pc:` é tratado ANTES do "botão de resumo antigo" do helper; só o t
 ação que esperava o Sim, e a ação que a IA arma junto com o começo da classificação não fica esperando. 403 do
 meuWatt = o papel da pessoa na usina não classifica (só admin, admin do sistema e operador): o bot diz e encerra.
 
+**Relatório mensal NÃO REVISADO** (dono, 11/11/2026: "somente quando pedir por WhatsApp ou bot … será enviado, porém,
+com marca 'relatório não revisado'"): `relatorio_pdf` com o mês SEM relatório emitido pela equipe (geração ou
+paradas; o resumo executivo não tem) não diz mais "não há": pede o PDF não revisado ao gerador do srvclaude
+(`helper_bot.relatorio_nao_revisado` → `POST /relatorio/pdf` pelo MESMO túnel e chave do helper → `meuwatt-relatorio-pdf`,
+navegador sem tela com o token do meuWatt DA PESSOA), com carimbo em toda folha e, no de geração, os comentários da IA
+do relatório (mw-analise) marcados como dela. O de geração leva ~3 min quando a IA ainda não comentou o mês: o bot avisa
+antes. Mês com relatório emitido segue mandando o arquivo de sempre. Teste: `tests/test_relatorio_nao_revisado.py`.
+
 **Tracker travado** (dono, 08/11/2026; push do aplicativo, `services/avisos.trackers_por_usuario`): o meuWatt detecta
 o travamento (bit de falha do controlador 10 min seguidos) e guarda os comandos do helper (mw-api 4b9fadb); daqui se
 lê `GET /plants/{slug}/trackers/incidents` com o token de quem enxerga a usina (e `…/trackers/events` só com tracker

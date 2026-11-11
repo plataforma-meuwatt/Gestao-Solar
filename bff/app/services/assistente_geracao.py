@@ -482,6 +482,8 @@ async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
     u = _usina(ctx, a.get("usina"))
     rel = await ctx.mw.relatorio_existente(u["slug"], "MENSAL", date.fromisoformat(f"{a['mes']}-01"))
     if not rel:
+        if tipo != "resumo":       # a equipe ainda não emitiu: vai o NÃO REVISADO, com a marca (o Renan, 11/11/2026)
+            return await _relatorio_nao_revisado(ctx, u, a["mes"], tipo)
         return {"erro": f"Não há relatório mensal de {a['mes']} emitido para {u['nome']}."}
     arq = next((f for f in rel.get("files") or [] if f.get("kind") == tipo), None)
     if arq is None:
@@ -494,6 +496,46 @@ async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
     if ok:
         ctx.enviados.append(nome)
     return {"arquivo": nome, "enviado_no_chat": ok, "erro": None if ok else (r or {}).get("erro")}
+
+
+async def _relatorio_nao_revisado(ctx: Contexto, u: dict, mes: str, tipo: str) -> dict:
+    """O mês sem relatório emitido pela equipe: o PDF NÃO REVISADO, gerado agora no meuWatt com o token DA PESSOA (o
+    Renan, 11/11/2026: "somente quando pedir por WhatsApp ou bot … será enviado, porém, com marca 'relatório não
+    revisado'"). O carimbo vai na capa e em toda folha; no de geração, os comentários da IA vão marcados como dela."""
+    from app.clients import whatsapp
+    from app.clients.helper_bot import relatorio_nao_revisado
+    from app.core.config import get_settings
+    from app.models.integracao import Produto
+    from app.services.vinculos import SemConexao, token_do_cliente
+
+    s = get_settings()
+    try:
+        token = token_do_cliente(ctx.db, ctx.user.id, Produto.MEUWATT, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e a versão não revisada sai com o "
+                        f"token do meuWatt da pessoa: {e}"}
+    if not (s.helper_bot_url and s.helper_bot_chave and token):
+        return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e a versão não revisada não "
+                        "pode ser gerada agora."}
+    if tipo == "geracao":          # leva alguns minutos quando a IA ainda não comentou o mês: avisa antes
+        await whatsapp.enviar_conteudo(
+            telefone=ctx.telefone, tipo="text",
+            texto=f"⏳ O relatório de {mes} de {u['nome']} ainda não foi revisado pela equipe. Estou gerando a versão "
+                  "NÃO REVISADA agora; leva uns 3 minutos.")
+    raw, nome, erro = await relatorio_nao_revisado(s.helper_bot_url, s.helper_bot_chamador, s.helper_bot_chave,
+                                                   token, u["slug"], mes, tipo)
+    if raw is None:
+        return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e não consegui gerar a versão "
+                        f"não revisada: {erro}"}
+    r = await whatsapp.enviar_conteudo(telefone=ctx.telefone, tipo="document", arquivo=raw, filename=nome,
+                                       mime="application/pdf", texto=f"⚠️ RELATÓRIO NÃO REVISADO · {nome}")
+    ok = bool(r and r.get("ok"))
+    if ok:
+        ctx.enviados.append(nome)
+    return {"arquivo": nome, "enviado_no_chat": ok, "nao_revisado": True,
+            "erro": None if ok else (r or {}).get("erro"),
+            "nota": "Diga com destaque que este relatório NÃO FOI REVISADO pela equipe: foi gerado agora, a pedido, e os "
+                    "comentários escritos pela IA não foram conferidos. A versão revisada substitui esta quando sair."}
 
 
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

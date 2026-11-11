@@ -67,3 +67,35 @@ class HelperBot:
             "/api/bot/confirmar", {"proposta": proposta, "confirmado_por": confirmado_por, "origem": origem},
             espera_s=190,
         )
+
+
+async def relatorio_nao_revisado(
+    base_url: str, chamador: str, chave: str, token: str, usina: str, mes: str, doc: str, espera_s: float = 560
+) -> tuple[bytes | None, str | None, str | None]:
+    """O PDF NÃO REVISADO do relatório mensal do meuWatt (o Renan, 11/11/2026: "somente quando pedir por WhatsApp ou
+    bot … será enviado, porém, com marca 'relatório não revisado'"): `(pdf, nome do arquivo, erro)`.
+
+    Pelo MESMO túnel do helper: o filtro do srvclaude confere a chave do chamador e repassa ao gerador de lá
+    (`meuwatt-relatorio-pdf`), que abre o relatório num navegador sem tela com o token do meuWatt DE QUEM PEDIU e
+    devolve o PDF com o carimbo. O Relatório de Geração leva alguns minutos quando a IA ainda não comentou o mês."""
+    from urllib.parse import unquote
+
+    try:
+        async with httpx.AsyncClient(timeout=espera_s) as c:
+            r = await c.post(
+                f"{base_url.rstrip('/')}/relatorio/pdf",
+                headers={"X-MW-Bot-Chamador": chamador, "X-MW-Bot-Chave": chave, "X-MW-Token": token},
+                json={"usina": usina, "mes": mes, "doc": doc},
+            )
+    except httpx.TimeoutException:
+        return None, None, f"o gerador de PDF não respondeu em {int(espera_s)} s"
+    except httpx.HTTPError as exc:
+        return None, None, f"o gerador de PDF está fora do alcance ({type(exc).__name__})"
+    if r.status_code == 200 and r.content.startswith(b"%PDF"):
+        nome = unquote(r.headers.get("X-Nome") or "") or f"{doc}-{usina}-{mes}-NAO-REVISADO.pdf"
+        return r.content, nome, None
+    try:
+        motivo = (r.json() or {}).get("erro") or f"HTTP {r.status_code}"
+    except ValueError:
+        motivo = f"HTTP {r.status_code}"
+    return None, None, motivo
