@@ -49,6 +49,9 @@ class EuOut(BaseModel):
     apelido: str
     empresa: str | None = None
     meuplano: MeuPlanoOut
+    #: Se a pessoa entra no meuGuarda (o gerente libera no oem-gs; a plataforma sempre). O meuGuarda lê daqui e recusa
+    #: o falso; ausente conta como liberado lá.
+    meuguarda: bool = True
 
 
 @router.get("/eu", response_model=EuOut)
@@ -59,6 +62,7 @@ def eu(db: Session = Depends(get_db), tecnico: User = Depends(tecnico_atual)) ->
         nome=tecnico.nome,
         apelido=tecnico.apelido,
         empresa=empresa.nome if empresa else None,
+        meuguarda=tecnico.entra_no_meuguarda,
         meuplano=MeuPlanoOut(
             vinculado=v is not None,
             nome=v.usuario_remoto_nome if v else None,

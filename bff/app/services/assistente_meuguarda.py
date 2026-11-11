@@ -43,8 +43,12 @@ def cliente(user) -> MeuGuarda:
     from app.core.security import criar_token, criar_token_empresa, criar_token_tecnico
 
     portao = _PORTAO[user.perfil]
-    emitir = {"empresa": criar_token_empresa, "tecnico": criar_token_tecnico, "cliente": criar_token}[portao]
-    return MeuGuarda(get_settings().meuguarda_api_url, emitir(user.id)[0], portao)
+    if portao == "cliente":
+        token = criar_token(user.id)[0]
+    else:                                                # a empresa em que a sessão dela está operando, se trocou
+        emitir = criar_token_empresa if portao == "empresa" else criar_token_tecnico
+        token = emitir(user.id, getattr(user, "empresa_da_sessao", None))[0]
+    return MeuGuarda(get_settings().meuguarda_api_url, token, portao)
 
 
 def _recusa(e: httpx.HTTPError, nada_feito: bool = False) -> str:
@@ -437,10 +441,21 @@ async def classificar_eventos(ctx, a: dict) -> dict:
     return helper.propor(ctx, resumo, PRAZO_S, executar, detalhes, parte=PARTE, confirmacao="sim")
 
 
-FERRAMENTAS = {
+#: Consultar vem com o ACESSO ao meuGuarda (`meuguarda_liberado`) e segue as permissões de lá; atuar é a caixa do GS
+#: (`bot_meuguarda`). Decisão do dono, 11/11/2026: "aqui no gestão, ele apenas libera atuação pelo WhatsApp".
+LEITURA = {
     "cameras": (cameras, FERRAMENTA_ESTADO),
     "ver_camera": (ver_camera, FERRAMENTA_VER),
     "foto_camera": (foto_camera, FERRAMENTA_FOTO),
+}
+ATUACAO = {
     "alarme_cameras": (alarme_cameras, FERRAMENTA_ALARME),
     "classificar_eventos": (classificar_eventos, FERRAMENTA_CLASSIFICAR),
 }
+FERRAMENTAS = {**LEITURA, **ATUACAO}
+
+
+def permitidas(user) -> list[str]:
+    if not (disponivel(user) and user.meuguarda_liberado):
+        return []
+    return [*LEITURA, *(ATUACAO if "bot_meuguarda" in user.bot_ativo else ())]

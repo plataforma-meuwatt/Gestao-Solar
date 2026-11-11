@@ -145,6 +145,9 @@ class EuOut(BaseModel):
     apelido: str
     perfil: str
     areas: list[str]
+    #: Se a pessoa entra no meuGuarda (o gerente libera no oem-gs; a plataforma sempre). O meuGuarda lê daqui e recusa
+    #: o falso; ausente conta como liberado lá.
+    meuguarda: bool = True
 
 
 @router.get("/eu", response_model=EuOut)
@@ -161,6 +164,7 @@ def eu(db: Session = Depends(get_db), gestor: User = Depends(gestor_atual)) -> E
         apelido=gestor.apelido,
         perfil=gestor.perfil.value,
         areas=sorted(areas_painel.efetivas(db, gestor)),
+        meuguarda=gestor.entra_no_meuguarda,
     )
 
 

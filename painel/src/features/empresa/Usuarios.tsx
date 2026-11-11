@@ -19,7 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Link2, MessageCircle, Sun, UserCog, UserPlus } from 'lucide-react'
+import { KeyRound, Link2, UserCog, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
@@ -35,12 +35,15 @@ import {
   desligarDoMeuPlano,
   ligarAoMeuPlano,
   pessoasDoMeuPlano,
+  meuGuardaDaEmpresa,
+  type MeuGuardaDaEmpresa,
   type PessoaMeuPlano,
+  type PessoaNoMeuGuarda,
   type Produto,
   type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
-import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, confirmaAtivacao, temOToken, textoDoBot } from '@/features/rotulos'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, confirmaAtivacao, faltaParaLigar } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -51,6 +54,9 @@ export function UsuariosDaEmpresa() {
     queryKey: ['empresa', 'usuarios-detalhados'],
     queryFn: usuariosDetalhados,
   })
+  // O que cada pessoa tem NO meuGuarda, lido com a sessão deste gerente (lá ele é Gestor). Falhar aqui não derruba a
+  // lista: cada pessoa diz que não deu para ler.
+  const { data: meuGuarda } = useQuery({ queryKey: ['empresa', 'meuguarda-pessoas'], queryFn: meuGuardaDaEmpresa })
   const [usinasDe, setUsinasDe] = useState<UsuarioDetalhado | null>(null)
   const [tokensDe, setTokensDe] = useState<UsuarioDetalhado | null>(null)
   const [novo, setNovo] = useState(false)
@@ -82,6 +88,7 @@ export function UsuariosDaEmpresa() {
               key={u.id}
               usuario={u}
               souEu={u.apelido === eu}
+              meuGuarda={meuGuarda}
               aoAbrirUsinas={() => setUsinasDe(u)}
               aoAbrirTokens={() => setTokensDe(u)}
             />
@@ -104,11 +111,13 @@ function CaixasDoBot({
   bot,
   produtos,
   temCelular,
+  liberado,
   aoMudar,
 }: {
   bot: Record<ProdutoDoBot, boolean>
   produtos: Produto[]
   temCelular: boolean
+  liberado: boolean
   aoMudar: (campo: ProdutoDoBot, valor: boolean) => void
 }) {
   const faltam = [
@@ -123,7 +132,10 @@ function CaixasDoBot({
             <input
               type="checkbox"
               checked={bot[b.campo]}
-              disabled={!bot[b.campo] && (!temCelular || !temOToken(b, produtos))}
+              disabled={
+                !bot[b.campo] &&
+                faltaParaLigar(b, { telefone: temCelular ? 'sim' : null, produtos, meuguarda_liberado: liberado }) !== null
+              }
               onChange={(e) => aoMudar(b.campo, e.target.checked)}
             />
             {b.rotulo}
@@ -144,15 +156,18 @@ function CaixasDoBot({
 function Linha({
   usuario,
   souEu,
+  meuGuarda,
   aoAbrirUsinas,
   aoAbrirTokens,
 }: {
   usuario: UsuarioDetalhado
   souEu: boolean
+  meuGuarda: MeuGuardaDaEmpresa | undefined
   aoAbrirUsinas: () => void
   aoAbrirTokens: () => void
 }) {
   const qc = useQueryClient()
+  const [aberta, setAberta] = useState(false)
   const [senhaAberta, setSenhaAberta] = useState(false)
   const [senha, setSenha] = useState('')
   const [cadastroAberto, setCadastroAberto] = useState(false)
@@ -166,142 +181,385 @@ function Linha({
       qc.invalidateQueries({ queryKey: ['empresa'] })
     },
   })
+  const noMeuGuarda = meuGuarda?.pessoas[usuario.apelido]
 
   return (
-    <Cartao className="px-5 py-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-start gap-3 min-w-0">
+    <Cartao>
+      <button
+        type="button"
+        className="w-full text-left px-5 py-4 flex items-start justify-between gap-3 flex-wrap"
+        aria-expanded={aberta}
+        onClick={() => setAberta((v) => !v)}
+      >
+        <div className="flex items-start gap-3 min-w-0 flex-1">
           <UserCog size={18} className="text-rotulo mt-1 shrink-0" />
           <div className="min-w-0">
             <p className="text-forte font-semibold">
               {usuario.nome}
               {souEu ? <span className="text-xs text-ok font-normal ml-2">é você</span> : null}
             </p>
-            <p className="text-sm text-rotulo mt-0.5">
-              {usuario.apelido} · {PAPEL[usuario.perfil] ?? usuario.perfil}
-              {usuario.email ? ` · ${usuario.email}` : ''}
+            <p className="text-sm text-rotulo mt-0.5 break-words">
+              <span className="mono text-xs text-fraco">{usuario.apelido}</span> · {PAPEL[usuario.perfil] ?? usuario.perfil}
+              {usuario.email ? ` · ${usuario.email}` : ''} · {usuario.telefone ?? 'sem celular'}
+              {usuario.perfil === 'cliente'
+                ? ` · ${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
+                : ''}
             </p>
-            <p className="text-sm text-rotulo mt-2 flex items-center gap-3 flex-wrap">
-              <span className="flex items-center gap-1.5">
-                <Sun size={14} />
-                {usuario.perfil === 'cliente'
-                  ? `${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
-                  : usuario.perfil === 'tecnico'
-                    ? 'entra só para o próprio WhatsApp'
-                    : 'vê todas as usinas da empresa'}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <MessageCircle size={14} />
-                {usuario.telefone
-                  ? `${usuario.telefone} · bot: ${textoDoBot(
-                      PARTES_DO_BOT.filter((p) => usuario[p.campo]).map((p) => p.campo),
-                      usuario.produtos,
-                      true,
-                    )}`
-                  : 'sem celular'}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <UserCog size={14} />
-                {usuario.meuplano ? `cadastro ligado a ${usuario.meuplano} no meuPlano` : 'cadastro só do Gestão Solar'}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Link2 size={14} />
-                {usuario.produtos.length
-                  ? `token próprio: ${usuario.produtos
-                      .map((p) => `${NOME_DO_PRODUTO[p]}${usuario.tokens_de[p] ? ` (de ${usuario.tokens_de[p]})` : ''}`)
-                      .join(' · ')}`
-                  : 'lê com a conta da empresa'}
-              </span>
-            </p>
-            {usuario.sugestao_meuplano && usuario.sugestao_meuplano_id && !usuario.cuidada_por ? (
-              <SugestaoMeuPlano
-                usuarioId={usuario.id}
-                pessoaId={usuario.sugestao_meuplano_id}
-                pessoa={usuario.sugestao_meuplano}
-              />
-            ) : null}
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {resumoDosAcessos(usuario, meuGuarda, noMeuGuarda).map((t) => (
+                <Marca key={t.rotulo} tom={t.tom}>
+                  {t.rotulo}
+                </Marca>
+              ))}
+            </div>
           </div>
         </div>
+        <div className="flex flex-col items-end gap-2">
+          <Selo tom={usuario.ativo ? 'ok' : 'sem-dados'}>{usuario.ativo ? 'Ativo' : 'Inativo'}</Selo>
+          <span className="text-xs text-fraco">{aberta ? 'Fechar ▴' : 'Acessos ▾'}</span>
+        </div>
+      </button>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <Selo tom={usuario.ativo ? 'ok' : 'sem-dados'}>
-            {usuario.ativo ? 'Ativo' : 'Inativo'}
-          </Selo>
+      {aberta ? (
+        <div className="border-t border-borda px-5 pb-4">
           {usuario.cuidada_por ? (
-            // Também é de OUTRA empresa, que cuida da conta: daqui só se concedem as usinas
-            // desta empresa. Senha, celular, token e bot são de lá.
-            usuario.perfil === 'cliente' ? (
+            <p className="text-xs text-alerta mt-3">
+              Também é da empresa {usuario.cuidada_por}, que cuida da conta (senha, celular, token, acessos e
+              bot). Aqui você concede só as usinas da sua empresa.
+            </p>
+          ) : (
+            <Acessos
+              usuario={usuario}
+              meuGuarda={meuGuarda}
+              noMeuGuarda={noMeuGuarda}
+              mudando={editar.isPending}
+              aoMudar={(dados) => editar.mutate(dados)}
+              aoAbrirTokens={aoAbrirTokens}
+            />
+          )}
+          {usuario.sugestao_meuplano && usuario.sugestao_meuplano_id && !usuario.cuidada_por ? (
+            <SugestaoMeuPlano
+              usuarioId={usuario.id}
+              pessoaId={usuario.sugestao_meuplano_id}
+              pessoa={usuario.sugestao_meuplano}
+            />
+          ) : null}
+
+          <div className="flex items-center gap-2 flex-wrap pt-3 mt-3 border-t border-borda">
+            {/* Gerente não recebe concessão: ele vê a carteira inteira da empresa por SER
+                gerente. Um botão que só sabe recusar é pior que botão nenhum. */}
+            {usuario.perfil === 'cliente' ? (
               <button className="btn-secundario" onClick={aoAbrirUsinas}>
                 Usinas
               </button>
-            ) : null
-          ) : (
-            <>
-          {/* Gerente não recebe concessão: ele vê a carteira inteira da empresa por SER
-              gerente. Oferecer o botão o punha a competir com os clientes pela mesma
-              usina — a regra é "cada usina pertence a um dono só" —, e o salvar voltava
-              como erro. Um botão que só sabe recusar é pior que botão nenhum. */}
-          {usuario.perfil === 'cliente' ? (
-            <button className="btn-secundario" onClick={aoAbrirUsinas}>
-              Usinas
-            </button>
+            ) : null}
+            {!usuario.cuidada_por ? (
+              <>
+                <button className="btn-fantasma" onClick={aoAbrirTokens}>
+                  <Link2 size={13} />
+                  Token
+                </button>
+                <button className="btn-fantasma" onClick={() => setCadastroAberto(true)}>
+                  <UserCog size={13} />
+                  Cadastro
+                </button>
+                <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
+                  <KeyRound size={13} />
+                  Senha
+                </button>
+                {!souEu ? (
+                  <button
+                    className="btn-fantasma"
+                    disabled={editar.isPending}
+                    onClick={() =>
+                      confirmaAtivacao(usuario.nome, usuario.ativo) && editar.mutate({ ativo: !usuario.ativo })
+                    }
+                  >
+                    {usuario.ativo ? 'Desativar' : 'Reativar'}
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+
+          {senhaAberta ? (
+            <div className="flex gap-2 mt-3">
+              <input
+                className="campo h-9 text-sm"
+                type="text"
+                placeholder="senha nova (mínimo 8 caracteres)"
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                autoFocus
+              />
+              <button
+                className="btn-secundario shrink-0"
+                disabled={senha.length < 8 || editar.isPending}
+                onClick={() => editar.mutate({ senha })}
+              >
+                Definir
+              </button>
+            </div>
           ) : null}
-          <button className="btn-fantasma" onClick={aoAbrirTokens}>
-            Token
-          </button>
-          <button className="btn-fantasma" onClick={() => setCadastroAberto(true)}>
-            <UserCog size={13} />
-            Cadastro
-          </button>
-          <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
-            <KeyRound size={13} />
-            Senha
-          </button>
-          {!souEu ? (
-            <button
-              className="btn-fantasma"
-              disabled={editar.isPending}
-              onClick={() => confirmaAtivacao(usuario.nome, usuario.ativo) && editar.mutate({ ativo: !usuario.ativo })}
-            >
-              {usuario.ativo ? 'Desativar' : 'Reativar'}
-            </button>
-          ) : null}
-            </>
+          {editar.error ? <Erro className="mt-2">{mensagemDeErro(editar.error)}</Erro> : null}
+        </div>
+      ) : null}
+
+      {cadastroAberto ? <CadastroDoUsuario usuario={usuario} aoFechar={() => setCadastroAberto(false)} /> : null}
+    </Cartao>
+  )
+}
+
+type TomDaMarca = 'ok' | 'alerta' | 'desligado'
+
+/** Uma marca por sistema, com a pessoa fechada: verde funciona, amarelo funciona em parte, vazio é desligado. */
+function resumoDosAcessos(
+  u: UsuarioDetalhado,
+  mg: MeuGuardaDaEmpresa | undefined,
+  noMg: PessoaNoMeuGuarda | undefined,
+): { rotulo: string; tom: TomDaMarca }[] {
+  const temMw = u.produtos.includes('meuwatt')
+  const guarda: { rotulo: string; tom: TomDaMarca } = !u.meuguarda_liberado
+    ? { rotulo: 'meuGuarda', tom: 'desligado' }
+    : noMg
+      ? { rotulo: `meuGuarda · ${noMg.papel}${u.bot_meuguarda ? ' · atua' : ''}`, tom: 'ok' }
+      : mg && !mg.erro
+        ? { rotulo: 'meuGuarda · ainda não entrou', tom: 'alerta' }
+        : { rotulo: `meuGuarda · liberado${u.bot_meuguarda ? ' · atua' : ''}`, tom: 'ok' }
+  return [
+    { rotulo: 'meuWatt', tom: temMw ? 'ok' : 'desligado' },
+    { rotulo: 'meuPlano', tom: u.produtos.includes('meuplano') ? 'ok' : 'desligado' },
+    !u.bot_helper
+      ? { rotulo: 'Helper', tom: 'desligado' }
+      : temMw && u.tem_senha_atuacao
+        ? { rotulo: 'Helper · senha definida', tom: 'ok' }
+        : { rotulo: temMw ? 'Helper · sem senha' : 'Helper · falta o token', tom: 'alerta' },
+    guarda,
+  ]
+}
+
+function Marca({ tom, children }: { tom: TomDaMarca; children: React.ReactNode }) {
+  const ponto = tom === 'ok' ? 'bg-ok' : tom === 'alerta' ? 'bg-alerta' : 'border border-fraco'
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border border-borda bg-afundado px-2.5 py-0.5 text-xs whitespace-nowrap ${tom === 'desligado' ? 'text-fraco' : 'text-corpo'}`}
+    >
+      <i className={`inline-block h-[7px] w-[7px] rounded-full ${ponto}`} />
+      {children}
+    </span>
+  )
+}
+
+/** O interruptor das caixas de acesso. */
+function Chave({
+  ligada,
+  rotulo,
+  travada,
+  aoMudar,
+}: {
+  ligada: boolean
+  rotulo: string
+  travada?: boolean
+  aoMudar?: (v: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={ligada}
+      aria-label={rotulo}
+      disabled={travada}
+      onClick={() => aoMudar?.(!ligada)}
+      className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${ligada ? 'border-ambar/60 bg-ambar/25' : 'border-borda-forte bg-superficie-alta'}`}
+    >
+      <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full ${ligada ? 'left-[18px] bg-ambar' : 'left-0.5 bg-fraco'}`} />
+    </button>
+  )
+}
+
+function Opcao({ titulo, nota, children }: { titulo: string; nota: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      {children}
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-corpo">{titulo}</p>
+        <p className="text-xs text-fraco">{nota}</p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Os ACESSOS da pessoa, um sistema por linha: como ela entra e o que pode pelo WhatsApp. Modelo do dono (11/11/2026):
+ * o gerente do GS libera os acessos; o meuGuarda é um deles, e as permissões dele são dadas lá (aqui só aparecem);
+ * aqui se liga só a atuação pelo WhatsApp. O Telegram também fica lá.
+ */
+function Acessos({
+  usuario: u,
+  meuGuarda,
+  noMeuGuarda: noMg,
+  mudando,
+  aoMudar,
+  aoAbrirTokens,
+}: {
+  usuario: UsuarioDetalhado
+  meuGuarda: MeuGuardaDaEmpresa | undefined
+  noMeuGuarda: PessoaNoMeuGuarda | undefined
+  mudando: boolean
+  aoMudar: (dados: Parameters<typeof editarContaDaEmpresa>[1]) => void
+  aoAbrirTokens: () => void
+}) {
+  const parte = (campo: ProdutoDoBot) => PARTES_DO_BOT.find((p) => p.campo === campo)!
+  const caixa = (campo: ProdutoDoBot, titulo: string, nota: string) => {
+    const falta = faltaParaLigar(parte(campo), u)
+    return (
+      <Opcao titulo={titulo} nota={!u[campo] && falta ? `Falta ${falta}.` : nota}>
+        <Chave
+          ligada={u[campo]}
+          rotulo={titulo}
+          travada={mudando || (!u[campo] && falta !== null)}
+          aoMudar={(v) => aoMudar({ [campo]: v })}
+        />
+      </Opcao>
+    )
+  }
+  const token = (p: Produto) =>
+    u.produtos.includes(p) ? (
+      <p className="text-sm text-ok">Token próprio ✓</p>
+    ) : (
+      <p className="text-sm text-alerta">
+        Sem token próprio{' '}
+        <button type="button" className="underline text-xs text-rotulo" onClick={aoAbrirTokens}>
+          colar
+        </button>
+      </p>
+    )
+  const linha = 'grid gap-3 py-3.5 border-t border-borda md:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.2fr)]'
+  const sistema = (nome: string, o_que: string, cor = 'text-forte') => (
+    <div>
+      <p className={`font-semibold ${cor}`}>{nome}</p>
+      <p className="text-xs text-fraco">{o_que}</p>
+    </div>
+  )
+
+  return (
+    <div className="mt-1">
+      <div className="hidden md:grid md:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.2fr)] gap-3 pt-3 pb-1 text-[11px] uppercase tracking-[0.06em] text-fraco">
+        <span>Sistema</span>
+        <span>Como entra</span>
+        <span>No WhatsApp</span>
+      </div>
+
+      <div className={linha}>
+        {sistema('meuWatt', 'Geração')}
+        <div className="min-w-0">
+          {token('meuwatt')}
+          <p className="text-xs text-fraco">
+            {u.tokens_de.meuwatt ? `de ${u.tokens_de.meuwatt}` : 'o aplicativo lê com a conta da empresa'}
+          </p>
+        </div>
+        {caixa('bot_meuwatt', 'Consultar geração', 'geração, paradas, relatórios')}
+      </div>
+
+      <div className={linha}>
+        {sistema('meuPlano', 'Manutenção')}
+        <div className="min-w-0">
+          {token('meuplano')}
+          <p className="text-xs text-fraco break-words">
+            {u.meuplano ? `cadastro ligado a ${u.meuplano}` : 'cadastro só do Gestão Solar'}
+          </p>
+        </div>
+        {caixa('bot_meuplano', 'Consultar e pedir', 'OS, tarefas, relatórios · ação confirma com Sim')}
+      </div>
+
+      <div className={linha}>
+        {sistema('Helper', 'Usina ao vivo')}
+        <div className="min-w-0">
+          <p className="text-sm text-corpo">Usa o token do meuWatt</p>
+          <p className={`text-xs ${u.tem_senha_atuacao ? 'text-ok' : 'text-fraco'}`}>
+            {u.tem_senha_atuacao ? 'senha de atuação definida' : 'sem senha de atuação (Bot do WhatsApp)'}
+          </p>
+        </div>
+        {caixa('bot_helper', 'Ler equipamentos', 'ligar, desligar e gravar pedem a senha de atuação')}
+      </div>
+
+      <div className={linha}>
+        {sistema('meuGuarda', 'Câmeras e alarmes', 'text-tempo-ruim')}
+        <div className="min-w-0 grid gap-2.5">
+          <Opcao
+            titulo={u.meuguarda_liberado ? 'Liberado' : 'Não liberado'}
+            nota={
+              u.meuguarda_liberado
+                ? 'entra com a conta do Gestão Solar, sem token'
+                : 'fica fora do meuGuarda (e das câmeras no WhatsApp)'
+            }
+          >
+            <Chave
+              ligada={u.meuguarda_liberado}
+              rotulo="Acesso ao meuGuarda"
+              travada={mudando}
+              aoMudar={(v) => aoMudar({ meuguarda_liberado: v })}
+            />
+          </Opcao>
+          {u.meuguarda_liberado ? <NoMeuGuarda meuGuarda={meuGuarda} pessoa={noMg} /> : null}
+        </div>
+        <div className="grid gap-2.5 content-start">
+          <Opcao
+            titulo="Consultar câmeras"
+            nota="estado, foto de agora, link ao vivo · vem com o acesso e segue as permissões do meuGuarda"
+          >
+            <Chave ligada={u.meuguarda_liberado && Boolean(u.telefone)} rotulo="Consultar câmeras" travada />
+          </Opcao>
+          {caixa(
+            'bot_meuguarda',
+            'Atuar pelo WhatsApp',
+            'desarmar e rearmar alarme, classificar eventos em massa · confirma com Sim · só com "Tratar alarme" no meuGuarda',
           )}
         </div>
       </div>
-      {usuario.cuidada_por ? (
-        <p className="text-xs text-alerta mt-2">
-          Também é da empresa {usuario.cuidada_por}, que cuida da conta (senha, celular, token e
-          bot). Aqui você concede só as usinas da sua empresa.
-        </p>
-      ) : null}
+    </div>
+  )
+}
 
-      {senhaAberta ? (
-        <div className="flex gap-2 mt-3">
-          <input
-            className="campo h-9 text-sm"
-            type="text"
-            placeholder="senha nova (mínimo 8 caracteres)"
-            value={senha}
-            onChange={(e) => setSenha(e.target.value)}
-            autoFocus
-          />
-          <button
-            className="btn-secundario shrink-0"
-            disabled={senha.length < 8 || editar.isPending}
-            onClick={() => editar.mutate({ senha })}
-          >
-            Definir
-          </button>
-        </div>
-      ) : null}
-
-      {editar.error ? <Erro className="mt-2">{mensagemDeErro(editar.error)}</Erro> : null}
-      {cadastroAberto ? (
-        <CadastroDoUsuario usuario={usuario} aoFechar={() => setCadastroAberto(false)} />
-      ) : null}
-    </Cartao>
+/** O que a pessoa tem NO meuGuarda, só para conferir: quem muda é o meuGuarda. */
+function NoMeuGuarda({ meuGuarda, pessoa }: { meuGuarda: MeuGuardaDaEmpresa | undefined; pessoa: PessoaNoMeuGuarda | undefined }) {
+  const titulo = <p className="text-[11px] uppercase tracking-[0.06em] text-tempo-ruim">Definido no meuGuarda</p>
+  const link = meuGuarda?.endereco ? (
+    <a className="text-xs font-semibold text-tempo-ruim hover:underline" href={meuGuarda.endereco} target="_blank" rel="noopener noreferrer">
+      Mudar permissões no meuGuarda ↗
+    </a>
+  ) : null
+  return (
+    <div className="rounded-campo border border-tempo-ruim/25 bg-tempo-ruim/5 px-3 py-2.5 grid gap-1.5">
+      {titulo}
+      {!meuGuarda ? (
+        <p className="text-xs text-fraco">Lendo o meuGuarda…</p>
+      ) : meuGuarda.erro ? (
+        <p className="text-xs text-alerta">Não deu para ler o meuGuarda: {meuGuarda.erro}</p>
+      ) : !pessoa ? (
+        <p className="text-sm text-corpo">Ainda não entrou no meuGuarda. O papel e as usinas aparecem aqui depois do primeiro acesso.</p>
+      ) : (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+          <dt className="text-fraco">Papel</dt>
+          <dd className="text-corpo">{pessoa.papel}</dd>
+          <dt className="text-fraco">Usinas</dt>
+          <dd className="text-corpo break-words">
+            {pessoa.usinas === null ? 'todas da empresa' : pessoa.usinas.length ? pessoa.usinas.join(', ') : 'nenhuma liberada'}
+          </dd>
+          <dt className="text-fraco">Pode</dt>
+          <dd className="text-corpo break-words">{pessoa.pode.join(', ') || 'nada'}</dd>
+          <dt className="text-fraco">Telegram</dt>
+          <dd className={pessoa.telegram ? 'text-ok' : 'text-fraco'}>{pessoa.telegram ? 'ligado' : 'não ligado'}</dd>
+          {!pessoa.ultimo_acesso ? (
+            <>
+              <dt className="text-fraco">Acesso</dt>
+              <dd className="text-alerta">ainda não entrou</dd>
+            </>
+          ) : null}
+        </dl>
+      )}
+      {link}
+    </div>
   )
 }
 
@@ -490,6 +748,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
           bot={bot}
           produtos={usuario.produtos}
           temCelular={Boolean(telefone.trim())}
+          liberado={usuario.meuguarda_liberado}
           aoMudar={(campo, valor) => setBot((v) => ({ ...v, [campo]: valor }))}
         />
 

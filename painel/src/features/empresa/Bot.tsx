@@ -33,7 +33,7 @@ import {
 } from '@/features/api'
 import { LinhaDoLog } from '@/features/bot/LogDoBot'
 import { Tokens } from '@/features/empresa/Usuarios'
-import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, quando, temOToken } from '@/features/rotulos'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, faltaParaLigar, quando, temOToken } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -64,8 +64,9 @@ export function BotDaEmpresa() {
         <Aviso>
           Regra: cada pessoa usa o bot com o <strong>token dela</strong>, nunca o da empresa.
           Geração precisa do token do meuWatt dela; manutenção, do token do meuPlano dela. As{' '}
-          <strong>câmeras</strong> (meuGuarda) não pedem token: valem as permissões da pessoa no
-          meuGuarda, e ligar ou desligar alarme ela confirma com <strong>Sim</strong>. Sem o
+          <strong>câmeras</strong> (meuGuarda) não pedem token: consultar vem com o acesso liberado em
+          Usuários e segue as permissões do meuGuarda; <strong>atuar</strong> (desarmar, rearmar,
+          classificar eventos) é a caixa daqui, e ela confirma com <strong>Sim</strong>. Sem o
           celular, o bot não sabe quem está escrevendo. <strong>Ação no equipamento</strong> (helper:
           ligar, desligar, gravar) só roda com a <strong>senha de atuação</strong> da pessoa;{' '}
           <strong>ação no meuPlano</strong> (criar ou fechar OS) ela confirma com <strong>Sim</strong>;
@@ -223,7 +224,7 @@ function LinhaDoBot({
       <div className="mt-3 flex gap-x-5 gap-y-2 flex-wrap">
         {PARTES_DO_BOT.map((p) => {
           const ligado = u[p.campo]
-          const falta = !u.telefone ? 'o celular' : p.token !== null && !u.produtos.includes(p.token) ? `o token próprio do ${NOME_DO_PRODUTO[p.token]}` : null
+          const falta = faltaParaLigar(p, u)
           const travado = !ligado && falta !== null
           return (
             <label

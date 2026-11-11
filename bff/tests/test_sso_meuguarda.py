@@ -57,9 +57,25 @@ def test_cada_portao_leva_o_apelido_o_perfil_o_portao_e_a_empresa(db, publica):
         assert (c["sub"], c["apelido"], c["perfil"], c["portao"], c["empresa_id"]) == (
             str(conta.id), conta.apelido, conta.perfil.value, portao, conta.empresa_id)
         assert c["exp"] - c["iat"] == 120 and c["jti"]
+        # quem o gerente não liberou fica fora do meuGuarda; a plataforma sempre entra
+        assert c["meuguarda"] is (portao == "painel")
         # a do meuGuarda não vale no meuWatt (nem a deles aqui)
         with pytest.raises(Exception):
             jwt.decode(frag, publica, algorithms=["RS256"], audience="meuwatt")
+
+
+def test_o_eu_dos_portoes_diz_se_a_pessoa_entra_no_meuguarda(db):
+    from app.api.v1 import auth, empresa, tecnico
+
+    gerente = _conta(db, "gerente.tres", Perfil.GESTOR_EMPRESA)
+    assert empresa.eu(db, gerente).meuguarda is False
+    gerente.meuguarda_liberado = True
+    assert empresa.eu(db, gerente).meuguarda is True
+    tec = _conta(db, "tecnico.tres", Perfil.TECNICO)
+    assert tecnico.eu(db, tec).meuguarda is False
+    dono = _conta(db, "dono.tres", Perfil.CLIENTE)
+    dono.meuguarda_liberado = True
+    assert auth.eu(db, dono).meuguarda is True
 
 
 def test_a_volta_so_vai_para_o_meuguarda(db, publica):

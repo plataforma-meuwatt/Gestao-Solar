@@ -22,8 +22,20 @@ export const PARTES_DO_BOT: { campo: ProdutoDoBot; rotulo: string; token: Produt
   { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
   { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
   { campo: 'bot_helper', rotulo: 'Usina ao vivo (helper)', token: 'meuwatt' },
-  { campo: 'bot_meuguarda', rotulo: 'Câmeras (meuGuarda)', token: null },
+  { campo: 'bot_meuguarda', rotulo: 'Atuar nas câmeras (meuGuarda)', token: null },
 ]
+
+/** O que falta para LIGAR a parte, ou nulo: o celular, o token próprio, ou (atuação nas câmeras) o acesso ao
+ *  meuGuarda liberado em Usuários. */
+export function faltaParaLigar(
+  parte: { campo: ProdutoDoBot; token: Produto | null },
+  u: { telefone: string | null; produtos: Produto[]; meuguarda_liberado: boolean },
+): string | null {
+  if (!u.telefone) return 'o celular'
+  if (parte.token !== null && !u.produtos.includes(parte.token)) return `o token próprio do ${NOME_DO_PRODUTO[parte.token]}`
+  if (parte.campo === 'bot_meuguarda' && !u.meuguarda_liberado) return 'liberar o meuGuarda'
+  return null
+}
 
 /** A parte tem o que precisa para responder: o token dela, ou nenhum (meuGuarda). */
 export const temOToken = (parte: { token: Produto | null }, tokens: Produto[]) =>

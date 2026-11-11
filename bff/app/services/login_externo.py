@@ -120,7 +120,7 @@ def assinar_meuguarda(usuario: User, portao: str, empresa_id: int | None) -> str
     """A asserção do "Entrar com o Gestão Solar" do meuGuarda. `portao`: cliente, empresa, tecnico ou painel — o da
     sessão que pediu; `empresa_id`: a empresa em que ela está operando."""
     return _assinar(usuario, MEUGUARDA, {"apelido": usuario.apelido, "perfil": usuario.perfil.value, "portao": portao,
-                                         "empresa_id": empresa_id})
+                                         "empresa_id": empresa_id, "meuguarda": usuario.entra_no_meuguarda})
 
 
 def _assinar(usuario: User, audiencia: str, extra: dict | None = None) -> str:

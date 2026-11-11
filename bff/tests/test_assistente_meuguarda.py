@@ -21,22 +21,27 @@ def _conta(db, apelido="tecnico.um", perfil=Perfil.TECNICO, telefone="+551799737
     return u
 
 
-def test_a_parte_das_cameras_liga_sem_token_e_so_com_celular(db):
+def test_a_atuacao_pede_o_acesso_e_nenhum_token(db):
     conta = _conta(db)
+    with pytest.raises(HTTPException) as e:                # sem o acesso ao meuGuarda, não há o que atuar
+        cadastro.liberar_bot(conta, "bot_meuguarda", True)
+    assert "Libere o meuGuarda" in e.value.detail
+    cadastro.liberar_meuguarda(conta, True)
     cadastro.liberar_bot(conta, "bot_meuguarda", True)
     assert conta.bot_ativo == {"bot_meuguarda"} and conta.bot_liberado
-    # a do meuPlano continua pedindo o token dela
-    with pytest.raises(HTTPException):
+    with pytest.raises(HTTPException):                     # a do meuPlano continua pedindo o token dela
         cadastro.liberar_bot(conta, "bot_meuplano", True)
+    cadastro.liberar_meuguarda(conta, False)               # tirar o acesso tira a atuação junto
+    assert not conta.bot_meuguarda and not conta.entra_no_meuguarda
 
-    sem_celular = _conta(db, "sem.celular", telefone=None)
+    sem_celular = _conta(db, "sem.celular", telefone=None, meuguarda_liberado=True)
     with pytest.raises(HTTPException) as e:
         cadastro.liberar_bot(sem_celular, "bot_meuguarda", True)
     assert "celular" in e.value.detail
 
 
 async def test_apagar_o_celular_desliga_as_cameras_junto(db):
-    conta = _conta(db, bot_meuguarda=True)
+    conta = _conta(db, bot_meuguarda=True, meuguarda_liberado=True)
     await cadastro.gravar(db, conta, conta.empresa_id, telefone="")
     assert not conta.bot_meuguarda and conta.bot_ativo == set()
 
@@ -45,11 +50,18 @@ async def test_o_gerente_liga_e_desliga_pela_tela_bot_do_whatsapp(db):
     from app.api.v1 import empresa as rotas
 
     gerente = _conta(db, "gerente.um", Perfil.GESTOR_EMPRESA, "+5517997372222")
-    tecnico = _conta(db, bot_meuguarda=True)
+    tecnico = _conta(db, bot_meuguarda=True, meuguarda_liberado=True)
     db.add(VinculoProduto(gs_user_id=tecnico.id, produto="meuwatt", usuario_remoto_id="1", token_cifrado="x"))
     db.commit()
     out = await rotas.editar_conta_da_empresa(tecnico.id, rotas.ContaPatch(bot_meuguarda=False), db, gerente)
-    assert out.bot_meuguarda is False and not db.get(User, tecnico.id).bot_meuguarda
+    assert out.bot_meuguarda is False and out.meuguarda_liberado and not db.get(User, tecnico.id).bot_meuguarda
+    # os dois juntos num pedido só: o acesso entra antes da atuação
+    out = await rotas.editar_conta_da_empresa(
+        tecnico.id, rotas.ContaPatch(meuguarda_liberado=False), db, gerente)
+    assert not out.meuguarda_liberado
+    out = await rotas.editar_conta_da_empresa(
+        tecnico.id, rotas.ContaPatch(meuguarda_liberado=True, bot_meuguarda=True), db, gerente)
+    assert out.meuguarda_liberado and out.bot_meuguarda
 
 
 # ── as ferramentas, com o meuGuarda simulado ────────────────────────────────
@@ -113,7 +125,7 @@ def meuguarda(monkeypatch):
 
 
 def _ctx(db, **bot):
-    u = _conta(db, bot_meuguarda=True, **bot)
+    u = _conta(db, bot_meuguarda=True, meuguarda_liberado=True, **bot)
     return ger.Contexto(db=db, user=u, telefone=u.telefone)
 
 
@@ -126,17 +138,22 @@ def test_o_nome_falado_casa_sem_inventar():
     assert {k["nome"] for k in mg.escolher(ks, "perímetro")[1]} == {"Perímetro 01", "Perímetro 03"}
 
 
-def test_as_ferramentas_vem_com_a_parte_e_o_perfil(db):
-    tecnico = _conta(db, bot_meuguarda=True)
-    assert set(mg.FERRAMENTAS) <= set(assistente.permitidas(tecnico))
-    assert "câmeras de segurança" in assistente._sistema(ger.Contexto(db=db, user=tecnico, telefone="x"))
-    sem = _conta(db, "sem.cameras", telefone="+5517997373333", bot_meuguarda=False)
+def test_consultar_vem_com_o_acesso_e_atuar_com_a_caixa_do_gs(db):
+    prompt = lambda u: assistente._sistema(ger.Contexto(db=db, user=u, telefone="x"))  # noqa: E731
+    tudo = _conta(db, bot_meuguarda=True, meuguarda_liberado=True)
+    assert set(mg.FERRAMENTAS) <= set(assistente.permitidas(tudo)) and "câmeras de segurança" in prompt(tudo)
+
+    so_ler = _conta(db, "so.ler", telefone="+5517997375555", meuguarda_liberado=True)
+    nomes = set(assistente.permitidas(so_ler))
+    assert set(mg.LEITURA) <= nomes and not set(mg.ATUACAO) & nomes
+    # sem a atuação, a IA não ouve o nome das ferramentas de atuação (chamaria fora da lista)
+    assert "alarme_cameras" not in prompt(so_ler) and "não estão liberados para esta pessoa" in prompt(so_ler)
+
+    sem = _conta(db, "sem.cameras", telefone="+5517997373333")
     assert not set(mg.FERRAMENTAS) & set(assistente.permitidas(sem))
-    # sem a parte, a IA não ouve o nome das ferramentas (chamava `foto_camera` fora da lista no banco de perguntas)
-    prompt = assistente._sistema(ger.Contexto(db=db, user=sem, telefone="x"))
-    assert "foto_camera" not in prompt and "não está liberada para esta pessoa" in prompt
+    assert "foto_camera" not in prompt(sem) and "não está liberada para esta pessoa" in prompt(sem)
     # a plataforma não usa o bot: sem portão no meuGuarda, sem ferramenta
-    adm = _conta(db, "adm.um", Perfil.ADMINISTRADOR, "+5517997374444", bot_meuguarda=True)
+    adm = _conta(db, "adm.um", Perfil.ADMINISTRADOR, "+5517997374444", bot_meuguarda=True, meuguarda_liberado=True)
     assert not set(mg.FERRAMENTAS) & set(assistente.permitidas(adm))
 
 
@@ -293,3 +310,32 @@ async def test_classificar_sem_motivo_sem_classe_ou_sem_evento_nao_propoe(db, co
     com_eventos.permissoes = ["alarmes.ver"]
     r = await mg.classificar_eventos(ctx, {"classificacao": "falso", "motivo": "vento forte"})
     assert "não classifica eventos" in r["erro"]
+
+
+async def test_a_tela_usuarios_le_o_que_cada_pessoa_tem_no_meuguarda(db, meuguarda):
+    from app.api.v1 import empresa as rotas
+
+    async def pessoas():
+        return [{"apelido": "kewyn", "papel": "Gestor", "usinas": [], "telegram": True,
+                 "ultimo_acesso": "2026-11-11T20:00:00+00:00"},
+                {"apelido": "camila", "papel": "Cliente", "usinas": [1], "telegram": False, "ultimo_acesso": None},
+                {"apelido": "vigia", "papel": "Cliente", "usinas": [], "telegram": False, "ultimo_acesso": None}]
+
+    async def papeis():
+        return {"papeis": [{"nome": "Gestor", "permissoes": ["cameras.ver", "alarmes.tratar"]},
+                           {"nome": "Cliente", "permissoes": ["cameras.ver"]}],
+                "catalogo": {"cameras.ver": "Ver câmeras e mapa", "alarmes.tratar": "Tratar alarme"}}
+
+    meuguarda.pessoas, meuguarda.papeis = pessoas, papeis
+    gerente = _conta(db, "gerente.mg", Perfil.GESTOR_EMPRESA, "+5517997376666")
+    r = (await rotas.meuguarda_da_empresa(gerente)).pessoas
+    assert r["kewyn"].usinas is None and r["kewyn"].pode == ["Ver câmeras e mapa", "Tratar alarme"] and r["kewyn"].telegram
+    assert r["camila"].usinas == ["UFV Pereiras"] and r["camila"].ultimo_acesso is None
+    assert r["vigia"].usinas == []                         # Cliente sem usina liberada não vê nada (não é "todas")
+
+    async def recusa():
+        raise _recusa(403, "Seu papel não permite: Gerenciar clientes, pessoas e acessos")
+
+    meuguarda.pessoas = recusa
+    out = await rotas.meuguarda_da_empresa(gerente)
+    assert out.erro == "O meuGuarda recusou: Seu papel não permite: Gerenciar clientes, pessoas e acessos." and not out.pessoas

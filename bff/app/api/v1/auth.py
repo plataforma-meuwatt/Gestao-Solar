@@ -52,6 +52,9 @@ class UsuarioOut(BaseModel):
     usinas: int
     #: Enquanto verdadeiro, o app leva para a troca de senha antes de qualquer tela.
     trocar_senha: bool
+    #: Se a pessoa entra no meuGuarda (o gerente libera no oem-gs; a plataforma sempre). O meuGuarda lê daqui e recusa
+    #: o falso; ausente conta como liberado lá.
+    meuguarda: bool = True
 
 
 class LoginIn(BaseModel):
@@ -89,6 +92,7 @@ def _perfil(db: Session, usuario: User) -> UsuarioOut:
         nivel_acesso=usuario.nivel_acesso,
         usinas=usinas,
         trocar_senha=usuario.trocar_senha,
+        meuguarda=usuario.entra_no_meuguarda,
     )
 
 

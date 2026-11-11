@@ -918,8 +918,7 @@ def permitidas(user) -> list[str]:
                   "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
-    if "bot_meuguarda" in ativo and mg.disponivel(user):
-        nomes += list(mg.FERRAMENTAS)
+    nomes += mg.permitidas(user)
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
         nomes += list(cad.FERRAMENTAS)
     return nomes
@@ -930,9 +929,19 @@ _CAMERAS = """- CÂMERA de segurança (CFTV, meuGuarda: "câmera Perímetro 03",
   alarmes abertos), `ver_camera` (link ao vivo), `foto_camera` (foto de agora), `alarme_cameras` (ligar/desligar o
   alarme) ou `classificar_eventos` (classificar os eventos em massa); as duas últimas com o Sim. Não é o helper.
   Use o nome que a pessoa disse; se a ferramenta disser que é ambíguo, pergunte."""
+#: Com o acesso e sem a atuação: a IA não ouve o nome das ferramentas de atuação (chamaria fora da lista).
+_CAMERAS_SO_LER = """- CÂMERA de segurança (CFTV, meuGuarda: "câmera Perímetro 03", "Térmica 02", "Dome SKID 01") → `cameras` (estado,
+  alarmes abertos), `ver_camera` (link ao vivo) ou `foto_camera` (foto de agora). Não é o helper. Use o nome que a
+  pessoa disse; se a ferramenta disser que é ambíguo, pergunte. Ligar ou desligar alarme e classificar eventos pelo
+  WhatsApp não estão liberados para esta pessoa: diga isso e que o gerente da O&M pode liberar."""
 #: Sem a parte, a IA não ouve o nome das ferramentas (ela as chamava mesmo fora da lista): só que a parte não está liberada.
 _SEM_CAMERAS = """- CÂMERA de segurança (CFTV, meuGuarda): não está liberada para esta pessoa; diga isso e que o gerente da O&M
   pode liberar. Não é o helper nem o meuPlano."""
+
+
+
+def _texto_das_cameras(nomes: list[str]) -> str:
+    return (_SEM_CAMERAS if "cameras" not in nomes else _CAMERAS if "alarme_cameras" in nomes else _CAMERAS_SO_LER)
 
 
 def _sistema(ctx: ger.Contexto) -> str:
@@ -941,9 +950,10 @@ def _sistema(ctx: ger.Contexto) -> str:
     ativo = ctx.user.bot_ativo
     areas = [n for n, c in (("geração/monitoramento (meuWatt)", "bot_meuwatt"),
                             ("manutenção (meuPlano)", "bot_meuplano"),
-                            ("a usina ao vivo pelo helper", "bot_helper"),
-                            ("as câmeras de segurança das usinas (meuGuarda)", "bot_meuguarda")) if c in ativo
-             and (c != "bot_helper" or helper.configurado()) and (c != "bot_meuguarda" or mg.disponivel(ctx.user))]
+                            ("a usina ao vivo pelo helper", "bot_helper")) if c in ativo
+             and (c != "bot_helper" or helper.configurado())]
+    if mg.permitidas(ctx.user):                       # consultar vem com o acesso; atuar é a caixa do GS
+        areas.append("as câmeras de segurança das usinas (meuGuarda)")
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
@@ -1035,7 +1045,7 @@ de memória.
 - Arquivo/gráfico com `enviado_no_chat: true` já chegou: só confirme, não repita link.
 - Se uma ferramenta disser que a VPN das usinas está parada (ou que o helper está fora), não tente outra rota: diga
   isso à pessoa, com desde quando.
-{_CAMERAS if "cameras" in permitidas(ctx.user) else _SEM_CAMERAS}
+{_texto_das_cameras(permitidas(ctx.user))}
 - Fora dessas áreas, diga com gentileza que não consegue ajudar. Assunto de usina ou de O&M (procedimento, manual,
   configuração, contato, e-mail de concessionária) que a geração e o helper não respondem vai ao meuPlano
   (`manutencao`) ANTES de você dizer que não sabe."""

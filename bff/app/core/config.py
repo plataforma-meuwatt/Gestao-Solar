@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     #: da própria pessoa, e o meuGuarda a confere no `/eu` daqui (`clients/meuguarda.py`). Vazio = o bot não oferece.
     #: Pela rede interna do Docker (apelido fixo no Coolify, como o gateway): o DNS do sslip.io já calou o bot uma vez.
     meuguarda_api_url: str = "http://meuguarda-api:8000"
+    #: O SITE do meuGuarda (o link "Mudar permissões no meuGuarda" da tela Usuários).
+    meuguarda_web_url: str = "https://meuguarda.gestao.solar"
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").

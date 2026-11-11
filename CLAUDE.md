@@ -811,18 +811,28 @@ quais câmeras pelo `/api/alarmes/contar`, o Sim roda o `/api/alarmes/classifica
 sai do motivo — gente trabalhando = manutenção, mesmo dito "desclassificar" —, sem período é o dia de hoje de
 Brasília, só os sem classificação). O nome falado casa com a lista de lá (`escolher`: "perímetro 3" → "Perímetro 03"; "3"
 sozinho é ambíguo e a IA pergunta). Identidade: a SESSÃO do GS da própria pessoa (`criar_token_empresa`/`_tecnico`/
-`criar_token`, portão no `X-Portao`), conferida lá no `/eu` daqui; nenhuma chave nova, e a plataforma não usa. Parte
-`bot_meuguarda` sem token (`BOT_TOKEN` = `None`), ligada pela migração `c9e1a3b5d7f2` para as 7 pessoas que o bot já
-atendia; o cadastro pelo bot liga junto com as outras partes. Além da parte, valem as permissões da pessoa NO meuGuarda
-(`cameras.aovivo.ver`, `alarmes.tratar`): a recusa de lá vai como veio. Rotas no catálogo da sonda (`MEUGUARDA`, todas
+`criar_token`, portão no `X-Portao`), conferida lá no `/eu` daqui; nenhuma chave nova, e a plataforma não usa. ⛔ **Modelo do
+dono (11/11/2026, mockup aprovado): o GS libera o ACESSO, o meuGuarda dá as permissões, e aqui se liga só a ATUAÇÃO pelo
+WhatsApp.** `gs_users.meuguarda_liberado` é o acesso (oem-gs → Usuários, linha meuGuarda; vai no `/eu` dos três portões
+e na asserção como `meuguarda`, e o meuGuarda recusa o falso — "desligar no GS = fica fora"; a plataforma sempre
+entra; quem existia em 11/11 ficou liberado, conta nova nasce sem). Consultar câmeras pelo WhatsApp vem com o acesso
+(`assistente_meuguarda.LEITURA`). `bot_meuguarda` passa a ser só a atuação (`ATUACAO`: desarmar, rearmar, classificar
+eventos), sem token (`BOT_TOKEN` = `None`) e só com o acesso (`cadastro.liberar_bot` recusa sem ele; tirar o acesso
+tira a atuação). O que a pessoa tem LÁ (papel, usinas, permissões, Telegram) a tela Usuários lê com a sessão do
+próprio gerente (`GET /api/empresa/meuguarda/pessoas` → `/api/pessoas` e `/api/papeis` de lá; usinas vazio = todas,
+menos no papel Cliente; quem não está lá ainda não entrou), só para conferir. O cadastro pelo bot liga o acesso e a
+atuação junto com as outras partes. Além disso, valem as permissões da pessoa NO meuGuarda (`cameras.aovivo.ver`,
+`alarmes.tratar`): a recusa de lá vai como veio. Rotas no catálogo da sonda (`MEUGUARDA`, todas
 `sonda=False`: exigem a sessão de uma pessoa) e na tela Rotas do adm, com o `/api/saude` no alto. Base:
 `MEUGUARDA_API_URL`, padrão `http://meuguarda-api:8000` (apelido fixo na rede interna, como o gateway). **"Entrar com o
 Gestão Solar" no meuGuarda**: a página `/entrar/meuguarda?volta=` do portal, do oem-gs e do adm-gs (sem sessão, entra
 e volta para ela) chama `POST /api/sessao/meuguarda`, que confere a sessão pela GUARDA do próprio portão e devolve a
 `volta` com a asserção no fragmento (`login_externo.assinar_meuguarda`: audiência `meuguarda`, mais apelido, perfil,
 portão e empresa; o meuGuarda casa pelo apelido). A `volta` só vai para `VOLTAS_DO_MEUGUARDA` (lista fixa: senão,
-redirecionamento aberto). O meuGuarda não é um `Produto` daqui (não tem token nem conexão), só recebe o login. Banco de perguntas: os casos com `origem` "meuGuarda"; `"sem":
-["bot_meuguarda"]` num caso tira a parte só naquele processo (`testes-ia/rodar.py`).
+redirecionamento aberto). O meuGuarda não é um `Produto` daqui (não tem token nem conexão), só recebe o login.
+Banco de perguntas: os casos com `origem`
+"meuGuarda"; `"sem": ["bot_meuguarda"]` (a atuação) ou `["meuguarda_liberado"]` (o acesso) num caso tira só naquele
+processo (`testes-ia/rodar.py`).
 
 **Tracker travado** (dono, 08/11/2026; push do aplicativo, `services/avisos.trackers_por_usuario`): o meuWatt detecta
 o travamento (bit de falha do controlador 10 min seguidos) e guarda os comandos do helper (mw-api 4b9fadb); daqui se

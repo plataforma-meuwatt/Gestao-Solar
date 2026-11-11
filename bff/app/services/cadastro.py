@@ -95,12 +95,22 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
         if not conta.telefone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "Cadastre o celular antes de liberar o bot do WhatsApp.")
+        if campo == "bot_meuguarda" and not conta.meuguarda_liberado:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Libere o meuGuarda para esta pessoa antes de ligar a atuação pelo WhatsApp.")
         produto = BOT_TOKEN[campo]
         if produto is not None and not conta.tem_token(produto):
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"Cole o token do {NOME[Produto(produto)]} desta pessoa antes de liberar: "
                                 "o assistente só responde com o token dela.")
     setattr(conta, campo, valor)
+
+
+def liberar_meuguarda(conta: User, valor: bool) -> None:
+    """O acesso ao meuGuarda. Desligar tira a atuação pelo WhatsApp junto: sem acesso, não há o que atuar."""
+    conta.meuguarda_liberado = valor
+    if not valor:
+        conta.bot_meuguarda = False
 
 
 # --------------------------------------------------------------------------- leitura

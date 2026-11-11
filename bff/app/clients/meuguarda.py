@@ -32,6 +32,15 @@ class MeuGuarda:
     async def cameras(self, usina_id: int) -> list[dict[str, Any]]:
         return (await self._req("GET", f"/api/usinas/{usina_id}/cameras")).json()
 
+    async def pessoas(self) -> list[dict[str, Any]]:
+        """Quem é da empresa lá (só o Gestor lê): `{apelido, papel, usinas[ids], telegram, ultimo_acesso}`. A pessoa da
+        O&M aparece depois do 1º acesso; usinas vazio = todas, menos no papel Cliente (= nenhuma)."""
+        return (await self._req("GET", "/api/pessoas")).json()
+
+    async def papeis(self) -> dict[str, Any]:
+        """`{papeis: [{nome, permissoes[]}], catalogo: {permissão: rótulo}}`: as permissões são do papel."""
+        return (await self._req("GET", "/api/papeis")).json()
+
     async def alarmes(self) -> list[dict[str, Any]]:
         """Os ABERTOS, das usinas que a pessoa vê."""
         return (await self._req("GET", "/api/alarmes")).json()

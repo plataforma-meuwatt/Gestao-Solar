@@ -52,6 +52,9 @@ class EuOut(BaseModel):
     apelido: str
     empresa: str
     empresa_id: int
+    #: Se a pessoa entra no meuGuarda (o gerente libera no oem-gs; a plataforma sempre). O meuGuarda lê daqui e recusa
+    #: o falso; ausente conta como liberado lá.
+    meuguarda: bool = True
 
 
 @router.get("/eu", response_model=EuOut)
@@ -68,6 +71,7 @@ def eu(db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atu
         apelido=gerente.apelido,
         empresa=empresa.nome,
         empresa_id=empresa.id,
+        meuguarda=gerente.entra_no_meuguarda,
     )
 
 
@@ -1371,6 +1375,8 @@ class UsuarioDetalhado(BaseModel):
     bot_meuwatt: bool = False
     bot_helper: bool = False
     bot_meuguarda: bool = False
+    #: O acesso ao meuGuarda (as permissões são dadas lá; `bot_meuguarda` é só a atuação pelo WhatsApp).
+    meuguarda_liberado: bool = False
     #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com SIM.
     tem_senha_atuacao: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
@@ -1473,7 +1479,7 @@ async def usuarios_detalhados(
             tokens_de=tokens_de.get(c.id, {}),
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
-            bot_meuguarda=c.bot_meuguarda,
+            bot_meuguarda=c.bot_meuguarda, meuguarda_liberado=c.meuguarda_liberado,
             tem_senha_atuacao=bool(c.senha_atuacao_hash),
             meuplano=ligado_mp.get(c.id),
             cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
@@ -1562,6 +1568,8 @@ class ContaPatch(BaseModel):
     bot_meuwatt: bool | None = None
     bot_helper: bool | None = None
     bot_meuguarda: bool | None = None
+    #: O acesso ao meuGuarda. Desligar tira a atuação pelo WhatsApp junto.
+    meuguarda_liberado: bool | None = None
     #: A SENHA DE ATUAÇÃO (6 a 8 números) que o bot pede antes de ligar, desligar ou gravar no
     #: equipamento (helper). Ação do meuPlano (criar ou concluir OS) confirma com Sim, sem ela. O
     #: gerente define e entrega à pessoa, como a senha provisória.
@@ -1612,6 +1620,8 @@ async def editar_conta_da_empresa(
         await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
                               email=str(body.email) if body.email else None, telefone=body.telefone)
     from app.services import cadastro
+    if body.meuguarda_liberado is not None:             # antes da atuação: ligar os dois juntos vale
+        cadastro.liberar_meuguarda(conta, body.meuguarda_liberado)
     for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper", "bot_meuguarda"):
         if getattr(body, campo) is not None:
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
@@ -1632,10 +1642,60 @@ async def editar_conta_da_empresa(
         or 0,
         telefone=exibir_telefone(conta.telefone),
         bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
-        bot_meuguarda=conta.bot_meuguarda,
+        bot_meuguarda=conta.bot_meuguarda, meuguarda_liberado=conta.meuguarda_liberado,
         tem_senha_atuacao=bool(conta.senha_atuacao_hash),
         meuplano=_nome_no_meuplano(db, conta.id),
     )
+
+
+class PessoaNoMeuGuarda(BaseModel):
+    papel: str
+    #: O que o papel pode, nos rótulos do meuGuarda ("Ver ao vivo", "Tratar alarme").
+    pode: list[str] = []
+    #: Os nomes das usinas liberadas; nulo = todas as usinas da empresa lá.
+    usinas: list[str] | None = None
+    telegram: bool = False
+    #: Nulo = cadastrada lá, mas nunca entrou.
+    ultimo_acesso: datetime | None = None
+
+
+class MeuGuardaDaEmpresaOut(BaseModel):
+    #: Por que não deu para ler (meuGuarda fora, ou a conta do gerente lá não gerencia pessoas). Sem isto, `pessoas`.
+    erro: str | None = None
+    #: Por apelido do GS. Quem não está aqui ainda não entrou no meuGuarda (o vínculo nasce no 1º acesso).
+    pessoas: dict[str, PessoaNoMeuGuarda] = {}
+    #: O site do meuGuarda, onde se mudam as permissões.
+    endereco: str = ""
+
+
+@router.get("/meuguarda/pessoas", response_model=MeuGuardaDaEmpresaOut)
+async def meuguarda_da_empresa(gerente: User = Depends(gestor_empresa_atual)) -> MeuGuardaDaEmpresaOut:
+    """O que cada pessoa da empresa tem NO meuGuarda (papel, usinas, permissões, Telegram), para a tela Usuários
+    mostrar ao lado da caixa "Liberado". Lido com a sessão do GS do próprio gerente: lá ele é Gestor (as permissões são
+    dadas lá, não aqui). Decisão do dono, 11/11/2026."""
+    import httpx
+
+    from app.core.config import get_settings
+    from app.services import assistente_meuguarda as amg
+    endereco = get_settings().meuguarda_web_url
+    if not amg.disponivel(gerente):
+        return MeuGuardaDaEmpresaOut(erro="O meuGuarda não está ligado neste servidor.", endereco=endereco)
+    mg = amg.cliente(gerente)
+    try:
+        pessoas, papeis, usinas = await asyncio.gather(mg.pessoas(), mg.papeis(), mg.usinas())
+    except httpx.HTTPError as e:
+        return MeuGuardaDaEmpresaOut(erro=amg._recusa(e), endereco=endereco)
+    catalogo = papeis.get("catalogo") or {}
+    pode = {p["nome"]: [catalogo.get(x, x) for x in p.get("permissoes") or []] for p in papeis.get("papeis") or []}
+    nomes = {u["id"]: u["nome"] for u in usinas}
+    return MeuGuardaDaEmpresaOut(endereco=endereco, pessoas={
+        p["apelido"]: PessoaNoMeuGuarda(
+            papel=p["papel"], pode=pode.get(p["papel"], []), telegram=bool(p.get("telegram")),
+            ultimo_acesso=p.get("ultimo_acesso"),
+            # vazio = todas as usinas da empresa, menos no papel Cliente (= nenhuma): a regra do `_sessao` de lá
+            usinas=None if not p.get("usinas") and p["papel"] != "Cliente"
+            else [nomes.get(i, f"usina {i}") for i in p.get("usinas") or []])
+        for p in pessoas if p.get("apelido")})
 
 
 def _nome_no_meuplano(db: Session, conta_id: int) -> str | None:

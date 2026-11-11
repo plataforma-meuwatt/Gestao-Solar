@@ -919,7 +919,10 @@ export type UsuarioDetalhado = {
   bot_meuplano: boolean
   bot_meuwatt: boolean
   bot_helper: boolean
+  /** Atuar pelo WhatsApp nas câmeras (desarmar, rearmar, classificar eventos). Só com o meuGuarda liberado. */
   bot_meuguarda: boolean
+  /** O ACESSO ao meuGuarda: entra com a conta do GS; as permissões são dadas lá. */
+  meuguarda_liberado: boolean
   /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com Sim. */
   tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */
@@ -961,6 +964,23 @@ export const desligarDoMeuPlano = (usuarioId: number) =>
 export const usuariosDetalhados = () =>
   apiEmpresa.get<UsuarioDetalhado[]>('/usuarios/detalhados').then((r) => r.data)
 
+/** O que a pessoa tem NO meuGuarda (as permissões são dadas lá). */
+export type PessoaNoMeuGuarda = {
+  papel: string
+  pode: string[]
+  /** Nulo = todas as usinas da empresa. */
+  usinas: string[] | null
+  telegram: boolean
+  /** Nulo = cadastrada lá e nunca entrou. */
+  ultimo_acesso: string | null
+}
+
+/** Lido com a sessão do gerente. `erro` diz por que não deu; quem não está em `pessoas` ainda não entrou lá. */
+export type MeuGuardaDaEmpresa = { erro: string | null; pessoas: Record<string, PessoaNoMeuGuarda>; endereco: string }
+
+export const meuGuardaDaEmpresa = () =>
+  apiEmpresa.get<MeuGuardaDaEmpresa>('/meuguarda/pessoas').then((r) => r.data)
+
 export const conectarContaDoCliente = (usuarioId: number, produto: Produto, token: string) =>
   apiEmpresa
     .put<{ ok: boolean; detalhe: string }>(`/usuarios/${usuarioId}/conexoes/${produto}`, { token })
@@ -979,6 +999,8 @@ export const editarContaDaEmpresa = (
     telefone?: string
     /** 6 a 8 números: a que o bot pede antes de ação no equipamento (helper: ligar, desligar, gravar). */
     senha_atuacao?: string
+    /** O acesso ao meuGuarda. Desligar tira a atuação pelo WhatsApp junto. */
+    meuguarda_liberado?: boolean
   } & Partial<Record<ProdutoDoBot, boolean>>,
 ) => apiEmpresa.patch<UsuarioDetalhado>(`/usuarios/${usuarioId}`, dados).then((r) => r.data)
 
