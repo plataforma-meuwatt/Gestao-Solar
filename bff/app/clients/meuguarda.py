@@ -51,6 +51,15 @@ class MeuGuarda:
         return (await self._req("POST", f"/api/usinas/{usina_id}/deteccao", {
             "ligada": ligada, "camera_ids": camera_ids, "minutos": minutos, "motivo": motivo})).json()
 
+    async def contar(self, filtro: dict[str, Any]) -> dict[str, Any]:
+        """Quantos eventos o recorte pega: `{total, por_camera[{nome, n}], por_tipo[{tipo, n}]}`."""
+        return (await self._req("POST", "/api/alarmes/contar", filtro)).json()
+
+    async def classificar_lote(self, filtro: dict[str, Any], classificacao: str, motivo: str) -> dict[str, Any]:
+        """Classifica o recorte de uma vez (os abertos fecham com o motivo): `{classificados, cameras}`."""
+        return (await self._req("POST", "/api/alarmes/classificar-lote",
+                                {**filtro, "classificacao": classificacao, "motivo": motivo}, espera_s=60)).json()
+
 
 async def no_ar(base_url: str) -> bool:
     """A prova de vida, sem sessão (`/api/saude`): o alto da tela Rotas."""

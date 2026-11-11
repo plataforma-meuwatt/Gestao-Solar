@@ -104,8 +104,26 @@ def _privada() -> str:
     return (get_settings().gs_sso_private_key or "").replace("\\n", "\n")
 
 
+#: O meuGuarda (CFTV das usinas, da família GS) só RECEBE o login: não é um `Produto` (não tem token nem conexão
+#: aqui), então a audiência dele mora fora de `AUDIENCIA`. Ele casa a pessoa pelo APELIDO e decide o que ela pode pelos
+#: vínculos de lá; por isso a asserção dele leva também o perfil, o portão e a empresa (spec em
+#: `/root/DEVV/CFTV/docs/bot-gs.md`, "Pedido 2").
+MEUGUARDA = "meuguarda"
+
+
 def assinar(usuario: User, produto: Produto) -> str:
     """A asserção que prova, para aquele produto, quem é esta conta do Gestão Solar."""
+    return _assinar(usuario, AUDIENCIA[produto])
+
+
+def assinar_meuguarda(usuario: User, portao: str, empresa_id: int | None) -> str:
+    """A asserção do "Entrar com o Gestão Solar" do meuGuarda. `portao`: cliente, empresa, tecnico ou painel — o da
+    sessão que pediu; `empresa_id`: a empresa em que ela está operando."""
+    return _assinar(usuario, MEUGUARDA, {"apelido": usuario.apelido, "perfil": usuario.perfil.value, "portao": portao,
+                                         "empresa_id": empresa_id})
+
+
+def _assinar(usuario: User, audiencia: str, extra: dict | None = None) -> str:
     s = get_settings()
     if not s.gs_sso_private_key:
         raise SemChave(
@@ -118,13 +136,14 @@ def assinar(usuario: User, produto: Produto) -> str:
     return jwt.encode(
         {
             "iss": s.gs_sso_issuer,
-            "aud": AUDIENCIA[produto],
+            "aud": audiencia,
             "sub": str(usuario.id),
             "jti": str(uuid.uuid4()),
             "iat": int(agora.timestamp()),
             "exp": int((agora + VALIDADE).timestamp()),
             "email": usuario.email,
             "name": usuario.nome,
+            **(extra or {}),
         },
         _privada(),
         algorithm="RS256",

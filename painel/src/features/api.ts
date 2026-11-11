@@ -631,6 +631,10 @@ export const meusPapeis = () => sessao.get<Papel[]>('/papeis').then((r) => r.dat
 export const trocarDePapel = (apelido: string, senha?: string) =>
   sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null }).then((r) => r.data)
 
+/** A asserção do meuGuarda para a sessão deste portão, já no endereço de volta (`#assercao=`). */
+export const entrarNoMeuGuarda = (volta: string) =>
+  sessao.post<{ url: string }>('/meuguarda', { volta }).then((r) => r.data)
+
 /* ------------------------------------------- agrupar contas (administrador) */
 
 export type ContaParaAgrupar = {

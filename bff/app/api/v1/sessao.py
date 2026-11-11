@@ -238,3 +238,69 @@ def trocar_de_empresa(
         token=token, expira_em=expira, apelido=usuario.apelido, nome=usuario.nome,
         escopo=escopo, perfil=usuario.perfil.value, empresa=empresa.nome,
     )
+
+
+# ─────────────────────── "Entrar com o Gestão Solar" no meuGuarda ───────────────────────
+#
+# Pedido do dono (11/11/2026): "eu clico, o Gestão Solar autentica e boa". A página `/entrar/meuguarda?volta=` dos três
+# portões (gs, oem-gs, adm-gs) chama esta rota com a sessão daquele portão e manda o navegador para a `volta` com a
+# asserção no FRAGMENTO (`#assercao=`), como o `entrar_no_produto` do meuWatt e do meuPlano. Mora aqui porque é a rota
+# que atravessa os portões e não devolve dado: só diz QUEM está falando — e de qual portão.
+
+#: Para onde a asserção pode ir. Lista FIXA: um `volta` livre seria redirecionamento aberto, e a asserção (dois minutos,
+#: uso único) iria parar no site de quem montou o link.
+VOLTAS_DO_MEUGUARDA = frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})
+
+
+def _volta_do_meuguarda(volta: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        u = urlsplit((volta or "").strip())
+        valida = u.scheme == "https" and u.netloc in VOLTAS_DO_MEUGUARDA
+    except ValueError:
+        valida = False
+    if not valida:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Esse endereço de volta não é do meuGuarda.")
+    return urlunsplit(("https", u.netloc, u.path or "/", u.query, ""))
+
+
+def _conta_do_portao(cred: HTTPAuthorizationCredentials | None, db: Session) -> tuple[User, str]:
+    """A conta e o portão da sessão, conferidos pela GUARDA daquele portão (empresa ativa, perfil, empresa da sessão):
+    a do meuGuarda não pode ser mais frouxa que a do próprio portão."""
+    from app.core.security import gestor_atual, gestor_empresa_atual, tecnico_atual, usuario_atual
+
+    _, dados = _sessao(cred, db)
+    escopo = dados.get("escopo")
+    guarda = {None: usuario_atual, "empresa": gestor_empresa_atual, "tecnico": tecnico_atual,
+              "painel": gestor_atual}.get(escopo)
+    if guarda is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
+    return guarda(cred, db), escopo or "cliente"
+
+
+class MeuGuardaIn(BaseModel):
+    volta: str
+
+
+class MeuGuardaOut(BaseModel):
+    url: str
+
+
+@router.post("/meuguarda", response_model=MeuGuardaOut)
+def entrar_no_meuguarda(
+    body: MeuGuardaIn,
+    cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> MeuGuardaOut:
+    """A asserção do meuGuarda para quem está logado aqui, no endereço de volta dele."""
+    from app.services import login_externo
+
+    volta = _volta_do_meuguarda(body.volta)
+    usuario, portao = _conta_do_portao(cred, db)
+    empresa = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
+    try:
+        assercao = login_externo.assinar_meuguarda(usuario, portao, empresa)
+    except login_externo.SemChave as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    return MeuGuardaOut(url=f"{volta}#assercao={assercao}")

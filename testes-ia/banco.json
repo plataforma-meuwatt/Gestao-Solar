@@ -234,5 +234,10 @@
 {"frase": "desliga o alarme das câmeras perímetro 1, 2 e 3 por 4 horas, tem gente roçando", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
 {"frase": "desliga o alarme da Térmica 05", "espera": ["alarme_cameras"], "ou_sem_ferramenta": true, "origem": "meuGuarda (spec 11/11)"},
 {"frase": "liga de novo o alarme das câmeras de Pereiras", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "me manda a foto da câmera Perímetro 03", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda (spec 11/11)"}
+{"frase": "me manda a foto da câmera Perímetro 03", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "desclassificar todos os eventos de Pereiras, pessoa trabalhando", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
+{"frase": "os alarmes da Térmica 03 de hoje eram a equipe roçando, classifica como manutenção", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
+{"frase": "marca como falso alarme os eventos de veículo do Perímetro 01 de ontem, era o carro da vigilância", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
+{"frase": "classifica os eventos de hoje de Pereiras", "espera": ["classificar_eventos"], "ou_sem_ferramenta": true, "origem": "meuGuarda pedido 2 (spec 11/11)"},
+{"frase": "descarta os eventos da Térmica 03, era o pessoal da roçagem", "espera": ["classificar_eventos"], "como": "diogo.dardani", "origem": "meuGuarda pedido 2 (spec 11/11)"}
 ]

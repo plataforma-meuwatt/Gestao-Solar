@@ -927,8 +927,9 @@ def permitidas(user) -> list[str]:
 
 # --------------------------------------------------------------------------- orquestrador
 _CAMERAS = """- CÂMERA de segurança (CFTV, meuGuarda: "câmera Perímetro 03", "Térmica 02", "Dome SKID 01") → `cameras` (estado,
-  alarmes abertos), `ver_camera` (link ao vivo), `foto_camera` (foto de agora) ou `alarme_cameras` (ligar/desligar o
-  alarme, com o Sim). Não é o helper. Use o nome que a pessoa disse; se a ferramenta disser que é ambíguo, pergunte."""
+  alarmes abertos), `ver_camera` (link ao vivo), `foto_camera` (foto de agora), `alarme_cameras` (ligar/desligar o
+  alarme) ou `classificar_eventos` (classificar os eventos em massa); as duas últimas com o Sim. Não é o helper.
+  Use o nome que a pessoa disse; se a ferramenta disser que é ambíguo, pergunte."""
 #: Sem a parte, a IA não ouve o nome das ferramentas (ela as chamava mesmo fora da lista): só que a parte não está liberada.
 _SEM_CAMERAS = """- CÂMERA de segurança (CFTV, meuGuarda): não está liberada para esta pessoa; diga isso e que o gerente da O&M
   pode liberar. Não é o helper nem o meuPlano."""

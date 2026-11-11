@@ -6,6 +6,7 @@ import { Diagnostico } from '@/features/diagnostico/Diagnostico'
 import { EmpresaPagina } from '@/features/empresas/Empresa'
 import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
+import { EntrarNoMeuGuarda } from '@/features/entrada/EntrarNoMeuGuarda'
 import { BotDaEmpresa } from '@/features/empresa/Bot'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
@@ -68,6 +69,7 @@ export function App() {
       <Router>
         <Routes>
           <Route path="/entrar" element={<Entrada />} />
+          <Route path="/entrar/meuguarda" element={<EntrarNoMeuGuarda />} />
 
           <Route element={<Layout />}>
             {/* Cada tela repete, no `SoArea`, a MESMA área que o BFF exige nas rotas dela.

@@ -14,7 +14,7 @@
 import re
 import unicodedata
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -333,9 +333,114 @@ async def alarme_cameras(ctx, a: dict) -> dict:
     return helper.propor(ctx, resumo, PRAZO_S, executar, detalhes, parte=PARTE, confirmacao="sim")
 
 
+#: Como o meuGuarda chama cada classificação (o mesmo nome da tela de lá).
+CLASSES = {"verdadeiro": "verdadeiro", "falso": "falso alarme", "manutencao": "equipe/manutenção", "teste": "teste"}
+
+FERRAMENTA_CLASSIFICAR = {"type": "function", "function": {
+    "name": "classificar_eventos",
+    "description": ("CLASSIFICAR EM MASSA os eventos (alarmes) das câmeras de segurança (meuGuarda): é AÇÃO, o sistema "
+                    "mostra quantos e de quais câmeras e a pessoa confirma com Sim. Os abertos fecham com o motivo. "
+                    "A classificação sai do MOTIVO: gente trabalhando, equipe, roçagem, manutenção = manutencao (mesmo "
+                    "dito \"desclassificar\"); desclassificar, descartar, falso alarme = falso; é verdade, invasão = "
+                    "verdadeiro; teste = teste. Ambíguo ou sem motivo: pergunte antes de chamar. Sem período, o dia de "
+                    "hoje; por padrão só os eventos ainda sem classificação."),
+    "parameters": {"type": "object", "properties": {
+        "classificacao": {"type": "string", "enum": list(CLASSES)},
+        "motivo": {"type": "string", "description": "por quê, nas palavras da pessoa (ex.: pessoa trabalhando)"},
+        "usina": {"type": "string", "description": "nome da usina (opcional)"},
+        "cameras": {"type": "array", "items": {"type": "string"},
+                    "description": "os nomes como a pessoa disse; vazio = todas as câmeras da usina"},
+        "tipos": {"type": "array", "items": {"type": "string"},
+                  "description": "só estes tipos de evento (ex.: pessoa, veiculo); vazio = todos"},
+        "de": {"type": "string", "description": "primeiro dia, AAAA-MM-DD (padrão: hoje)"},
+        "ate": {"type": "string", "description": "último dia, AAAA-MM-DD, inclusive (padrão: o mesmo de 'de')"},
+        "inclusive_ja_classificados": {"type": "boolean", "description": "true = reclassifica também os que já têm"}},
+        "required": ["classificacao", "motivo"]}}}
+
+
+def _periodo(a: dict) -> tuple[datetime, datetime] | None:
+    """O período em dias inteiros de Brasília: [de 00:00, dia seguinte a `ate` 00:00)."""
+    from datetime import date, time, timedelta
+
+    from app.core.datas import BRT, hoje
+    try:
+        de = date.fromisoformat(a["de"]) if a.get("de") else hoje()
+        ate = date.fromisoformat(a["ate"]) if a.get("ate") else de
+    except ValueError:
+        return None
+    if ate < de:
+        return None
+    return datetime.combine(de, time.min, BRT), datetime.combine(ate + timedelta(days=1), time.min, BRT)
+
+
+async def classificar_eventos(ctx, a: dict) -> dict:
+    classe, motivo = a.get("classificacao"), (a.get("motivo") or "").strip()
+    if classe not in CLASSES:
+        return {"erro": "Falta a classificação (verdadeiro, falso alarme, equipe/manutenção ou teste): pergunte."}
+    if len(motivo) < 5:
+        return {"erro": "Falta o motivo (fica no histórico de cada câmera): pergunte. Nada foi feito."}
+    periodo = _periodo(a)
+    if periodo is None:
+        return {"erro": "Não entendi o período: pergunte de qual dia a qual dia."}
+    mg = cliente(ctx.user)
+    ctx.db.commit()
+    try:
+        if "alarmes.tratar" not in ((await mg.eu()).get("permissoes") or []):
+            return {"erro": "O papel desta pessoa no meuGuarda não classifica eventos. Nada foi feito: quem administra o "
+                            "meuGuarda da empresa pode liberar."}
+        usina, erro = _usina(await mg.usinas(), a.get("usina"))
+        if erro:
+            return erro
+        ks = await _cameras(mg, usina)
+        escolhidas = []
+        for n in [n for n in a.get("cameras") or [] if (n or "").strip() and _palavras(n) not in (["todas"], ["tudo"])]:
+            k, candidatas = escolher(ks, n)
+            if k is None:
+                return {"erro": f"Câmera '{n}' " + ("é ambígua" if candidatas else f"não existe em {usina['nome']}") +
+                                ": pergunte qual é (não invente). Nada foi feito.", "opcoes": _nomes(candidatas or ks)}
+            escolhidas.append(k)
+        filtro = {"usina_id": int(usina["id"]), "de": periodo[0].isoformat(), "ate": periodo[1].isoformat(),
+                  "so_sem_classificacao": not a.get("inclusive_ja_classificados"),
+                  **({"camera_ids": sorted({int(k["id"]) for k in escolhidas})} if escolhidas else {}),
+                  **({"tipos": [t for t in a["tipos"] if t]} if a.get("tipos") else {})}
+        conta = await mg.contar(filtro)
+    except httpx.HTTPError as e:
+        return {"erro": _recusa(e, nada_feito=True)}
+    total = int(conta.get("total") or 0)
+    ultimo = periodo[1] - timedelta(days=1)
+    dias = f"{periodo[0]:%d/%m}" if ultimo.date() == periodo[0].date() else f"{periodo[0]:%d/%m} a {ultimo:%d/%m}"
+    if not total:
+        return {"nenhum_evento": True, "usina": usina["nome"], "periodo": dias,
+                "instrucao": "Diga que não há evento" + (" sem classificação" if filtro["so_sem_classificacao"] else "")
+                             + " nesse recorte. Nada foi feito."}
+    nome = CLASSES[classe]
+    resumo = f"Classificar {total} evento{'s' if total > 1 else ''} de {usina['nome']} como {nome}"
+    cams = [f"{c['nome']} ({c['n']})" for c in conta.get("por_camera") or []]
+    tipos = [f"{t['tipo']} ({t['n']})" for t in conta.get("por_tipo") or []]
+    detalhes = [f"Câmeras: {', '.join(cams[:12])}" + (f" e mais {len(cams) - 12}" if len(cams) > 12 else ""),
+                f"Tipos: {', '.join(tipos)}",
+                f"Período: {dias}" + ("" if filtro["so_sem_classificacao"] else " (inclusive os já classificados)"),
+                f"Motivo: {motivo}"]
+
+    async def executar(db, user, telefone: str) -> str:
+        try:
+            r = await cliente(user).classificar_lote(filtro, classe, motivo)
+        except httpx.TimeoutException:
+            return f"⚠️ O meuGuarda não respondeu a tempo: os eventos de {usina['nome']} PODEM ter sido classificados. Confira."
+        except httpx.HTTPError as e:
+            return f"❌ {_recusa(e, nada_feito=True)}"
+        feitos = int(r.get("classificados") or 0)
+        extra = (f" (eram {total} na prévia: o resto mudou enquanto você confirmava)" if feitos != total else "")
+        return (f"✅ {feitos} evento{'s' if feitos != 1 else ''} de {usina['nome']} classificado{'s' if feitos != 1 else ''} "
+                f"como {nome}{extra}. Motivo: {motivo}.")
+
+    return helper.propor(ctx, resumo, PRAZO_S, executar, detalhes, parte=PARTE, confirmacao="sim")
+
+
 FERRAMENTAS = {
     "cameras": (cameras, FERRAMENTA_ESTADO),
     "ver_camera": (ver_camera, FERRAMENTA_VER),
     "foto_camera": (foto_camera, FERRAMENTA_FOTO),
     "alarme_cameras": (alarme_cameras, FERRAMENTA_ALARME),
+    "classificar_eventos": (classificar_eventos, FERRAMENTA_CLASSIFICAR),
 }

@@ -227,3 +227,69 @@ async def test_sem_a_permissao_de_la_nem_propoe(db, meuguarda):
     assert "não liga nem desliga alarme" in r["erro"] and ctx.proposta is None
     r = await mg.alarme_cameras(ctx, {"ligar": False, "cameras": ["Câmera 99"], "motivo": "manutenção na câmera"})
     assert ctx.proposta is None
+
+
+# ── classificar os eventos em massa ─────────────────────────────────────────
+@pytest.fixture
+def com_eventos(meuguarda):
+    meuguarda.contagens, meuguarda.lotes = [], []
+
+    async def contar(filtro):
+        meuguarda.contagens.append(filtro)
+        return {"total": 257, "por_camera": [{"nome": "Perímetro 01", "n": 171}, {"nome": "Térmica 03", "n": 84},
+                                             {"nome": "Dome SKID 02", "n": 2}],
+                "por_tipo": [{"tipo": "pessoa", "n": 252}, {"tipo": "veiculo", "n": 5}]}
+
+    async def classificar_lote(filtro, classificacao, motivo):
+        meuguarda.lotes.append((filtro, classificacao, motivo))
+        return {"classificados": 257, "cameras": 3}
+
+    meuguarda.contar, meuguarda.classificar_lote = contar, classificar_lote
+    return meuguarda
+
+
+async def test_classificar_em_massa_mostra_quantos_e_espera_o_sim(db, com_eventos, monkeypatch):
+    from datetime import date
+
+    monkeypatch.setattr("app.core.datas.hoje", lambda: date(2026, 11, 11))
+    ctx = _ctx(db)
+    r = await mg.classificar_eventos(ctx, {"classificacao": "manutencao", "motivo": "pessoa trabalhando",
+                                           "usina": "Pereiras"})
+    assert r["proposta_pendente"] == "Classificar 257 eventos de UFV Pereiras como equipe/manutenção"
+    p = ctx.proposta
+    assert p.detalhes == ["Câmeras: Perímetro 01 (171), Térmica 03 (84), Dome SKID 02 (2)",
+                          "Tipos: pessoa (252), veiculo (5)", "Período: 11/11", "Motivo: pessoa trabalhando"]
+    # o filtro do dia inteiro de Brasília, só os sem classificação, e nada gravado antes do Sim
+    assert com_eventos.contagens == [{"usina_id": 1, "de": "2026-11-11T00:00:00-03:00",
+                                      "ate": "2026-11-12T00:00:00-03:00", "so_sem_classificacao": True}]
+    assert com_eventos.lotes == [] and p.parte == "bot_meuguarda" and p.confirmacao == "sim"
+    assert helper.e_sim("Sim", p.resumo) and helper.e_sim("Pode desclassificar", p.resumo)
+    feito = await helper._rodar(p, db, ctx.user, ctx.telefone)
+    assert com_eventos.lotes == [(com_eventos.contagens[0], "manutencao", "pessoa trabalhando")]
+    assert feito == "✅ 257 eventos de UFV Pereiras classificados como equipe/manutenção. Motivo: pessoa trabalhando."
+
+
+async def test_classificar_por_camera_tipo_e_periodo(db, com_eventos):
+    ctx = _ctx(db)
+    await mg.classificar_eventos(ctx, {"classificacao": "falso", "motivo": "vento nas árvores", "cameras": ["perímetro 1"],
+                                       "tipos": ["veiculo"], "de": "2026-11-09", "ate": "2026-11-10"})
+    assert com_eventos.contagens[0] == {"usina_id": 1, "de": "2026-11-09T00:00:00-03:00",
+                                        "ate": "2026-11-11T00:00:00-03:00", "so_sem_classificacao": True,
+                                        "camera_ids": [2], "tipos": ["veiculo"]}
+    assert ctx.proposta.detalhes[2] == "Período: 09/11 a 10/11"
+
+
+async def test_classificar_sem_motivo_sem_classe_ou_sem_evento_nao_propoe(db, com_eventos):
+    ctx = _ctx(db)
+    assert "motivo" in (await mg.classificar_eventos(ctx, {"classificacao": "falso", "motivo": ""}))["erro"]
+    assert "classificação" in (await mg.classificar_eventos(ctx, {"classificacao": "x", "motivo": "vento forte"}))["erro"]
+
+    async def nada(filtro):
+        return {"total": 0, "por_camera": [], "por_tipo": []}
+
+    com_eventos.contar = nada
+    r = await mg.classificar_eventos(ctx, {"classificacao": "falso", "motivo": "vento forte"})
+    assert r["nenhum_evento"] and ctx.proposta is None and com_eventos.lotes == []
+    com_eventos.permissoes = ["alarmes.ver"]
+    r = await mg.classificar_eventos(ctx, {"classificacao": "falso", "motivo": "vento forte"})
+    assert "não classifica eventos" in r["erro"]

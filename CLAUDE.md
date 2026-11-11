@@ -806,14 +806,22 @@ antes. Mês com relatório emitido segue mandando o arquivo de sempre. Teste: `t
 pessoal de 15 min que abre a câmera ao vivo SEM login: vai pelo `ctx.rodape` e entra em `ctx.segredos`, então some do
 Log do bot e da cópia do gateway), `foto_camera` (a foto de agora, ~6 s; 504 = o PC da usina não respondeu) e
 `alarme_cameras` (ligar ou desligar a detecção: ação com o Sim, motivo obrigatório para desligar, sem prazo volta no
-horário de religar da usina). O nome falado casa com a lista de lá (`escolher`: "perímetro 3" → "Perímetro 03"; "3"
+horário de religar da usina) e `classificar_eventos` (classificação EM MASSA dos eventos: o resumo diz quantos e de
+quais câmeras pelo `/api/alarmes/contar`, o Sim roda o `/api/alarmes/classificar-lote` com o MESMO filtro; a classe
+sai do motivo — gente trabalhando = manutenção, mesmo dito "desclassificar" —, sem período é o dia de hoje de
+Brasília, só os sem classificação). O nome falado casa com a lista de lá (`escolher`: "perímetro 3" → "Perímetro 03"; "3"
 sozinho é ambíguo e a IA pergunta). Identidade: a SESSÃO do GS da própria pessoa (`criar_token_empresa`/`_tecnico`/
 `criar_token`, portão no `X-Portao`), conferida lá no `/eu` daqui; nenhuma chave nova, e a plataforma não usa. Parte
 `bot_meuguarda` sem token (`BOT_TOKEN` = `None`), ligada pela migração `c9e1a3b5d7f2` para as 7 pessoas que o bot já
 atendia; o cadastro pelo bot liga junto com as outras partes. Além da parte, valem as permissões da pessoa NO meuGuarda
 (`cameras.aovivo.ver`, `alarmes.tratar`): a recusa de lá vai como veio. Rotas no catálogo da sonda (`MEUGUARDA`, todas
 `sonda=False`: exigem a sessão de uma pessoa) e na tela Rotas do adm, com o `/api/saude` no alto. Base:
-`MEUGUARDA_API_URL` (padrão o sslip do Coolify). Banco de perguntas: os casos com `origem` "meuGuarda"; `"sem":
+`MEUGUARDA_API_URL`, padrão `http://meuguarda-api:8000` (apelido fixo na rede interna, como o gateway). **"Entrar com o
+Gestão Solar" no meuGuarda**: a página `/entrar/meuguarda?volta=` do portal, do oem-gs e do adm-gs (sem sessão, entra
+e volta para ela) chama `POST /api/sessao/meuguarda`, que confere a sessão pela GUARDA do próprio portão e devolve a
+`volta` com a asserção no fragmento (`login_externo.assinar_meuguarda`: audiência `meuguarda`, mais apelido, perfil,
+portão e empresa; o meuGuarda casa pelo apelido). A `volta` só vai para `VOLTAS_DO_MEUGUARDA` (lista fixa: senão,
+redirecionamento aberto). O meuGuarda não é um `Produto` daqui (não tem token nem conexão), só recebe o login. Banco de perguntas: os casos com `origem` "meuGuarda"; `"sem":
 ["bot_meuguarda"]` num caso tira a parte só naquele processo (`testes-ia/rodar.py`).
 
 **Tracker travado** (dono, 08/11/2026; push do aplicativo, `services/avisos.trackers_por_usuario`): o meuWatt detecta

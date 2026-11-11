@@ -78,7 +78,8 @@ class Settings(BaseSettings):
     meuwatt_web_url: str = "https://app.meuwatt.com.br"
     #: O meuGuarda (CFTV das usinas, da família GS): câmeras e alarmes pelo bot. Sem token: o bot manda a sessão do GS
     #: da própria pessoa, e o meuGuarda a confere no `/eu` daqui (`clients/meuguarda.py`). Vazio = o bot não oferece.
-    meuguarda_api_url: str = "https://mg-api.177.153.20.214.sslip.io"
+    #: Pela rede interna do Docker (apelido fixo no Coolify, como o gateway): o DNS do sslip.io já calou o bot uma vez.
+    meuguarda_api_url: str = "http://meuguarda-api:8000"
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").

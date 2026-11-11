@@ -751,6 +751,10 @@ MEUGUARDA: list[Rota] = [
          sonda=False, nao_sondada_porque="Manda um comando ao PC da usina e fica no log do meuGuarda."),
     Rota("mg.deteccao", "POST", "/api/usinas/{usina_id}/deteccao", "Ligar ou desligar o alarme das câmeras",
          essencial=False, sonda=False, nao_sondada_porque="Escreve: só roda com o Sim de quem pede pelo bot."),
+    Rota("mg.contar", "POST", "/api/alarmes/contar", "Quantos eventos a classificação em massa pega", essencial=False,
+         sonda=False, nao_sondada_porque=_SO_COM_PESSOA),
+    Rota("mg.classificar_lote", "POST", "/api/alarmes/classificar-lote", "Classificar os eventos em massa",
+         essencial=False, sonda=False, nao_sondada_porque="Escreve: só roda com o Sim de quem pede pelo bot."),
 ]
 
 
