@@ -172,6 +172,9 @@ async def manutencao(ctx: ger.Contexto, a: dict) -> dict:
 
 #: O link público de um PDF que o assistente do meuPlano gerou (PDF da OS, da tarefa, spare parts, estoque).
 _LINK_DE_PDF = re.compile(r"https?://[^\s/]+/api/public/share/[\w-]+/items/\d+/(?:view|download)")
+#: O link público de um documento ANEXADO no meuPlano (o manual e o certificado do instrumento, o datasheet, o
+#: projeto). Com `arquivo=1` vem o arquivo com o nome dele; sem, o link redireciona ao storage, sem nome.
+_LINK_DE_DOCUMENTO = re.compile(r"https?://[^\s/]+/api/public/documents/[a-z_]+/\d+\?t=[\w-]+")
 
 
 async def _baixar(url: str) -> httpx.Response:
@@ -181,15 +184,16 @@ async def _baixar(url: str) -> httpx.Response:
 
 async def _pdfs_dos_links(ctx: ger.Contexto, texto: str) -> str:
     """O PDF que o meuPlano devolve como LINK vai como ARQUIVO no chat: lá o arquivo só sai no bot DELE (09/11/2026,
-    o dono: "eu pedi pdf da OS, ele me mandou link. Mas eu quero receber o pdf"). Só do endereço do meuPlano; sem
+    o dono: "eu pedi pdf da OS, ele me mandou link. Mas eu quero receber o pdf"). Vale também para o documento anexado
+    (11/11/2026, o dono: "quero poder pedir o manual dos equipamentos para o bot"). Só do endereço do meuPlano; sem
     conseguir mandar, o link fica."""
     from urllib.parse import urlsplit
     meuplano = urlsplit(get_settings().meuplano_api_url).netloc
-    for url in dict.fromkeys(_LINK_DE_PDF.findall(texto)):
+    for url in dict.fromkeys([*_LINK_DE_PDF.findall(texto), *_LINK_DE_DOCUMENTO.findall(texto)]):
         if urlsplit(url).netloc != meuplano:
             continue
         try:
-            resp = await _baixar(url)
+            resp = await _baixar(url + "&arquivo=1" if "/api/public/documents/" in url else url)
         except httpx.HTTPError:
             log.warning("assistente: não baixei o PDF do meuPlano", exc_info=True)
             continue

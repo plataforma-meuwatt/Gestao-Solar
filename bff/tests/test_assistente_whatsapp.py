@@ -4169,3 +4169,34 @@ async def test_o_pdf_que_o_meuplano_devolve_como_link_vai_como_arquivo(monkeypat
     assert mandados[0]["filename"] == "os_2020_capacitores.pdf" and ctx.enviados == ["os_2020_capacitores.pdf"]
     aceita[0] = False
     assert await assistente._pdfs_dos_links(ctx, texto) == texto
+
+
+async def test_o_manual_anexado_no_meuplano_vai_como_arquivo(monkeypatch):
+    """11/11/2026, o dono: "quero poder pedir o manual dos equipamentos para o bot". O link de documento anexado
+    redireciona ao storage, sem nome: o bot pede o arquivo (`arquivo=1`), que vem com o nome do manual."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    from app.clients import whatsapp as wa
+    from app.core.config import get_settings
+    url = get_settings().meuplano_api_url.rstrip("/") + "/api/public/documents/instrumento/18?t=6dc215fb09ed"
+    resp = httpx.Response(200, content=b"%PDF-1.7", request=httpx.Request("GET", url), headers={
+        "content-type": "application/pdf", "content-disposition": 'inline; filename="Manual I-V600 (portugues).pdf"'})
+    baixados, mandados = [], []
+
+    async def _baixar(u):
+        baixados.append(u)
+        return resp
+
+    async def _enviar(**k):
+        mandados.append(k)
+        return {"ok": True}
+
+    monkeypatch.setattr(assistente, "_baixar", _baixar)
+    monkeypatch.setattr(wa, "enviar_conteudo", _enviar)
+    ctx = SimpleNamespace(telefone="+5517997377626", enviados=[])
+    assert await assistente._pdfs_dos_links(ctx, f"Segue o manual do traçador: {url}.") == \
+        "Segue o manual do traçador: (o PDF vai aqui no chat)."
+    assert baixados == [url + "&arquivo=1"] and mandados[0]["arquivo"] == b"%PDF-1.7"
+    assert mandados[0]["filename"] == "Manual I-V600 (portugues).pdf"
