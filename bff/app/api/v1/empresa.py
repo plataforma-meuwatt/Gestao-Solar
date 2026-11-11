@@ -1275,6 +1275,43 @@ class UsinaOcultaOut(BaseModel):
     ocultada_em: datetime
 
 
+class LocalDaUsinaOut(BaseModel):
+    latitude: float
+    longitude: float
+    #: De onde veio o número, para a tela dizer (regra 0: todo dado vem de um upstream).
+    fonte: str
+
+
+@router.get("/usinas/{usina_id}/local", response_model=LocalDaUsinaOut)
+async def local_da_usina(
+    usina_id: int, db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+) -> LocalDaUsinaOut:
+    """Onde a usina fica, lido no meuPlano com a conta da empresa.
+
+    Existe para o meuGuarda (CFTV, mesma família) abrir o mapa da usina no lugar certo sem
+    ninguém digitar coordenada. A usina é a desta empresa (recorte pela sessão); a leitura é
+    a lista de usinas que o token da empresa já enxerga, a mesma do catálogo — nenhuma rota
+    nova do meuPlano.
+    """
+    link = db.scalar(
+        svc.no_escopo(select(PlantLink).where(PlantLink.id == usina_id), PlantLink.empresa_id, gerente)
+    )
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usina não encontrada nesta empresa")
+    if link.mp_usina_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Esta usina não está ligada ao meuPlano")
+    try:
+        cliente = await integracoes.cliente_meuplano(db, svc.empresa_exigida(gerente))
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    mp = next((u for u in await cliente.usinas() if u.get("id") == link.mp_usina_id), None)
+    if mp is None or mp.get("latitude") is None or mp.get("longitude") is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "A usina não tem coordenada cadastrada no meuPlano")
+    return LocalDaUsinaOut(
+        latitude=mp["latitude"], longitude=mp["longitude"], fonte=f"meuPlano (usina {link.mp_usina_id})"
+    )
+
+
 @router.get("/usinas/ocultas", response_model=list[UsinaOcultaOut])
 def listar_ocultas(
     db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
