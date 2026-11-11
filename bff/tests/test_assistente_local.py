@@ -260,3 +260,21 @@ async def test_o_pedido_da_localizacao_sai_em_google_maps_e_waze_pelo_sistema(db
     await assistente.atender(_texto(p, 2, "e a de ibitinga"))
     assert "não tem coordenada gravada no meuPlano" in cenario.bot.enviados[-1] and "Waze" not in cenario.bot.enviados[-1]
     assert "local_da_usina" in assistente.permitidas(p)
+
+
+async def test_as_coordenadas_escritas_viram_a_localizacao_e_gravam_com_o_sim(db, cenario):
+    """11/11/2026, o dono: "eu mandei coordenada, ele deveria entender e gravar" (o bot dizia que texto não valia)."""
+    p = _pessoa(db)
+    await assistente.atender(_texto(p, 1, "-23,0535642, -47,7259153\n\nsalve a coordenada da usina tiete"))
+    assert "[📍 localização recebida pelas coordenadas escritas, ainda não gravada]" in cenario.bot.llm[0]
+    assert h.PENDENTES[p.id].detalhes[1] == "Nova: -23.053564, -47.725915"
+    await _sim(p, 2)
+    assert cenario.mp.gravadas == [(502, -23.0535642, -47.7259153, True)]     # o ponto lido pelo sistema
+
+
+def test_o_que_nao_e_coordenada_nao_vira_localizacao():
+    assert local._coordenadas("22°16'48.8\"S 51°31'31.7\"W")[0] == pytest.approx((-22.280222, -51.525472))
+    for texto in ("PR de 82,51 e 81,34", "gerou 1234,5678 kWh", "OS 1638, 1640", "veja https://x.com/?q=-23.1234,-47.7234",
+                  "-95.12345, 10.12345"):
+        assert local._coordenadas(texto) is None, texto
+    assert local.so_link("-22.2802, -51.5254") and not local.so_link("grava -22.2802, -51.5254")

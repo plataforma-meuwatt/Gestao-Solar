@@ -93,11 +93,45 @@ async def _ponto_do_link(url: str) -> tuple[float, float] | None:
     return _ponto_da_url(url)
 
 
+#: As COORDENADAS escritas (11/11/2026, o dono: "eu mandei coordenada, ele deveria entender e gravar"; o bot respondia que
+#: coordenada em texto não valia). Decimal com 4 casas ou mais (o "Copiar coordenadas" do Google Maps dá 5 a 7; número de
+#: energia não chega a 4), ponto ou vírgula decimal, separadas por vírgula, ponto e vírgula ou espaço; ou em graus, minutos
+#: e segundos (22°16'48.8"S 51°31'31.7"W; O e L em português).
+_NUM = r"[-−]?\d{1,3}[.,]\d{4,}"
+_PAR = re.compile(rf"(?<![\w.,/=-])({_NUM})\s*(?:[,;]\s*|\s+)({_NUM})(?![\w.,])")
+_GMS_UM = r"(\d{1,3})\s*°\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:[.,]\d+)?)\s*(?:[\"″]|'')?\s*"
+_GMS = re.compile(_GMS_UM + r"([NSns])[\s,;]+" + _GMS_UM + r"([LOWElowe])")
+
+
+def _decimal(t: str) -> float:
+    return float(t.replace("−", "-").replace(",", "."))
+
+
+def _coordenadas(texto: str) -> tuple[tuple[float, float], int] | None:
+    """O ponto escrito no texto e onde ele termina, ou None. Os links ficam de fora (o deles é lido pelo link)."""
+    t = re.sub(r"https?://\S+", lambda m: " " * len(m.group(0)), texto or "")
+    if m := _GMS.search(t):
+        g = m.groups()
+        lat = (int(g[0]) + int(g[1]) / 60 + _decimal(g[2]) / 3600) * (-1 if g[3] in "Ss" else 1)
+        lng = (int(g[4]) + int(g[5]) / 60 + _decimal(g[6]) / 3600) * (-1 if g[7] in "OoWw" else 1)
+    elif m := _PAR.search(t):
+        lat, lng = _decimal(m.group(1)), _decimal(m.group(2))
+    else:
+        return None
+    return ((lat, lng), m.end()) if -90 <= lat <= 90 and -180 <= lng <= 180 else None
+
+
 async def do_link(telefone: str, texto: str) -> str:
-    """O texto com a marca de localização depois do link do Google Maps (o ponto fica guardado, como o do 📎)."""
+    """O texto com a marca de localização depois do link do Google Maps ou das coordenadas escritas (o ponto fica
+    guardado, como o do 📎)."""
     m = LINK.search(texto or "")
     if m is None:
-        return texto
+        achado = _coordenadas(texto)
+        if achado is None:
+            return texto
+        (lat, lng), fim = achado
+        guardar(telefone, {"midia": {"lat": lat, "lng": lng}})
+        return texto[:fim] + " [📍 localização recebida pelas coordenadas escritas, ainda não gravada]" + texto[fim:]
     ponto = await _ponto_do_link(m.group(0).rstrip(".,;)"))
     if ponto is None:
         marca = " [🔗 link do Google Maps sem um ponto que eu consiga ler: peça a localização pelo 📎 → Localização]"
@@ -108,8 +142,9 @@ async def do_link(telefone: str, texto: str) -> str:
 
 
 def so_link(texto: str) -> bool:
-    """A mensagem é só o link: o pedido costuma vir logo depois, como na foto sem legenda."""
-    return bool(LINK.fullmatch((texto or "").strip()))
+    """A mensagem é só o link (ou só as coordenadas): o pedido costuma vir logo depois, como na foto sem legenda."""
+    t = (texto or "").strip()
+    return bool(LINK.fullmatch(t) or _PAR.fullmatch(t) or _GMS.fullmatch(t))
 
 
 def mensagem(telefone: str) -> str:

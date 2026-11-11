@@ -241,5 +241,6 @@
 {"frase": "classifica os eventos de hoje de Pereiras", "espera": ["classificar_eventos"], "ou_sem_ferramenta": true, "origem": "meuGuarda pedido 2 (spec 11/11)"},
 {"frase": "descarta os eventos da Térmica 03, era o pessoal da roçagem", "espera": ["classificar_eventos"], "como": "diogo.dardani", "origem": "meuGuarda pedido 2 (spec 11/11)"},
 {"frase": "desliga o alarme da Térmica 05 por 2 horas, tem gente roçando", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
-{"frase": "quais câmeras de Pereiras estão offline?", "espera": ["cameras"], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"}
+{"frase": "quais câmeras de Pereiras estão offline?", "espera": ["cameras"], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
+{"frase": "-22,280226, -51,525479 [📍 localização recebida pelas coordenadas escritas, ainda não gravada]\n\nsalve a coordenada de pirapozinho", "espera": ["gravar_coordenada"], "origem": "log #441 (coordenadas escritas, 11/11)"}
 ]
