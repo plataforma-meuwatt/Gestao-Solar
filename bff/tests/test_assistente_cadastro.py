@@ -196,7 +196,9 @@ async def test_pessoa_nova_nos_tres_sistemas_so_com_o_sim_e_sem_o_token_aparecer
     michel = db.query(User).filter_by(apelido="michel.renan").one()
     assert (michel.perfil, michel.empresa_id, michel.telefone) == (Perfil.TECNICO, cenario.gerente.empresa_id,
                                                                    "+5517996495795")
-    assert michel.bot_ativo == {"bot_meuwatt", "bot_meuplano"} and not michel.senha_atuacao_hash
+    # as câmeras (meuGuarda) vão junto com qualquer parte ligada (decisão do dono, 11/11/2026: todos)
+    assert michel.bot_ativo == {"bot_meuwatt", "bot_meuplano", "bot_meuguarda"} and not michel.senha_atuacao_hash
+    assert ", câmeras (sem senha de atuação)" in desfecho, desfecho
     assert ("na_empresa", 1, 99, "field_employee") in cenario.mw.gravou
     assert ("usinas", 70, [9371]) in cenario.mw.gravou            # só as usinas da empresa no GS
     assert ("provisionar", str(michel.id), "tecnico1@splendoroem.com.br", False) in cenario.mw.gravou

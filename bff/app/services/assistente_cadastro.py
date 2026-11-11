@@ -394,6 +394,9 @@ async def _executar(db, quem, p: dict) -> str:
             except HTTPException as e:
                 falhou = True
                 feitas.append(f"❌ Bot ({parte}): {str(e.detail).rstrip('. ')}")
+        if ligadas:                                      # as câmeras vão junto (decisão do dono, 11/11/2026: todos)
+            cadastro.liberar_bot(conta, "bot_meuguarda", True)
+            ligadas.append("câmeras")
         db.commit()
         if ligadas:
             feitas.append(f"✅ Bot ligado: {', '.join(ligadas)} (sem senha de atuação)")

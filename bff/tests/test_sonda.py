@@ -397,12 +397,13 @@ def test_o_catalogo_cobre_o_que_os_clientes_chamam():
     sem a sonda dizer nada. Este teste é o alarme quando alguém adiciona uma e esquece."""
     import inspect
 
-    from app.clients import helper_bot, meuplano, meuwatt
+    from app.clients import helper_bot, meuguarda, meuplano, meuwatt
 
     for modulo, catalogo in (
         (meuwatt, sonda.MEUWATT),
         (meuplano, sonda.MEUPLANO),
         (helper_bot, sonda.HELPER),
+        (meuguarda, sonda.MEUGUARDA),
     ):
         fonte = inspect.getsource(modulo)
         # Só os caminhos fixos: os montados com f-string variável não dão para casar por
@@ -478,10 +479,11 @@ def _fora_do_catalogo(modulo, catalogo) -> set[str]:
 def test_todo_caminho_do_cliente_esta_no_catalogo():
     """Cliente → catálogo, molde a molde. Uma rota nova no cliente sem linha aqui falha
     na hora, com o caminho escrito — não meses depois, na tela do cliente."""
-    from app.clients import meuplano, meuwatt
+    from app.clients import meuguarda, meuplano, meuwatt
 
     assert _fora_do_catalogo(meuwatt, sonda.MEUWATT) == set()
     assert _fora_do_catalogo(meuplano, sonda.MEUPLANO) == set()
+    assert _fora_do_catalogo(meuguarda, sonda.MEUGUARDA) == set()
 
 
 def test_o_inverso_reprova_quando_uma_rota_some_do_catalogo():

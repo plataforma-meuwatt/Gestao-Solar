@@ -32,6 +32,7 @@ import {
   type SituacaoRota,
   type Varredura,
   rotasDoHelper,
+  rotasDoMeuGuarda,
 } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -71,27 +72,48 @@ export function Rotas() {
         {PRODUTOS.map((p) => (
           <BlocoProduto key={`${p.chave}-${empresaId}`} {...p} empresaId={empresaId} />
         ))}
-        <BlocoHelper />
+        <BlocoPorta
+          chave="helper"
+          titulo="Helper: porta do bot"
+          buscar={rotasDoHelper}
+          apoio="Ler e comandar as usinas pelo bot do WhatsApp, com o token de cada pessoa. Não é sondado daqui: a plataforma não tem token."
+        />
+        <BlocoPorta
+          chave="meuguarda"
+          titulo="meuGuarda: câmeras pelo bot"
+          buscar={rotasDoMeuGuarda}
+          apoio="Câmeras e alarmes das usinas pelo bot do WhatsApp, com a sessão do Gestão Solar de cada pessoa. Não é sondado daqui."
+        />
       </div>
     </Pagina>
   )
 }
 
-/** A porta do bot do helper: declarada, não sondada (toda chamada exige o token da pessoa —
- *  a plataforma não tem), com o alcance de agora no alto: túnel e VPN até as usinas. */
-function BlocoHelper() {
-  const { data, isLoading, error } = useQuery({ queryKey: ['rotas', 'helper'], queryFn: rotasDoHelper })
+/** O que o bot usa e a sonda não exercita (toda chamada é como UMA pessoa, e a plataforma não é ninguém lá): o helper
+ *  (token do meuWatt da pessoa; o alto diz se o túnel e a VPN até as usinas respondem) e o meuGuarda (sessão do GS da
+ *  pessoa; o alto diz se ele responde). */
+function BlocoPorta({
+  chave,
+  titulo,
+  buscar,
+  apoio,
+}: {
+  chave: string
+  titulo: string
+  buscar: () => Promise<Omit<Varredura, 'produto'>>
+  apoio: string
+}) {
+  const { data, isLoading, error } = useQuery({ queryKey: ['rotas', chave], queryFn: buscar })
   return (
     <Cartao>
       <div className="px-5 pt-4 pb-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <p className="text-forte font-semibold">Helper: porta do bot</p>
+          <p className="text-forte font-semibold">{titulo}</p>
           {data ? <Selo tom={data.ok ? 'ok' : 'parado'}>{data.ok ? 'alcançável' : 'fora'}</Selo> : null}
           {data ? <Selo tom="sem-dados">{data.rotas.length} catalogadas</Selo> : null}
         </div>
         <p className="text-sm text-rotulo mt-1">
-          {data?.detalhe ??
-            'Ler e comandar as usinas pelo bot do WhatsApp, com o token de cada pessoa. Não é sondado daqui: a plataforma não tem token.'}
+          {data?.detalhe ?? apoio}
         </p>
       </div>
       {isLoading ? null : error ? (

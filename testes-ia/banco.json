@@ -221,5 +221,18 @@
 {"frase": "[📄 PDF recebido: «Aditivo 02.pdf»]\nassina pra mim", "espera": ["assinar_pdf"], "origem": "11/11 (PDF encaminhado e depois \"assina pra mim\")"},
 {"frase": "Pode assinar esse aqui com meu certificado?\n[📄 PDF recebido: «Proposta Splendor.pdf»]", "espera": ["assinar_pdf"], "origem": "11/11 (o pedido escrito antes do PDF)"},
 {"frase": "[📄 PDF recebido: «Termo de entrega.pdf»]", "espera": [], "origem": "11/11 (PDF sozinho: pergunta se é para assinar)"},
-{"frase": "Me manda o PDF da OS 1638 assinado", "espera": ["manutencao"], "origem": "11/11 (o PDF da OS continua indo ao meuPlano)"}
+{"frase": "Me manda o PDF da OS 1638 assinado", "espera": ["manutencao"], "origem": "11/11 (o PDF da OS continua indo ao meuPlano)"},
+{"frase": "quais câmeras de Pereiras estão online?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "tem alarme aberto nas câmeras?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "a Térmica 08 está online?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "quero ver a câmera Perímetro 03", "espera": ["ver_camera"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "manda o link pra eu ver a dome do skid 1 ao vivo", "espera": ["ver_camera"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "me manda uma foto da câmera Térmica 02", "espera": ["foto_camera"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "me manda uma foto da térmica 2 de pereiras", "espera": ["foto_camera"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "foto da câmera perímetro 3", "espera": ["foto_camera"], "como": "diogo.dardani", "origem": "meuGuarda (spec 11/11)"},
+{"frase": "me manda a foto da câmera Portão 07", "espera": ["foto_camera", "cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "desliga o alarme das câmeras perímetro 1, 2 e 3 por 4 horas, tem gente roçando", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "desliga o alarme da Térmica 05", "espera": ["alarme_cameras"], "ou_sem_ferramenta": true, "origem": "meuGuarda (spec 11/11)"},
+{"frase": "liga de novo o alarme das câmeras de Pereiras", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
+{"frase": "me manda a foto da câmera Perímetro 03", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda (spec 11/11)"}
 ]

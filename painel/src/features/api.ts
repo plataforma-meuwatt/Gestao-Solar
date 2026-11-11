@@ -376,6 +376,9 @@ export const listarRotas = (produto: Produto) =>
 export const rotasDoHelper = () =>
   api.get<Omit<Varredura, 'produto'> & { produto: 'helper' }>('/helper/rotas').then((r) => r.data)
 
+export const rotasDoMeuGuarda = () =>
+  api.get<Omit<Varredura, 'produto'> & { produto: 'meuguarda' }>('/meuguarda/rotas').then((r) => r.data)
+
 /** Exercita o catálogo inteiro com a conexão DA EMPRESA escolhida (a plataforma não tem
  *  token). Uma dúzia de chamadas ao produto. */
 export const sondarRotas = (produto: Produto, empresaId: number) =>

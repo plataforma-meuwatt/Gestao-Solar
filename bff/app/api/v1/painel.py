@@ -241,6 +241,29 @@ async def rotas_do_helper(_: User = Depends(EXIGE_ROTAS)) -> VarreduraOut:
     )
 
 
+@router.get("/meuguarda/rotas", response_model=VarreduraOut)
+async def rotas_do_meuguarda(_: User = Depends(EXIGE_ROTAS)) -> VarreduraOut:
+    """O meuGuarda (câmeras) na tela Rotas: declarado e não sondado — toda rota exige a sessão do GS de uma pessoa.
+    O alto diz se ele responde agora (`/api/saude`)."""
+    from app.clients import meuguarda
+    from app.core.config import get_settings
+
+    base = get_settings().meuguarda_api_url
+    ok = bool(base) and await meuguarda.no_ar(base)
+    return VarreduraOut(
+        produto="meuguarda",
+        ok=ok,
+        detalhe=("O meuGuarda responde." if ok else "O meuGuarda não respondeu agora.") if base
+        else "O meuGuarda não está configurado neste servidor (MEUGUARDA_API_URL).",
+        executada_em=datetime.now(UTC),
+        rotas=[
+            RotaSondadaOut(chave=r.chave, metodo=r.metodo, caminho=r.caminho, alimenta=r.alimenta,
+                           essencial=r.essencial, situacao="nao_sondada", detalhe=r.nao_sondada_porque)
+            for r in sonda.MEUGUARDA
+        ],
+    )
+
+
 @router.post("/integracoes/{produto}/rotas/sondar", response_model=VarreduraOut)
 async def sondar_rotas(
     produto: Produto,

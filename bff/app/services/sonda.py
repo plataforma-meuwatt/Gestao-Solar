@@ -730,6 +730,30 @@ HELPER: list[Rota] = [
 ]
 
 
+#: O MEUGUARDA (CFTV das usinas, `clients/meuguarda.py`). Declarado e não sondado: toda rota exige a sessão do GS de
+#: UMA pessoa (o meuGuarda aplica as permissões e as usinas dela lá), e a sonda não tem pessoa. A saúde é o
+#: `/api/saude` no alto da tela Rotas; o bot exercita sob demanda, como quem pergunta.
+_SO_COM_PESSOA = "Exige a sessão do GS da pessoa; o bot exercita sob demanda, como quem pergunta."
+MEUGUARDA: list[Rota] = [
+    Rota("mg.saude", "GET", "/api/saude", "A prova de vida do meuGuarda (o alto da tela Rotas)", essencial=False,
+         sonda=False, nao_sondada_porque="Lida pelo alto da tela Rotas, sem sessão."),
+    Rota("mg.eu", "GET", "/api/eu", "O que a pessoa pode no meuGuarda (permissões e usinas)", essencial=False,
+         sonda=False, nao_sondada_porque=_SO_COM_PESSOA),
+    Rota("mg.usinas", "GET", "/api/usinas", "As usinas com câmeras: online e alarmes abertos", essencial=False,
+         sonda=False, nao_sondada_porque=_SO_COM_PESSOA),
+    Rota("mg.cameras", "GET", "/api/usinas/{usina_id}/cameras", "As câmeras da usina e o alarme de cada uma",
+         essencial=False, sonda=False, nao_sondada_porque=_SO_COM_PESSOA),
+    Rota("mg.alarmes", "GET", "/api/alarmes", "Os alarmes abertos", essencial=False, sonda=False,
+         nao_sondada_porque=_SO_COM_PESSOA),
+    Rota("mg.link", "POST", "/api/cameras/{camera_id}/link", "O link de 15 min que abre a câmera ao vivo",
+         essencial=False, sonda=False, nao_sondada_porque="Gera um link pessoal e um registro no log do meuGuarda."),
+    Rota("mg.foto", "POST", "/api/cameras/{camera_id}/foto-agora", "A foto de agora da câmera", essencial=False,
+         sonda=False, nao_sondada_porque="Manda um comando ao PC da usina e fica no log do meuGuarda."),
+    Rota("mg.deteccao", "POST", "/api/usinas/{usina_id}/deteccao", "Ligar ou desligar o alarme das câmeras",
+         essencial=False, sonda=False, nao_sondada_porque="Escreve: só roda com o Sim de quem pede pelo bot."),
+]
+
+
 @dataclass
 class Resultado:
     """O que aconteceu com uma rota. `situacao` decide a cor na tela."""

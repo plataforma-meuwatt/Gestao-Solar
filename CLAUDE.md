@@ -800,6 +800,22 @@ navegador sem tela com o token do meuWatt DA PESSOA), com carimbo em toda folha 
 do relatório (mw-analise) marcados como dela. O de geração leva ~3 min quando a IA ainda não comentou o mês: o bot avisa
 antes. Mês com relatório emitido segue mandando o arquivo de sempre. Teste: `tests/test_relatorio_nao_revisado.py`.
 
+**Câmeras pelo bot: o meuGuarda** (dono, 11/11/2026: "integrar já, criar rotina de teste e ligar para todos"; spec em
+`/root/DEVV/CFTV/docs/bot-gs.md`, dúvida do meuGuarda é do terminal CFTV; `bff/app/services/assistente_meuguarda.py`):
+`cameras` (online, alarme ligado ou desligado até quando e por quem, alarmes abertos em resumo), `ver_camera` (link
+pessoal de 15 min que abre a câmera ao vivo SEM login: vai pelo `ctx.rodape` e entra em `ctx.segredos`, então some do
+Log do bot e da cópia do gateway), `foto_camera` (a foto de agora, ~6 s; 504 = o PC da usina não respondeu) e
+`alarme_cameras` (ligar ou desligar a detecção: ação com o Sim, motivo obrigatório para desligar, sem prazo volta no
+horário de religar da usina). O nome falado casa com a lista de lá (`escolher`: "perímetro 3" → "Perímetro 03"; "3"
+sozinho é ambíguo e a IA pergunta). Identidade: a SESSÃO do GS da própria pessoa (`criar_token_empresa`/`_tecnico`/
+`criar_token`, portão no `X-Portao`), conferida lá no `/eu` daqui; nenhuma chave nova, e a plataforma não usa. Parte
+`bot_meuguarda` sem token (`BOT_TOKEN` = `None`), ligada pela migração `c9e1a3b5d7f2` para as 7 pessoas que o bot já
+atendia; o cadastro pelo bot liga junto com as outras partes. Além da parte, valem as permissões da pessoa NO meuGuarda
+(`cameras.aovivo.ver`, `alarmes.tratar`): a recusa de lá vai como veio. Rotas no catálogo da sonda (`MEUGUARDA`, todas
+`sonda=False`: exigem a sessão de uma pessoa) e na tela Rotas do adm, com o `/api/saude` no alto. Base:
+`MEUGUARDA_API_URL` (padrão o sslip do Coolify). Banco de perguntas: os casos com `origem` "meuGuarda"; `"sem":
+["bot_meuguarda"]` num caso tira a parte só naquele processo (`testes-ia/rodar.py`).
+
 **Tracker travado** (dono, 08/11/2026; push do aplicativo, `services/avisos.trackers_por_usuario`): o meuWatt detecta
 o travamento (bit de falha do controlador 10 min seguidos) e guarda os comandos do helper (mw-api 4b9fadb); daqui se
 lê `GET /plants/{slug}/trackers/incidents` com o token de quem enxerga a usina (e `…/trackers/events` só com tracker

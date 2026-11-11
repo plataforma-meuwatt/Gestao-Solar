@@ -41,10 +41,17 @@ def _limpo(texto: str, valores=(), credencial: bool = False) -> str:
                            a.publicos_do_turno(texto or ""))
 
 
-async def _turno(apelido: str, frase: str, inteira: bool) -> dict:
+async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = ()) -> dict:
     db = SessionLocal()
     try:
         user = _conta(db, apelido)
+        if sem:
+            # a pessoa SEM uma parte do bot ("sem": ["bot_meuguarda"]): a conta sai da sessão antes, e a mudança fica
+            # só neste processo — o commit que solta a conexão não a grava
+            user.vinculos
+            db.expunge(user)
+            for parte in sem:
+                setattr(user, parte, False)
         ctx = ger.Contexto(db=db, user=user, telefone=user.telefone or "", pedido=frase)
         await ger.preparar(ctx)
         if m := re.search(r"\[📷 (\d+) foto\(s\) recebida\(s\)", frase):
@@ -85,7 +92,8 @@ async def _varias(casos: list[dict], inteira: bool, vezes: int) -> list[tuple[di
 
     async def um(caso):
         async with sem:
-            return caso, await _turno(caso.get("como", "renan.marquezini"), caso["frase"], inteira)
+            return caso, await _turno(caso.get("como", "renan.marquezini"), caso["frase"], inteira,
+                                      tuple(caso.get("sem", ())))
     return await asyncio.gather(*(um(c) for c in casos for _ in range(vezes)))
 
 

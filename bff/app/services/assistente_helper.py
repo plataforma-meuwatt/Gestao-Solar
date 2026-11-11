@@ -445,6 +445,8 @@ _FAMILIAS = {
     "devolver": ("devolver", "devolucao"), "lancar": ("lançar", "lancamento"),
     "anexar": ("anexar",), "programar": ("programar",), "agendar": ("agendar",), "enviar": ("enviar",),
     "arquivar": ("arquivar",), "atualizar": ("atualizar", "atualizacao"), "assinar": ("assinar", "assinatura"),
+    # o alarme das câmeras (meuGuarda): "Pode ligar" não confirma "Desligar o alarme…", e vice-versa
+    "desligar": ("desligar",), "ligar": ("ligar", "religar"),
 }
 _VERBOS = {forma: raiz for raiz, palavras in _FAMILIAS.items() for p in palavras
            for forma in (_formas(p) if p.endswith(("ar", "er", "ir")) else {p})}
