@@ -350,7 +350,7 @@ async def test_a_tela_diz_pronto_se_o_bot_consulta_cameras(db):
     sem_acesso = _conta(db, "sem.acesso", telefone="+5517997370000")
     falta = {u.apelido: u.cameras_no_whatsapp_falta for u in await rotas.usuarios_detalhados(db, gerente)}
     # o acesso sozinho não faz o bot responder a quem não usa o WhatsApp (o bot só atende quem tem uma parte ligada)
-    assert falta["so.celular"] == "o bot do WhatsApp ligado para esta pessoa (ao menos uma parte)"
+    assert falta["so.celular"] == "ligar uma chave do WhatsApp (geração, manutenção, helper ou atuar)"
     assert falta["atua.um"] is None and falta["sem.acesso"] == "o acesso ao meuGuarda"
     # e é a mesma régua do bot
     assert ("cameras" in assistente.permitidas(atua)) and atua.bot_liberado

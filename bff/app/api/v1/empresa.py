@@ -1667,7 +1667,7 @@ def _cameras_no_whatsapp(c: User, tokens: list[str]) -> str | None:
     if not amg.disponivel(c):
         return "o meuGuarda neste servidor"
     if not any(getattr(c, campo) and (p is None or p in tokens) for campo, p in BOT_TOKEN.items()):
-        return "o bot do WhatsApp ligado para esta pessoa (ao menos uma parte)"
+        return "ligar uma chave do WhatsApp (geração, manutenção, helper ou atuar)"
     return None
 
 
