@@ -154,7 +154,7 @@ class UsuarioDaEmpresaOut(BaseModel):
     telefone: str | None = None
     #: Usinas concedidas a esta pessoa (as desta empresa, quando a lista é de uma empresa).
     usinas: int = 0
-    #: O que o gerente liberou no assistente (`bot_meuwatt`, `bot_meuplano`, `bot_helper`)
+    #: O que o gerente liberou no assistente (`bot_meuwatt`, `bot_meuplano`, `bot_helper`, `bot_meuguarda`)
     #: e o que responde de fato — liberado E com o token PRÓPRIO da pessoa.
     bot: list[str] = []
     bot_ativo: list[str] = []
@@ -229,7 +229,7 @@ def resumo_das_contas(
                 # banco para todas as contas, e não uma por conta).
                 bot_ativo=sorted(
                     campo for campo, produto in BOT_TOKEN.items()
-                    if getattr(c, campo) and produto in tokens.get(c.id, [])
+                    if getattr(c, campo) and (produto is None or produto in tokens.get(c.id, []))
                 ) if c.telefone else [],
                 tokens=sorted(tokens.get(c.id, [])),
                 tokens_de=tokens_de.get(c.id, {}),

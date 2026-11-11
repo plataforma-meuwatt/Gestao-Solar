@@ -96,7 +96,7 @@ def liberar_bot(conta: User, campo: str, valor: bool) -> None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "Cadastre o celular antes de liberar o bot do WhatsApp.")
         produto = BOT_TOKEN[campo]
-        if not conta.tem_token(produto):
+        if produto is not None and not conta.tem_token(produto):
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"Cole o token do {NOME[Produto(produto)]} desta pessoa antes de liberar: "
                                 "o assistente só responde com o token dela.")
@@ -254,7 +254,7 @@ async def gravar(db: Session, conta: User, empresa_id: int, *, nome: str | None 
         conta.telefone = novo_tel
         adotar_mensagens(db, conta)
         if novo_tel is None:
-            conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = False
+            conta.bot_meuplano = conta.bot_meuwatt = conta.bot_helper = conta.bot_meuguarda = False
 
 
 async def todas_as_pessoas(db: Session, empresa_id: int) -> list[dict[str, Any]] | None:

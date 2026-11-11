@@ -63,8 +63,10 @@ class Perfil(StrEnum):
 
 
 #: O token PRÓPRIO que cada parte do assistente exige. O helper reconhece a pessoa pelo token
-#: do meuWatt dela (contrato `docs/bot.md` do mw-modbus-helper).
-BOT_TOKEN = {"bot_meuwatt": "meuwatt", "bot_meuplano": "meuplano", "bot_helper": "meuwatt"}
+#: do meuWatt dela (contrato `docs/bot.md` do mw-modbus-helper). O meuGuarda (câmeras) não pede
+#: token: ele confere a sessão do GS da própria pessoa no `/eu` daqui (`clients/meuguarda.py`).
+BOT_TOKEN: dict[str, str | None] = {"bot_meuwatt": "meuwatt", "bot_meuplano": "meuplano", "bot_helper": "meuwatt",
+                                    "bot_meuguarda": None}
 
 
 class User(Base):
@@ -112,6 +114,9 @@ class User(Base):
     bot_meuplano: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_meuwatt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_helper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    #: As câmeras e os alarmes das usinas (meuGuarda). Ligada para todos que já usavam o bot (decisão do dono,
+    #: 11/11/2026, migração `c9e1a3b5d7f2`); o gerente desliga pessoa a pessoa.
+    bot_meuguarda: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     #: A senha que o bot pede antes de AÇÃO no equipamento (helper: ligar, desligar, gravar) — só
     #: números, 6 a 8, e nunca a de login. Ação do meuPlano (criar/fechar OS) confirma com SIM.
     senha_atuacao_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -125,7 +130,7 @@ class User(Base):
         """O que o assistente responde DE FATO: liberado pelo gerente E com o token da pessoa.
         Regra do dono (23/10/2026): cada um usa o bot com o SEU token — nunca o da empresa
         nem o da plataforma. Liberado sem token fica parado, e a tela diz que falta o token."""
-        return {c for c, p in BOT_TOKEN.items() if getattr(self, c) and self.tem_token(p)}
+        return {c for c, p in BOT_TOKEN.items() if getattr(self, c) and (p is None or self.tem_token(p))}
 
     @property
     def bot_liberado(self) -> bool:

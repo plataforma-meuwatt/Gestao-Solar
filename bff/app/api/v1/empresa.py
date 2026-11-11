@@ -1370,6 +1370,7 @@ class UsuarioDetalhado(BaseModel):
     bot_meuplano: bool = False
     bot_meuwatt: bool = False
     bot_helper: bool = False
+    bot_meuguarda: bool = False
     #: Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com SIM.
     tem_senha_atuacao: bool = False
     #: A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui.
@@ -1472,6 +1473,7 @@ async def usuarios_detalhados(
             tokens_de=tokens_de.get(c.id, {}),
             telefone=exibir_telefone(c.telefone),
             bot_meuplano=c.bot_meuplano, bot_meuwatt=c.bot_meuwatt, bot_helper=c.bot_helper,
+            bot_meuguarda=c.bot_meuguarda,
             tem_senha_atuacao=bool(c.senha_atuacao_hash),
             meuplano=ligado_mp.get(c.id),
             cuidada_por=nomes.get(c.empresa_id) if c.empresa_id != empresa_id else None,
@@ -1559,6 +1561,7 @@ class ContaPatch(BaseModel):
     bot_meuplano: bool | None = None
     bot_meuwatt: bool | None = None
     bot_helper: bool | None = None
+    bot_meuguarda: bool | None = None
     #: A SENHA DE ATUAÇÃO (6 a 8 números) que o bot pede antes de ligar, desligar ou gravar no
     #: equipamento (helper). Ação do meuPlano (criar ou concluir OS) confirma com Sim, sem ela. O
     #: gerente define e entrega à pessoa, como a senha provisória.
@@ -1609,7 +1612,7 @@ async def editar_conta_da_empresa(
         await cadastro.gravar(db, conta, empresa_id, nome=body.nome,
                               email=str(body.email) if body.email else None, telefone=body.telefone)
     from app.services import cadastro
-    for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper"):
+    for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper", "bot_meuguarda"):
         if getattr(body, campo) is not None:
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
@@ -1629,6 +1632,7 @@ async def editar_conta_da_empresa(
         or 0,
         telefone=exibir_telefone(conta.telefone),
         bot_meuplano=conta.bot_meuplano, bot_meuwatt=conta.bot_meuwatt, bot_helper=conta.bot_helper,
+        bot_meuguarda=conta.bot_meuguarda,
         tem_senha_atuacao=bool(conta.senha_atuacao_hash),
         meuplano=_nome_no_meuplano(db, conta.id),
     )

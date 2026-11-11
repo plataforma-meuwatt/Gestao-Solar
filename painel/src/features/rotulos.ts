@@ -16,18 +16,24 @@ export const PAPEL: Record<string, string> = {
 export const NOME_DO_PRODUTO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
 
 /** As partes do assistente do WhatsApp. Cada uma responde com o token PRÓPRIO da pessoa
- *  (`token`); o helper reconhece a pessoa pelo do meuWatt. */
-export const PARTES_DO_BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto }[] = [
+ *  (`token`); o helper reconhece a pessoa pelo do meuWatt. O meuGuarda (câmeras) não pede token
+ *  (`null`): ele confere a sessão do Gestão Solar da própria pessoa. */
+export const PARTES_DO_BOT: { campo: ProdutoDoBot; rotulo: string; token: Produto | null }[] = [
   { campo: 'bot_meuwatt', rotulo: 'Geração (meuWatt)', token: 'meuwatt' },
   { campo: 'bot_meuplano', rotulo: 'Manutenção (meuPlano)', token: 'meuplano' },
   { campo: 'bot_helper', rotulo: 'Usina ao vivo (helper)', token: 'meuwatt' },
+  { campo: 'bot_meuguarda', rotulo: 'Câmeras (meuGuarda)', token: null },
 ]
+
+/** A parte tem o que precisa para responder: o token dela, ou nenhum (meuGuarda). */
+export const temOToken = (parte: { token: Produto | null }, tokens: Produto[]) =>
+  parte.token === null || tokens.includes(parte.token)
 
 /** "Geração (meuWatt) · Manutenção (meuPlano) (falta o token)" — o liberado, e o que está parado. */
 export function textoDoBot(liberado: ProdutoDoBot[], tokens: Produto[], temCelular: boolean): string {
   if (!temCelular) return 'sem celular: o bot não reconhece a pessoa'
   const partes = PARTES_DO_BOT.filter((p) => liberado.includes(p.campo)).map((p) =>
-    tokens.includes(p.token) ? p.rotulo : `${p.rotulo} (falta o token)`,
+    temOToken(p, tokens) ? p.rotulo : `${p.rotulo} (falta o token)`,
   )
   return partes.join(' · ') || 'desligado'
 }

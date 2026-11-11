@@ -650,7 +650,7 @@ export const desagruparConta = (apelido: string) =>
   api.delete<void>(`/pessoas/${apelido}`).then(() => undefined)
 
 /** O que o gerente liberou no assistente, por produto. */
-export type ProdutoDoBot = 'bot_meuplano' | 'bot_meuwatt' | 'bot_helper'
+export type ProdutoDoBot = 'bot_meuplano' | 'bot_meuwatt' | 'bot_helper' | 'bot_meuguarda'
 
 /** Uma conta como a PLATAFORMA a vê: papel, empresas, celular, bot e se a pessoa tem o
  *  token dela — nunca o token. */
@@ -912,6 +912,7 @@ export type UsuarioDetalhado = {
   bot_meuplano: boolean
   bot_meuwatt: boolean
   bot_helper: boolean
+  bot_meuguarda: boolean
   /** Tem a SENHA DE ATUAÇÃO que o bot pede antes de ação no equipamento (helper); o meuPlano confirma com Sim. */
   tem_senha_atuacao: boolean
   /** A pessoa do meuPlano a que o cadastro está ligado (nome), ou nulo: cadastro só daqui. */

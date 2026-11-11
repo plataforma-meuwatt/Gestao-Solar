@@ -40,7 +40,7 @@ import {
   type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
-import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, confirmaAtivacao, textoDoBot } from '@/features/rotulos'
+import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, confirmaAtivacao, temOToken, textoDoBot } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -112,7 +112,7 @@ function CaixasDoBot({
   aoMudar: (campo: ProdutoDoBot, valor: boolean) => void
 }) {
   const faltam = [
-    ...new Set(PARTES_DO_BOT.filter((b) => !produtos.includes(b.token)).map((b) => b.token)),
+    ...new Set(PARTES_DO_BOT.flatMap((b) => (b.token === null || produtos.includes(b.token) ? [] : [b.token]))),
   ]
   return (
     <div>
@@ -123,7 +123,7 @@ function CaixasDoBot({
             <input
               type="checkbox"
               checked={bot[b.campo]}
-              disabled={!bot[b.campo] && (!temCelular || !produtos.includes(b.token))}
+              disabled={!bot[b.campo] && (!temCelular || !temOToken(b, produtos))}
               onChange={(e) => aoMudar(b.campo, e.target.checked)}
             />
             {b.rotulo}
@@ -383,6 +383,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
     bot_meuplano: usuario.bot_meuplano,
     bot_meuwatt: usuario.bot_meuwatt,
     bot_helper: usuario.bot_helper,
+    bot_meuguarda: usuario.bot_meuguarda,
   })
   const [ligadoA, setLigadoA] = useState(usuario.meuplano)
   const [ligando, setLigando] = useState(false)
@@ -399,6 +400,7 @@ function CadastroDoUsuario({ usuario, aoFechar }: { usuario: UsuarioDetalhado; a
         bot_meuplano: temCelular && bot.bot_meuplano,
         bot_meuwatt: temCelular && bot.bot_meuwatt,
         bot_helper: temCelular && bot.bot_helper,
+        bot_meuguarda: temCelular && bot.bot_meuguarda,
       })
     },
     onSuccess: () => {
