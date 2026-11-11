@@ -114,9 +114,12 @@ class User(Base):
     bot_meuplano: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_meuwatt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     bot_helper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    #: As câmeras e os alarmes das usinas (meuGuarda). Ligada para todos que já usavam o bot (decisão do dono,
-    #: 11/11/2026, migração `c9e1a3b5d7f2`); o gerente desliga pessoa a pessoa.
+    #: A ATUAÇÃO pelo WhatsApp no meuGuarda: desarmar e rearmar alarme, classificar eventos em massa (com o Sim). Só
+    #: com o meuGuarda liberado (`meuguarda_liberado`). Consultar câmeras vem com o acesso. Decisão do dono, 11/11/2026.
     bot_meuguarda: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    #: O ACESSO ao meuGuarda (CFTV das usinas): o gerente libera aqui, as permissões são dadas lá. Falso = a pessoa fica
+    #: fora do meuGuarda (vai no `/eu` dos portões e na asserção do SSO, e o meuGuarda recusa). Migração `d1f3a5b7c9e2`.
+    meuguarda_liberado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     #: A senha que o bot pede antes de AÇÃO no equipamento (helper: ligar, desligar, gravar) — só
     #: números, 6 a 8, e nunca a de login. Ação do meuPlano (criar/fechar OS) confirma com SIM.
     senha_atuacao_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -131,6 +134,11 @@ class User(Base):
         Regra do dono (23/10/2026): cada um usa o bot com o SEU token — nunca o da empresa
         nem o da plataforma. Liberado sem token fica parado, e a tela diz que falta o token."""
         return {c for c, p in BOT_TOKEN.items() if getattr(self, c) and (p is None or self.tem_token(p))}
+
+    @property
+    def entra_no_meuguarda(self) -> bool:
+        """O que vai no `/eu` e na asserção do meuGuarda. A plataforma sempre (combinado com o meuGuarda)."""
+        return self.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO) or bool(self.meuguarda_liberado)
 
     @property
     def bot_liberado(self) -> bool:
