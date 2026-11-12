@@ -247,6 +247,12 @@ async def test_ate_as_18h_e_a_hora_do_servidor_em_brasilia(db, meuguarda, monkey
     assert r["erro"].startswith("13:00 já passou: agora são 14:03")
 
 
+def test_desligado_sem_prazo_no_app_vira_sem_prazo():
+    """O app do meuGuarda desliga "sem prazo" gravando 31/12/9999: o bot não pode dizer "até 31/12 21:00"."""
+    assert mg._ate("9999-12-31T00:00:00+00:00") == "sem prazo"
+    assert mg._ate("2020-01-01T00:00:00+00:00") is None
+
+
 async def test_a_parte_desligada_no_meio_nao_executa(db, meuguarda):
     ctx = _ctx(db)
     await mg.alarme_cameras(ctx, {"ligar": True, "cameras": ["todas"]})

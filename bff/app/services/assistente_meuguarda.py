@@ -150,6 +150,8 @@ def _ate(valor) -> str | None:
         return "sem prazo"
     if ate.tzinfo is None or ate <= datetime.now(ate.tzinfo):
         return None
+    if ate.year >= 9999:  # o "sem prazo" do app do meuGuarda (12/11/2026): só volta quando alguém religar
+        return "sem prazo"
     return f"até {hora_brt(ate.isoformat())}"
 
 
