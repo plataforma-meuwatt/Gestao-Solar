@@ -251,7 +251,13 @@ def trocar_de_empresa(
 #: asserção (dois minutos, uso único) iria parar no site de quem montou o link.
 VOLTAS = {
     "meuguarda": ("meuGuarda", frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
-    "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech"})),
+    # O meuGuarda também recebe a do TermoVision (12/11/2026, pedido do meuGuarda pela queixa do dono: "já estamos no
+    # Gestão Solar justamente para centralizar e tu me pede senha"): o botão "Importar do TermoVision" do mapa leva a
+    # pessoa por aqui, e o servidor do meuGuarda usa a asserção UMA vez para copiar o orto e sai. É a exceção consciente
+    # à regra de um produto não reapresentar a asserção no outro (`login_externo.AUDIENCIA`): os dois são da família e a
+    # pessoa clicou. Só nesta direção, só para os endereços do meuGuarda.
+    "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech",
+                                              "meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
 }
 
 

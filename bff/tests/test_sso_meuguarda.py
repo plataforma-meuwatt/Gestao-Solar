@@ -130,7 +130,10 @@ def test_o_termovision_entra_pelo_gestao_solar_igual_ao_meuguarda(db, publica):
     # a asserção de um produto não vale no outro; a volta de um não serve ao outro
     with pytest.raises(Exception):
         jwt.decode(frag, publica, algorithms=["RS256"], audience="meuguarda")
-    for produto, ruim in (("termovision", "https://meuguarda.gestao.solar/"), ("meuguarda", "https://termovision.gestao.solar/")):
+    # o meuGuarda recebe a do TermoVision para copiar o orto (exceção consciente, só nesta direção)
+    assert _entrar(db, security.criar_token_tecnico(tecnico.id)[0], "https://meuguarda.gestao.solar/?tv=7",
+                   "termovision").startswith("https://meuguarda.gestao.solar/?tv=7#assercao=")
+    for produto, ruim in (("termovision", "https://evil.com/"), ("meuguarda", "https://termovision.gestao.solar/")):
         with pytest.raises(HTTPException) as e:
             _entrar(db, security.criar_token_tecnico(tecnico.id)[0], ruim, produto)
         assert e.value.status_code == 400

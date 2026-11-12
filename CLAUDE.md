@@ -838,7 +838,9 @@ portões (`GET /api/sessao/produtos`: só os liberados). A entrada ÚNICA, para 
 o dono): `gestao.solar/entrar/<produto>` (portal) segue direto com a sessão de dono de usina e, sem sessão, pede o apelido
 e a senha do GS de qualquer conta (`POST /api/sessao/<produto>/com-senha`, a volta conferida antes da senha); é o botão
 do TermoVision. A sessão do meuGuarda aberta pelo GS não vence (decisão do dono lá): desligar o acesso aqui chama o
-`/api/pessoas/{apelido}/encerrar-sessoes` de lá com a sessão do gerente (`empresa._tirar_do_meuguarda`). O acesso ao TermoVision é `gs_users.termovision_liberado`
+`/api/pessoas/{apelido}/encerrar-sessoes` de lá com a sessão do gerente (`empresa._tirar_do_meuguarda`). Exceção consciente
+(12/11/2026): a asserção do TermoVision pode voltar também ao MEUGUARDA (o botão "Importar do TermoVision" do mapa: o
+servidor de lá a usa uma vez para copiar o orto e sai), para o dono não digitar senha; só nesta direção. O acesso ao TermoVision é `gs_users.termovision_liberado`
 (migração `e4a6c8d0f2b4`, linha TermoVision na tela Usuários; quem existia ficou liberado). Os dois não são `Produto`
 daqui (não têm token nem conexão), só recebem o login.
 Banco de perguntas: os casos com `origem`
