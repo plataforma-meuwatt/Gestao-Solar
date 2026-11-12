@@ -242,5 +242,19 @@
 {"frase": "descarta os eventos da Térmica 03, era o pessoal da roçagem", "espera": ["classificar_eventos"], "como": "diogo.dardani", "origem": "meuGuarda pedido 2 (spec 11/11)"},
 {"frase": "desliga o alarme da Térmica 05 por 2 horas, tem gente roçando", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
 {"frase": "quais câmeras de Pereiras estão offline?", "espera": ["cameras"], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
-{"frase": "-22,280226, -51,525479 [📍 localização recebida pelas coordenadas escritas, ainda não gravada]\n\nsalve a coordenada de pirapozinho", "espera": ["gravar_coordenada"], "origem": "log #441 (coordenadas escritas, 11/11)"}
+{"frase": "-22,280226, -51,525479 [📍 localização recebida pelas coordenadas escritas, ainda não gravada]\n\nsalve a coordenada de pirapozinho", "espera": ["gravar_coordenada"], "origem": "log #441 (coordenadas escritas, 11/11)"},
+{"frase": "Tem alguma garantia aberta para inversor de ibitinga?", "espera": ["manutencao"], "origem": "log #421"},
+{"frase": "Veja o cadastro do donva no meu plano e meuwatt, •••• usuario unico, crie no gestao solar tambem, de acesso a tudo, 55 13 ••••", "espera": ["procurar_pessoa", "formulario_de_cadastro"], "origem": "log #423"},
+{"frase": "me passa a localização de pereiras", "espera": ["local_da_usina"], "origem": "log #430"},
+{"frase": "Qual a senha padrão do inversor Sungro modelo ••••", "espera": ["manutencao"], "origem": "log #431"},
+{"frase": "me de a imagem da camera 10 de pereiras", "espera": ["foto_camera"], "origem": "log #433"},
+{"frase": "me mande uma foto da camera perimetral 2 de pereiras", "espera": ["foto_camera"], "origem": "log #436"},
+{"frase": "me mande uma foto da camera perimetral 1 de pereiras", "espera": ["foto_camera"], "origem": "log #437"},
+{"frase": "me mande o video da camera perimetral 1 de pereiras", "espera": ["ver_camera"], "origem": "log #439"},
+{"frase": "anota que o diogo passou o dia trabalhando com a instalação do CFTV de pereiras", "espera": ["manutencao"], "origem": "log #440"},
+{"frase": "grave a coordenada de ouro fino \nhttps://maps.app.goo.gl/9oH3HXTAWp5mjBYk7", "espera": ["gravar_coordenada"], "origem": "log #444"},
+{"frase": "Cadastre este contato em pirapozinho como pessoa que faz roçagens, cadastre como terceiro", "espera": ["manutencao"], "origem": "log #284"},
+{"frase": "+55 18 ••••\nJaime policial civil", "espera": ["manutencao"], "origem": "log #285"},
+{"frase": "[📷 foto]", "espera": [], "origem": "log #372"},
+{"frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.", "espera": ["manutencao"], "origem": "log #381"}
 ]
