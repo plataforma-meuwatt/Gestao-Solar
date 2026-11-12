@@ -215,3 +215,32 @@ def test_a_entrada_unica_aceita_qualquer_conta_com_a_senha_do_gs(db, publica):
         sessao.entrar_no_produto_com_senha("termovision", sessao.EntrarComSenhaIn(
             apelido="dono.unico", senha="senha-forte-1", volta="https://evil.com/"), db)
     assert e.value.status_code == 400
+
+
+def test_a_sessao_de_entrada_do_gestao_solar_so_gera_assercao(db, publica):
+    """"Não quero fazer login, já estou autenticado via Gestão" (o dono, 12/11/2026): a senha digitada uma vez em
+    gestao.solar deixa uma sessão de ENTRADA que gera as asserções dos produtos sem senha, e nada mais."""
+    from app.core.security import gerar_hash_senha, gestor_atual, gestor_empresa_atual, tecnico_atual, usuario_atual
+
+    gerente = _conta(db, "gerente.entrada", Perfil.GESTOR_EMPRESA)
+    gerente.senha_hash, gerente.termovision_liberado = gerar_hash_senha("senha-forte-1"), True
+    gerente.meuguarda_liberado = True
+    db.commit()
+    r = sessao.entrar_no_produto_com_senha("meuguarda", sessao.EntrarComSenhaIn(
+        apelido="gerente.entrada", senha="senha-forte-1", volta="https://meuguarda.gestao.solar/"), db)
+    assert r.entrada and r.entrada_expira_em
+    cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=r.entrada)
+    # sem senha de novo: a asserção do TermoVision (o "Importar do TermoVision" do meuGuarda), com o portão do perfil
+    r2 = sessao.entrar_no_produto("termovision", sessao.EntrarIn(volta="https://meuguarda.gestao.solar/?tv=1"), cred, db)
+    c = jwt.decode(r2.url.partition("#assercao=")[2], publica, algorithms=["RS256"], audience="termovision")
+    assert c["portao"] == "empresa" and r2.entrada                       # e a sessão se renova
+    assert [p.produto for p in sessao.produtos_da_sessao(cred, db)] == ["meuguarda", "termovision"]
+    # nenhuma porta do GS a aceita: nem os portões, nem trocar de papel ou de senha
+    for guarda in (usuario_atual, gestor_atual, gestor_empresa_atual, tecnico_atual, sessao.sessao_atual):
+        with pytest.raises(HTTPException):
+            guarda(cred, db)
+    # a empresa desligada para a entrada também
+    db.get(Empresa, gerente.empresa_id).ativa = False
+    db.commit()
+    with pytest.raises(HTTPException):
+        sessao.entrar_no_produto("termovision", sessao.EntrarIn(volta="https://meuguarda.gestao.solar/"), cred, db)

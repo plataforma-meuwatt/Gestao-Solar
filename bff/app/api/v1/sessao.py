@@ -25,6 +25,7 @@ from app.core.db import get_db
 from app.core.security import (
     ALGORITMO,
     conferir_senha,
+    criar_token_entrada,
     criar_token_empresa,
     criar_token_tecnico,
     gerar_hash_senha,
@@ -38,8 +39,9 @@ router = APIRouter(prefix="/api/sessao", tags=["sessão · papéis"])
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _sessao(cred: HTTPAuthorizationCredentials | None, db: Session) -> tuple[User, dict]:
-    """Quem está falando, e o que o token diz (escopo, empresa da sessão)."""
+def _sessao(cred: HTTPAuthorizationCredentials | None, db: Session, aceita_entrada: bool = False) -> tuple[User, dict]:
+    """Quem está falando, e o que o token diz (escopo, empresa da sessão). A sessão de ENTRADA (`criar_token_entrada`)
+    só vale onde se pede (`aceita_entrada`): sem isso, trocar de papel com ela emitiria a sessão inteira de um portão."""
     if cred is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Não autenticado")
     try:
@@ -47,6 +49,8 @@ def _sessao(cred: HTTPAuthorizationCredentials | None, db: Session) -> tuple[Use
         usuario = db.get(User, int(dados["sub"]))
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
+    if dados.get("escopo") == "entrada" and not aceita_entrada:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
 
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
@@ -275,13 +279,21 @@ def _volta(produto: str, volta: str) -> str:
     return urlunsplit(("https", u.netloc, u.path or "/", u.query, ""))
 
 
+def _escopo(cred: HTTPAuthorizationCredentials | None) -> str | None:
+    """O escopo de um token que já passou por `_sessao`."""
+    return jwt.get_unverified_claims(cred.credentials).get("escopo") if cred else None
+
+
 def _conta_do_portao(cred: HTTPAuthorizationCredentials | None, db: Session) -> tuple[User, str]:
     """A conta e o portão da sessão, conferidos pela GUARDA daquele portão (empresa ativa, perfil, empresa da sessão):
     a do meuGuarda não pode ser mais frouxa que a do próprio portão."""
-    from app.core.security import gestor_atual, gestor_empresa_atual, tecnico_atual, usuario_atual
+    from app.core.security import _empresa_ativa, gestor_atual, gestor_empresa_atual, tecnico_atual, usuario_atual
 
-    _, dados = _sessao(cred, db)
+    usuario, dados = _sessao(cred, db, aceita_entrada=True)
     escopo = dados.get("escopo")
+    if escopo == "entrada":                                # a do gestao.solar: o portão vem do perfil
+        _empresa_ativa(db, usuario)
+        return usuario, pessoas.escopo_do_perfil(usuario.perfil)
     guarda = {None: usuario_atual, "empresa": gestor_empresa_atual, "tecnico": tecnico_atual,
               "painel": gestor_atual}.get(escopo)
     if guarda is None:
@@ -321,6 +333,10 @@ class EntrarIn(BaseModel):
 
 class EntrarOut(BaseModel):
     url: str
+    #: A sessão de ENTRADA do gestao.solar (nova a cada uso: a validade corre do último uso), quando a pessoa entrou
+    #: com a senha ali ou veio com ela. Só gera asserção: nenhum portão a aceita.
+    entrada: str | None = None
+    entrada_expira_em: datetime | None = None
 
 
 class EntrarComSenhaIn(BaseModel):
@@ -353,7 +369,8 @@ def entrar_no_produto_com_senha(produto: str, body: EntrarComSenhaIn, db: Sessio
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
-    return EntrarOut(url=f"{volta}#assercao={assercao}")
+    entrada, expira = criar_token_entrada(usuario.id)
+    return EntrarOut(url=f"{volta}#assercao={assercao}", entrada=entrada, entrada_expira_em=expira)
 
 
 @router.post("/{produto}", response_model=EntrarOut)
@@ -377,4 +394,7 @@ def entrar_no_produto(
         assercao = login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id)
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    if _escopo(cred) == "entrada":                          # renova: 30 dias a partir do último uso
+        entrada, expira = criar_token_entrada(usuario.id)
+        return EntrarOut(url=f"{volta}#assercao={assercao}", entrada=entrada, entrada_expira_em=expira)
     return EntrarOut(url=f"{volta}#assercao={assercao}")

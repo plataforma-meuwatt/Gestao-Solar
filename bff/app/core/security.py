@@ -187,6 +187,20 @@ def criar_token_empresa(user_id: int, empresa_id: int | None = None) -> tuple[st
     return _token_de_escopo(user_id, "empresa", empresa_id)
 
 
+#: A sessão de ENTRADA dos produtos (meuGuarda, TermoVision): o GS como autenticador ("não quero fazer login, já estou
+#: autenticado no sistema via Gestão", o dono, 12/11/2026). Só serve para `/api/sessao/{produto}` (gerar a asserção):
+#: nenhuma guarda de portão a aceita (o escopo `entrada` é recusado por todas), por isso pode durar 30 dias e se
+#: renovar a cada uso, guardada no navegador em gestao.solar.
+DIAS_DA_ENTRADA = 30
+
+
+def criar_token_entrada(user_id: int) -> tuple[str, datetime]:
+    s = get_settings()
+    expira = datetime.now(UTC) + timedelta(days=DIAS_DA_ENTRADA)
+    return jwt.encode({"sub": str(user_id), "escopo": "entrada", "exp": expira}, s.gs_jwt_secret,
+                      algorithm=ALGORITMO), expira
+
+
 def criar_token_tecnico(user_id: int, empresa_id: int | None = None) -> tuple[str, datetime]:
     """Sessão do técnico, marcada com `escopo=tecnico`.
 
