@@ -797,6 +797,22 @@ class MeuPlanoClient:
                             json={"lat": lat, "lng": lng, "substituir": substituir})
         return r.json()
 
+    # ------------------------------------------------- lugares não recomendados (a frota)
+
+    async def lugares_perto(self, lat: float, lng: float) -> dict[str, Any]:
+        """O que há em volta do ponto (Google, ou o OSM de reserva): `{lugares: [{nome, endereco, tipo, lat, lng,
+        place_id, fonte, distancia_m, nao_recomendado_id}], endereco, fonte, nao_recomendados_perto: [...]}`."""
+        return await self._get("/api/v1/meuacesso/veiculos/lugares/perto", lat=lat, lng=lng)
+
+    async def marcar_lugar_nao_recomendado(self, lugar: dict[str, Any], motivo: str) -> dict[str, Any]:
+        """Lá, o mesmo lugar marcado de novo troca o motivo (`ja_tinha`, `motivo_anterior`)."""
+        r = await self._req("POST", "/api/v1/meuacesso/veiculos/lugares-nao-recomendados",
+                            json={**lugar, "motivo": motivo})
+        return r.json()
+
+    async def lugares_nao_recomendados(self) -> list[dict[str, Any]]:
+        return await self._get("/api/v1/meuacesso/veiculos/lugares-nao-recomendados") or []
+
     # ------------------------------------------------------- relatório da OS (o Word meuPlano)
 
     async def relatorios_da_os(self, os_id: int) -> list[dict[str, Any]]:

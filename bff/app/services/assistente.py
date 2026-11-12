@@ -405,7 +405,11 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "assinar_pdf": (pdf.assinar_pdf, pdf.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
-               "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER), **helper.FERRAMENTAS, **cad.FERRAMENTAS,
+               "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER),
+               "lugar_da_localizacao": (local.lugar_da_localizacao, local.FERRAMENTA_LUGAR),
+               "marcar_lugar_nao_recomendado": (local.marcar_lugar_nao_recomendado, local.FERRAMENTA_MARCAR),
+               "lugares_nao_recomendados": (local.lugares_nao_recomendados, local.FERRAMENTA_LISTA_LUGARES),
+               **helper.FERRAMENTAS, **cad.FERRAMENTAS,
                **par.FERRAMENTAS, **mg.FERRAMENTAS}
 
 
@@ -914,8 +918,8 @@ def permitidas(user) -> list[str]:
         nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "assinar_pdf",
-                  "gravar_coordenada",
-                  "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
+                  "gravar_coordenada", "lugar_da_localizacao", "marcar_lugar_nao_recomendado",
+                  "lugares_nao_recomendados", "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
@@ -1013,8 +1017,10 @@ de memória.
   quem ela chama de "este contato". Siga a regra de sempre para o pedido e use o nome, o telefone e o e-mail EXATOS
   dele. Sem pedido junto, pergunte o que fazer com o contato.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização (pelo 📎 ou por link do Google Maps, que o sistema já
-  leu). Pergunte de QUAL usina é (se ela ainda não disse) e chame `gravar_coordenada` com a usina; o sistema diz se
-  grava ou substitui e pede o Sim. Nunca escreva coordenada.
+  leu). Disse que é a coordenada de uma usina → `gravar_coordenada` com a usina (o sistema diz se grava ou substitui e
+  pede o Sim). Sem dizer para que é → `lugar_da_localizacao` e pergunte se ela está no lugar sugerido (a usina perto,
+  senão o 1º da lista); confirmado, pergunte o que ela quer com ele. "Não é recomendado", "ruim", "evitar" (com o
+  motivo) → `marcar_lugar_nao_recomendado`. Quais lugares evitar → `lugares_nao_recomendados`. Nunca escreva coordenada.
 - Pedido da localização, da coordenada ou de como chegar a uma usina → `local_da_usina`: o sistema manda o link do
   Google Maps e o do Waze; você só diz uma linha, sem os links.
 - Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →

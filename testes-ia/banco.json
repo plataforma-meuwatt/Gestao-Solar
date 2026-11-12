@@ -42,7 +42,7 @@
 {"frase": "qual o código do portão de pirapozinho?", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
 {"frase": "senha do wifi de pereiras", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
 {"frase": "cadastra o michel no meuwatt como técnico", "espera": ["formulario_de_cadastro"], "origem": "teste 29/10 (contato × conta)"},
-{"frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]", "espera": ["listar_usinas"], "origem": "teste 29/10 (localização: pergunta a usina)", "ou_sem_ferramenta": true},
+{"frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]", "espera": ["lugar_da_localizacao"], "origem": "teste 29/10 (localização sem dizer a usina); desde 12/11 reconhece o lugar (pedido do Renan: \"pela localização eu quero que o bot sugira o local\")"},
 {"frase": "[📍 localização recebida, ainda não gravada] essa é a usina de ibitinga", "espera": ["gravar_coordenada"], "origem": "teste 29/10 (localização)"},
 {"frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina", "espera": ["manutencao"], "origem": "29/10 (virou assinatura digital)"},
 {"frase": "Deixe só Roçagem nos centros de custo do comissionamento 1736", "espera": ["manutencao"], "origem": "29/10 (o meuPlano não tinha a ferramenta)"},
@@ -207,7 +207,7 @@
 {"frase": "Me manda meu usuário e senha", "espera": ["conta_do_gs"], "origem": "log #234"},
 {"frase": "Redefina a senha para ••••", "espera": ["conta_do_gs"], "origem": "log #309"},
 {"frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #310"},
-{"frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb", "espera": [], "origem": "log #313"},
+{"frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb", "espera": ["lugar_da_localizacao"], "ou_sem_ferramenta": true, "origem": "log #313; desde 12/11 o link sozinho também reconhece o lugar"},
 {"frase": "Salve a senha do cadeado de tiete ••••", "espera": ["manutencao"], "origem": "log #316"},
 {"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #333"},
 {"frase": "Abra uma os para porto ferreira corretiva barramento principal cabine primária, designar técnico diogo e michel, responsáveis kewyn e renan", "espera": ["manutencao"], "origem": "log #393"},
@@ -256,5 +256,8 @@
 {"frase": "Cadastre este contato em pirapozinho como pessoa que faz roçagens, cadastre como terceiro", "espera": ["manutencao"], "origem": "log #284"},
 {"frase": "+55 18 ••••\nJaime policial civil", "espera": ["manutencao"], "origem": "log #285"},
 {"frase": "[📷 foto]", "espera": [], "origem": "log #372"},
-{"frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.", "espera": ["manutencao"], "origem": "log #381"}
+{"frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.", "espera": ["manutencao"], "origem": "log #381"},
+{"frase": "[📍 localização recebida, ainda não gravada] parei nesse posto agora", "espera": ["lugar_da_localizacao"], "origem": "lugares não recomendados (12/11)"},
+{"frase": "[📍 localização recebida, ainda não gravada] esse posto não é recomendado, o diesel é batizado", "espera": ["lugar_da_localizacao", "marcar_lugar_nao_recomendado"], "origem": "lugares não recomendados (12/11)"},
+{"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_nao_recomendados"], "origem": "lugares não recomendados (12/11)"}
 ]

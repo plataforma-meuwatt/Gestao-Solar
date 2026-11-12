@@ -626,6 +626,15 @@ MEUPLANO: list[Rota] = [
          "A localização mandada pelo WhatsApp gravada como coordenada da usina, confirmada pela pessoa com o Sim",
          essencial=False, sonda=False,
          nao_sondada_porque="Grava a coordenada da usina: só roda com a confirmação da pessoa."),
+    # o LUGAR onde a pessoa parou e a lista de lugares não recomendados da empresa (`assistente_local`, 12/11/2026)
+    Rota("mp.lugares_perto", "GET", "/api/v1/meuacesso/veiculos/lugares/perto",
+         "Que lugar é a localização mandada pelo WhatsApp (posto, restaurante…) e o que a equipe já marcou ali",
+         essencial=False, sonda=False, params={"lat": "{lat}", "lng": "{lng}"},
+         nao_sondada_porque="Procura no Google (custa) a partir da localização da pessoa: só roda quando ela manda uma."),
+    Rota("mp.marcar_lugar", "POST", "/api/v1/meuacesso/veiculos/lugares-nao-recomendados",
+         "O lugar marcado como NÃO RECOMENDADO pelo WhatsApp, com o motivo, confirmado pela pessoa com o Sim",
+         essencial=False, sonda=False,
+         nao_sondada_porque="Grava na lista da empresa: só roda com a confirmação da pessoa."),
     # o RELATÓRIO da OS pelo bot (`assistente_relatorio`): o salvo da aba Relatórios ou um novo com IA, em PDF
     Rota("mp.relatorios_da_os", "GET", "/api/v1/meuacesso/word/relatorios",
          "Os relatórios salvos de uma OS (a aba Relatórios de lá), para o bot perguntar qual mandar",

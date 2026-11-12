@@ -65,6 +65,11 @@ async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = ()) -> di
             from app.services import assistente_pdf as pdf
             pdf._RECEBIDOS[ctx.telefone] = [{"id": f"teste-{i}", "nome": n, "em": pdf.monotonic()}
                                             for i, n in enumerate(nomes)]
+        if "[📍" not in frase:
+            # as coordenadas escritas ou o link do Google Maps viram a localização GUARDADA, como no bot (12/11/2026:
+            # sem isto `lugar_da_localizacao` dizia que não havia localização)
+            from app.services import assistente_local as local
+            frase = ctx.pedido = await local.do_link(ctx.telefone, frase)
         if inteira:
             texto = await a.responder(ctx, [{"role": "user", "content": frase}])
             if ctx.rodape:                                  # os links do mapa, como no bot

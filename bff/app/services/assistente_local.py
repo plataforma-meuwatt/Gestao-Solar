@@ -1,4 +1,5 @@
-"""Localização do WhatsApp gravada como coordenada da usina no meuPlano (pedido do Renan, 29/10/2026).
+"""Localização do WhatsApp gravada como coordenada da usina no meuPlano (pedido do Renan, 29/10/2026), ou reconhecida
+como o LUGAR onde a pessoa parou, para a lista de lugares não recomendados (12/11/2026, no fim do arquivo).
 
 A pessoa manda a localização (📎 → Localização). O gateway entrega os números da Meta (`midia`: lat, lng, nome,
 endereço); eles ficam guardados aqui na chegada e a IA lê só «[📍 localização recebida…]». Ela pergunta de qual usina
@@ -10,9 +11,11 @@ permissão de lá (`meuacesso.usinas.coordenada`).
 
 import re
 import unicodedata
+from datetime import datetime, timezone
 from math import asin, cos, radians, sin, sqrt
 from time import monotonic
 from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -153,11 +156,18 @@ def mensagem(telefone: str) -> str:
     return "[📍 localização recebida, ainda não gravada" + (f": {loc['rotulo']}" if loc.get("rotulo") else "") + "]"
 
 
-def _distancia(lat1: float, lng1: float, lat2: float, lng2: float) -> str:
+def _m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dlat, dlng = radians(lat2 - lat1), radians(lng2 - lng1)
     h = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
-    m = 2 * 6371000.0 * asin(sqrt(h))
+    return 2 * 6371000.0 * asin(sqrt(h))
+
+
+def _metros(m: float) -> str:
     return f"{m:.0f} m" if m < 1000 else f"{m / 1000:.1f} km".replace(".", ",")
+
+
+def _distancia(lat1: float, lng1: float, lat2: float, lng2: float) -> str:
+    return _metros(_m(lat1, lng1, lat2, lng2))
 
 
 def _sem_acento(t: str) -> str:
@@ -294,3 +304,269 @@ async def local_da_usina(ctx, a: dict) -> dict:
     ctx.rodape.append(f"📍 *{nome}*\nGoogle Maps: {_mapa(lat, lng)}\nWaze: {_waze(lat, lng)}")
     return {"usina": nome, "enviado": "O sistema manda os links do Google Maps e do Waze ao pé da sua resposta: "
                                       "não os escreva. Responda numa linha curta."}
+
+
+# ── o LUGAR da localização e a lista de lugares não recomendados (12/11/2026, o dono: "parei em um posto agora … pela
+# localização eu quero que o bot sugira o local … aí eu falo, esse lugar não é recomendado, por isso. Aí fica lá tipo na
+# lista negra de locais"). Quem procura é o meuPlano (Google, ou o OSM de reserva); os números do lugar ficam aqui,
+# guardados com a localização, e a IA escolhe pelo número da lista: ela nunca escreve coordenada.
+
+PERMISSAO_FROTA = "gestao.veiculos.usar"
+#: Até onde a usina conta como "aqui" (a usina é grande e a coordenada gravada é um ponto dela).
+USINA_PERTO_M = 2000
+_BRT = ZoneInfo("America/Sao_Paulo")
+
+
+def _data(iso: str | None) -> str:
+    """A data em Brasília: o meuPlano manda em UTC (a marcação das 22h não pode sair com o dia seguinte)."""
+    try:
+        t = datetime.fromisoformat((iso or "").replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(_BRT).strftime("%d/%m/%Y")
+
+
+def _marcado(m: dict) -> str:
+    quem = ", ".join(x for x in (m.get("por"), _data(m.get("em"))) if x)
+    return f"{m.get('motivo')}" + (f" ({quem})" if quem else "")
+
+
+def _marcas_do_lugar(loc: dict, lugar: dict) -> list[dict]:
+    """As marcações da empresa que são DESTE lugar: as que o meuPlano casou com ele, ou o mesmo nome a até 60 m (o lugar
+    que a pessoa disse pelo nome, fora da lista do mapa)."""
+    ids = set(lugar.get("nao_recomendado_ids") or [])
+    return [m for m in loc.get("marcados") or [] if m.get("id") in ids or (
+        _sem_acento(m.get("nome")) == _sem_acento(lugar.get("nome")) and m.get("lat") is not None
+        and _m(m["lat"], m["lng"], lugar["lat"], lugar["lng"]) <= 60)]
+
+
+async def _lugares(ctx, loc: dict, *, refazer_parcial: bool = True) -> dict:
+    """O que há em volta da localização, perguntado ao meuPlano (fica com ela; o que falhou se pergunta de novo, e o que
+    veio em parte também — menos ao marcar, quando o número que a pessoa disse vale contra a lista que ela VIU). A usina
+    perto vem à parte: sem a frota (403) ou com o mapa fora, a usina segue sendo sugerida. {"erro": …} se nada.
+    `loc` só muda no fim, de uma vez: as ferramentas de uma rodada rodam juntas, e uma não pode ler a lista pela metade
+    da outra."""
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    if "lugares" in loc and not loc.get("mapa_erro") and not (refazer_parcial and loc.get("incompleto")):
+        return loc
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()                                       # solta a conexão enquanto o meuPlano (e o Google) responde
+    try:
+        usinas = await mp.usinas()
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora."}
+    novo = {"usinas": sorted(((u, d) for u in usinas if u.get("latitude") is not None and u.get("longitude") is not None
+                              for d in [_m(loc["lat"], loc["lng"], u["latitude"], u["longitude"])]
+                              if d <= USINA_PERTO_M), key=lambda x: x[1]),
+            "lugares": [], "endereco": None, "marcados": [], "mapa_erro": None, "incompleto": False,
+            "marcados_lidos": False}
+    try:
+        perto = await mp.lugares_perto(loc["lat"], loc["lng"])
+    except httpx.HTTPStatusError as e:
+        novo["mapa_erro"] = ("o papel desta pessoa no meuPlano não usa a frota, e é por ela que se procura o lugar (o "
+                             "gestor da O&M pode liberar)" if e.response.status_code == 403
+                             else "o meuPlano não conseguiu procurar o lugar agora")
+    except httpx.HTTPError:
+        novo["mapa_erro"] = "o meuPlano não respondeu a tempo"
+    else:
+        if perto.get("fonte") == "erro":
+            novo["mapa_erro"] = "o mapa (Google/OpenStreetMap) não respondeu agora"
+        elif perto.get("fonte") == "none":
+            novo["mapa_erro"] = "a procura de lugares não está ligada no meuPlano"
+        novo.update(lugares=perto.get("lugares") or [], endereco=perto.get("endereco"),
+                    marcados=perto.get("nao_recomendados_perto") or [], incompleto=bool(perto.get("incompleto")),
+                    marcados_lidos=True)
+    loc.update(novo)
+    return loc
+
+
+FERRAMENTA_LUGAR = {"type": "function", "function": {
+    "name": "lugar_da_localizacao",
+    "description": ("QUE LUGAR é a localização que a pessoa mandou («[📍 localização recebida…]»): a usina dela ali perto, "
+                    "os estabelecimentos em volta (posto, restaurante, hotel…), do mais perto ao mais longe, e os que a "
+                    "equipe já marcou como NÃO RECOMENDADOS ali. Use quando ela manda a localização sem dizer que é a "
+                    "coordenada de uma usina."),
+    "parameters": {"type": "object", "properties": {}}}}
+
+
+async def lugar_da_localizacao(ctx, a: dict) -> dict:
+    loc = recebida(ctx.telefone)
+    if loc is None:
+        return {"erro": "Não há localização recebida (ela fica guardada 30 min). Peça que a pessoa mande de novo pelo "
+                        "📎 → Localização."}
+    loc = await _lugares(ctx, loc)
+    if "erro" in loc:
+        return loc
+    out: dict = {}
+    if loc["usinas"]:
+        out["usinas_perto"] = [f"{u.get('name')} (a {_metros(d)})" for u, d in loc["usinas"]]
+    out["lugares"] = []
+    for i, c in enumerate(loc["lugares"], 1):
+        marcas = _marcas_do_lugar(loc, c)
+        out["lugares"].append(f"{i}. {c.get('nome')}" + "".join(f", {x}" for x in (c.get("tipo"), c.get("endereco")) if x)
+                              + f", a {_metros(c.get('distancia_m') or 0)}"
+                              + (" — ⚠️ NÃO RECOMENDADO pela equipe: " + "; ".join(_marcado(m) for m in marcas)
+                                 if marcas else ""))
+    nos_lugares = {m.get("id") for c in loc["lugares"] for m in _marcas_do_lugar(loc, c)}
+    ja = [m for m in loc["marcados"] if m.get("id") not in nos_lugares]
+    if ja:
+        out["nao_recomendados_aqui"] = [f"{m.get('nome')}: {_marcado(m)}, a {_metros(m.get('distancia_m') or 0)}"
+                                        for m in ja]
+    if loc["mapa_erro"]:
+        out["sem_mapa"] = f"Não deu para ver os lugares em volta: {loc['mapa_erro']}. Diga isso e pergunte o nome do lugar."
+    elif not loc["lugares"]:
+        out["sem_lugar"] = ("O mapa " + ("respondeu só em parte e " if loc["incompleto"] else "")
+                            + "não trouxe estabelecimento com nome aqui"
+                            + (f"; o endereço é {loc['endereco']}" if loc.get("endereco") else "")
+                            + ". Pergunte o nome do lugar.")
+    elif loc["incompleto"]:
+        out["aviso"] = ("O mapa respondeu só em parte: a lista pode não ter o lugar onde ela está. Diga isso ao "
+                        "perguntar.")
+    out["como"] = ("Pergunte se ela está no 1º lugar da lista (na usina, se houver usina perto) e, confirmado, o que ela "
+                   "quer fazer com ele. Avise o que está NÃO RECOMENDADO. Não escreva coordenada.")
+    return out
+
+
+def _numero(termo: str) -> int | None:
+    """O número da lista ("1", "1º", "#2"), ou None se é um nome."""
+    t = (termo or "").strip(" .#º°")
+    return int(t) if t.isdigit() else None
+
+
+def _escolher_lugar(lugares: list[dict], termo: str) -> tuple[dict | None, list[dict]]:
+    """O lugar pelo número da lista ou pelo nome: (o escolhido, ou None e os candidatos)."""
+    t = _sem_acento(termo)
+    if (n := _numero(termo)) is not None:
+        return (lugares[n - 1], []) if 1 <= n <= len(lugares) else (None, [])
+    achados = [c for c in lugares if t and (t in _sem_acento(c.get("nome")) or _sem_acento(c.get("nome")) in t)]
+    return (achados[0], achados) if len(achados) == 1 else (None, achados)
+
+
+FERRAMENTA_MARCAR = {"type": "function", "function": {
+    "name": "marcar_lugar_nao_recomendado",
+    "description": ("Põe na lista de LUGARES NÃO RECOMENDADOS da equipe o lugar da localização que a pessoa mandou, com o "
+                    "motivo nas palavras dela. Passe o número da lista de `lugar_da_localizacao` (ou o nome que ela "
+                    "disse, se o lugar não está na lista): os números do lugar vêm do sistema, nunca os escreva. Sem o "
+                    "motivo, pergunte por que não é recomendado."),
+    "parameters": {"type": "object", "properties": {
+        "lugar": {"type": "string", "description": "o número da lista ou o nome do lugar"},
+        "motivo": {"type": "string", "description": "por que não é recomendado, nas palavras dela"}},
+        "required": ["lugar", "motivo"]}}}
+
+
+async def marcar_lugar_nao_recomendado(ctx, a: dict) -> dict:
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    loc = recebida(ctx.telefone)
+    if loc is None:
+        return {"erro": "Não há localização recebida (ela fica guardada 30 min). Peça que a pessoa mande de novo pelo "
+                        "📎 → Localização, de onde ela está."}
+    termo, motivo = (a.get("lugar") or "").strip(), " ".join((a.get("motivo") or "").split())
+    if not motivo:
+        return {"erro": "Falta o motivo: pergunte por que o lugar não é recomendado."}
+    if not termo:
+        return {"erro": "Falta o lugar: pergunte qual é."}
+    loc = await _lugares(ctx, loc, refazer_parcial=False)
+    if "erro" in loc:
+        return loc
+    lugar, candidatos = _escolher_lugar(loc["lugares"], termo)
+    if lugar is None and (candidatos or _numero(termo) is not None):
+        return {"erro": f"O lugar '{termo}' " + ("é ambíguo" if candidatos else "não está na lista") + ": pergunte qual é.",
+                "opcoes": [c.get("nome") for c in (candidatos or loc["lugares"])]}
+    if lugar is None:                                   # o nome que a pessoa disse, no ponto que ela mandou
+        lugar = {"nome": termo, "endereco": loc.get("endereco") or loc.get("rotulo") or None, "lat": loc["lat"],
+                 "lng": loc["lng"], "fonte": "manual"}
+    corpo = {k: lugar.get(k) for k in ("nome", "endereco", "tipo", "lat", "lng", "place_id", "fonte")}
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()
+    try:
+        if PERMISSAO_FROTA not in (await mp.permissoes()):
+            return {"erro": "O papel desta pessoa no meuPlano não usa a frota, e a lista de lugares é dela. Nada foi "
+                            "gravado: o gestor da O&M pode liberar."}
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora. Nada foi gravado."}
+    nome = corpo["nome"]
+    # o que já está na lista sobre ESTE lugar vai no resumo: o motivo do colega fica (cada um tem a sua marcação), e o
+    # da própria pessoa é trocado pelo novo — o ✅ diz qual era
+    linhas = [corpo["endereco"], *(f"Já na lista: {_marcado(m)}" for m in _marcas_do_lugar(loc, lugar)),
+              f"Motivo: {motivo}", _mapa(corpo["lat"], corpo["lng"]),
+              "Não deu para ver a lista agora: se você já marcou este lugar, o motivo novo substitui o seu."
+              if not loc.get("marcados_lidos") else ""]
+
+    async def executar(db, user, telefone: str) -> str:
+        from app.services.integracoes import detalhe_do_upstream
+        try:
+            mp = cliente_meuplano(db, user.id, so_proprio=True)
+            db.commit()
+            r = await mp.marcar_lugar_nao_recomendado(corpo, motivo)
+        except SemConexao as e:
+            return f"❌ Não executado: {e}"
+        except httpx.HTTPStatusError as e:
+            motivo_ = str(detalhe_do_upstream(e.response) or e.response.status_code).rstrip(". ")
+            return f"❌ O meuPlano recusou: {motivo_}. Nada foi gravado."
+        except httpx.HTTPError:
+            return f"⚠️ O meuPlano não respondeu a tempo: {nome} PODE ter entrado na lista. Confira."
+        if r.get("id") is not None and r.get("lat") is not None:
+            # a marcação nova entra na lista guardada (refazer a busca mudaria o número que a pessoa viu)
+            loc["marcados"] = [m for m in loc.get("marcados") or [] if m.get("id") != r["id"]] + [
+                {**r, "distancia_m": round(_m(loc["lat"], loc["lng"], r["lat"], r["lng"]))}]
+            if any(c is lugar for c in loc.get("lugares") or []) and r["id"] not in lugar.get("nao_recomendado_ids", []):
+                lugar["nao_recomendado_ids"] = [*lugar.get("nao_recomendado_ids", []), r["id"]]
+        if r.get("ja_tinha"):
+            return (f"✅ {nome} já estava na sua lista de lugares não recomendados: o seu motivo de antes "
+                    f"(«{r.get('motivo_anterior')}») foi trocado por este.")
+        return f"✅ {nome} está na lista de lugares não recomendados da equipe."
+
+    return helper.propor(ctx, f"Marcar como NÃO RECOMENDADO: {nome}", PRAZO_S, executar, linhas,
+                         parte="bot_meuplano", confirmacao="sim")
+
+
+FERRAMENTA_LISTA_LUGARES = {"type": "function", "function": {
+    "name": "lugares_nao_recomendados",
+    "description": ("A lista de LUGARES NÃO RECOMENDADOS da equipe (posto, restaurante, hotel…), com o motivo, quem "
+                    "marcou e quando. Use quando perguntarem quais lugares evitar ou o que está na lista."),
+    "parameters": {"type": "object", "properties": {
+        "busca": {"type": "string", "description": "parte do nome, da cidade ou do motivo, para ver só esses"}}}}}
+#: Até onde a lista vai inteira na resposta da ferramenta (o teto dela, em `assistente`, é 14.000 letras).
+TETO_LISTA = 12000
+
+
+async def lugares_nao_recomendados(ctx, a: dict) -> dict:
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    try:
+        mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
+    except SemConexao as e:
+        return {"erro": f"Manutenção indisponível: {e}"}
+    ctx.db.commit()
+    try:
+        lista = await mp.lugares_nao_recomendados()
+    except httpx.HTTPStatusError as e:
+        return {"erro": "O papel desta pessoa no meuPlano não vê a frota, e a lista de lugares é dela."
+                if e.response.status_code == 403 else "O meuPlano não conseguiu ler a lista agora."}
+    except httpx.HTTPError:
+        return {"erro": "O meuPlano não respondeu agora."}
+    busca = _sem_acento(a.get("busca") or "")
+    if busca:
+        lista = [m for m in lista if busca in _sem_acento(" ".join(str(m.get(k) or "")
+                                                                  for k in ("nome", "endereco", "motivo")))]
+    if not lista:
+        return {"lugares": [], "nota": f"Nenhum lugar com '{a['busca']}' na lista." if busca else
+                "A lista está vazia: ninguém da equipe marcou lugar ainda."}
+    # sem o endereço (o do OSM tem 100+ letras); e o que não couber é DITO, com o jeito de ver, nunca cortado calado
+    linhas, usado = [], 0
+    for m in lista:
+        linha = f"{m.get('nome')}: {_marcado(m)}"
+        if usado + len(linha) > TETO_LISTA:
+            break
+        linhas.append(linha)
+        usado += len(linha) + 4
+    out = {"total": len(lista), "lugares": linhas}
+    if len(linhas) < len(lista):
+        out["faltam"] = (f"Mais {len(lista) - len(linhas)} lugares não couberam aqui: diga quantos são e peça o nome, a "
+                         "cidade ou o motivo para procurar (`busca`).")
+    return out
