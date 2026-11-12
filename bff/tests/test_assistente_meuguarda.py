@@ -228,6 +228,25 @@ async def test_desligar_o_alarme_pede_o_motivo_e_o_sim(db, meuguarda):
     assert feito.startswith("✅ Alarme de 2 câmeras de UFV Pereiras desligado até 01/01 18:00")
 
 
+async def test_ate_as_18h_e_a_hora_do_servidor_em_brasilia(db, meuguarda, monkeypatch):
+    """12/11/2026, 13:57: "Pessoal trabalhando. Até as 18hr." e o bot respondeu que as 18h já tinham passado (o prompt
+    só tinha a data). Regra do Renan: vale a hora do nosso servidor, em Brasília, e a conta é do servidor, na hora do Sim."""
+    from app.core import datas
+    agora = datas.agora().replace(hour=13, minute=57, second=0, microsecond=0)
+    monkeypatch.setattr(mg, "agora", lambda: agora)
+    monkeypatch.setattr(assistente, "agora", lambda: agora)
+    assert "agora são 13:57 (America/Sao_Paulo" in assistente._sistema(_ctx(db, telefone="+5517997372222", apelido="t2"))
+    ctx = _ctx(db)
+    r = await mg.alarme_cameras(ctx, {"ligar": False, "cameras": ["todas"], "ate": "18h", "motivo": "pessoal trabalhando"})
+    assert r["proposta_pendente"] == "Desligar o alarme de 6 câmeras de UFV Pereiras, até 18:00"
+    agora = agora.replace(hour=14, minute=3, second=40)   # o Sim veio 6 min depois: continua até as 18:00
+    await helper._rodar(ctx.proposta, db, ctx.user, ctx.telefone)
+    assert meuguarda.deteccoes[-1][3] == 237              # 3 h 56 min 20 s, para cima
+    r = await mg.alarme_cameras(_ctx(db, telefone="+5517997373333", apelido="t3"),
+                                {"ligar": False, "cameras": ["todas"], "ate": "13:00", "motivo": "pessoal trabalhando"})
+    assert r["erro"].startswith("13:00 já passou: agora são 14:03")
+
+
 async def test_a_parte_desligada_no_meio_nao_executa(db, meuguarda):
     ctx = _ctx(db)
     await mg.alarme_cameras(ctx, {"ligar": True, "cameras": ["todas"]})

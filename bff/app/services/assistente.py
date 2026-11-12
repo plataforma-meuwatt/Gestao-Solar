@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.clients import whatsapp
 from app.core import cripto
 from app.core.config import get_settings
-from app.core.datas import hora_brt
+from app.core.datas import agora, hora_brt
 from app.core.db import SessionLocal
 from app.core.telefone import normalizar
 from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
@@ -958,7 +958,9 @@ def _sistema(ctx: ger.Contexto) -> str:
              and (c != "bot_helper" or helper.configurado())]
     if mg.permitidas(ctx.user):                       # consultar vem com o acesso; atuar é a caixa do GS
         areas.append("as câmeras de segurança das usinas (meuGuarda)")
-    return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} (America/Sao_Paulo).
+    return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} e agora são {agora():%H:%M} (America/Sao_Paulo,
+o relógio do servidor: é a ÚNICA hora que vale; nunca a deduza das mensagens nem do relógio de câmera, inversor ou
+outro sistema).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
 a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente responder de outro jeito.

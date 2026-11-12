@@ -11,6 +11,7 @@
   `ctx.segredos`, que o tira do Log do bot e da cópia do gateway — quem lê o log não abre a câmera.
 """
 
+import math
 import re
 import unicodedata
 from collections import Counter
@@ -21,7 +22,7 @@ import httpx
 from app.clients import whatsapp
 from app.clients.meuguarda import MeuGuarda
 from app.core.config import get_settings
-from app.core.datas import hora_brt
+from app.core.datas import BRT, agora, hora_brt
 from app.models.user import Perfil
 from app.services import assistente_helper as helper
 from app.services.integracoes import detalhe_do_upstream
@@ -152,6 +153,20 @@ def _ate(valor) -> str | None:
     return f"até {hora_brt(ate.isoformat())}"
 
 
+def _limite(valor) -> tuple[datetime | None, str | None]:
+    """"18:00"/"18h30" (hoje) ou "2026-11-13T08:00" → o instante na hora de Brasília. Regra do Renan (12/11/2026): a
+    hora que vale é a do nosso servidor; sem fuso, é Brasília (nunca o relógio de câmera nem a hora deduzida da conversa)."""
+    s = str(valor).strip().lower().replace("h", ":").rstrip(":")
+    try:
+        if re.fullmatch(r"\d{1,2}(:\d{2})?", s):
+            h, _, m = s.partition(":")
+            return agora().replace(hour=int(h), minute=int(m or 0), second=0, microsecond=0), None
+        t = datetime.fromisoformat(s.upper() if "t" in s else s)
+        return (t.replace(tzinfo=BRT) if t.tzinfo is None else t), None
+    except ValueError:
+        return None, "Não entendi até que horas: pergunte de novo (ex.: 18:00)."
+
+
 def _desligada(c: dict) -> str | None:
     """"até 18:00 por Renan (roçagem)", ou None com o alarme ligado."""
     quando = _ate(c.get("deteccao_desligada_ate"))
@@ -272,6 +287,8 @@ FERRAMENTA_ALARME = {"type": "function", "function": {
                     "description": "os nomes como a pessoa disse; vazio ou [\"todas\"] = todas as câmeras da usina"},
         "usina": {"type": "string", "description": "nome da usina (opcional)"},
         "horas": {"type": "number", "description": "por quanto tempo desligar (opcional)"},
+        "ate": {"type": "string", "description": ("até que horas desligar, como a pessoa disse, na hora de Brasília: "
+                                                   "\"18:00\" (hoje) ou \"2026-11-13T08:00\" (opcional; no lugar de horas)")},
         "motivo": {"type": "string", "description": "por que desligar, nas palavras da pessoa"}},
         "required": ["ligar", "cameras"]}}}
 
@@ -282,14 +299,22 @@ async def alarme_cameras(ctx, a: dict) -> dict:
     if not ligar and len(motivo) < 5:
         return {"erro": "Falta o motivo para desligar o alarme (fica no histórico de cada câmera): pergunte. Nada foi "
                         "feito."}
-    minutos = None
-    if not ligar and a.get("horas") not in (None, ""):
+    minutos, limite = None, None
+    if not ligar and a.get("ate") not in (None, ""):
+        limite, erro = _limite(a["ate"])
+        if erro:
+            return {"erro": erro}
+        minutos = math.ceil((limite - agora()).total_seconds() / 60)
+        if minutos < 5:
+            return {"erro": f"{hora_brt(limite.isoformat())} já passou: agora são {agora():%H:%M} (hora de Brasília). "
+                            "Pergunte de novo."}
+    elif not ligar and a.get("horas") not in (None, ""):
         try:
             minutos = round(float(a["horas"]) * 60)
         except (TypeError, ValueError):
             return {"erro": "Não entendi por quanto tempo: pergunte em horas."}
-        if not 5 <= minutos <= 30 * 24 * 60:
-            return {"erro": "O prazo vai de 5 minutos a 30 dias: pergunte de novo."}
+    if minutos is not None and not 5 <= minutos <= 30 * 24 * 60:
+        return {"erro": "O prazo vai de 5 minutos a 30 dias: pergunte de novo."}
     mg = cliente(ctx.user)
     ctx.db.commit()
     try:
@@ -317,15 +342,22 @@ async def alarme_cameras(ctx, a: dict) -> dict:
         return {"erro": f"{usina['nome']} não tem câmera cadastrada no meuGuarda."}
     n = len(escolhidas)
     alvo = f"{n} câmera{'s' if n > 1 else ''} de {usina['nome']}"
-    quando = (f"por {minutos // 60} h" + (f" {minutos % 60} min" if minutos % 60 else "") if minutos and minutos >= 60
+    quando = (f"até {hora_brt(limite.isoformat())}" if limite
+              else f"por {minutos // 60} h" + (f" {minutos % 60} min" if minutos % 60 else "") if minutos and minutos >= 60
               else f"por {minutos} min" if minutos else "até o horário de religar da usina")
     resumo = f"Ligar de novo o alarme de {alvo}" if ligar else f"Desligar o alarme de {alvo}, {quando}"
     detalhes = [", ".join(_nomes(escolhidas))] + ([] if ligar else [f"Motivo: {motivo}"])
     ids, uid = [int(k["id"]) for k in escolhidas], int(usina["id"])
 
     async def executar(db, user, telefone: str) -> str:
+        m = minutos
+        if limite:  # "até 18:00" vale 18:00 mesmo com o Sim minutos depois: a conta sai do relógio do servidor agora
+            m = math.ceil((limite - agora()).total_seconds() / 60)  # para cima: nunca antes da hora pedida
+            if m < 5:
+                return (f"❌ {hora_brt(limite.isoformat())} já passou (agora são {agora():%H:%M}): nada foi feito. "
+                        "Peça de novo com outro horário.")
         try:
-            r = await cliente(user).deteccao(uid, ligar, ids, minutos, None if ligar else motivo)
+            r = await cliente(user).deteccao(uid, ligar, ids, m, None if ligar else motivo)
         except httpx.TimeoutException:
             return f"⚠️ O meuGuarda não respondeu a tempo: o alarme de {alvo} PODE ter mudado. Confira no meuGuarda."
         except httpx.HTTPError as e:
