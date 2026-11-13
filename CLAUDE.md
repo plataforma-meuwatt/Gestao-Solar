@@ -866,7 +866,9 @@ fonte única: cada função ANSI do relé (27, 59, 59N, 47, 81, 50/51, 67, 32, 4
 (NAO_LIGOU, relé sem comunicação, fase zerada na medição) com o que é, as causas em ordem, o que conferir e o que fazer;
 `do_codigo` lê o código como o relé escreve ("27A", "51G"). `services/diagnostico.py` cruza as paradas de HOJE do
 detector (por skid) com os trips dos relés de proteção do skid (12 h antes; o mesmo trip em 2+ relés no mesmo minuto =
-REDE), o trip ativo (skid desarmado agora), o relé mudo e a fase zerada; `com_helper` lê ao vivo pelo helper (só
+REDE), o trip ativo (skid desarmado agora), o relé mudo (30 min sem leitura VÁLIDA, o `last_read_at` do meuWatt: o `comm`
+sozinho fica falso numa leitura vazia de um minuto, Tietê 13/11) e a fase zerada; parada por falha de comunicação sem
+trip não vira achado (faltou o dado, não a energia: Pereiras 13/11); `com_helper` lê ao vivo pelo helper (só
 leitura) o relé mudo (o helper também não alcança = o relé/barramento; alcança = o coletor do meuWatt) e os inversores
 do skid (estado, hora da partida, falha, alarme). A varredura é o motor de 10 min (`api/v1/avisos._diagnosticos`): vai
 a quem tem "Usina parada", por push e, para quem falou com o bot nas últimas 24 h, a mensagem inteira no WhatsApp

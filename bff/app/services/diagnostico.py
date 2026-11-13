@@ -10,10 +10,12 @@ As regras, em ordem:
 1. Parada (ou inversor sem ligar) num skid + trip no relé DAQUELE skid até 12 h antes = a função do trip é a causa (a
    última antes da parada; as de antes entram como contexto: a 47 que precede a 27). Vários relés com a mesma função no
    mesmo minuto = a REDE, não a usina.
-2. Parada sem trip no relé do skid = "não ligou" ou a causa do detector, com os alarmes do inversor.
+2. Parada sem trip no relé do skid = "não ligou" ou a causa do detector, com os alarmes do inversor. Falha de
+   comunicação sem trip não é parada (faltou o dado, não a energia) e não vira achado.
 3. Trip que disparou e não limpou = skid DESARMADO agora (antes de qualquer parada: de madrugada já se sabe que o skid
    não vai ligar).
-4. Relé sem comunicação = estado desconhecido.
+4. Relé sem leitura válida há 30 min ou mais = estado desconhecido. O `comm` do meuWatt sozinho não basta: ele fica
+   falso numa leitura vazia de um minuto (Tietê, TR-03, 13/11 13:21: o aviso saiu com o coletor de pé).
 5. Uma fase perto de zero com as outras normais e o skid gerando = fusível do TP de medição.
 """
 
@@ -32,6 +34,8 @@ from app.services import matriz
 JANELA_TRIP = timedelta(hours=12)
 #: Trips da mesma função em relés diferentes dentro disto = o mesmo evento da rede.
 MESMO_EVENTO = timedelta(minutes=5)
+#: Sem leitura válida há isto = relé mudo (o mesmo prazo do aviso de usina sem comunicação).
+MUDO = timedelta(minutes=30)
 _ORDEM = {"critica": 0, "alta": 1, "media": 2, "info": 3}
 
 
@@ -202,6 +206,10 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                        fim, causa, [parada_txt], list(item.fazer), item.religar_remoto)
             causas[chave] = a
             achados.append(a)
+        elif all(p.get("cause") == "communication_failure" for p in ps):
+            # Faltou o DADO do inversor, não a energia (Pereiras, 13/11: buracos de 9 min com o relé medindo corrente).
+            # Sem trip não é parada: quem avisa é o "usina sem comunicação" e a verificação do meuWatt.
+            continue
         else:
             item = matriz.MATRIZ["NAO_LIGOU"]
             nao_ligou = any(p.get("cause") == "never_woke_up" for p in ps)
@@ -224,7 +232,9 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                                   None, f"trip {e['funcao']} ({i.nome.lower()}) disparou às {_h(e['quando'])} e não limpou.",
                                   ["Os inversores deste skid não vão gerar até rearmar."], list(i.fazer), i.religar_remoto))
             ja.add(skid)
-        if r.get("comm") is False:                        # um achado por skid (o geral e o do skid podem cair juntos)
+        ultima = _quando(r.get("last_read_at"))         # a última leitura VÁLIDA (48 h); nula = nenhuma nesse tempo
+        if (r.get("comm") is False and m.get("read_evidence") != "unavailable"
+                and (ultima is None or agora - ultima >= MUDO)):   # um achado por skid (o geral e o do skid juntos)
             i = matriz.MATRIZ["RELE_SEM_COMUNICACAO"]
             nome = str(r.get("name") or "")
             nome = nome if nome.lower().startswith("rel") else f"relé {nome}"
@@ -233,7 +243,9 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                 mudo.titulo = mudo.titulo.replace(" sem comunicação", f" e {nome} sem comunicação")
             else:
                 achados.append(Achado(i.codigo, f"{nome} sem comunicação", i.gravidade, usina["nome"], [skid], None,
-                                      None, i.o_que_e, [], list(i.fazer)))
+                                      None, i.o_que_e, [f"Sem leitura válida no meuWatt desde {_h(ultima)}." if ultima
+                                                        else "Sem leitura válida no meuWatt nas últimas 48 h."],
+                                      list(i.fazer)))
         f = _fase_zero([r.get(f"voltage_{x}") for x in "abc"], r.get("total_active_power"))
         if f is not None:
             i = matriz.MATRIZ["FASE_ZERO_MEDICAO"]

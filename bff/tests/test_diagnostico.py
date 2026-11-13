@@ -86,6 +86,12 @@ async def test_sem_trip_e_nao_ligou_e_trip_ativo_e_desarmado():
     assert por["86"].titulo == "skid DESARMADO agora" and por["86"].skids == ["TR-03"]
     assert achados[0].codigo == "86"                     # o crítico primeiro
 
+    # Pereiras, 13/11: o coletor perdeu o dado dos inversores 9 min, sem trip. Não é parada, não vira achado.
+    comm = {**_parada("TR-01", "INV11"), "cause": "communication_failure"}
+    assert not [a for a in await diagnostico.diagnosticar(Sem(), {"slug": "p", "nome": "P"}, [comm],
+                                                         agora=datetime(2026, 11, 13, 12, 30, tzinfo=UTC))
+                if a.skids == ["TR-01"]]
+
 
 async def test_helper_le_o_rele_mudo_e_os_inversores():
     class Helper:
@@ -121,3 +127,25 @@ async def test_helper_le_o_rele_mudo_e_os_inversores():
     assert rele.evidencias == ["Helper agora: o Relé Skid 2 também não responde (o equipamento (slave 3) não "
                                "respondeu)."]
     assert parou.evidencias[0].startswith("Helper agora: Inv 21: Grid-On (running), partiu às")
+
+
+async def test_rele_so_e_mudo_com_30_min_sem_leitura_valida():
+    """Tietê, 13/11 13:21: UMA leitura vazia do TR-03 virou `comm` falso no meuWatt e o aviso saiu com o coletor de pé."""
+    class Tiete(_MW):
+        def __init__(self, ultima):
+            self.ultima = ultima
+
+        async def monitoramento_atual(self, slug):
+            return {"relays": [{"name": "TR-03", "transformer_name": "TR-03", "relay_db_id": 26, "model": "pextron-urp6000",
+                                "comm": False, "last_read_at": self.ultima}]}
+
+        async def eventos_de_trip(self, slug, rele, n):
+            return {"events": []}
+
+    agora = datetime(2026, 11, 13, 16, 22, tzinfo=UTC)
+    assert await diagnostico.diagnosticar(Tiete("2026-11-13T16:18:00Z"), {"slug": "tiete", "nome": "Tietê"}, [],
+                                          agora=agora) == []
+    mudo, = await diagnostico.diagnosticar(Tiete("2026-11-13T15:40:00Z"), {"slug": "tiete", "nome": "Tietê"}, [],
+                                           agora=agora)
+    assert mudo.codigo == "RELE_SEM_COMUNICACAO" and mudo.evidencias[0].startswith("Sem leitura válida no meuWatt desde ")
+    assert mudo.evidencias[0].endswith("12:40.")                 # outro dia sai "13/11 12:40"
