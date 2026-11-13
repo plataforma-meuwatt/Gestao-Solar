@@ -14,7 +14,7 @@ As regras, em ordem:
    comunicação sem trip não é parada (faltou o dado, não a energia) e não vira achado.
 3. Trip que disparou e não limpou = skid DESARMADO agora (antes de qualquer parada: de madrugada já se sabe que o skid
    não vai ligar).
-4. Relé sem leitura válida há 30 min ou mais = estado desconhecido. O `comm` do meuWatt sozinho não basta: ele fica
+4. Relé sem leitura válida há 15 min ou mais = estado desconhecido. O `comm` do meuWatt sozinho não basta: ele fica
    falso numa leitura vazia de um minuto (Tietê, TR-03, 13/11 13:21: o aviso saiu com o coletor de pé).
 5. Uma fase perto de zero com as outras normais e o skid gerando = fusível do TP de medição.
 """
@@ -34,8 +34,8 @@ from app.services import matriz
 JANELA_TRIP = timedelta(hours=12)
 #: Trips da mesma função em relés diferentes dentro disto = o mesmo evento da rede.
 MESMO_EVENTO = timedelta(minutes=5)
-#: Sem leitura válida há isto = relé mudo (o mesmo prazo do aviso de usina sem comunicação).
-MUDO = timedelta(minutes=30)
+#: Sem leitura válida há isto = relé mudo (dono, 13/11: "30 é demais"; o buraco normal do coletor vai até 10 min).
+MUDO = timedelta(minutes=15)
 _ORDEM = {"critica": 0, "alta": 1, "media": 2, "info": 3}
 
 

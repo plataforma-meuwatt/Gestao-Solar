@@ -866,7 +866,7 @@ fonte única: cada função ANSI do relé (27, 59, 59N, 47, 81, 50/51, 67, 32, 4
 (NAO_LIGOU, relé sem comunicação, fase zerada na medição) com o que é, as causas em ordem, o que conferir e o que fazer;
 `do_codigo` lê o código como o relé escreve ("27A", "51G"). `services/diagnostico.py` cruza as paradas de HOJE do
 detector (por skid) com os trips dos relés de proteção do skid (12 h antes; o mesmo trip em 2+ relés no mesmo minuto =
-REDE), o trip ativo (skid desarmado agora), o relé mudo (30 min sem leitura VÁLIDA, o `last_read_at` do meuWatt: o `comm`
+REDE), o trip ativo (skid desarmado agora), o relé mudo (15 min sem leitura VÁLIDA, o `last_read_at` do meuWatt: o `comm`
 sozinho fica falso numa leitura vazia de um minuto, Tietê 13/11) e a fase zerada; parada por falha de comunicação sem
 trip não vira achado (faltou o dado, não a energia: Pereiras 13/11); `com_helper` lê ao vivo pelo helper (só
 leitura) o relé mudo (o helper também não alcança = o relé/barramento; alcança = o coletor do meuWatt) e os inversores

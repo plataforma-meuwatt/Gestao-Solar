@@ -129,7 +129,7 @@ async def test_helper_le_o_rele_mudo_e_os_inversores():
     assert parou.evidencias[0].startswith("Helper agora: Inv 21: Grid-On (running), partiu às")
 
 
-async def test_rele_so_e_mudo_com_30_min_sem_leitura_valida():
+async def test_rele_so_e_mudo_com_15_min_sem_leitura_valida():
     """Tietê, 13/11 13:21: UMA leitura vazia do TR-03 virou `comm` falso no meuWatt e o aviso saiu com o coletor de pé."""
     class Tiete(_MW):
         def __init__(self, ultima):
@@ -143,9 +143,9 @@ async def test_rele_so_e_mudo_com_30_min_sem_leitura_valida():
             return {"events": []}
 
     agora = datetime(2026, 11, 13, 16, 22, tzinfo=UTC)
-    assert await diagnostico.diagnosticar(Tiete("2026-11-13T16:18:00Z"), {"slug": "tiete", "nome": "Tietê"}, [],
-                                          agora=agora) == []
-    mudo, = await diagnostico.diagnosticar(Tiete("2026-11-13T15:40:00Z"), {"slug": "tiete", "nome": "Tietê"}, [],
+    for ultima in ("2026-11-13T16:18:00Z", "2026-11-13T16:08:00Z"):  # 4 e 14 min: o buraco normal do coletor
+        assert await diagnostico.diagnosticar(Tiete(ultima), {"slug": "tiete", "nome": "Tietê"}, [], agora=agora) == []
+    mudo, = await diagnostico.diagnosticar(Tiete("2026-11-13T16:07:00Z"), {"slug": "tiete", "nome": "Tietê"}, [],
                                            agora=agora)
     assert mudo.codigo == "RELE_SEM_COMUNICACAO" and mudo.evidencias[0].startswith("Sem leitura válida no meuWatt desde ")
-    assert mudo.evidencias[0].endswith("12:40.")                 # outro dia sai "13/11 12:40"
+    assert mudo.evidencias[0].endswith("13:07.")                 # outro dia sai "13/11 12:40"
