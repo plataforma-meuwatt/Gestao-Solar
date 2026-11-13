@@ -67,6 +67,7 @@ async def disparar_avisos_de_parada(
     await _paradas(db, simular, saida)
     await _sem_comunicacao(db, simular, saida)
     await _trackers(db, simular, saida)
+    await _diagnosticos(db, simular, saida)
     return saida
 
 
@@ -202,5 +203,52 @@ async def _trackers(db: Session, simular: bool, saida: DisparoOut) -> None:
         for token in resultado.invalidos:
             db.execute(Dispositivo.__table__.delete().where(Dispositivo.token == token))
         saida.dispositivos_removidos += len(resultado.invalidos)
+    if not simular:
+        db.commit()
+
+
+async def _diagnosticos(db: Session, simular: bool, saida: DisparoOut) -> None:
+    """A causa do que parou (`avisos.diagnosticos_por_usuario`): o push e, para quem falou com o bot nas últimas 24 h
+    (a janela em que a Meta aceita texto livre), a mensagem inteira no WhatsApp. Fora da janela o WhatsApp pede um
+    template aprovado na Meta, que ainda não existe: vai só o push. Sem nenhum dos dois, a trava não é gravada (a pessoa
+    recebe quando registrar o aparelho ou abrir a janela, enquanto o achado for de hoje)."""
+    from datetime import UTC, datetime
+
+    from app.clients import whatsapp
+    from app.models.notificacao import NotificacaoEnviada
+
+    candidatos = await avisos.diagnosticos_por_usuario(db)
+    saida.candidatos += len(candidatos)
+    for c in candidatos:
+        a, pessoa = c.achado, c.usuario
+        tokens = avisos.tokens_do_usuario(db, pessoa)
+        zap = avisos.na_janela_do_whatsapp(db, pessoa)
+        if not tokens and not zap:
+            saida.sem_destino += 1
+            continue
+        if simular:
+            saida.enviados += 1
+            continue
+        if tokens:
+            titulo, corpo = a.push()
+            resultado = await push.enviar(tokens, titulo, corpo, {"tipo": "diagnostico", "usina_id": c.usina.id})
+            saida.enviados += resultado.enviados
+            saida.erros.extend(resultado.erros)
+            for token in resultado.invalidos:
+                db.execute(Dispositivo.__table__.delete().where(Dispositivo.token == token))
+            saida.dispositivos_removidos += len(resultado.invalidos)
+        if zap:
+            try:
+                r = await whatsapp.enviar_conteudo(telefone=pessoa.telefone, tipo="text", texto=a.texto(),
+                                                   origem="diagnostico")
+                erro = None if r.get("ok") else str(r.get("erro") or r.get("error") or r)[:500]
+            except whatsapp.GatewayIndisponivel as exc:
+                erro = str(exc)[:500]
+            # O fluxo de classificar paradas confere esta tabela: um "ok" depois deste aviso não é resposta de lá.
+            db.add(NotificacaoEnviada(user_id=pessoa.id, tipo="diagnostico", chave=a.chave[:160],
+                                      plant_link_id=c.usina.id, canal="whatsapp", destino=pessoa.telefone,
+                                      status="falhou" if erro else "enviada", status_em=datetime.now(UTC), erro=erro))
+            saida.enviados += erro is None
+        db.add(AvisoEnviado(user_id=pessoa.id, chave=a.chave))
     if not simular:
         db.commit()

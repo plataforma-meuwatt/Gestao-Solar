@@ -473,6 +473,33 @@ async def reles(ctx: Contexto, a: dict) -> dict:
                      "a bandeirola sumiu; confira na geração se o skid parou. trips nulo = não consegui ler o histórico. "
                      "Funções pelo código ANSI do relé (86, 27, 47…).")}
 
+async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
+    """A CAUSA do que parou hoje (dono, 13/11/2026: "pesquisar o motivo no helper … uma matriz"): a mesma régua da
+    varredura de rotina (`services/diagnostico.py`), com a leitura ao vivo pelo helper para quem o tem. Com `codigo`,
+    só a explicação da função de proteção pela matriz."""
+    from dataclasses import asdict
+
+    from app.api.v1.paradas import ParadasOut, ler_do_detector
+    from app.services import diagnostico, matriz
+
+    if a.get("codigo"):
+        item = matriz.do_codigo(str(a["codigo"]))
+        return asdict(item) if item else {"erro": f"O código {a['codigo']} não está na matriz de diagnóstico."}
+    u = _usina(ctx, a.get("usina"))
+    dia = hoje().isoformat()
+    linhas = await ler_do_detector(ctx.mw, u["id"], ParadasOut(recorte="dia", inicio=dia, fim=dia))
+    achados = await diagnostico.diagnosticar(ctx.mw, u, linhas)
+    if "bot_helper" in ctx.user.bot_ativo:
+        from app.services.assistente_helper import _cliente
+        try:
+            await diagnostico.com_helper(_cliente(ctx, ctx.user), u["slug"], achados)
+        except Exception:                                 # noqa: BLE001 (sem o helper, fica o que o meuWatt disse)
+            pass
+    return {"usina": u["nome"], "achados": [x.para_ia() for x in achados],
+            "nota": ("Lista vazia = nenhum trip, parada, relé mudo ou fase zerada HOJE (não quer dizer que a usina gerou "
+                     "bem: veja `geracao`). 'Helper agora' é a leitura ao vivo do equipamento.")}
+
+
 async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
     from app.clients import whatsapp
     tipo = {"executivo": "resumo", "resumo_executivo": "resumo"}.get((a.get("tipo") or "geracao").lower(),
@@ -902,6 +929,11 @@ FERRAMENTAS = {
         "de religar. Leitura AO VIVO de um relé (corrente, comunicação agora) é `usina_helper`.",
         {"usina": _USINA, "dias": {"type": "integer",
         "description": "Quantos dias de histórico de trip (padrão 2)."}})),
+    "diagnostico_usina": (diagnostico_usina, _f("diagnostico_usina", "DIAGNÓSTICO da usina HOJE: POR QUE parou ou não "
+        "ligou. Cruza os inversores parados com os trips dos relés de proteção (matriz ANSI: 27, 59, 47, 81, 50/51, 67, "
+        "32, 86…), relé sem comunicação e fase zerada na medição, lê os equipamentos pelo helper e diz a causa provável e "
+        "o que fazer. Com `codigo` (ex.: 27, 59N, 86) explica a função de proteção.",
+        {"usina": _USINA, "codigo": {"type": "string", "description": "Função ANSI ou condição (27, 59N, NAO_LIGOU)."}})),
     "relatorio_pdf": (relatorio_pdf, _f("relatorio_pdf", "Manda como ARQUIVO o PDF do relatório MENSAL do monitoramento "
         "(geracao | paradas | resumo executivo).", {"usina": _USINA, "mes": _MES, "tipo": {"type": "string",
         "enum": ["geracao", "paradas", "resumo"]}}, ["mes"])),

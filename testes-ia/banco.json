@@ -100,12 +100,12 @@
 {"frase": "Me manda o Excel diario de outubro de porto ferreora", "espera": ["excel_energia_diaria"], "origem": "log #141"},
 {"frase": "Me manda o Excel diario de outubro de porto ferreira", "espera": ["excel_energia_diaria"], "origem": "log #142"},
 {"frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers", "espera": ["geracao", "paradas"], "origem": "log #169"},
-{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "usina_helper_catalogo"], "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"},
-{"frase": "Pirapozinho esta parado", "espera": ["reles", "geracao", "paradas", "usina_helper", "usina_helper_catalogo"], "origem": "31/10 (skid 2 parado)"},
+{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "usina_helper_catalogo", "diagnostico_usina"], "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"},
+{"frase": "Pirapozinho esta parado", "espera": ["reles", "geracao", "paradas", "usina_helper", "usina_helper_catalogo", "diagnostico_usina"], "origem": "31/10 (skid 2 parado)"},
 {"frase": "Qual a coordenada de tiete", "espera": ["local_da_usina"], "origem": "log #92 · 06/11/2026: Google Maps e Waze pelo sistema (pedido do Renan)"},
 {"frase": "Coloque que a tarefa de rocagem de tiete é responsabilidade do Thiago marquezini", "espera": ["manutencao"], "origem": "log #126"},
 {"frase": "Anotei o wiki de pirapozinho: as chaves ficam dentro da caixa do transformador do skid 2", "espera": ["manutencao"], "origem": "log #175"},
-{"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles"], "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)", "ou_sem_ferramenta": true},
+{"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles", "diagnostico_usina"], "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)", "ou_sem_ferramenta": true},
 {"frase": "cadastre estas diarias no contrato de instalação de CFTV de pereiras, do Diogo Dardani\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10", "espera": ["manutencao"], "origem": "log #155"},
 {"frase": "Me de o relatorio de geracao de ibitinga", "espera": ["geracao"], "origem": "log #182"},
 {"frase": "ligue o rele geral de tiete", "espera": ["reles", "usina_helper"], "origem": "log #183"},
@@ -121,7 +121,7 @@
 {"frase": "Pausa a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #130"},
 {"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #136"},
 {"frase": "Me de quais classificações tem em administrativo", "espera": ["manutencao"], "origem": "log #138"},
-{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper"], "origem": "log #178"},
+{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "diagnostico_usina"], "origem": "log #178"},
 {"frase": "Quero acrescentar mais tarefas na os 1874", "espera": ["manutencao"], "origem": "log #202"},
 {"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"},
 {"frase": "Me manda o relatório da OS 1878", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: o salvo ou um novo)"},
@@ -260,5 +260,7 @@
 {"frase": "[📍 localização recebida, ainda não gravada] parei nesse posto agora", "espera": ["lugar_da_localizacao"], "origem": "lugares não recomendados (12/11)"},
 {"frase": "[📍 localização recebida, ainda não gravada] esse posto não é recomendado, o diesel é batizado", "espera": ["lugar_da_localizacao", "marcar_lugar_nao_recomendado"], "origem": "lugares não recomendados (12/11)"},
 {"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_nao_recomendados"], "origem": "lugares não recomendados (12/11)"},
-{"frase": "Me mande o manual do trr", "espera": ["manutencao"], "origem": "log #446"}
+{"frase": "Me mande o manual do trr", "espera": ["manutencao"], "origem": "log #446"},
+{"frase": "Pirapozinho não acordou o skid 1 e 2 e tem trip 27, veja o motivo", "espera": ["diagnostico_usina", "reles"], "origem": "13/11 (Renan: 27 de madrugada, 8 inversores sem ligar; a matriz e a varredura)"},
+{"frase": "O que é o trip 59N?", "espera": ["diagnostico_usina"], "ou_sem_ferramenta": true, "origem": "13/11 (a matriz explica a função)"}
 ]

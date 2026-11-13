@@ -540,6 +540,74 @@ async def trackers_por_usuario(db: Session) -> list[AvisoDeTracker]:
             for p in pessoas for link in escopos[p.id] for c, t, b, d in da_usina.get(link.id, [])]
 
 
+# ── diagnóstico: a CAUSA do que parou (a matriz de trips) ───────────────────────────────────────────────────────────
+#
+# O dono, 13/11/2026 (Pirapozinho: 47 e 27 de madrugada, oito inversores sem ligar, e o aviso das 07:28 dizia só
+# "parado"): "uma criação de varredura de rotina … uma matriz". Vai a quem o gestor deu "Usina parada"; a régua é
+# `services/diagnostico.py`.
+
+@dataclass
+class AvisoDeDiagnostico:
+    usuario: User
+    usina: PlantLink
+    achado: Any            # diagnostico.Achado
+
+
+async def diagnosticos_por_usuario(db: Session) -> list[AvisoDeDiagnostico]:
+    """Os achados de HOJE que ainda não foram a cada pessoa. Cada usina é lida uma vez, com o token de alguém que a
+    enxerga; o helper (a parte cara, ~1 s por equipamento) só é perguntado quando há achado novo."""
+    from app.api.v1.paradas import ParadasOut, _id_no_meuwatt, ler_do_detector
+    from app.models.permissao import AvisoEnviado
+    from app.services import diagnostico
+    from app.services.assistente_helper import _cliente as cliente_helper
+
+    pessoas = permissoes.usuarios_com_permissao(db, CATEGORIA, SUBCATEGORIA)
+    escopos = {p.id: {u.id for u in usinas_do_usuario(db, p) if u.mw_plant_slug} for p in pessoas}
+    alvos = {u.id: u for p in pessoas for u in usinas_do_usuario(db, p) if u.mw_plant_slug}
+    leitor_da_usina = _leitores(db, pessoas, {p.id: [alvos[i] for i in escopos[p.id]] for p in pessoas})
+    dia = hoje_brt().isoformat()
+    saida: list[AvisoDeDiagnostico] = []
+    for link in alvos.values():
+        dono = leitor_da_usina.get(link.id)
+        if dono is None:
+            continue
+        try:
+            mw = vinculos.cliente_meuwatt(db, dono)
+            linhas = await ler_do_detector(mw, await _id_no_meuwatt(mw, link.mw_plant_slug),
+                                           ParadasOut(recorte="dia", inicio=dia, fim=dia))
+            achados = await diagnostico.diagnosticar(mw, {"slug": link.mw_plant_slug, "nome": link.nome}, linhas)
+        except Exception:  # noqa: BLE001 (meuWatt fora: sem diagnóstico, que não é "tudo bem")
+            continue
+        quem = [p for p in pessoas if link.id in escopos[p.id]]
+        ja = set(db.execute(select(AvisoEnviado.user_id, AvisoEnviado.chave).where(
+            AvisoEnviado.chave.in_([a.chave for a in achados]))).all()) if achados else set()
+        novos = [a for a in achados if any((p.id, a.chave) not in ja for p in quem)]
+        if not novos:
+            continue
+        try:
+            await diagnostico.com_helper(cliente_helper(db, db.get(User, dono)), link.mw_plant_slug, novos)
+        except Exception:  # noqa: BLE001 (sem o helper o aviso sai com o que o meuWatt disse)
+            pass
+        saida += [AvisoDeDiagnostico(p, link, a) for a in novos for p in quem if (p.id, a.chave) not in ja]
+    return saida
+
+
+def na_janela_do_whatsapp(db: Session, usuario: User) -> bool:
+    """A Meta só aceita texto livre até 24 h depois da última mensagem DA PESSOA; depois, só template aprovado (que o
+    diagnóstico ainda não tem). Cada mensagem recebida é uma linha do Log do bot."""
+    from sqlalchemy import func
+
+    from app.models.conversa_whatsapp import RegistroBot
+
+    if not usuario.telefone or "bot_meuwatt" not in usuario.bot_ativo:
+        return False
+    ultima = db.scalar(select(func.max(RegistroBot.em)).where(RegistroBot.gs_user_id == usuario.id))
+    if ultima is None:
+        return False
+    ultima = ultima if ultima.tzinfo else ultima.replace(tzinfo=UTC)
+    return datetime.now(UTC) - ultima < timedelta(hours=23, minutes=50)
+
+
 def tokens_do_usuario(db: Session, usuario: User) -> list[str]:
     return list(
         db.scalars(select(Dispositivo.token).where(Dispositivo.user_id == usuario.id)).all()

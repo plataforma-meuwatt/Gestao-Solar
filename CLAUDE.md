@@ -860,6 +860,20 @@ volta (automática, pelo helper por X, ou sem comando: falta classificar no meuW
 `notificacao.tracker_travado` (adm-gs → permissões do cliente); a volta só sai para quem recebeu o "travou", menos a
 pendência de classificar, que sempre sai. Trava de repetição em `gs_avisos_enviados`, como as paradas.
 
+**Diagnóstico: a CAUSA do que parou** (dono, 13/11/2026: Pirapozinho teve 47 e 27 de madrugada, os oito inversores dos
+TR-01/TR-02 não ligaram e o aviso dizia só "parado": "uma varredura de rotina … uma matriz"). `services/matriz.py` é a
+fonte única: cada função ANSI do relé (27, 59, 59N, 47, 81, 50/51, 67, 32, 46, 49, 26, 63, 86, 50BF) e as condições
+(NAO_LIGOU, relé sem comunicação, fase zerada na medição) com o que é, as causas em ordem, o que conferir e o que fazer;
+`do_codigo` lê o código como o relé escreve ("27A", "51G"). `services/diagnostico.py` cruza as paradas de HOJE do
+detector (por skid) com os trips dos relés de proteção do skid (12 h antes; o mesmo trip em 2+ relés no mesmo minuto =
+REDE), o trip ativo (skid desarmado agora), o relé mudo e a fase zerada; `com_helper` lê ao vivo pelo helper (só
+leitura) o relé mudo (o helper também não alcança = o relé/barramento; alcança = o coletor do meuWatt) e os inversores
+do skid (estado, hora da partida, falha, alarme). A varredura é o motor de 10 min (`api/v1/avisos._diagnosticos`): vai
+a quem tem "Usina parada", por push e, para quem falou com o bot nas últimas 24 h, a mensagem inteira no WhatsApp
+(fora da janela a Meta pede template aprovado, que o diagnóstico não tem: só push); a trava é a chave do achado em
+`gs_avisos_enviados` (estado sem começo, como o relé mudo, avisa uma vez por dia) e o WhatsApp entra em
+`gs_notificacoes_enviadas` (tipo `diagnostico`). O bot tem `diagnostico_usina` (a mesma régua; com `codigo`, a matriz).
+
 ---
 
 ## 9. Git e deploy
