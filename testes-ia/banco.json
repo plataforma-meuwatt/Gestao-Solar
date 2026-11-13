@@ -259,5 +259,6 @@
 {"frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.", "espera": ["manutencao"], "origem": "log #381"},
 {"frase": "[📍 localização recebida, ainda não gravada] parei nesse posto agora", "espera": ["lugar_da_localizacao"], "origem": "lugares não recomendados (12/11)"},
 {"frase": "[📍 localização recebida, ainda não gravada] esse posto não é recomendado, o diesel é batizado", "espera": ["lugar_da_localizacao", "marcar_lugar_nao_recomendado"], "origem": "lugares não recomendados (12/11)"},
-{"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_nao_recomendados"], "origem": "lugares não recomendados (12/11)"}
+{"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_nao_recomendados"], "origem": "lugares não recomendados (12/11)"},
+{"frase": "Me mande o manual do trr", "espera": ["manutencao"], "origem": "log #446"}
 ]
