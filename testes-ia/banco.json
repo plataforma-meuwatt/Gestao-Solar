@@ -262,5 +262,8 @@
 {"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_nao_recomendados"], "origem": "lugares não recomendados (12/11)"},
 {"frase": "Me mande o manual do trr", "espera": ["manutencao"], "origem": "log #446"},
 {"frase": "Pirapozinho não acordou o skid 1 e 2 e tem trip 27, veja o motivo", "espera": ["diagnostico_usina", "reles"], "origem": "13/11 (Renan: 27 de madrugada, 8 inversores sem ligar; a matriz e a varredura)"},
-{"frase": "O que é o trip 59N?", "espera": ["diagnostico_usina"], "ou_sem_ferramenta": true, "origem": "13/11 (a matriz explica a função)"}
+{"frase": "O que é o trip 59N?", "espera": ["diagnostico_usina"], "ou_sem_ferramenta": true, "origem": "13/11 (a matriz explica a função)"},
+{"frase": "Me mande uma foto da câmera perimetral 1 de pereiras", "espera": ["foto_camera"], "origem": "log #438"},
+{"frase": "Desativar alarmes de pereiras", "espera": ["alarme_cameras"], "origem": "log #448"},
+{"frase": "Manda outro comando de destravar o tracker de ibitinga", "espera": ["usina_helper"], "origem": "log #450"}
 ]
