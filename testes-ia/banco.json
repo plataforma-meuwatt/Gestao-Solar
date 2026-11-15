@@ -265,5 +265,10 @@
 {"frase": "O que é o trip 59N?", "espera": ["diagnostico_usina"], "ou_sem_ferramenta": true, "origem": "13/11 (a matriz explica a função)"},
 {"frase": "Me mande uma foto da câmera perimetral 1 de pereiras", "espera": ["foto_camera"], "origem": "log #438"},
 {"frase": "Desativar alarmes de pereiras", "espera": ["alarme_cameras"], "origem": "log #448"},
-{"frase": "Manda outro comando de destravar o tracker de ibitinga", "espera": ["usina_helper"], "origem": "log #450"}
+{"frase": "Manda outro comando de destravar o tracker de ibitinga", "espera": ["usina_helper"], "origem": "log #450"},
+{"frase": "anexe essas fotos na tarefa de roçagem de ibitinga, o thiago continua roçando ontem e hoje", "espera": ["manutencao", "anexar_fotos"], "origem": "log #210"},
+{"frase": "Valeu escravobot", "espera": [], "origem": "log #462"},
+{"frase": "🎙️ Testando para saber se você consegue transcrever áudio. Me responda sim ou não.", "espera": [], "origem": "log #185"},
+{"frase": "🎙️ Meu bote inútil, me mande uma foto da câmera perimetral 1 de Pereiras.", "espera": ["foto_camera"], "origem": "log #463"},
+{"frase": "🎙️ Meu bot inútil, me mande o link de vídeo da câmera perimetral 1", "espera": ["ver_camera"], "origem": "log #464"}
 ]
