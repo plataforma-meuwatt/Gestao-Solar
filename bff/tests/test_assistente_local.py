@@ -67,13 +67,13 @@ class _MeuPlano:
             raise _erro(*self.falha_perto)
         return self.perto
 
-    async def marcar_lugar_nao_recomendado(self, lugar, motivo):
+    async def marcar_lugar(self, lugar, motivo, recomendado):
         if self.recusa:
             raise _erro(*self.recusa)
-        self.marcados.append((lugar, motivo))
+        self.marcados.append((lugar, motivo, recomendado))
         return self.resposta_marcar
 
-    async def lugares_nao_recomendados(self):
+    async def lugares_marcados(self):
         return self.lista
 
 
@@ -324,8 +324,11 @@ def estrada(cenario, monkeypatch):
         elif m := re.search(r"não é recomendado(?: porque (.*))?", txt):
             lugar = re.search(r"«(.+?)»", txt)
             nome, args = "marcar_lugar_nao_recomendado", {"lugar": lugar[1] if lugar else "1", "motivo": m[1] or ""}
+        elif m := re.search(r"salve(?:.*?, (.*))?", txt):
+            lugar = re.search(r"«(.+?)»", txt)
+            nome, args = "marcar_lugar_recomendado", {"lugar": lugar[1] if lugar else "1", "comentario": m[1] or ""}
         elif "quais lugares" in txt:
-            nome, args = "lugares_nao_recomendados", {}
+            nome, args = "lugares_da_equipe", {}
         else:
             return {"content": "?"}
         return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
@@ -347,9 +350,10 @@ async def test_a_localizacao_sugere_o_posto_e_marca_nao_recomendado_com_o_sim(db
     assert "Motivo: o diesel é batizado" in pend.detalhes and estrada.mp.marcados == []          # nada antes do Sim
     assert estrada.mp.perguntas == 1                                       # o lugar foi procurado UMA vez
     await _sim(p, 3)
-    lugar, motivo = estrada.mp.marcados[0]
+    lugar, motivo, recomendado = estrada.mp.marcados[0]
     # os números são os do lugar que o meuPlano achou, não os da IA nem os de quem mandou
     assert (lugar["lat"], lugar["lng"], lugar["place_id"], motivo) == (-21.746376, -48.820501, "G1", "o diesel é batizado")
+    assert recomendado is False
     assert estrada.bot.enviados[-1] == "✅ Auto Posto Capim Fino está na lista de lugares não recomendados da equipe."
 
 
@@ -365,15 +369,16 @@ async def test_o_lugar_ja_marcado_avisa_e_o_resumo_mostra_o_que_ja_esta_na_lista
     await assistente.atender(_local(p, 1))
     assert ("Auto Posto Capim Fino, Posto de combustível, Av. Eng. Ivanil Franchiscini, Ibitinga, a 21 m — ⚠️ NÃO "
             "RECOMENDADO pela equipe: fila de uma hora (Michel, 10/11/2026)") in estrada.bot.enviados[-1]
-    assert "Borracharia do Zé: cobrou dobrado (Diogo, 01/11/2026), a 33 m" in estrada.bot.enviados[-1]  # fora da lista do mapa
+    assert ("Borracharia do Zé, a 33 m — ⚠️ NÃO RECOMENDADO pela equipe: cobrou dobrado (Diogo, 01/11/2026)"
+            in estrada.bot.enviados[-1])                                    # fora da lista do mapa
     await assistente.atender(_texto(p, 2, "não é recomendado porque o banheiro está fechado"))
     pend = h.PENDENTES[p.id]
-    assert "Já na lista: fila de uma hora (Michel, 10/11/2026)" in pend.detalhes
+    assert "Já na lista: não recomendado, fila de uma hora (Michel, 10/11/2026)" in pend.detalhes
     assert "Motivo: o banheiro está fechado" in pend.detalhes
     # o lugar dito pelo nome (fora da lista do mapa) também mostra o que já está marcado nele
     h.PENDENTES.pop(p.id)
     await assistente.atender(_texto(p, 3, "a «borracharia do zé» não é recomendado porque fecha cedo"))
-    assert "Já na lista: cobrou dobrado (Diogo, 01/11/2026)" in h.PENDENTES[p.id].detalhes
+    assert "Já na lista: não recomendado, cobrou dobrado (Diogo, 01/11/2026)" in h.PENDENTES[p.id].detalhes
     estrada.mp.resposta_marcar = {"id": 9, "ja_tinha": True, "motivo_anterior": "cobrou o dobro"}
     await _sim(p, 4)
     assert estrada.bot.enviados[-1] == ("✅ borracharia do zé já estava na sua lista de lugares não recomendados: o seu "
@@ -405,7 +410,7 @@ async def test_lugar_fora_da_lista_vai_com_o_nome_dito_no_ponto_mandado(db, estr
     assert "não está na lista" in estrada.bot.enviados[-1] and p.id not in h.PENDENTES   # número inventado não vira lugar
     await assistente.atender(_texto(p, 3, "o «Restaurante Graal»: não é recomendado porque fecha cedo"))
     await _sim(p, 4)
-    lugar, _ = estrada.mp.marcados[0]
+    lugar, _, _ = estrada.mp.marcados[0]
     assert (lugar["nome"], lugar["lat"], lugar["lng"], lugar["fonte"]) == ("Restaurante Graal", LAT, LNG, "manual")
     assert lugar["endereco"] == "Rod. SP-304, km 120, Ibitinga"
 
@@ -428,16 +433,17 @@ async def test_a_usina_perto_vem_na_sugestao(db, estrada):
     assert r["usinas_perto"] == ["UFV Ibitinga (a 334 m)"] and len(r["lugares"]) == 2
 
 
-async def test_a_lista_de_lugares_nao_recomendados(db, estrada):
+async def test_a_lista_de_lugares_da_equipe(db, estrada):
     p = _pessoa(db)
     await assistente.atender(_texto(p, 1, "quais lugares a equipe não recomenda?"))
     assert "A lista está vazia" in estrada.bot.enviados[-1]
     estrada.mp.lista = [{"id": 7, "nome": "Auto Posto Capim Fino", "endereco": "Ibitinga", "motivo": "diesel batizado",
                          "por": "Renan", "em": "2026-11-12T12:00:00Z"}]
     await assistente.atender(_texto(p, 2, "quais lugares a equipe não recomenda?"))
-    assert "Auto Posto Capim Fino: diesel batizado (Renan, 12/11/2026)" in estrada.bot.enviados[-1]
-    assert {"lugar_da_localizacao", "marcar_lugar_nao_recomendado", "lugares_nao_recomendados"} <= set(
-        assistente.permitidas(p))
+    assert ("Auto Posto Capim Fino — ⚠️ NÃO RECOMENDADO pela equipe: diesel batizado (Renan, 12/11/2026)"
+            in estrada.bot.enviados[-1])
+    assert {"lugar_da_localizacao", "marcar_lugar_nao_recomendado", "marcar_lugar_recomendado",
+            "lugares_da_equipe"} <= set(assistente.permitidas(p))
 
 
 async def test_a_lista_grande_nao_e_cortada_calada_e_a_busca_acha(db, estrada, monkeypatch):
@@ -446,10 +452,11 @@ async def test_a_lista_grande_nao_e_cortada_calada_e_a_busca_acha(db, estrada, m
     estrada.mp.lista = [{"id": i, "nome": f"Posto {i}", "endereco": "Tietê" if i == 5 else "Ibitinga",
                          "motivo": "diesel batizado", "por": "Renan", "em": "2026-11-12T12:00:00Z"} for i in range(1, 9)]
     ctx = SimpleNamespace(telefone=p.telefone, db=db, user=p)
-    r = await local.lugares_nao_recomendados(ctx, {})
+    r = await local.lugares_da_equipe(ctx, {})
     assert r["total"] == 8 and len(r["lugares"]) < 8 and f"Mais {8 - len(r['lugares'])} lugares" in r["faltam"]
-    r = await local.lugares_nao_recomendados(ctx, {"busca": "tiete"})
-    assert r["lugares"] == ["Posto 5: diesel batizado (Renan, 12/11/2026)"] and "faltam" not in r
+    r = await local.lugares_da_equipe(ctx, {"busca": "tiete"})
+    assert r["lugares"] == ["Posto 5 — ⚠️ NÃO RECOMENDADO pela equipe: diesel batizado (Renan, 12/11/2026)"]
+    assert "faltam" not in r
 
 
 async def test_mapa_em_parte_avisa_e_pergunta_de_novo(db, estrada):
@@ -503,3 +510,66 @@ async def test_depois_de_marcar_o_numero_segue_o_da_lista_mostrada_e_a_marcacao_
     assert h.PENDENTES[p.id].resumo == "Marcar como NÃO RECOMENDADO: Padaria Capim Fino" and estrada.mp.perguntas == 1
     r = await local.lugar_da_localizacao(SimpleNamespace(telefone=p.telefone, db=db, user=p), {})
     assert "NÃO RECOMENDADO pela equipe: a comida é ruim (Kewyn, 12/11/2026)" in r["lugares"][0]
+
+
+# 16/11/2026, o dono mandou a localização de uma lanchonete em São Roque e pediu "Salve essa lanchonete como maravilhosaz
+# browdog": o mapa não trouxe nada (o meuPlano estava sem a chave do Google) e o bot só sabia o NÃO recomendado.
+async def test_salvar_o_lugar_marca_recomendado_com_o_sim_e_sem_comentario_obrigatorio(db, estrada):
+    p = _pessoa(db)
+    await assistente.atender(_local(p, 1))
+    await assistente.atender(_texto(p, 2, "salve a «padaria», que é ótima"))
+    assert "é ambíguo" not in estrada.bot.enviados[-1]
+    pend = h.PENDENTES[p.id]
+    assert pend.resumo == "Marcar como RECOMENDADO: Padaria Capim Fino" and "Comentário: que é ótima" in pend.detalhes
+    await _sim(p, 3)
+    assert estrada.mp.marcados[-1][1:] == ("que é ótima", True)
+    assert estrada.bot.enviados[-1] == "✅ Padaria Capim Fino está na lista de lugares recomendados da equipe."
+    # sem comentário também vale (no recomendado ele é opcional)
+    ctx = SimpleNamespace(telefone=p.telefone, db=db, user=p, proposta=None, pedido="")
+    r = await local.marcar_lugar_recomendado(ctx, {"lugar": "1"})
+    assert "erro" not in r, r
+    assert not any(d.startswith(("Comentário", "Motivo")) for d in h.PENDENTES[p.id].detalhes)
+
+
+async def test_mudar_de_ideia_troca_a_marcacao_e_o_lugar_bom_aparece_na_localizacao(db, estrada):
+    p = _pessoa(db)
+    estrada.mp.perto["lugares"][1]["nao_recomendado_ids"] = [7]
+    estrada.mp.perto["nao_recomendados_perto"] = [
+        {"id": 7, "nome": "Padaria Capim Fino", "motivo": "maravilhosa", "recomendado": True, "por": "Renan",
+         "em": "2026-11-16T23:19:00Z", "distancia_m": 33, "lat": -21.7464146, "lng": -48.8206163}]
+    local.guardar(p.telefone, _local(p, 1))
+    ctx = SimpleNamespace(telefone=p.telefone, db=db, user=p, proposta=None, pedido="")
+    r = await local.lugar_da_localizacao(ctx, {})
+    assert r["lugares"][1].endswith("— 👍 RECOMENDADO pela equipe: maravilhosa (Renan, 16/11/2026)")
+    await assistente.atender(_texto(p, 2, "a «padaria» não é recomendado porque fechou"))
+    assert "Já na lista: recomendado, maravilhosa (Renan, 16/11/2026)" in h.PENDENTES[p.id].detalhes
+    estrada.mp.resposta_marcar = {"id": 7, "ja_tinha": True, "motivo_anterior": "maravilhosa",
+                                  "recomendado_anterior": True, "recomendado": False}
+    await _sim(p, 3)
+    assert estrada.bot.enviados[-1] == "✅ Padaria Capim Fino: a sua marcação mudou de recomendado para não recomendado."
+
+
+def test_o_lugar_e_escolhido_por_uma_palavra_do_nome_e_nunca_pelo_tipo():
+    lugares = [{"nome": "PAV são roque, Ponto SP"}, {"nome": "Browdog - Hamburguer Defumado"},
+               {"nome": "Buzzy Gang Tattoo Shop"}, {"nome": "Lanchonete do Zé"}, {"nome": "Auto Posto Ipiranga"}]
+    assert local._escolher_lugar(lugares, "maravilhosaz browdog")[0]["nome"] == "Browdog - Hamburguer Defumado"
+    assert local._escolher_lugar(lugares, "essa lanchonete")[0] is None        # o tipo não escolhe…
+    assert local._escolher_lugar(lugares, "o posto bom")[0] is None
+    assert local._escolher_lugar(lugares, "Lanchonete do Zé")[0]["nome"] == "Lanchonete do Zé"   # …o nome inteiro sim
+    assert local._escolher_lugar(lugares, "Restaurante Graal") == (None, [])  # fora da lista: vai com o nome dito
+
+
+async def test_a_lista_separa_recomendados_e_nao_recomendados(db, estrada):
+    p = _pessoa(db)
+    estrada.mp.lista = [
+        {"id": 7, "nome": "Auto Posto Capim Fino", "motivo": "diesel batizado", "recomendado": False, "por": "Renan",
+         "em": "2026-11-12T12:00:00Z"},
+        {"id": 8, "nome": "Browdog - Hamburguer Defumado", "motivo": "", "recomendado": True, "por": "Renan",
+         "em": "2026-11-16T23:19:00Z"}]
+    ctx = SimpleNamespace(telefone=p.telefone, db=db, user=p)
+    r = await local.lugares_da_equipe(ctx, {"quais": "recomendados"})
+    assert r["lugares"] == ["Browdog - Hamburguer Defumado — 👍 RECOMENDADO pela equipe: (Renan, 16/11/2026)"]
+    assert [x.split(" — ")[0] for x in (await local.lugares_da_equipe(ctx, {}))["lugares"]] == [
+        "Auto Posto Capim Fino", "Browdog - Hamburguer Defumado"]
+    estrada.mp.lista = estrada.mp.lista[:1]
+    assert (await local.lugares_da_equipe(ctx, {"quais": "recomendados"}))["nota"] == "Nenhum lugar assim na lista."

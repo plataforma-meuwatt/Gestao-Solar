@@ -797,20 +797,22 @@ class MeuPlanoClient:
                             json={"lat": lat, "lng": lng, "substituir": substituir})
         return r.json()
 
-    # ------------------------------------------------- lugares não recomendados (a frota)
+    # ------------------------------------------- lugares marcados pela equipe: recomendados e não (a frota)
 
     async def lugares_perto(self, lat: float, lng: float) -> dict[str, Any]:
         """O que há em volta do ponto (Google, ou o OSM de reserva): `{lugares: [{nome, endereco, tipo, lat, lng,
-        place_id, fonte, distancia_m, nao_recomendado_id}], endereco, fonte, nao_recomendados_perto: [...]}`."""
+        place_id, fonte, distancia_m, nao_recomendado_ids}], endereco, fonte, nao_recomendados_perto: [...]}` — os
+        nomes são de antes do recomendado (16/11/2026): as marcações vêm todas, cada uma com `recomendado`."""
         return await self._get("/api/v1/meuacesso/veiculos/lugares/perto", lat=lat, lng=lng)
 
-    async def marcar_lugar_nao_recomendado(self, lugar: dict[str, Any], motivo: str) -> dict[str, Any]:
-        """Lá, o mesmo lugar marcado de novo troca o motivo (`ja_tinha`, `motivo_anterior`)."""
+    async def marcar_lugar(self, lugar: dict[str, Any], motivo: str, recomendado: bool) -> dict[str, Any]:
+        """Lá, o mesmo lugar marcado de novo troca a marcação da pessoa (`ja_tinha`, `motivo_anterior`,
+        `recomendado_anterior`)."""
         r = await self._req("POST", "/api/v1/meuacesso/veiculos/lugares-nao-recomendados",
-                            json={**lugar, "motivo": motivo})
+                            json={**lugar, "motivo": motivo, "recomendado": recomendado})
         return r.json()
 
-    async def lugares_nao_recomendados(self) -> list[dict[str, Any]]:
+    async def lugares_marcados(self) -> list[dict[str, Any]]:
         return await self._get("/api/v1/meuacesso/veiculos/lugares-nao-recomendados") or []
 
     # ------------------------------------------------------- relatório da OS (o Word meuPlano)
