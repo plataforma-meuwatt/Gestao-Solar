@@ -15,7 +15,7 @@ import io
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -454,22 +454,36 @@ async def reles(ctx: Contexto, a: dict) -> dict:
     protecao = [r for r in agora.get("relays") or []
                 if not r.get("is_temperature_relay") and not str(r.get("model") or "").startswith("abs")]
     desde = datetime.now(_TZ) - timedelta(days=dias)
+    try:                                                  # a regra de "está ok" e o «já sei» são da tela Leituras
+        lidos = {x["relay_id"]: x for x in (await ctx.mw.leituras(u["slug"])).get("relays") or []}
+    except Exception:                                     # noqa: BLE001 (sem ela, fica o monitoramento)
+        lidos = {}
 
     async def um(r: dict) -> dict:
         try:
             trips = _trips(await ctx.mw.eventos_de_trip(u["slug"], int(r["relay_db_id"]), 50), desde)
         except Exception:                                 # noqa: BLE001
             trips = None
-        fases = lambda k: [_r(r.get(f"{k}_{f}")) for f in "abc"]
-        return {"rele": r.get("name"), "skid": r.get("transformer_name"), "comunica": r.get("comm"),
-                "tensao_v": fases("voltage"), "corrente_a": fases("current"), "potencia_kw": _r(r.get("total_active_power")),
-                "trips": trips}
+        lido = lidos.get(r.get("relay_db_id"))
+        if lido is None:                              # sem a tela Leituras: a regra de reserva do diagnóstico
+            from app.services.diagnostico import _da_reserva
+            lido = _da_reserva(r, agora.get("read_evidence") != "unavailable", datetime.now(UTC))
+        valor = {x.get("key"): x.get("value") for x in lido.get("readings") or []}   # nulo = sem valor de AGORA
+        status = {x.get("key"): x.get("status") for x in lido.get("readings") or []}
+        fases = lambda k: [_r(valor.get(f"{k}_{f}")) for f in "abc"]
+        return {"rele": r.get("name"), "skid": r.get("transformer_name"),
+                "comunica": {"ok": True, "no_comm": False}.get(status.get("comm")),
+                "tensao_v": fases("voltage"), "corrente_a": fases("current"),
+                "potencia_kw": _r(valor.get("total_active_power")),
+                "leituras_que_pedem_atencao": _atencao(lido) if lidos else None, "trips": trips}
 
     return {"usina": u["nome"], "lido_em": agora.get("data_at"), "dias": dias,
             "noite": agora.get("plant_sleeping"),         # corrente 0 à noite é normal, não é skid parado
             "reles": await asyncio.gather(*(um(r) for r in protecao)),
-            "nota": ("comunica=false: o meuWatt não lê o relé agora, o estado dele é DESCONHECIDO (não diga que está "
-                     "ligado, desligado ou sem trip). Tensão perto de zero = sem tensão. 'disparou' e depois 'limpou' = "
+            "nota": ("comunica=false: o meuWatt não lê o relé há 15 min ou mais, o estado dele é DESCONHECIDO (não diga "
+                     "que está ligado, desligado ou sem trip); comunica=null: não conferido. As três fases perto de zero "
+                     "= sem tensão; UMA fase zerada com as outras normais = a MEDIÇÃO (veja leituras_que_pedem_atencao, "
+                     "e ja_sei = a equipe já sabe: diga que é conhecido). 'disparou' e depois 'limpou' = "
                      "a bandeirola sumiu; confira na geração se o skid parou. trips nulo = não consegui ler o histórico. "
                      "Funções pelo código ANSI do relé (86, 27, 47…).")}
 
@@ -488,7 +502,8 @@ async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
     u = _usina(ctx, a.get("usina"))
     dia = hoje().isoformat()
     linhas = await ler_do_detector(ctx.mw, u["id"], ParadasOut(recorte="dia", inicio=dia, fim=dia))
-    achados = await diagnostico.diagnosticar(ctx.mw, u, linhas)
+    info: dict = {}
+    achados = await diagnostico.diagnosticar(ctx.mw, u, linhas, info=info)
     if "bot_helper" in ctx.user.bot_ativo:
         from app.services.assistente_helper import _cliente
         try:
@@ -496,8 +511,17 @@ async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
         except Exception:                                 # noqa: BLE001 (sem o helper, fica o que o meuWatt disse)
             pass
     return {"usina": u["nome"], "achados": [x.para_ia() for x in achados],
-            "nota": ("Lista vazia = nenhum trip, parada, relé mudo ou fase zerada HOJE (não quer dizer que a usina gerou "
-                     "bem: veja `geracao`). 'Helper agora' é a leitura ao vivo do equipamento.")}
+            "nota": (("Relés com a comunicação NÃO conferida agora: " + ", ".join(info["nao_conferidos"])
+                      + " (nenhum equipamento da usina mandou leitura há pouco: não diga que estão ok nem que não há "
+                      "relé mudo neles). " if info.get("nao_conferidos") else "")
+                     + "Lista vazia = nenhum trip, parada, relé mudo ou fase zerada HOJE"
+                     + (" nos relés conferidos" if info.get("nao_conferidos") else "")
+                     + " (não quer dizer que a usina gerou bem: veja `geracao`). 'Helper agora' é a leitura ao vivo do "
+                     "equipamento. `ja_sabido` = alguém "
+                     "marcou «já sei» na tela Leituras do meuWatt: diga que é conhecido, com a observação, e que o aviso "
+                     "não sai; não trate como novidade.")
+            + (" A tela Leituras do meuWatt NÃO respondeu agora: relé mudo e fase zerada saíram da regra de reserva, "
+               "sem o «já sei» de lá (diga isso se falar deles)." if info.get("leituras") == "reserva" else "")}
 
 
 async def relatorio_pdf(ctx: Contexto, a: dict) -> dict:
@@ -905,6 +929,137 @@ _FIM = {"type": "string", "description": "Data final AAAA-MM-DD (inclusive). Vaz
 _MES = {"type": "string", "description": "Mês AAAA-MM."}
 
 
+# ── Leituras: o "já sei" (dono, 14/11/2026: o bot avisou a fase A do Skid 3 de Pirapozinho, que ele já sabia) ──────
+#: As leituras dos relés de proteção, na ordem da tela Leituras do meuWatt (a chave é a de lá).
+LEITURAS_RELE = ["comm", "voltage_a", "voltage_b", "voltage_c", "current_a", "current_b", "current_c",
+                 "active_power_a", "active_power_b", "active_power_c", "total_active_power", "reactive_power",
+                 "frequency", "current_thd_a", "current_thd_b", "current_thd_c", "ct_ratio", "pt_ratio"]
+_SITUACAO = {"ok": "ok", "zeroed": "zerada", "no_comm": "sem comunicação", "missing": "sem leitura",
+             "not_read": "não lida (o relé não manda esta medida)", "blank": "vazia só na leitura de agora",
+             "unknown": "não conferida"}
+
+
+def _atencao(rele: dict) -> list[dict]:
+    """O que pede atenção num relé, como a tela Leituras mostra: o problema (o relé mudo uma vez só, na comunicação),
+    o não conferido e o que tem marcação."""
+    linhas = rele.get("readings") or []
+    if any(x.get("key") == "comm" and x.get("status") == "unknown" for x in linhas):
+        # Sem conferir a comunicação, cada medida é "não conferida": um item só pelo relé (a tela faz o mesmo).
+        linhas = [x for x in linhas if x.get("key") == "comm" or x.get("mark")]
+    saida = []
+    for x in linhas:
+        st, m = x.get("status"), x.get("mark") or {}
+        problema = st in ("zeroed", "missing", "unknown") or (st == "no_comm" and x.get("key") == "comm")
+        if problema or m:
+            saida.append({"leitura": x["key"], "rotulo": x.get("label"), "valor": x.get("value"), "unidade": x.get("unit"),
+                          "situacao": _SITUACAO.get(st, st), "detalhe": x.get("detail"), "ja_sei": bool(m.get("ignored")),
+                          "observacao": m.get("note"), "por": m.get("user_name")})
+    return saida
+
+
+def _o_rele(reles: list[dict], nome: str | None) -> dict:
+    """O relé pelo nome ou pelo skid ("Skid 3", "TR-03", "relé geral"); ambíguo ou ausente = pergunta."""
+    alvo = _norm(nome).replace("rele ", "").strip()
+    if not alvo:
+        raise Recusa("Qual relé? " + ", ".join(r.get("name") or "" for r in reles) + ".")
+    def casa(r):
+        nomes = {_norm(r.get("name")), _norm(r.get("name")).replace("rele ", ""), _norm(r.get("transformer_name"))}
+        return alvo in nomes
+    cands = [r for r in reles if casa(r)] or [r for r in reles if alvo in _norm(r.get("name"))]
+    if len(cands) != 1:
+        raise Recusa(("Mais de um relé casa" if cands else "Não achei o relé") + f" '{nome}': "
+                     + ", ".join(f"{r.get('name')} ({r.get('transformer_name') or 'sem skid'})" for r in (cands or reles))
+                     + ". Pergunte qual.")
+    return cands[0]
+
+
+async def leituras_usina(ctx: Contexto, a: dict) -> dict:
+    """A tela Leituras do meuWatt: o que não está ok e o que alguém marcou "já sei" (a regra é de lá)."""
+    u = _usina(ctx, a.get("usina"))
+    reles = (await ctx.mw.leituras(u["slug"])).get("relays") or []
+    if a.get("rele"):
+        reles = [_o_rele(reles, a["rele"])]
+    saida = [{"rele": r.get("name"), "skid": r.get("transformer_name"), "leituras": _atencao(r)} for r in reles]
+    return {"usina": u["nome"], "reles": saida,
+            "nota": ("Só as leituras com problema ou com marcação (as outras estão ok). `ja_sei` = alguém marcou na tela "
+                     "Leituras do meuWatt que o problema é conhecido: o aviso dela não sai. Para marcar ou tirar, "
+                     "`marcar_leitura`.")}
+
+
+async def marcar_leitura(ctx: Contexto, a: dict) -> dict:
+    """O X ("já sei") e a observação de UMA leitura de um relé, na tela Leituras do meuWatt: ação com o Sim, gravada
+    com o token DA PESSOA (o papel dela na usina decide lá)."""
+    from app.core.datas import hora_brt
+    from app.services import assistente_helper as helper
+    from app.services.vinculos import cliente_meuwatt
+
+    u = _usina(ctx, a.get("usina"))
+    leitura = a.get("leitura")
+    if leitura not in LEITURAS_RELE:
+        raise Recusa(f"Leitura '{leitura}' não existe: use a chave de `leituras_usina` (ex.: voltage_a, comm).")
+    ja_sei = a.get("ja_sei", True) is not False
+    lido = await ctx.mw.leituras(u["slug"])
+    if not lido.get("can_mark"):                          # o papel da pessoa NESTA usina no meuWatt (o mesmo do PUT)
+        raise Recusa("O seu papel nesta usina no meuWatt não marca leituras (só a operação). Nada foi feito.")
+    r = _o_rele(lido.get("relays") or [], a.get("rele"))
+    linha = next((x for x in r.get("readings") or [] if x.get("key") == leitura), {})
+    atual = linha.get("mark") or {}
+    nova = (a.get("observacao") or "").strip() or None
+    if not ja_sei and not atual.get("ignored") and not nova:
+        raise Recusa("Esta leitura não está marcada «já sei»: não há o que tirar.")
+    # O PUT troca a marcação inteira: sem observação nova, fica a que já existe (a da tela), e o prazo também.
+    nota = nova or atual.get("note")
+    vence = atual.get("expires_at") if ja_sei else None
+    prazo_novo = None
+    if ja_sei and a.get("dias") not in (None, ""):
+        try:
+            dias = int(a["dias"])
+        except (TypeError, ValueError):
+            raise Recusa("Não entendi o prazo: pergunte em dias (de 1 a 365).") from None
+        if not 1 <= dias <= 365:
+            raise Recusa("O prazo vai de 1 a 365 dias: pergunte de novo.")
+        vence = prazo_novo = (datetime.now(UTC) + timedelta(days=dias)).isoformat()
+    rotulo = linha.get("label") or leitura
+    onde = f"{r.get('name')} · {rotulo} ({u['nome']})"
+    resumo = (f"Marcar «já sei» no meuWatt: {onde}" if ja_sei else f"Tirar o «já sei» no meuWatt: {onde}"
+              if atual.get("ignored") else f"Gravar a observação no meuWatt: {onde}")
+    avisa = bool(linha.get("alert_hint"))                 # o que o bot avisa hoje (a tela mostra o sino)
+    detalhes = [f"Observação: {nota}" if nota else "Sem observação",
+                ((f"O aviso desta leitura deixa de sair até {hora_brt(vence)}." if vence else
+                  "O aviso desta leitura deixa de sair até alguém tirar a marcação.") if avisa
+                 else "Fica registrado (o bot não avisa esta leitura).") if ja_sei
+                else "O aviso desta leitura continua saindo." if not atual.get("ignored")
+                else "O aviso desta leitura volta a sair (a observação fica; apagar a observação, só na tela Leituras)."
+                if nota else "O aviso desta leitura volta a sair."]
+    slug, rid = u["slug"], int(r["relay_id"])
+
+    async def executar(db, user, telefone: str) -> str:
+        mw = cliente_meuwatt(db, user.id, so_proprio=True)
+        try:
+            # O PUT troca a marcação inteira: relê agora, para não apagar o que alguém editou na tela depois da proposta.
+            hoje = next((x.get("mark") or {} for rel in (await mw.leituras(slug)).get("relays") or []
+                         if rel.get("relay_id") == rid for x in rel.get("readings") or [] if x.get("key") == leitura),
+                        atual)                            # a leitura sumiu da resposta: fica o que a proposta viu
+            n, v = nova or hoje.get("note"), prazo_novo or (hoje.get("expires_at") if ja_sei else None)
+            # O prazo que a proposta mostrou venceu até o Sim (o meuWatt já não o devolve): o X fica sem prazo, e diz.
+            antes = atual.get("expires_at") if ja_sei and not prazo_novo else None
+            venceu = bool(antes) and datetime.fromisoformat(str(antes).replace("Z", "+00:00")) <= datetime.now(UTC)
+            if venceu:
+                v = None
+            await mw.marcar_leitura(slug, rid, leitura, ja_sei, n, v)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                return "❌ O seu papel nesta usina no meuWatt não marca leituras (só a operação). Nada foi feito."
+            return f"❌ O meuWatt recusou ({e.response.status_code}). Nada foi feito."
+        except httpx.HTTPError:
+            return f"⚠️ O meuWatt não respondeu: a marcação de {onde} PODE ter sido gravada. Confira na tela Leituras."
+        feito = ("marcado «já sei»" if ja_sei else "o aviso volta a sair" if atual.get("ignored") else "observação gravada")
+        return (f"✅ {onde}: {feito}" + (f". Observação: {n}" if n else "")
+                + (". O prazo que havia já tinha vencido: ficou até alguém tirar" if venceu else "") + ".")
+
+    return helper.propor(ctx, resumo, 600, executar, detalhes, parte="bot_meuwatt", confirmacao="sim")
+
+
 def _f(nome, desc, props=None, req=None):
     return {"type": "function", "function": {"name": nome, "description": desc, "parameters": {
         "type": "object", "properties": props or {}, "required": req or []}}}
@@ -934,6 +1089,20 @@ FERRAMENTAS = {
         "32, 86…), relé sem comunicação e fase zerada na medição, lê os equipamentos pelo helper e diz a causa provável e "
         "o que fazer. Com `codigo` (ex.: 27, 59N, 86) explica a função de proteção.",
         {"usina": _USINA, "codigo": {"type": "string", "description": "Função ANSI ou condição (27, 59N, NAO_LIGOU)."}})),
+    "leituras_usina": (leituras_usina, _f("leituras_usina", "LEITURAS dos relés de proteção (tela Leituras do meuWatt): "
+        "as que não estão ok (fase zerada, sem comunicação, sem leitura) e as que alguém marcou «já sei» com a observação.",
+        {"usina": _USINA, "rele": {"type": "string", "description": "Nome ou skid do relé (opcional)."}})),
+    "marcar_leitura": (marcar_leitura, _f("marcar_leitura", "AÇÃO (com Sim): marca «já sei» numa leitura de um relé "
+        "(o problema é conhecido, ex.: \"já sei, o relé tá com defeito\"), com a observação, na tela Leituras do "
+        "meuWatt: o aviso daquela leitura deixa de sair. `ja_sei`=false tira a marcação (o aviso volta), ou, numa "
+        "leitura sem marcação, grava só a observação. Use a chave da leitura que `diagnostico_usina` ou "
+        "`leituras_usina` mostraram (fase A zerada = voltage_a; relé mudo = comm).",
+        {"usina": _USINA, "rele": {"type": "string", "description": "Nome ou skid do relé (ex.: Skid 3, TR-03)."},
+         "leitura": {"type": "string", "enum": LEITURAS_RELE},
+         "ja_sei": {"type": "boolean", "description": "true = marcar «já sei» (padrão); false = tirar."},
+         "observacao": {"type": "string", "description": "O que a pessoa disse do problema, nas palavras dela."},
+         "dias": {"type": "integer", "description": "Prazo do «já sei» em dias, só se a pessoa disser (sem = até tirar)."}},
+        ["rele", "leitura"])),
     "relatorio_pdf": (relatorio_pdf, _f("relatorio_pdf", "Manda como ARQUIVO o PDF do relatório MENSAL do monitoramento "
         "(geracao | paradas | resumo executivo).", {"usina": _USINA, "mes": _MES, "tipo": {"type": "string",
         "enum": ["geracao", "paradas", "resumo"]}}, ["mes"])),

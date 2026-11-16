@@ -292,6 +292,20 @@ class MeuWattClient:
         """
         return await self._get(f"/plants/{slug}/relays/{relay_id}/trip-events", limit=limite)
 
+    async def leituras(self, slug: str) -> dict[str, Any]:
+        """A tela Leituras do meuWatt (`readings/`, migration 197): cada relé de proteção com cada leitura, o `status`
+        (ok, no_comm, zeroed, missing, blank, not_read, unknown: a REGRA é de lá) e a `mark` (o X "já sei", que cala o aviso
+        daquela leitura, e a observação; nota e autor só para quem opera a usina lá)."""
+        return await self._get(f"/plants/{slug}/readings")
+
+    async def marcar_leitura(self, slug: str, relay_id: int, leitura: str, ja_sei: bool, nota: str | None,
+                             vence: str | None = None) -> None:
+        """O X e a observação de UMA leitura (com o token DA PESSOA: só o papel de operação na usina grava). O PUT
+        troca a marcação inteira: quem chama manda a nota e o prazo que ficam. Sem X e sem observação, ela some."""
+        await self._enviar("PUT", f"/plants/{slug}/readings/marks", json={
+            "equipment": "relay", "equipment_id": int(relay_id), "reading": leitura, "ignored": ja_sei, "note": nota,
+            "expires_at": vence})
+
     async def trackers_travamentos(self, slug: str, inicio: str, fim: str) -> dict[str, Any]:
         """Os travamentos dos trackers nos dias [inicio, fim] (BRT), mais os abertos: `{travados, pendentes,
         incidents[]}`, cada um com `situacao` (travado | automatico | helper_manual | pendente | classificado |

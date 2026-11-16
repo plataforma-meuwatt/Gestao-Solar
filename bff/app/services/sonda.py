@@ -195,6 +195,11 @@ MEUWATT: list[Rota] = [
                             "como `relay-{id}` no meio dos equipamentos — não há campo "
                             "de topo para a sonda colher. A tela de Equipamentos "
                             "exercita este caminho com o relé escolhido."),
+    Rota("mw.readings", "GET", "/plants/{slug}/readings",
+         "As leituras dos relés e o \"já sei\" de cada uma: o diagnóstico da varredura e o bot", essencial=False),
+    Rota("mw.reading_marks", "PUT", "/plants/{slug}/readings/marks",
+         "O X (\"já sei\") e a observação de uma leitura, pelo bot do WhatsApp", essencial=False,
+         sonda=False, nao_sondada_porque="Escreve: a sonda só lê. Roda só com o Sim de quem opera a usina."),
     Rota("mw.slots", "GET", "/plants/{slug}/slots", "Inversores da tela de Equipamentos",
          captura={"slot_id": "id"}),
     # Achada pelo teste inverso da sonda: o cliente chamava `/slots/{id}` há meses sem

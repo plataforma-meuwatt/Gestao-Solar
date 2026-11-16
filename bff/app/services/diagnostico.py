@@ -14,15 +14,20 @@ As regras, em ordem:
    comunicação sem trip não é parada (faltou o dado, não a energia) e não vira achado.
 3. Trip que disparou e não limpou = skid DESARMADO agora (antes de qualquer parada: de madrugada já se sabe que o skid
    não vai ligar).
-4. Relé sem leitura válida há 15 min ou mais = estado desconhecido. O `comm` do meuWatt sozinho não basta: ele fica
-   falso numa leitura vazia de um minuto (Tietê, TR-03, 13/11 13:21: o aviso saiu com o coletor de pé).
-5. Uma fase perto de zero com as outras normais e o skid gerando = fusível do TP de medição.
+4. Relé sem comunicação (estado desconhecido) e 5. fase zerada na medição com o skid gerando (fusível do TP): quem
+   diz é a tela Leituras do meuWatt (`GET /plants/{slug}/readings`, a regra de lá: 15 min sem leitura válida E duas
+   voltas do coletor sem medida dele, porque o `comm` sozinho fica falso numa leitura vazia de um minuto, Tietê 13/11,
+   e o tempo sozinho dava alarme falso de madrugada, quando o coletor espaça as leituras; uma fase abaixo de 10% das
+   outras nas duas últimas leituras).
+   O X de lá ("já sei", o dono em 14/11: o relé do Skid 3 de Pirapozinho está com defeito e não lê a fase A) faz o
+   achado sair `conhecido`: a varredura não avisa, o bot diz que é sabido e o que anotaram.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -30,12 +35,12 @@ from typing import Any
 from app.core.datas import hoje, hora_brt
 from app.services import matriz
 
+logger = logging.getLogger(__name__)
+
 #: Quanto antes da parada um trip ainda explica a parada (o 27 das 03:17 explica o "não ligou" das 05:46).
 JANELA_TRIP = timedelta(hours=12)
 #: Trips da mesma função em relés diferentes dentro disto = o mesmo evento da rede.
 MESMO_EVENTO = timedelta(minutes=5)
-#: Sem leitura válida há isto = relé mudo (dono, 13/11: "30 é demais"; o buraco normal do coletor vai até 10 min).
-MUDO = timedelta(minutes=15)
 _ORDEM = {"critica": 0, "alta": 1, "media": 2, "info": 3}
 
 
@@ -55,13 +60,17 @@ class Achado:
     religar_remoto: bool = False
     #: O slug do meuWatt (a chave usa ele: o nome da usina pode mudar e passar do tamanho da trava).
     slug: str = ""
+    #: O X da tela Leituras do meuWatt ("já sei"): a nota e quem marcou. Achado conhecido não vai na varredura.
+    conhecido: str | None = None
+    #: O que separa dois achados do mesmo código no mesmo skid (a fase zerada: a A e, depois, a B avisam cada uma).
+    parte: str = ""
 
     @property
     def chave(self) -> str:
         """Estável por problema: a mesma queda avisa uma vez (a volta não reavisa)."""
         # O estado sem começo (relé sem comunicação, fase zerada) avisa uma vez POR DIA enquanto durar.
         quando = f"{self.desde:%Y-%m-%dT%H:%M}" if self.desde else hoje().isoformat()
-        k = f"diag:{self.slug or self.usina}:{self.codigo}:{'+'.join(sorted(self.skids))}:{quando}"
+        k = f"diag:{self.slug or self.usina}:{self.codigo}{':' + self.parte if self.parte else ''}:{'+'.join(sorted(self.skids))}:{quando}"
         return k if len(k) <= 120 else k[:100] + ":" + hashlib.sha1(k.encode()).hexdigest()[:19]   # a trava tem 120
 
     def texto(self) -> str:
@@ -74,6 +83,8 @@ class Achado:
         linhas += [f"• {e}" for e in self.evidencias]
         if self.fazer:
             linhas.append("O que fazer: " + " ".join(f"{i}) {f}" for i, f in enumerate(self.fazer, 1)))
+        if self.conhecido:
+            linhas.append(f"Já sabido (marcado no meuWatt): {self.conhecido}")
         return "\n".join(linhas)
 
     def push(self) -> tuple[str, str]:
@@ -87,7 +98,7 @@ class Achado:
                 "desde": hora_brt(self.desde.isoformat()) if self.desde else None,
                 "voltou": hora_brt(self.resolvido_em.isoformat()) if self.resolvido_em else None,
                 "causa": self.causa, "evidencias": self.evidencias, "fazer": self.fazer,
-                "religar_de_longe": self.religar_remoto}
+                "religar_de_longe": self.religar_remoto, "ja_sabido": self.conhecido}
 
 
 def _quando(iso: Any) -> datetime | None:
@@ -125,16 +136,37 @@ def _ativos(eventos: list[dict]) -> list[dict]:
     return [e for e in ultimo.values() if e["disparou"]]
 
 
-def _fase_zero(tensoes: list[Any], potencia: Any) -> int | None:
-    """O índice da fase perto de zero com as outras normais e o skid gerando (a MEDIÇÃO, não a rede)."""
-    v = [x if isinstance(x, (int, float)) else None for x in tensoes]
-    if None in v or not isinstance(potencia, (int, float)) or potencia <= 10:
+def _sabido(linha: dict, pode: bool = True) -> str | None:
+    """O X da leitura no meuWatt, em uma frase: a nota e quem marcou; None = ninguém marcou "já sei". `pode` = o
+    `can_mark` da resposta: para quem não opera a usina, o meuWatt manda a nota e o autor vazios, e aí não se sabe se
+    há observação."""
+    m = linha.get("mark") or {}
+    if not m.get("ignored"):
         return None
-    for i, x in enumerate(v):
-        outras = [y for j, y in enumerate(v) if j != i]
-        if min(outras) > 1000 and x < 0.1 * min(outras):
-            return i
-    return None
+    if not pode and not m.get("note"):
+        return "a equipe marcou que já sabe (a observação só aparece para quem opera a usina)"
+    quem = ", ".join(x for x in (m.get("user_name"), hora_brt(m["created_at"]) if m.get("created_at") else None) if x)
+    return (m.get("note") or "sem observação") + (f" ({quem})" if quem else "")
+
+
+#: O snapshot do relé passou disto: o valor dele não é "de agora" (o STALE_SNAPSHOT_THRESHOLD do meuWatt).
+RESERVA_FRESCO = timedelta(minutes=10)
+
+
+def _da_reserva(r: dict, evidencia_ok: bool, agora: datetime) -> dict:
+    """Um relé do /monitoring/current no formato da tela Leituras, só quando ela não responde. A reserva NÃO julga relé
+    mudo nem fase zerada (sem a tela não há o «já sei» de lá, e o aviso que alguém já marcou sairia de novo): a
+    comunicação fica "não conferida" (menos quando o monitoramento leu agora) e os trips seguem pela matriz. Valor de
+    snapshot com mais de RESERVA_FRESCO sai nulo (o monitoramento manda o último, de até dias atrás)."""
+    hora = _quando(r.get("timestamp"))
+    fresco = hora is not None and agora - hora <= RESERVA_FRESCO
+    val = (lambda k: r.get(k) if fresco else None)
+    comm = "ok" if r.get("comm") is True and evidencia_ok else "unknown"
+    leituras = [{"key": "comm", "status": comm}]
+    leituras += [{"key": k, "status": "ok", "value": val(k)}
+                 for k in ("total_active_power", *(f"{g}_{f}" for g in ("voltage", "current") for f in "abc"))]
+    return {"relay_id": r["relay_db_id"], "name": r.get("name"), "transformer_name": r.get("transformer_name"),
+            "last_read_at": r.get("last_read_at"), "readings": leituras}
 
 
 def _da_rede(funcao_item: matriz.Item, quando: datetime, todos: dict[str, list[dict]]) -> list[str]:
@@ -144,22 +176,37 @@ def _da_rede(funcao_item: matriz.Item, quando: datetime, todos: dict[str, list[d
                          for e in evs))
 
 
-async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | None = None) -> list[Achado]:
+async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | None = None,
+                       info: dict | None = None) -> list[Achado]:
     """Os achados da usina AGORA. `usina`: {slug, nome}; `paradas`: as linhas do detector de hoje
-    (`paradas.ler_do_detector`), para casar inversor e skid."""
+    (`paradas.ler_do_detector`), para casar inversor e skid. `info` recebe `leituras`: "meuwatt" (a tela Leituras) ou
+    "reserva" (ela não respondeu: a regra de antes, sem o «já sei»)."""
     agora = agora or datetime.now(UTC)
-    m = await mw.monitoramento_atual(usina["slug"])
-    protecao = [r for r in m.get("relays") or []
-                if not r.get("is_temperature_relay") and not str(r.get("model") or "").startswith("abs")]
+    # Os relés de proteção com cada leitura julgada pelo meuWatt (a tela Leituras) e o X de quem opera. Sem ela (o
+    # meuWatt fora, ou a rota ainda não publicada), a reserva: a lista do monitoramento só para os trips e o skid
+    # desarmado; relé mudo e fase zerada ficam "não conferidos" (quem chama recebe a lista e diz isso).
+    try:
+        lido = await mw.leituras(usina["slug"])
+        protecao, pode, fonte = lido.get("relays") or [], bool(lido.get("can_mark")), "meuwatt"
+    except Exception as e:                                 # noqa: BLE001
+        logger.warning("diagnostico: a tela Leituras do meuWatt falhou em %s (%s); usando a reserva",
+                       usina["slug"], type(e).__name__)
+        m = await mw.monitoramento_atual(usina["slug"])
+        evidencia = m.get("read_evidence") != "unavailable"
+        protecao = [_da_reserva(r, evidencia, agora) for r in m.get("relays") or [] if r.get("relay_db_id") is not None
+                    and not r.get("is_temperature_relay") and not str(r.get("model") or "").startswith("abs")]
+        fonte, pode = "reserva", True
+    if info is not None:
+        info["leituras"] = fonte
 
     async def evs(r):
         try:
-            return _eventos(await mw.eventos_de_trip(usina["slug"], int(r["relay_db_id"]), 50))
+            return _eventos(await mw.eventos_de_trip(usina["slug"], int(r["relay_id"]), 50))
         except Exception:                                  # noqa: BLE001 — sem o histórico, as outras regras seguem
             return []
 
     historicos = await asyncio.gather(*(evs(r) for r in protecao))
-    por_rele = {r.get("name") or str(r.get("relay_db_id")): h for r, h in zip(protecao, historicos)}
+    por_rele = {r.get("name") or str(r.get("relay_id")): h for r, h in zip(protecao, historicos)}
     # Os trips de TODOS os relés do skid (o geral pode ter o mesmo transformador: um não apaga o outro).
     do_skid: dict[str, list[dict]] = {}
     for r, h in zip(protecao, historicos):
@@ -232,29 +279,41 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                                   None, f"trip {e['funcao']} ({i.nome.lower()}) disparou às {_h(e['quando'])} e não limpou.",
                                   ["Os inversores deste skid não vão gerar até rearmar."], list(i.fazer), i.religar_remoto))
             ja.add(skid)
-        ultima = _quando(r.get("last_read_at"))         # a última leitura VÁLIDA (48 h); nula = nenhuma nesse tempo
-        if (r.get("comm") is False and m.get("read_evidence") != "unavailable"
-                and (ultima is None or agora - ultima >= MUDO)):   # um achado por skid (o geral e o do skid juntos)
+        lido = {x.get("key"): x for x in r.get("readings") or []}
+        comm = lido.get("comm") or {}
+        if comm.get("status") == "unknown" and info is not None:   # nem mudo nem ok: quem chama não pode dizer "ok"
+            info.setdefault("nao_conferidos", []).append(r.get("name") or str(r.get("relay_id")))
+        if comm.get("status") == "no_comm":             # um achado por skid (o geral e o do skid juntos)
             i = matriz.MATRIZ["RELE_SEM_COMUNICACAO"]
+            # A última leitura VÁLIDA (48 h; nula = nenhuma nesse tempo): a da linha da comunicação, que o meuWatt
+            # tira da consulta de 48 h quando o monitoramento não conferiu.
+            ultima = _quando(comm.get("last_valid_at") or r.get("last_read_at"))
             nome = str(r.get("name") or "")
             nome = nome if nome.lower().startswith("rel") else f"relé {nome}"
             mudo = next((a for a in achados if a.codigo == i.codigo and a.skids == [skid]), None)
             if mudo:
                 mudo.titulo = mudo.titulo.replace(" sem comunicação", f" e {nome} sem comunicação")
+                if not _sabido(comm, pode):             # um dos dois ainda ninguém sabia: avisa
+                    mudo.conhecido = None
+                elif mudo.conhecido and _sabido(comm, pode) != mudo.conhecido:
+                    mudo.conhecido += f"; {nome}: {_sabido(comm, pode)}"
             else:
                 achados.append(Achado(i.codigo, f"{nome} sem comunicação", i.gravidade, usina["nome"], [skid], None,
                                       None, i.o_que_e, [f"Sem leitura válida no meuWatt desde {_h(ultima)}." if ultima
                                                         else "Sem leitura válida no meuWatt nas últimas 48 h."],
-                                      list(i.fazer)))
-        f = _fase_zero([r.get(f"voltage_{x}") for x in "abc"], r.get("total_active_power"))
-        if f is not None:
+                                      list(i.fazer), conhecido=_sabido(comm, pode)))
+        pot = (lido.get("total_active_power") or {}).get("value")
+        for f in "abc":                                 # zerada com o skid gerando = a MEDIÇÃO, não a rede
+            fase = lido.get(f"voltage_{f}") or {}
+            if fase.get("status") != "zeroed" or not isinstance(pot, (int, float)) or pot <= 10:
+                continue
             i = matriz.MATRIZ["FASE_ZERO_MEDICAO"]
-            v = [r.get(f"voltage_{x}") for x in "abc"]
-            achados.append(Achado(i.codigo, f"fase {'ABC'[f]} zerada na medição", i.gravidade, usina["nome"], [skid],
+            v = [(lido.get(f"voltage_{x}") or {}).get("value") for x in "abc"]
+            achados.append(Achado(i.codigo, f"fase {f.upper()} zerada na medição", i.gravidade, usina["nome"], [skid],
                                   None, None, i.causas[0],
-                                  [f"Tensões {' / '.join(_n(x) + ' V' for x in v)} com o skid gerando "
-                                   f"{_n(r.get('total_active_power'))} kW."],
-                                  list(i.fazer)))
+                                  [f"Tensões {' / '.join(_n(x) + ' V' if isinstance(x, (int, float)) else '—' for x in v)}"
+                                   f" com o skid gerando {_n(pot)} kW."],
+                                  list(i.fazer), conhecido=_sabido(fase, pode), parte=f.upper()))
     for a in achados:
         a.slug = usina["slug"]
     return sorted(achados, key=lambda a: (_ORDEM.get(a.gravidade, 9), a.resolvido_em is not None))

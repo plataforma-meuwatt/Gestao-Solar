@@ -576,6 +576,7 @@ async def diagnosticos_por_usuario(db: Session) -> list[AvisoDeDiagnostico]:
             linhas = await ler_do_detector(mw, await _id_no_meuwatt(mw, link.mw_plant_slug),
                                            ParadasOut(recorte="dia", inicio=dia, fim=dia))
             achados = await diagnostico.diagnosticar(mw, {"slug": link.mw_plant_slug, "nome": link.nome}, linhas)
+            achados = [a for a in achados if not a.conhecido]   # o X "já sei" da tela Leituras do meuWatt cala
         except Exception:  # noqa: BLE001 (meuWatt fora: sem diagnóstico, que não é "tudo bem")
             continue
         quem = [p for p in pessoas if link.id in escopos[p.id]]

@@ -17,7 +17,8 @@ class _MeuWattFalso:
              "comm": False, "is_temperature_relay": False},
             {"relay_db_id": 18, "name": "Relé Skid 1", "model": "pextron-urp6000", "transformer_name": "TR-01",
              "comm": True, "is_temperature_relay": False, "voltage_a": 7865.6, "voltage_b": 7804.7, "voltage_c": 7888.1,
-             "current_a": 0.0, "current_b": 0.0, "current_c": 0.0, "total_active_power": 0.0},
+             "current_a": 0.0, "current_b": 0.0, "current_c": 0.0, "total_active_power": 0.0,
+             "timestamp": self.agora.isoformat()},                 # snapshot de agora (o velho sai nulo)
             {"relay_db_id": 62, "name": "TEMP-SKID-02", "model": "electron-ep4-iot", "is_temperature_relay": True},
             {"relay_db_id": 73, "name": "ABS IO SKID 2", "model": "abs-eth-io", "is_temperature_relay": False}]}
 
@@ -36,7 +37,8 @@ async def test_os_reles_de_protecao_com_o_estado_e_os_trips(db):
     r = await ger.reles(ctx, {"usina": "pirapo"})
     assert [x["rele"] for x in r["reles"]] == ["Relé Skid 2", "Relé Skid 1"]      # sem o térmico e o módulo de IO
     skid2, skid1 = r["reles"]
-    assert skid2["comunica"] is False and "DESCONHECIDO" in r["nota"] and r["noite"] is True
+    # Sem a tela Leituras (este meuWatt falso não a tem), quem não leu agora fica "não conferido": nunca "comunica".
+    assert skid2["comunica"] is None and "comunica=null: não conferido" in r["nota"] and r["noite"] is True
     assert [t["evento"] for t in skid2["trips"]] == ["disparou"]                    # só os dos últimos 2 dias
     assert skid1["trips"] is None and skid1["tensao_v"] == [7865.6, 7804.7, 7888.1]  # histórico que não leu: nulo
 
