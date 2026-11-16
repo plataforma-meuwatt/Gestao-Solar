@@ -270,5 +270,7 @@
 {"frase": "Valeu escravobot", "espera": [], "origem": "log #462"},
 {"frase": "🎙️ Testando para saber se você consegue transcrever áudio. Me responda sim ou não.", "espera": [], "origem": "log #185"},
 {"frase": "🎙️ Meu bote inútil, me mande uma foto da câmera perimetral 1 de Pereiras.", "espera": ["foto_camera"], "origem": "log #463"},
-{"frase": "🎙️ Meu bot inútil, me mande o link de vídeo da câmera perimetral 1", "espera": ["ver_camera"], "origem": "log #464"}
+{"frase": "🎙️ Meu bot inútil, me mande o link de vídeo da câmera perimetral 1", "espera": ["ver_camera"], "origem": "log #464"},
+{"frase": "Veja se tem tracker parado em ibitinga", "espera": ["usina_helper"], "origem": "log #466 (16/11: o Renan pediu o tracker parado de Ibitinga)"},
+{"frase": "Me mande a foto da Skid 1 da câmera.", "espera": ["foto_camera"], "como": "diogo.dardani", "origem": "log #465 (15/11)"}
 ]
