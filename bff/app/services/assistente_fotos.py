@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 #: ponytail: em memória, como as ações esperando (`helper.PENDENTES`); o deploy esquece, e a pessoa manda de novo.
 _RECEBIDAS: dict[str, list[dict]] = {}
 VALIDADE_S = 30 * 60
+#: 16/11/2026: as 2 fotos da roçagem de Tietê (14:01, nunca anexadas) entraram junto na tarefa de Pirapozinho (14:16).
+NOVA_LEVA_S = 10 * 60
 TETO = 20
 #: O álbum chega como uma mensagem por foto, quase juntas: a última espera isto antes de responder.
 JUNTAR_S = 4.0
@@ -68,14 +70,17 @@ def recebidas(telefone: str, sem_video: bool = False) -> list[dict]:
 
 
 def guardar(telefone: str, evento: dict) -> None:
-    """Na CHEGADA, antes da fila do número: a foto anterior do álbum precisa saber que veio outra."""
+    """Na CHEGADA, antes da fila do número: a foto anterior do álbum precisa saber que veio outra. Uma leva nova mais de
+    `NOVA_LEVA_S` depois da anterior começa do zero: as de antes, não anexadas, eram de outro assunto."""
     agora = monotonic()
     for velho in [t for t, fs in _RECEBIDAS.items() if not fs or agora - fs[-1]["em"] >= VALIDADE_S]:
         del _RECEBIDAS[velho]
     legenda = str((evento.get("midia") or {}).get("legenda") or "").strip()
     video = evento.get("tipo") == "video" or _mime(evento).startswith("video/")
-    _RECEBIDAS[telefone] = [*recebidas(telefone),
-                            {"id": evento.get("id"), "legenda": legenda, "em": agora, "video": video}][-TETO:]
+    antes = recebidas(telefone)
+    if antes and agora - antes[-1]["em"] > NOVA_LEVA_S:
+        antes = []
+    _RECEBIDAS[telefone] = [*antes, {"id": evento.get("id"), "legenda": legenda, "em": agora, "video": video}][-TETO:]
 
 
 async def e_a_ultima(telefone: str, mensagem_id: Any) -> bool:

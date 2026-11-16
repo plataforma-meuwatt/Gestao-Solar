@@ -177,6 +177,9 @@ class Pendente:
     #: A ação do meuPlano e os argumentos dela, (ação, args): o passo seguinte do pedido que repete
     #: o que acabou de ser feito não é oferecido (`assistente._seguir_no_meuplano`).
     acao: tuple[str, dict] | None = None
+    #: As (ação, args) dos passos de ANTES no mesmo pedido: o passo que repete qualquer um deles também não é
+    #: oferecido (16/11/2026: criar o contato, pôr o WhatsApp e a 3ª proposta era o 1º passo de novo, igual).
+    acoes_feitas: tuple[tuple[str, dict], ...] = ()
 
 
 #: A ação que cada pessoa (id da conta) tem esperando a senha — uma por vez.
@@ -746,6 +749,36 @@ _PARAR = _CANCELA_PALAVRAS | _TROCA | {"parar", "parem", "nem", "nunca", "nada",
                                        "somente"}
 
 
+#: O começo de frase que fala da ação esperando (confirma, nega, troca, corrige, espera) ou é só ciência: essa mensagem
+#: não espera a vez, segue como sempre (confirma, pergunta de novo ou derruba a ação).
+_SOBRE_A_ACAO = (_AFIRMA | _CANCELA_PALAVRAS | _PARAR | _HESITACAO | _CIENCIA
+                 | {"pare", "para", "verdade", "aliás", "alias", "ops", "opa", "errei", "corrigindo", "correção"})
+NA_FILA = ("📥 Anotado. Faço depois do *Sim* ou do *Não* da ação acima (ela vale até as {limite}). Se era para mudar a "
+           "ação, toque *Não*.")
+
+
+def espera_a_vez(user_id: int, texto: str, midia: bool) -> bool:
+    """A FILA (16/11/2026, o dono: "monta uma fila decente… se auto cancela conforme vou falando"): com uma ação
+    esperando o Sim (já mostrada e no prazo), a mensagem que não é resposta a ela espera a vez em vez de derrubá-la; o
+    resumo das fotos caía com o vídeo que ainda chegava, e o Sim dele ouvia "cancelada". Espera a foto e o vídeo, e a
+    frase que não começa por sim, não, cancela, troca, correção ou ciência, não pergunta e não é só número. Só na ação
+    do Sim: a da senha (equipamento) continua caindo com qualquer mensagem. `texto` é o da pessoa, cru."""
+    p = PENDENTES.get(user_id)
+    if p is None or p.confirmacao != "sim" or p.mostrada_em is None or monotonic() > p.expira:
+        return False
+    if not (texto or "").strip():
+        return midia
+    if _PERGUNTA.search(texto) or not re.search(r"[a-zà-ú]", texto.lower()):
+        return False                                       # o número sozinho é a resposta que o bot pediu (a UC)
+    palavras = _palavras(texto)
+    return bool(palavras) and not any(_tem(_SOBRE_A_ACAO, x) for x in palavras[:3])
+
+
+def aviso_da_fila(user_id: int) -> str:
+    p = PENDENTES.get(user_id)
+    return NA_FILA.format(limite=_limite(p)) if p is not None else NA_FILA.split(" (")[0] + "."
+
+
 def so_cancela(texto: str) -> bool:
     """A mensagem é SÓ o cancelamento — sem informação nova ("não é amanhã" e "não, corredores"
     são correções, e vão à IA)."""
@@ -817,18 +850,32 @@ def resposta_ao_botao(user_id: int, botao: str | None) -> str | None:
     codigo = (botao or "").partition(":")[2]
     feita = _CONFIRMADAS.get((user_id, codigo))
     if feita is not None:
-        return JA_CONFIRMADA.format(desfecho=feita.split("\n")[0])
+        return JA_CONFIRMADA.format(desfecho=feita.split("\n")[0]) + _o_de_agora(user_id, codigo)
     if (user_id, codigo) in _CANCELADAS:
-        return CANCELADA_PELA_MENSAGEM.format(trecho=_CANCELADAS[(user_id, codigo)])
+        return CANCELADA_PELA_MENSAGEM.format(trecho=_CANCELADAS[(user_id, codigo)]) + _o_de_agora(user_id, codigo)
     p = PENDENTES.get(user_id)
     if p is None:
         return BOTAO_SEM_ACAO
     if botao not in (f"sim:{p.codigo}", f"nao:{p.codigo}"):
-        return BOTAO_ANTIGO
+        return BOTAO_ANTIGO + _o_de_agora(user_id, codigo)
     if monotonic() > p.expira:
         PENDENTES.pop(user_id, None)
         return VENCEU.format(limite=_limite(p))
     return None
+
+
+#: O começo do lembrete do resumo de agora no toque num botão velho (o `assistente` manda com os botões dele).
+O_DE_AGORA = "O que espera a sua confirmação agora é o resumo mais novo:"
+
+
+def _o_de_agora(user_id: int, codigo: str) -> str:
+    """O toque no Sim de um resumo velho logo depois de chegar o novo (16/11/2026: o Sim do «Atualizar contato» que a
+    mensagem cancelou, 1 s depois do «Lançar o dia»): a pessoa ouvia só "foi cancelada" e achava que o de agora também.
+    Com uma ação do meuPlano esperando o Sim (já mostrada e no prazo), o lembrete dela."""
+    p = PENDENTES.get(user_id)
+    if p is None or p.codigo == codigo or p.confirmacao != "sim" or p.mostrada_em is None or monotonic() > p.expira:
+        return ""
+    return f"\n\n{O_DE_AGORA}\n{_escopo(p)}\nPara fazer, toque em *Sim* aqui embaixo até as {_limite(p)}."
 
 
 def mandada_antes_do_resumo(user_id: int, texto: str, chegou: float | None, mandada_em: datetime | None) -> bool:
@@ -850,7 +897,7 @@ def espera_sim(user_id: int) -> bool:
 
 def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), parte: str | None = "bot_helper",
            confirmacao: str = "senha", conversa: list[dict] | None = None, feitos: tuple[str, ...] = (),
-           acao: tuple[str, dict] | None = None) -> dict:
+           acao: tuple[str, dict] | None = None, acoes_feitas: tuple[tuple[str, dict], ...] = ()) -> dict:
     """Guarda a ação desta pessoa e devolve o que o modelo mostra. Nada rodou.
 
     - Sem senha de atuação cadastrada nem guarda: a ação não teria como ser confirmada.
@@ -876,7 +923,7 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
         return {"erro": "Uma ação por vez: já há uma esperando a senha nesta mensagem. Fale só dela."}
     p = Pendente(resumo, monotonic() + prazo_s, executar, prazo_s, [d for d in detalhes if d], [a for a in avisos if a],
                  parte, confirmacao=confirmacao, conversa=conversa, pedido=getattr(ctx, "pedido", "") or "",
-                 feitos=tuple(feitos), acao=acao)
+                 feitos=tuple(feitos), acao=acao, acoes_feitas=tuple(acoes_feitas))
     PENDENTES[user.id] = ctx.proposta = p
     if confirmacao == "sim":
         return {
@@ -1186,6 +1233,27 @@ def _nota_da_leitura(rota: str, resposta: Any) -> str | None:
     return None
 
 
+#: As rotas que o helper só executa com o aceite de risco no corpo ("aceite": true, o checkbox da tela). No bot quem
+#: aceita é a senha de atuação, mandada depois do resumo que diz o risco; o campo é posto aqui, não pela IA (16/11/2026:
+#: ela o pôs no 1º reset de Ibitinga e esqueceu no 2º, e o helper recusou com o texto cru).
+_ACEITE_TRACKER = ("Ao mandar a senha, você confirma que não há ninguém perto das fileiras (elas giram sozinhas) e "
+                   "assume o risco de comandar os rastreadores.")
+_ACEITE_RELIGA = ("Ao mandar a senha, você confirma que não há ninguém exposto nem trabalhando nos circuitos da usina e "
+                  "assume o risco de religar.")
+_ROTAS_COM_ACEITE = {"/api/trackers/comando": _ACEITE_TRACKER, "/api/trackers/destravar": _ACEITE_TRACKER,
+                     "/api/trackers/rocagem": _ACEITE_TRACKER, "/api/religa/start": _ACEITE_RELIGA,
+                     "/api/religa/comando": _ACEITE_RELIGA}
+
+
+def _aceite(rota: str, corpo: dict) -> str | None:
+    """O aviso do risco que a senha aceita, ou None se a rota não pede aceite (armar a automação dos trackers pede;
+    desarmar, não)."""
+    r = rota.split("?")[0]
+    if r == "/api/trackers/automacao":
+        return _ACEITE_TRACKER if corpo.get("modo") == "armada" else None
+    return _ROTAS_COM_ACEITE.get(r)
+
+
 async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     rota = (a.get("rota") or "").strip()
     if not rota.startswith("/api/"):
@@ -1215,6 +1283,9 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     ctx.db.commit()                                       # solta a conexão enquanto o helper lê
     if erro := await _comando_inexistente(cliente, rota, corpo, ctx.telefone):
         return erro
+    aceite = _aceite(rota, corpo) if metodo == "POST" else None
+    if aceite:
+        corpo = {**corpo, "aceite": True}
     d = await cliente.chamar(rota, corpo, origem=f"whatsapp {ctx.telefone}", metodo=metodo)
     if not d.get("ok"):
         # leitura que falhou traz o motivo DENTRO de `resposta` ("dispositivo desconhecido"): sem
@@ -1240,7 +1311,7 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
             db.commit()                                   # o lote pode levar até ~150 s
             return _desfecho(resumo, await cliente.confirmar(proposta, "pin", f"whatsapp {telefone}"))
 
-        return propor(ctx, resumo, int(d.get("expira_em_s") or 120), executar)
+        return propor(ctx, resumo, int(d.get("expira_em_s") or 120), executar, avisos=[aceite] if aceite else ())
     resposta = d.get("resposta")
     nota = _nota_da_leitura(rota.split("?")[0], resposta)
     return _corta({"status_http": d.get("status_http"), "resposta": resposta, **({"nota": nota} if nota else {})})
@@ -1275,7 +1346,7 @@ def _desfecho(resumo: str, r: dict) -> str:
     if not r.get("ok"):
         resposta = r.get("resposta") if isinstance(r.get("resposta"), dict) else {}
         motivo = r.get("error") or resposta.get("error") or r.get("reason") or ""
-        texto = f"❌ Não executado: {resumo}. {motivo}".strip()
+        texto = f"❌ Não executado: {resumo.rstrip('. ')}. {motivo}".strip()
     else:
         texto = f"✅ Executado: {r.get('resumo') or resumo}."
     return texto + (f"\nReleitura do equipamento: {releitura}" if releitura else "")

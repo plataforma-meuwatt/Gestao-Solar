@@ -288,3 +288,18 @@ def test_as_informacoes_do_relatorio_levam_so_as_fotos(db):
     fotos.guardar("+55", {"id": 2, "tipo": "video", "midia": {"mime": "video/mp4"}})
     assert [f["id"] for f in fotos.recebidas("+55")] == [1, 2]
     assert [f["id"] for f in fotos.recebidas("+55", sem_video=True)] == [1]
+
+
+def test_leva_nova_de_fotos_dez_minutos_depois_comeca_do_zero(monkeypatch):
+    """16/11/2026: as 2 fotos da roçagem de Tietê (14:01, nunca anexadas) entraram na tarefa de Pirapozinho (14:16)."""
+    from app.services import assistente_fotos as f
+
+    agora = [1000.0]
+    monkeypatch.setattr(f, "monotonic", lambda: agora[0])
+    f.guardar("+5517997377626", {"id": 1, "tipo": "image"})
+    agora[0] += 60
+    f.guardar("+5517997377626", {"id": 2, "tipo": "image"})
+    assert [x["id"] for x in f.recebidas("+5517997377626")] == [1, 2]
+    agora[0] += f.NOVA_LEVA_S + 1
+    f.guardar("+5517997377626", {"id": 3, "tipo": "image"})
+    assert [x["id"] for x in f.recebidas("+5517997377626")] == [3]

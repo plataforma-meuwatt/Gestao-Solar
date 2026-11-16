@@ -348,7 +348,7 @@ def _valores_secretos(args: Any) -> list[str]:
 
 
 def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | None = None,
-                          feitos: tuple[str, ...] = ()) -> dict:
+                          feitos: tuple[str, ...] = (), acoes_feitas: tuple[tuple[str, dict], ...] = ()) -> dict:
     """Ação do assistente do meuPlano (criar/concluir OS, lançar o dia, lembrete…) volta como
     PROPOSTA: nada foi gravado lá. A pessoa confirma com SIM (pedido do dono, 24/10/2026: a senha
     de atuação é para equipamento — "desligar, ligar, gravar" —, e o bot a cobrava para concluir
@@ -391,7 +391,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
                               if len(linhas) > 15 else [])
     proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
                              parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos,
-                             acao=(acao, args))
+                             acao=(acao, args), acoes_feitas=acoes_feitas)
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
     return proposta
 
@@ -1296,16 +1296,17 @@ async def atender(evento: dict) -> None:
     mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
     if evento.get("tipo") in IGNORADOS - {"reaction"}:     # a reação ao resumo esperando o Sim é perguntada de novo
         return
-    if evento.get("id") is not None:
+    da_fila = evento.get("_da_fila")                       # a que esperou a vez (`_na_fila`): já foi recebida e guardada
+    if evento.get("id") is not None and not da_fila:
         if evento["id"] in _ATENDIDAS:
             return
         _ATENDIDAS[evento["id"]] = None
         while len(_ATENDIDAS) > 2000:
             _ATENDIDAS.popitem(last=False)
     chave = evento.get("wa_id") or evento.get("telefone") or ""
-    if fotos.e_foto(evento):                               # na chegada: a foto anterior do álbum sabe que veio outra
+    if fotos.e_foto(evento) and not da_fila:               # na chegada: a foto anterior do álbum sabe que veio outra
         fotos.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
-    if pdf.e_pdf(evento):                                  # o "assina" que vem logo depois já acha o PDF
+    if pdf.e_pdf(evento) and not da_fila:                  # o "assina" que vem logo depois já acha o PDF
         pdf.guardar(evento.get("telefone") or ("+" + evento.get("wa_id", "")), evento)
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     texto = (evento.get("texto") or "").strip()
@@ -1321,6 +1322,43 @@ async def atender(evento: dict) -> None:
         fila.remove(item)
         if not fila and _FILA.get(chave) is fila:
             del _FILA[chave]
+
+
+#: A FILA de cada pessoa (id da conta): as mensagens que esperam a vez atrás de uma ação esperando o Sim
+#: (`helper.espera_a_vez`), na ordem em que chegaram. Soltas no fim do turno em que nada mais espera o Sim (a ação foi
+#: feita ou cancelada; o próximo passo do mesmo pedido também segura) ou quando a ação vence: entram de novo por
+#: `atender`, atrás da trava do número, e vão juntas como UM pedido (`_vem_mais`).
+#: ponytail: em memória, como as ações esperando; o deploy esquece a fila (e a ação).
+_ESPERAM_A_VEZ: dict[int, list[dict]] = {}
+#: Os turnos da fila soltos (referência forte: o laço de eventos só guarda referência fraca da tarefa).
+_SOLTAS: set[asyncio.Task] = set()
+
+
+async def _na_fila(db: Session, telefone: str, user: User, evento: dict, pergunta: str, inicio: float,
+                   enviada: datetime | None) -> None:
+    """A mensagem espera a vez: não derruba a ação, não vai à IA. Um aviso só, na primeira da leva."""
+    fila = _ESPERAM_A_VEZ.setdefault(user.id, [])
+    aviso = helper.aviso_da_fila(user.id) if not fila and not evento.get("_da_fila") else None
+    fila.append({k: v for k, v in evento.items() if k not in ("_fila", "_item", "_chegou")})
+    if aviso:
+        await _texto(telefone, aviso)
+    _registrar(db, telefone, user, "respondeu", pergunta=pergunta,
+               resposta=aviso or "[na fila: atendida depois da ação que espera o Sim]", ferramentas=["fila"],
+               inicio=inicio, em=enviada)
+
+
+def _soltar_a_fila(user_id: int) -> None:
+    """Sem ação esperando o Sim (no prazo), a fila volta a `atender`; com ela, volta a olhar quando ela vencer."""
+    if not _ESPERAM_A_VEZ.get(user_id):
+        return
+    p = helper.PENDENTES.get(user_id)
+    if p is not None and p.confirmacao == "sim" and monotonic() <= p.expira:
+        asyncio.get_running_loop().call_later(p.expira - monotonic() + 1, _soltar_a_fila, user_id)
+        return
+    for ev in _ESPERAM_A_VEZ.pop(user_id):
+        t = asyncio.get_running_loop().create_task(atender({**ev, "_da_fila": True}))
+        _SOLTAS.add(t)
+        t.add_done_callback(_SOLTAS.discard)
 
 
 def _contatos_em_texto(evento: dict) -> str:
@@ -1461,6 +1499,7 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
     except SemConexao as e:
         return nao_seguiu(e)
     conversa = [*p.conversa, {"role": "assistant", "content": f"Proposta confirmada pela pessoa: {p.resumo}"}]
+    acoes_feitas = (*p.acoes_feitas, *((p.acao,) if p.acao is not None else ()))
     msgs = [{"role": "system", "content": _sistema_do_resto(p.pedido or p.resumo, feitos)},
             *[m for m in p.conversa if m.get("role") in ("user", "assistant") and m.get("content")],
             {"role": "user", "content": f"[sistema] {feito}"}]
@@ -1509,19 +1548,19 @@ async def _seguir_no_meuplano(db: Session, user: User, telefone: str, p: Any, fe
                 revelados.extend(str(v) for v in r.get("segredos") or [] if v)
             if r.get("erro"):
                 return nao_seguiu(r["erro"])
-            if r.get("type") == "proposal" and (p.acao is None
-                                                or (r.get("action") or "", r.get("args") or {}) != p.acao):
+            if r.get("type") == "proposal" and (r.get("action") or "", r.get("args") or {}) not in acoes_feitas:
                 ctx = ger.Contexto(db=db, user=user, telefone=telefone, pedido=p.pedido)
-                _proposta_do_meuplano(ctx, r, conversa, feitos=feitos)
+                _proposta_do_meuplano(ctx, r, conversa, feitos=feitos, acoes_feitas=acoes_feitas)
                 if digitados is not None:
                     digitados.extend(ctx.digitados)
                 bloco = helper.bloco_da_proposta(ctx.proposta) if ctx.proposta is not None else ""
                 return fim(bloco, bloco)
             if r.get("type") == "proposal":
-                # O mesmo passo de novo (mesma ação, mesmos argumentos): oferecer seria pedir à pessoa para fazê-lo
-                # duas vezes (avaliação 16). A IA fica sabendo e decide.
-                resultado = {"erro": f"O meuPlano propôs de novo o passo que acabou de ser feito ({p.resumo})."}
-                conversa = [*conversa, {"role": "assistant", "content": f"(propus de novo: {p.resumo})"}]
+                # Um passo já feito neste pedido de novo (mesma ação, mesmos argumentos): oferecer seria pedir à
+                # pessoa para fazê-lo duas vezes (avaliação 16; 16/11/2026, o contato). A IA fica sabendo e decide.
+                resultado = {"erro": "O meuPlano propôs de novo um passo que já foi feito neste pedido. Já feito: "
+                                     f"{'; '.join(feitos)}."}
+                conversa = [*conversa, {"role": "assistant", "content": "(propus de novo um passo já feito)"}]
             else:
                 texto = (r.get("texto") or "").strip()
                 resultado = {"resposta_do_meuplano": texto}
@@ -1783,8 +1822,11 @@ async def _atender(evento: dict) -> None:
                           if evento.get("tipo") == "interactive" and not formulario.e_resposta(evento) else None)
         if aviso_do_botao is not None:
             # O Sim/Não que não é do resumo de agora (antigo, vencido, ou a ação se perdeu num
-            # deploy): não confirma, não cancela e não vai à IA (avaliações 13 e 14).
-            await _texto(telefone, aviso_do_botao)
+            # deploy): não confirma, não cancela e não vai à IA (avaliações 13 e 14). Com outro resumo esperando
+            # o Sim, o lembrete dele vai com os botões DELE.
+            esperando = helper.PENDENTES.get(user.id)
+            await (_botoes(telefone, aviso_do_botao, esperando.codigo)
+                   if esperando is not None and helper.O_DE_AGORA in aviso_do_botao else _texto(telefone, aviso_do_botao))
             _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=aviso_do_botao,
                        ferramentas=["confirmacao"], inicio=inicio, em=enviada)
             return
@@ -1802,6 +1844,13 @@ async def _atender(evento: dict) -> None:
             await (_botoes(telefone, de_novo, esperando.codigo) if esperando is not None else _texto(telefone, de_novo))
             _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=de_novo,
                        ferramentas=["confirmacao"], inicio=inicio, em=enviada)
+            return
+        if not (tentativa or confirma or antes) and evento.get("tipo") in ("text", "audio", "voice", "image", "video") \
+                and helper.espera_a_vez(user.id, texto, fotos.e_foto(evento)):
+            # A FILA: o que não responde à ação esperando o Sim espera a vez, sem derrubá-la (16/11/2026)
+            if evento.get("tipo") in ("audio", "voice"):   # já transcrita, e o 🎙️ já saiu: volta como o texto
+                evento = {**evento, "tipo": "text", "texto": texto}
+            await _na_fila(db, telefone, user, evento, pergunta or "[📷 foto]", inicio, enviada)
             return
         desarmada = None if tentativa or confirma or antes else helper.desarmar(user.id, seguro or "[mídia]")
         esperava = desarmada is not None
@@ -2066,3 +2115,5 @@ async def _atender(evento: dict) -> None:
     finally:
         fim.set()
         db.close()
+        if user is not None:
+            _soltar_a_fila(user.id)                        # a fila: o que esperava a vez entra atrás deste turno

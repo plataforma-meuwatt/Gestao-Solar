@@ -59,7 +59,7 @@ def _memoria_do_bot_limpa():
     for guardado in (assistente_fotos._RECEBIDAS, assistente_pdf._ESPERANDO, assistente_pdf._ZONA_ATE, assistente_pdf._AVISAR, assistente_pdf._RECEBIDOS,
                      assistente_helper.PENDENTES, assistente_helper._ERROS, assistente_helper._BLOQUEIO,
                      assistente_helper._CONFERENCIAS, assistente_helper._CONFIRMADAS, assistente_helper._CANCELADAS,
-                     assistente_geracao._USINAS_MW, assistente._ATENDIDAS,
+                     assistente_geracao._USINAS_MW, assistente._ATENDIDAS, assistente._ESPERAM_A_VEZ, assistente._SOLTAS,
                      # a trava por número presa ao laço de eventos do teste anterior estoura no seguinte
                      assistente._TRAVAS):
         guardado.clear()

@@ -2512,7 +2512,7 @@ async def test_o_resto_do_pedido_e_a_decisao_da_ia_nunca_a_prosa_do_meuplano(db,
         # a IA decide com o pedido da pessoa e o que já foi feito
         assert PEDIDO_DOIS_PASSOS in vistos[0][0]["content"] and "Criar OS em UFV Ibitinga" in vistos[0][0]["content"]
         if depois == (criar,):                                       # o mesmo passo de novo: a IA ficou sabendo
-            assert "propôs de novo o passo que acabou de ser feito" in vistos[1][-1]["content"], n
+            assert "propôs de novo um passo que já foi feito" in vistos[1][-1]["content"], n
 
 
 async def test_a_decisao_do_resto_exige_ferramenta_e_o_modo_sem_raciocinio():
@@ -2636,10 +2636,15 @@ async def test_o_botao_de_um_resumo_antigo_nao_confirma_a_acao_de_agora(db, bot_
     assert bot_local.enviados[-1] == h.CANCELADO
     await assistente.atender(_ev(dono, 4, "crie: feche a 1638"))   # resumo B: fechar a OS 1638
     # O Sim de A diz que a própria pessoa o cancelou (avaliação 16); o sem código, que é de um resumo antigo.
+    codigo_b = h.PENDENTES[dono.id].codigo
     for velho, aviso in ((toque_a, h.CANCELADA_PELA_MENSAGEM.format(trecho="Não")),
                          ({**_ev(dono, 5, "Sim"), "tipo": "interactive"}, h.BOTAO_ANTIGO)):
         await assistente.atender(velho)
-        assert bot_local.enviados[-1] == aviso and falso.aplicadas == []
+        assert bot_local.enviados[-1].startswith(aviso) and falso.aplicadas == []
+        # 16/11/2026: o toque no Sim velho logo depois de chegar o resumo novo ouvia só "foi cancelada"; agora o
+        # resumo de agora vem junto, com os botões DELE
+        assert h.O_DE_AGORA in bot_local.enviados[-1] and h.PENDENTES[dono.id].resumo in bot_local.enviados[-1]
+        assert bot_local.botoes[-1] == [f"sim:{codigo_b}", f"nao:{codigo_b}"]
     assert dono.id in h.PENDENTES                          # a ação de agora continua esperando
     await assistente.atender(_toque(dono, 6))
     assert falso.aplicadas == ["fechar_os"]
@@ -3553,8 +3558,144 @@ async def test_o_passo_seguinte_que_repete_o_que_acabou_de_ser_feito_nao_e_ofere
         else:
             # a IA fica sabendo que o meuPlano repetiu o passo e decide (aqui, o fim)
             assert dono.id not in h.PENDENTES and len(falso.conversas) == 2
-            assert "propôs de novo o passo que acabou de ser feito" in decisoes[-1][-1]["content"]
+            assert "propôs de novo um passo que já foi feito" in decisoes[-1][-1]["content"]
             assert bot_local.enviados[-1].startswith("✅ Feito no meuPlano: Fechar a OS 1638")
+
+
+
+async def test_o_passo_que_repete_um_passo_de_antes_do_mesmo_pedido_nao_e_oferecido(db, bot_local, monkeypatch):
+    """16/11/2026: criar o contato, pôr o WhatsApp dele, e a 3ª proposta era o 1º passo de novo, igual (o guarda só
+    olhava o passo que acabou de ser feito). Vale todo passo já feito no pedido."""
+    from app.services import assistente_helper as h
+
+    h.PENDENTES.clear()
+    falso, decisoes = _MeuPlanoQueRepete({"os_id": 1638}, {"os_id": 1640}, {"os_id": 1638}), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, [])
+    passo = ("proximo_passo", {"passo": "o próximo"})
+    _resto(monkeypatch, passo, passo, ("fim_do_pedido", {"situacao": "feito"}), vistos=decisoes)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie: feche a 1638 e a 1640"))
+    await assistente.atender(_toque(dono, 2))
+    assert h.PENDENTES[dono.id].resumo == "Fechar a OS 1640 (Roçagem)"
+    await assistente.atender(_toque(dono, 3))
+    assert falso.aplicadas == [("fechar_os", {"os_id": 1638}), ("fechar_os", {"os_id": 1640})]
+    assert dono.id not in h.PENDENTES and len(falso.conversas) == 3
+    assert "propôs de novo um passo que já foi feito" in decisoes[-1][-1]["content"]
+
+
+
+async def test_a_fila_o_que_nao_responde_ao_resumo_espera_a_vez_sem_derruba_lo(db, bot_local, monkeypatch):
+    """16/11/2026, o dono: "monta uma fila decente… se auto cancela conforme vou falando". Com o resumo das fotos
+    esperando o Sim, o vídeo que ainda chegava e o "Acrescente o parecer" derrubavam o resumo, e o Sim dele ouvia
+    "cancelada". Agora esperam a vez (um aviso só), o Sim do resumo vale, e depois dele a fila é atendida."""
+    import asyncio as _asyncio
+
+    from app.models.conversa_whatsapp import RegistroBot
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    _resto(monkeypatch, ("fim_do_pedido", {"situacao": "feito"}))
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    codigo = h.PENDENTES[dono.id].codigo
+    await assistente.atender(_ev(dono, 2, "Acrescente o parecer: trocado o conector MC4"))
+    assert bot_local.enviados[-1].startswith("📥 Anotado") and h.PENDENTES[dono.id].codigo == codigo
+    enviados = len(bot_local.enviados)
+    await assistente.atender({"id": 3, "telefone": dono.telefone, "wa_id": "1", "tipo": "image",
+                              "midia": {"id": "m3", "mime": "image/jpeg"}})
+    assert len(bot_local.enviados) == enviados                     # um aviso só, na primeira da leva
+    assert h.PENDENTES[dono.id].codigo == codigo and len(assistente._ESPERAM_A_VEZ[dono.id]) == 2
+    assert vistos == ["crie a OS"]                                 # nada da fila foi à IA
+    await assistente.atender(_toque(dono, 4))                      # o Sim do resumo vale
+    assert falso.aplicadas == ["criar_ordem_servico"] and bot_local.enviados[-1].startswith("✅")
+    while assistente._SOLTAS:                                      # depois dele, a fila é atendida
+        await _asyncio.gather(*list(assistente._SOLTAS))
+    assert dono.id not in assistente._ESPERAM_A_VEZ
+    parecer = [r.ferramentas for r in db.query(RegistroBot).order_by(RegistroBot.id)
+               if (r.pergunta or "").startswith("Acrescente o parecer")]
+    assert parecer[0] == "fila" and len(parecer) == 2 and parecer[1] != "fila"
+    # o que fala da ação não espera: o "não", a correção, a pergunta e o "sim" seguem como sempre
+    h.PENDENTES[dono.id] = h.Pendente("Fechar a OS 1638", 10 ** 9, None, confirmacao="sim",
+                                      mostrada_em=(0.0, None))
+    for frase in ("Não, o técnico é o Diogo", "cancela", "Isso fecha a OS?", "Sim, e manda o PDF", "Troca o técnico",
+                  "Espera", "Na verdade é a 1640", "valeu", "Sem problemas", "4829137", "482 913"):
+        assert not h.espera_a_vez(dono.id, frase, False), frase
+    for frase in ("Acrescente o parecer: trocado o MC4", "Conclua a tarefa e a OS", "Anexe as fotos na 10336"):
+        assert h.espera_a_vez(dono.id, frase, False), frase
+    assert h.espera_a_vez(dono.id, "", True) and not h.espera_a_vez(dono.id, "", False)
+    h.PENDENTES[dono.id].confirmacao = "senha"                     # a da senha (equipamento) cai como sempre
+    assert not h.espera_a_vez(dono.id, "Conclua a tarefa e a OS", True)
+
+
+async def test_a_fila_e_atendida_quando_a_acao_vence(db, bot_local, monkeypatch):
+    import asyncio as _asyncio
+    from time import monotonic as _agora
+
+    from app.services import assistente_helper as h
+
+    falso, vistos = _MeuPlanoDoisPassos(), []
+    _ia_que_pede_ao_meuplano(monkeypatch, falso, vistos)
+    dono = _conta(db, "dono", "+5517997377626")
+    await assistente.atender(_ev(dono, 1, "crie a OS"))
+    await assistente.atender(_ev(dono, 2, "Me diga a geração de hoje"))
+    assert vistos == ["crie a OS"] and dono.id in assistente._ESPERAM_A_VEZ
+    h.PENDENTES[dono.id].expira = _agora() - 1                     # venceu sem resposta
+    assistente._soltar_a_fila(dono.id)
+    while assistente._SOLTAS:
+        await _asyncio.gather(*list(assistente._SOLTAS))
+    assert vistos[-1] == "Me diga a geração de hoje" and falso.aplicadas == []
+
+class _HelperDosTrackers(_HelperFalso):
+    def __init__(self):
+        super().__init__()
+        self.corpos = []
+
+    async def chamar(self, rota, corpo, origem, metodo="POST"):
+        self.corpos.append((rota, dict(corpo)))
+        if rota in ("/api/trackers/destravar", "/api/trackers/automacao", "/api/religa/comando"):
+            return {"ok": True, "tipo": "proposta", "proposta": "P-1", "resumo": "DESTRAVAR os rastreadores.",
+                    "expira_em_s": 120}
+        return await super().chamar(rota, corpo, origem, metodo)
+
+
+async def test_comando_de_tracker_e_religa_vai_com_o_aceite_posto_pelo_sistema(db, monkeypatch):
+    """16/11/2026: a IA pôs o "aceite": true no 1º reset de Ibitinga e esqueceu no 2º; a senha foi aceita e o helper
+    recusou ("comandar tracker exige o aceite de risco"). O sistema põe o campo, e o resumo diz o risco que a senha
+    aceita."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    falso = _HelperDosTrackers()
+    monkeypatch.setattr(h, "_cliente", lambda db, user: falso)
+    monkeypatch.setattr(h, "configurado", lambda: True)
+
+    async def _vpn_ok(cliente):
+        return None
+
+    monkeypatch.setattr(h, "_vpn_parada", _vpn_ok)
+    monkeypatch.setattr(ger, "usinas_do_bot", lambda db, user: [type("U", (), {"mw_plant_slug": "ibitinga"})()])
+    dono = _conta(db, "dono", "+5517997377626")
+    dono.bot_helper, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
+    db.commit()
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    for corpo, rota, risco in (({"slug": "ibitinga"}, "/api/trackers/destravar", "perto das fileiras"),
+                               ({"slug": "ibitinga", "modo": "armada"}, "/api/trackers/automacao", "perto das fileiras"),
+                               ({"slug": "ibitinga", "disjuntor": "geral", "acao": "ligar"}, "/api/religa/comando",
+                                "nos circuitos")):
+        h.PENDENTES.clear()
+        ctx.proposta = None
+        await h.usina_helper(ctx, {"rota": rota, "corpo": corpo})
+        assert falso.corpos[-1] == (rota, {**corpo, "aceite": True})
+        assert any(risco in a for a in h.PENDENTES[dono.id].avisos), rota
+        assert risco in h.bloco_da_proposta(h.PENDENTES[dono.id])
+    # leitura e desarmar a automação não levam o aceite
+    for corpo, rota in (({"slug": "ibitinga"}, "/api/trackers/travados"),
+                        ({"slug": "ibitinga", "modo": "desligada"}, "/api/trackers/automacao")):
+        await h.usina_helper(ctx, {"rota": rota, "corpo": corpo})
+        assert "aceite" not in falso.corpos[-1][1]
+    # o "não executado" não repete o ponto final do resumo
+    assert "rastreadores.." not in h._desfecho("DESTRAVAR os rastreadores.", {"ok": False, "error": "x"})
 
 
 def test_os_modulos_do_bot_nao_repetem_nome():
