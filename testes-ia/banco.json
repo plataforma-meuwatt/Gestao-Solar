@@ -1,285 +1,2117 @@
 [
-{"frase": "oi", "espera": [], "origem": "log #7"},
-{"frase": "Me fala sobre Porto Ferreira. Tem o anydesk de lá?", "espera": ["manutencao"], "origem": "log #8"},
-{"frase": "michel roçou ibitinga hoje, não terminou, irá voltar", "espera": ["manutencao"], "origem": "log #10"},
-{"frase": "Qual a senha do cadeado de pirapozinho", "espera": ["manutencao"], "origem": "log #11"},
-{"frase": "Altere a senha do cadeado de pirapozinho para 4455", "espera": ["manutencao"], "origem": "log #12"},
-{"frase": "Me de o pdf de spare part de porto ferreira", "espera": ["manutencao"], "origem": "log #13"},
-{"frase": "Quais os parametros que o rele.pextron urp6000 tem", "espera": ["manutencao", "usina_helper", "usina_helper_catalogo"], "origem": "log #14"},
-{"frase": "Como eu configuro o estado default da saída fault do relé de temperatura ep4?", "espera": ["manutencao", "usina_helper", "usina_helper_catalogo"], "origem": "log #16"},
-{"frase": "Quem é mais bonito na splendor?", "espera": [], "origem": "log #17"},
-{"frase": "Quanto gerou de energia atr agora ibitinga?", "espera": ["geracao"], "origem": "log #21"},
-{"frase": "Qual contato de alguem que pode ajudar em pirapozinho", "espera": ["manutencao"], "origem": "log #23"},
-{"frase": "Vc é capaz de cadastrar um contato em pirapozinho?", "espera": ["manutencao"], "ou_sem_ferramenta": true, "origem": "log #24"},
-{"frase": "Cadastre o eletricista Thiago na usina de ouro fino, ele é eletricista, experiente, 35 9931-8670", "espera": ["manutencao"], "origem": "log #26"},
-{"frase": "Me de o pdf da subestacao de pirapozinho", "espera": ["manutencao"], "origem": "log #31"},
-{"frase": "Quem sou eu?", "espera": ["listar_usinas"], "origem": "log #32", "ou_sem_ferramenta": true},
-{"frase": "Ta bom seu feio, agora me fala quem atende ouro fino", "espera": ["manutencao"], "origem": "log #33"},
-{"frase": "Tem algum tecnico para atender urgencia?", "espera": ["manutencao"], "origem": "log #34"},
-{"frase": "Qual a geração de hoje de pirapozinho", "espera": ["geracao"], "origem": "log #36"},
-{"frase": "qual e-mail para solicitar liberação de pulso de medição saída serial do usuário grupo A elektro neoenergia", "espera": ["manutencao"], "origem": "log #37"},
-{"frase": "Me dê a planta de strings de Pirapozinho", "espera": ["manutencao"], "origem": "log #42"},
-{"frase": "Me dê a pranta de trackers de ibitinga", "espera": ["manutencao"], "origem": "log #43"},
-{"frase": "Me dê o manual dos trackers de ibitinga", "espera": ["manutencao"], "origem": "log #44"},
-{"frase": "Me de a senha da pv operation de ibitinga", "espera": ["manutencao"], "origem": "log #45"},
-{"frase": "Me dê o projeto de cftv de Pirapozinho", "espera": ["manutencao"], "origem": "log #46"},
-{"frase": "Rocagem de 5 ruas em ibitinga, em 2 horas, michel", "espera": ["manutencao"], "origem": "log #49"},
-{"frase": "Ontem o michel rocou 5 ruas em ibitinga, é uma OS nova que nao foi aberta e ele ira continuar hoje", "espera": ["manutencao"], "origem": "log #53"},
-{"frase": "Pode criar a OS e concluir a 1638 em aberto", "espera": ["manutencao"], "origem": "log #55"},
-{"frase": "Usina de ibitinga 100% rocada por michel, falta apenas acabamento com rocadeira costal e passar veneno", "espera": ["manutencao"], "origem": "log #57"},
-{"frase": "1638 pode fechar 1843 é a continuacao, ele começou ontem e acabou hoje", "espera": ["manutencao"], "origem": "log #58"},
-{"frase": "Abra uma os de rocagem para pereiras para terça feira agora", "espera": ["manutencao"], "origem": "log #60"},
-{"frase": "qual o status de comunicação dos reles de ouro fino?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #64"},
-{"frase": "Abrir os com tarefa de rocagem para pirapozinho, sao dois terceiros, responsável kewyn.", "espera": ["manutencao"], "origem": "log #67"},
-{"frase": "Se eu enviar foto aqui vc consegue anexar?", "espera": [], "origem": "log #76"},
-{"frase": "Qual a tensao atual do rele geral de pirapozinho?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #79"},
-{"frase": "qual a leitura de corrente do rele geral de pirapozinho?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #80"},
-{"frase": "qual os ta em aberto hoje", "espera": ["manutencao"], "origem": "log #85"},
-{"frase": "Qual a leitura do relé de proteção geral de porto ferreira agora?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #86"},
-{"frase": "Crie a conta de: Marcos cunha no meuwatt, meuplano, gs. Vincule os tokens do meuwatt e do meuplano no gestao solar. Libere o bot", "espera": ["formulario_de_cadastro"], "origem": "log #87"},
-{"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #88"},
-{"frase": "Qual a senha do roteador de pirapozinho", "espera": ["manutencao"], "origem": "log #89"},
-{"frase": "qual o código do portão de pirapozinho?", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
-{"frase": "senha do wifi de pereiras", "espera": ["manutencao"], "origem": "teste 29/10 (cadeado)"},
-{"frase": "cadastra o michel no meuwatt como técnico", "espera": ["formulario_de_cadastro"], "origem": "teste 29/10 (contato × conta)"},
-{"frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]", "espera": ["lugar_da_localizacao"], "origem": "teste 29/10 (localização sem dizer a usina); desde 12/11 reconhece o lugar (pedido do Renan: \"pela localização eu quero que o bot sugira o local\")"},
-{"frase": "[📍 localização recebida, ainda não gravada] essa é a usina de ibitinga", "espera": ["gravar_coordenada"], "origem": "teste 29/10 (localização)"},
-{"frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina", "espera": ["manutencao"], "origem": "29/10 (virou assinatura digital)"},
-{"frase": "Deixe só Roçagem nos centros de custo do comissionamento 1736", "espera": ["manutencao"], "origem": "29/10 (o meuPlano não tinha a ferramenta)"},
-{"frase": "Cadastre o Thiago e. Ouro fino, ele socorre, ele é bom eletricista 35 9931-8670", "espera": ["manutencao"], "origem": "log #25"},
-{"frase": "Abre um serviço de comissionamento para mairinque", "espera": ["manutencao"], "origem": "log #90"},
-{"frase": "Crie um contrato de comissionamento para usina de mairinque", "espera": ["manutencao"], "origem": "log #91"},
-{"frase": "🎙️ Eu preciso da senha do cadeado da entrada de Tietê.", "espera": ["manutencao"], "origem": "log #96"},
-{"frase": "Cadastre a senha do cadeado de tiete, senha ••••", "espera": ["manutencao"], "origem": "log #99"},
-{"frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS", "espera": ["formulario_de_cadastro"], "origem": "29/10 (prestador de serviço é conta no meuPlano)"},
-{"frase": "Marcar dia de trabalho do Thiago, valor 200. Ontem ele trabalhou na construção do barracão", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho com valor: diário e conta a pagar)"},
-{"frase": "marca o dia do thiago hoje, 180 reais, na OS 1638", "espera": ["manutencao"], "origem": "29/10 (dia de trabalho na OS)"},
-{"frase": "Acrescente diaria de 150 para o tiago marquezini com custo para a OS", "espera": ["manutencao"], "origem": "29/10 (diária de prestador atrelada à OS)"},
-{"frase": "marca o dia do Thiago", "espera": ["manutencao"], "origem": "29/10 (dia sem valor nem lugar: diária e OS do dia)"},
-{"frase": "o Welinton também é chamado de Gordo", "espera": ["manutencao"], "origem": "29/10 (apelido da equipe, no meuPlano)"},
-{"frase": "guarda o apelido Gordo pro Welinton", "espera": ["manutencao"], "origem": "29/10 (apelido da equipe não é o login do GS)"},
-{"frase": "Quantas diárias tem em aberto do tiago marquezini", "espera": ["manutencao"], "origem": "log #118"},
-{"frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan", "espera": ["manutencao"], "origem": "log #119"},
-{"frase": "quero cadastrar uma pessoa", "espera": ["formulario_de_cadastro"], "ou_sem_ferramenta": true, "origem": "29/10 (cadastro abre o formulário)"},
-{"frase": "o Michel tem conta no meuWatt?", "espera": ["procurar_pessoa"], "origem": "29/10 (consulta de conta não é cadastro)"},
-{"frase": "muda o centro de custo da OS 1846 para roçagem", "espera": ["manutencao"], "origem": "29/10 (centro de custo da OS)"},
-{"frase": "o que tenho a pagar essa semana?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
-{"frase": "qual o saldo das contas?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
-{"frase": "paga a diária do Thiago de hoje pela conta Espresso", "espera": ["manutencao"], "origem": "29/10 (pagar pelo meuPlano, com Sim)"},
-{"frase": "quanto entrou de receita em outubro?", "espera": ["manutencao"], "origem": "29/10 (financeiro pelo meuPlano)"},
-{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log (29/10, faltava a ferramenta)"},
-{"frase": "dá play na roçagem de tiete", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"},
-{"frase": "comenta na OS 1846 que choveu e paramos às 15h", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"},
-{"frase": "inicia a OS 1846", "espera": ["manutencao"], "origem": "29/10 (OS e tarefas pela API)"},
-{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "29/10 (diária administrativa: escolhe, propõe e manda a lista para trocar)"},
-{"frase": "Me de quais classificações tem em administrativo", "espera": ["manutencao"], "origem": "29/10 (plano de contas inteiro)"},
-{"frase": "alou", "espera": [], "origem": "log #9"},
-{"frase": "Oi", "espera": [], "origem": "log #15"},
-{"frase": "Ola", "espera": [], "origem": "log #94"},
-{"frase": "Corredores entre fileiras, ele levou 2hr. Crie a OS e a tarefa. A OS 1638 mova para concluida", "espera": ["manutencao"], "origem": "log #54"},
-{"frase": "Me de.o pdf de spare part de porto ferreira", "espera": ["manutencao"], "origem": "log #78"},
-{"frase": "Crie o contrato de Comissionamento para a usina de mairinque", "espera": ["manutencao"], "origem": "log #95"},
-{"frase": "Crie um contrato de comissionamento para mairinque", "espera": ["manutencao"], "origem": "log #102"},
-{"frase": "Cadastre o contrato de comissionamento para mairinque", "espera": ["manutencao"], "origem": "log #104"},
-{"frase": "Quero alterar os centros de custos do contrato de mairinque", "espera": ["manutencao"], "origem": "log #107"},
-{"frase": "Deixe marcados nos centros de custo do contrato #1736: Serviço Contratado à Parte", "espera": ["manutencao"], "origem": "log #108"},
-{"frase": "Thiago inicial a rocagem de tiete hoje, abra os e tarefa", "espera": ["manutencao"], "origem": "log #110"},
-{"frase": "Abra os de rocagem para tiete, com tarefa de rocagem, responsavel renan, executor Thiago marquezini, registre tambem uma diária de ••••", "espera": ["manutencao"], "origem": "log #114"},
-{"frase": "Quantas diárias o Thiago tem em aberto", "espera": ["manutencao"], "origem": "log #129"},
-{"frase": "Diárias welinton dias 28 e 29 de outubro 150,00 referente a viagem para comissionamento de Mairinque", "espera": ["manutencao"], "origem": "log #151"},
-{"frase": "dar play na roçagem de tiete, ele iniciou as 9hr mas esqueci de dar play", "espera": ["manutencao"], "origem": "log #153"},
-{"frase": "registre no diario do diogo dardani que ele trabalhou no contrato de instalação de CFTV de pereiras, nos dias \n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10", "espera": ["manutencao"], "origem": "log #156"},
-{"frase": "vc criou o contrato de instalação de CFTV de tiete?", "espera": ["manutencao"], "origem": "log #163"},
-{"frase": "me de o diario do diogo de outubro", "espera": ["manutencao"], "origem": "log #167"},
-{"frase": "Dias de trabalho do diogo em pereiras até o momento, anote do diario, e em usina coloque Pereiras, em serviço coloque INstalação do CFTV\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10", "espera": ["manutencao"], "origem": "log #150"},
-{"frase": "cadastre o Thiago Marquezini no meuPlano como prestador de serviço da Splendor", "espera": ["formulario_de_cadastro"], "origem": "log #120"},
-{"frase": "Cadastre thiago marquezini como prestador da splendor", "espera": ["formulario_de_cadastro"], "origem": "log #121"},
-{"frase": "Cadastre o gabriel no meuplano, no gs e de acesso ao bot, o telefone é  16 •••• e o email gabriel@meuwatt.com.br", "espera": ["formulario_de_cadastro"], "origem": "log #145"},
-{"frase": "Qual foi a geração do mês passado da usina de Tietê e da usina de Pirapozinho?", "espera": ["geracao"], "origem": "log #162"},
-{"frase": "Você é capaz de exportar uma planilha com dados de geração diário por inversor do mês de outubro da ufv masini?", "espera": ["excel_energia_diaria"], "origem": "log #140"},
-{"frase": "Me manda o Excel diario de outubro de porto ferreora", "espera": ["excel_energia_diaria"], "origem": "log #141"},
-{"frase": "Me manda o Excel diario de outubro de porto ferreira", "espera": ["excel_energia_diaria"], "origem": "log #142"},
-{"frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers", "espera": ["geracao", "paradas"], "origem": "log #169"},
-{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "usina_helper_catalogo", "diagnostico_usina"], "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"},
-{"frase": "Pirapozinho esta parado", "espera": ["reles", "geracao", "paradas", "usina_helper", "usina_helper_catalogo", "diagnostico_usina"], "origem": "31/10 (skid 2 parado)"},
-{"frase": "Qual a coordenada de tiete", "espera": ["local_da_usina"], "origem": "log #92 · 06/11/2026: Google Maps e Waze pelo sistema (pedido do Renan)"},
-{"frase": "Coloque que a tarefa de rocagem de tiete é responsabilidade do Thiago marquezini", "espera": ["manutencao"], "origem": "log #126"},
-{"frase": "Anotei o wiki de pirapozinho: as chaves ficam dentro da caixa do transformador do skid 2", "espera": ["manutencao"], "origem": "log #175"},
-{"frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha", "espera": ["reles", "diagnostico_usina"], "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)", "ou_sem_ferramenta": true},
-{"frase": "cadastre estas diarias no contrato de instalação de CFTV de pereiras, do Diogo Dardani\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10", "espera": ["manutencao"], "origem": "log #155"},
-{"frase": "Me de o relatorio de geracao de ibitinga", "espera": ["geracao"], "origem": "log #182"},
-{"frase": "ligue o rele geral de tiete", "espera": ["reles", "usina_helper"], "origem": "log #183"},
-{"frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.br · celular +55 41 •••• · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Técnico", "espera": ["formulario_de_cadastro"], "origem": "log #124"},
-{"frase": "📝 Cadastro pelo formulário: Gabriel · e-mail gabriel@meuwatt.com.br · celular 16 •••• · meuPlano: Operador · meuWatt: Admin O&M · Gestão Solar: Gerente da O&M", "espera": ["formulario_de_cadastro"], "origem": "log #146"},
-{"frase": "Como estão as usinas hoje?", "espera": ["geracao"], "origem": "log #184"},
-{"frase": "Oi", "espera": [], "origem": "log #48"},
-{"frase": "Tem algum tecnico para atender urgencia?", "espera": ["manutencao"], "origem": "log #35"},
-{"frase": "Abra uma os de rocagem para pereiras para terça feira agora", "espera": ["manutencao"], "origem": "log #62"},
-{"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #93"},
-{"frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.combr · celular nenhum · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Não cadastrar", "espera": ["formulario_de_cadastro"], "origem": "log #122"},
-{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #128"},
-{"frase": "Pausa a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #130"},
-{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #136"},
-{"frase": "Me de quais classificações tem em administrativo", "espera": ["manutencao"], "origem": "log #138"},
-{"frase": "Religue pirapozinho", "espera": ["reles", "usina_helper", "diagnostico_usina"], "origem": "log #178"},
-{"frase": "Quero acrescentar mais tarefas na os 1874", "espera": ["manutencao"], "origem": "log #202"},
-{"frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.", "espera": ["manutencao"], "origem": "log #204"},
-{"frase": "Me manda o relatório da OS 1878", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: o salvo ou um novo)"},
-{"frase": "gera um relatório novo da OS 1878 com IA e me manda o pdf", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot: gerar na hora)"},
-{"frase": "me manda o pdf da OS 1638", "espera": ["manutencao"], "origem": "04/11 (o PDF da OS não é o relatório dela)"},
-{"frase": "Gere o relatório da OS 1878 com o prompt: relatório curto para a diretoria, foco na falta entre as fases B e C. Segue imagens de apoio\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["relatorio_da_os"], "origem": "04/11 (relatório da OS pelo bot com o prompt e as imagens de apoio)"},
-{"frase": "Anexa essa foto na tarefa 9388\n[📷 1 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["anexar_fotos"], "origem": "04/11 (a foto para a ficha não é imagem de apoio do relatório)"},
-{"frase": "Registra nas informações do relatório da OS 1878: o relé marcou 12 kA na fase B no trip", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (texto para as informações do relatório, sem gerar)"},
-{"frase": "Coloca essas fotos nas informações do relatório da OS 1878\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]", "espera": ["informacoes_do_relatorio"], "origem": "05/11 (fotos para as informações do relatório, sem gerar)"},
-{"frase": "registra nas informações do relatório da OS do arco de Pereiras: a oscilografia indica arco entre duas fases", "espera": ["manutencao"], "origem": "05/11 (sem o número da OS: acha a OS com continuar=true e segue para o Sim)"},
-{"frase": "Tem os de troca de bobina do trafo 2 de ouro fino?", "espera": ["manutencao"], "origem": "log #218 (rotina 05/11)"},
-{"frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?", "espera": ["usina_helper"], "origem": "log #223 (rotina 05/11)"},
-{"frase": "Qual o número de série do transformador do skid 1 de ouro fino?", "espera": ["manutencao"], "origem": "log #224 (rotina 05/11)"},
-{"frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto", "espera": ["manutencao"], "origem": "log #225 (rotina 05/11)"},
-{"frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras", "espera": ["manutencao", "relatorio_da_os"], "origem": "log #227 (rotina 05/11)"},
-{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233 (rotina 05/11)"},
-{"frase": "Como eu configuro o estado default da saída fault do relé de temperatura ep4?", "espera": ["manutencao"], "origem": "log #18"},
-{"frase": "qual e-mail para solicitar liberação de pulso de medição saída serial do usuário grupo A elektro neoenergia", "espera": ["manutencao"], "origem": "log #39"},
-{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #131"},
-{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #137"},
-{"frase": "Qual a senha do cadeado de pirapozinho", "espera": ["manutencao"], "origem": "log #174"},
-{"frase": "Tem os de troca de bobina do trafo 2 de ouro fino?", "espera": ["manutencao"], "origem": "log #218"},
-{"frase": "Qual o número de série do transformador do skid 1 de ouro fino?", "espera": ["manutencao"], "origem": "log #224"},
-{"frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto", "espera": ["manutencao"], "origem": "log #225"},
-{"frase": "Cadastre o Marlon no gestao solar, +55 17 ••••, veja que ele ja tem meuwatt e meu plano. Libere o acesso ao bot", "espera": ["formulario_de_cadastro"], "origem": "log #236"},
-{"frase": "Me envie o Excel de geração diária para o mês de novembro da UFV Porto Ferreira", "espera": ["excel_energia_diaria"], "origem": "log #245"},
-{"frase": "🎙️ Bot, faz um favor pra mim. Me mostra tudo que foi realizado de OS pra usina UFV Porto Ferreira.", "espera": ["manutencao"], "origem": "log #246"},
-{"frase": "Abra OS de roçada de pirapozinho", "espera": ["manutencao"], "origem": "log #249"},
-{"frase": "me de o PDF da tarefa · Tarefa #9474", "espera": ["manutencao"], "origem": "log #264"},
-{"frase": "Ibitinga gerou mal em outubro, foi o clima?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "o que o gêmeo diz de porto ferreira em outubro", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "quanto o clima tirou de porto ferreira no mês passado?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "em ibitinga é sujeira ou tracker?", "espera": ["gemeo"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "a régua do gêmeo de ibitinga bate com o pvsyst?", "espera": ["gemeo_regua"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "como foi ibitinga hora a hora ontem no gêmeo", "espera": ["gemeo_dia"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "qual o limite de potência dos inversores de porto ferreira?", "espera": ["gemeo", "gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "o gêmeo de ibitinga usa o arquivo .PAN do módulo?", "espera": ["gemeo_config"], "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"},
-{"frase": "Me de a coordenada da usina de tiete", "espera": ["local_da_usina"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"},
-{"frase": "Me manda a localização de ibitinga", "espera": ["local_da_usina"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"},
-{"frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb [📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete", "espera": ["gravar_coordenada"], "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"},
-{"frase": "Quero um relatório de usina sem cadastro https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY", "espera": ["relatorio_sem_cadastro"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
-{"frase": "Relatório de usina sem cadastro: UFV Ouro Fino 2, ensaio do trafo do SKID 3 e da proteção 51/51N, cliente Eldorado. Fotos: https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY", "espera": ["relatorio_sem_cadastro"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
-{"frase": "Tira a foto do marimbondo do relatório da OS 1900 e deixa a conclusão mais curta", "espera": ["alterar_relatorio"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
-{"frase": "Manda o pdf do relatório da OS 1900", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"},
-{"frase": "Manda o link público do relatório da OS 1995", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"},
-{"frase": "Gera um link do relatório da OS 1900 pra eu mandar pro cliente", "espera": ["relatorio_da_os"], "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"},
-{"frase": "Qual a coordenada de tiete", "espera": ["local_da_usina"], "origem": "log #92"},
-{"frase": "Me de a coordenada da usina de pereiras", "espera": ["local_da_usina"], "origem": "log #265"},
-{"frase": "Me de a coordenada da usina de tiete", "espera": ["local_da_usina"], "origem": "log #312"},
-{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #139"},
-{"frase": "Pause a tarefa de rocagem de tiete", "espera": ["manutencao"], "origem": "log #148"},
-{"frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?", "espera": ["usina_helper"], "origem": "log #223"},
-{"frase": "Gere o relatorio da os 1878", "espera": ["relatorio_da_os"], "origem": "log #233"},
-{"frase": "Qual a senha do cadeado de tiete", "espera": ["manutencao"], "origem": "log #315"},
-{"frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete", "espera": ["gravar_coordenada"], "origem": "log #319"},
-{"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #322"},
-{"frase": "Na tmOS 1840, abra as seguintes tarefas\nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #303"},
-{"frase": "Me de o relatorio de geracao de outubro de porto ferreira", "espera": ["relatorio_pdf", "geracao"], "origem": "log #305"},
-{"frase": "Lista as OS sem usina", "espera": ["os_sem_cadastro"], "origem": "dono 07/11 (lista das OS sem cadastro)"},
-{"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro", "os_sem_cadastro"], "origem": "log #330"},
-{"frase": "Caíram varias usinas hoje, quero classificar as paradas sem precisar ir no site", "espera": ["classificar_paradas"], "origem": "pedido do Renan (07/11: classificar paradas pelo WhatsApp)"},
-{"frase": "vamos classificar as paradas de ontem de Tietê", "espera": ["classificar_paradas"], "origem": "07/11 (classificar paradas)"},
-{"frase": "Quantas paradas faltam classificar essa semana?", "espera": ["paradas_a_classificar"], "origem": "07/11 (classificar paradas: só a contagem)"},
-{"frase": "Quanto Pirapozinho perdeu com paradas em outubro?", "espera": ["paradas"], "origem": "07/11 (classificar não rouba a leitura de paradas)"},
-{"frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #307"},
-{"frase": "Me passa usuario e senha do gestao solar", "espera": ["conta_do_gs"], "origem": "log #308"},
-{"frase": "Monte o relatório de uma usina solar sem cadastro. O nome da usina é Urofino 2. Irei enviar várias fotos. O contexto é... A usina desligou. Foi enviado um técnico em campo, o técnico é o Kevin. Ele verificou que o... que o trafo do Skid 3 teve um curto-circuito, porque um pássaro sentou nas buchas de média tensão, e dá pra ver pelas fotos a marca da bucha, e o pássaro no chão. Foi realizado um ensaio de resistência da... da isolação, medição da resistência da bobina, o TTR, estava tudo normal. Foi verificado também a oscilografia, que deu pra constatar que foi um curto-circuito. Após tudo, após ver que tudo estava ok, a usina foi relegada.", "espera": ["relatorio_sem_cadastro"], "ou_sem_ferramenta": true, "origem": "log #321"},
-{"frase": "Abre o Word na web q nao consigo rolar. Nao tem como abrir o Word no app meuplano?", "espera": ["manutencao"], "origem": "log #324"},
-{"frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada]\n\nSalve a localizacao de mairinque", "espera": ["gravar_coordenada"], "origem": "log #325"},
-{"frase": "Gere o pdf da os 1996", "espera": ["relatorio_da_os"], "origem": "log #327"},
-{"frase": "Gere novamente o relatorio da OS1996, foi trocado o template word", "espera": ["relatorio_da_os"], "origem": "log #328"},
-{"frase": "Quero classificar as paradas de hoje", "espera": ["classificar_paradas"], "origem": "log #339"},
-{"frase": "Uai me passa qual tem para classificar de hoje", "espera": ["paradas_a_classificar"], "origem": "log #351"},
-{"frase": "Me a localizacao da usina de mairinque", "espera": ["local_da_usina"], "origem": "log #362"},
-{"frase": "🎙️ Abra uma OS corretiva para Porto Ferreira. Alarme inversor 42.", "espera": ["manutencao"], "origem": "log #363"},
-{"frase": "Qual o código da instalação da concessionária do TR-01 de Pereiras?", "espera": ["manutencao"], "origem": "log #368"},
-{"frase": "Como foi a geração das usinas essa semana", "espera": ["geracao", "comparar_usinas"], "origem": "log #369"},
-{"frase": "_Monte o relatório de uma usina solar sem cadastro. O nome da usina é Urofino 2. Irei enviar várias fotos. O contexto é... A usina desligou. Foi enviado um técnico em campo, o técnico é o Kevin. Ele verificou que o... que o trafo do Skid 3 teve um curto-circuito, porque um pássaro sentou nas buchas de média tensão, e dá pra ver pelas fotos a marca da bucha, e o pássaro no chão. Foi realizado um ensaio de resistência da... da isolação, medição da resistência da bobina, o TTR, estava tudo normal. Foi verificado também a oscilografia, que deu pra constatar que foi um curto-circuito. Após tudo, após ver que tudo estava ok, a usina foi relegada._", "espera": ["relatorio_sem_cadastro"], "origem": "log #332", "ou_sem_ferramenta": true},
-{"frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario", "espera": ["manutencao"], "origem": "log #143"},
-{"frase": "🎙️ Veja se já tem uma ordem de serviço para substituição, na verdade agora vamos instalar o inversor 8 do Skid 1 da UFV Pereiras. Já existia uma pendência de envio para garantia. Quem vai executar é o técnico Diogo, no dia de hoje a prioridade é a máxima. Em seguida eu já te passo quais são as tarefas que tem que ter.", "espera": ["manutencao"], "origem": "log #187"},
-{"frase": "Qual a tensão da rede de Pirapozinho?", "espera": ["usina_helper", "usina_helper_catalogo"], "origem": "log #222"},
-{"frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras", "espera": ["manutencao"], "origem": "log #227"},
-{"frase": "Me manda meu usuário e senha", "espera": ["conta_do_gs"], "origem": "log #234"},
-{"frase": "Redefina a senha para ••••", "espera": ["conta_do_gs"], "origem": "log #309"},
-{"frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34", "espera": ["manutencao"], "origem": "log #310"},
-{"frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb", "espera": ["lugar_da_localizacao"], "ou_sem_ferramenta": true, "origem": "log #313; desde 12/11 o link sozinho também reconhece o lugar"},
-{"frase": "Salve a senha do cadeado de tiete ••••", "espera": ["manutencao"], "origem": "log #316"},
-{"frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2", "espera": ["relatorio_sem_cadastro"], "origem": "log #333"},
-{"frase": "Abra uma os para porto ferreira corretiva barramento principal cabine primária, designar técnico diogo e michel, responsáveis kewyn e renan", "espera": ["manutencao"], "origem": "log #393"},
-{"frase": "Já tem OS aberta para o inversor 42 e para o problema de comunicação de rede em porto ferreira?", "espera": ["manutencao"], "origem": "log #397"},
-{"frase": "Já tem os aberta para roçagem de pereiras?", "espera": ["manutencao"], "origem": "log #416", "como": "kewyn"},
-{"frase": "Replique as tarefas da OS 1005 para pereiras, data de hoje, prioridade media, responsável técnico diogo", "espera": ["manutencao"], "origem": "log #417", "como": "kewyn"},
-{"frase": "Tem OS aberta para pereiras inversor 18 ensaio cc das strings?", "espera": ["manutencao"], "origem": "log #419", "como": "kewyn"},
-{"frase": "Me de a localizacao de mairinque", "espera": ["local_da_usina"], "origem": "log #415"},
-{"frase": "as usinas geraram bem hoje?", "espera": ["comparar_usinas"], "origem": "log #420", "como": "marcos"},
-{"frase": "[📄 PDF recebido: «Contrato Cliente.pdf»] assina", "espera": ["assinar_pdf"], "origem": "11/11 (PDF encaminhado com a legenda assina)"},
-{"frase": "[📄 PDF recebido: «Aditivo 02.pdf»]\nassina pra mim", "espera": ["assinar_pdf"], "origem": "11/11 (PDF encaminhado e depois \"assina pra mim\")"},
-{"frase": "Pode assinar esse aqui com meu certificado?\n[📄 PDF recebido: «Proposta Splendor.pdf»]", "espera": ["assinar_pdf"], "origem": "11/11 (o pedido escrito antes do PDF)"},
-{"frase": "[📄 PDF recebido: «Termo de entrega.pdf»]", "espera": [], "origem": "11/11 (PDF sozinho: pergunta se é para assinar)"},
-{"frase": "Me manda o PDF da OS 1638 assinado", "espera": ["manutencao"], "origem": "11/11 (o PDF da OS continua indo ao meuPlano)"},
-{"frase": "quais câmeras de Pereiras estão online?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "tem alarme aberto nas câmeras?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "a Térmica 08 está online?", "espera": ["cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "quero ver a câmera Perímetro 03", "espera": ["ver_camera"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "manda o link pra eu ver a dome do skid 1 ao vivo", "espera": ["ver_camera"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "me manda uma foto da câmera Térmica 02", "espera": ["foto_camera"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "me manda uma foto da térmica 2 de pereiras", "espera": ["foto_camera"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "foto da câmera perímetro 3", "espera": ["foto_camera"], "como": "diogo.dardani", "origem": "meuGuarda (spec 11/11)"},
-{"frase": "me manda a foto da câmera Portão 07", "espera": ["foto_camera", "cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "desliga o alarme das câmeras perímetro 1, 2 e 3 por 4 horas, tem gente roçando", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "desliga o alarme da Térmica 05", "espera": ["alarme_cameras"], "ou_sem_ferramenta": true, "origem": "meuGuarda (spec 11/11)"},
-{"frase": "liga de novo o alarme das câmeras de Pereiras", "espera": ["alarme_cameras"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "me manda a foto da câmera Perímetro 03", "espera": [], "sem": ["meuguarda_liberado"], "origem": "meuGuarda (spec 11/11)"},
-{"frase": "desclassificar todos os eventos de Pereiras, pessoa trabalhando", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
-{"frase": "os alarmes da Térmica 03 de hoje eram a equipe roçando, classifica como manutenção", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
-{"frase": "marca como falso alarme os eventos de veículo do Perímetro 01 de ontem, era o carro da vigilância", "espera": ["classificar_eventos"], "origem": "meuGuarda pedido 2 (spec 11/11)"},
-{"frase": "classifica os eventos de hoje de Pereiras", "espera": ["classificar_eventos"], "ou_sem_ferramenta": true, "origem": "meuGuarda pedido 2 (spec 11/11)"},
-{"frase": "descarta os eventos da Térmica 03, era o pessoal da roçagem", "espera": ["classificar_eventos"], "como": "diogo.dardani", "origem": "meuGuarda pedido 2 (spec 11/11)"},
-{"frase": "desliga o alarme da Térmica 05 por 2 horas, tem gente roçando", "espera": [], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
-{"frase": "quais câmeras de Pereiras estão offline?", "espera": ["cameras"], "sem": ["bot_meuguarda"], "origem": "meuGuarda: consulta sem atuação (11/11)"},
-{"frase": "-22,280226, -51,525479 [📍 localização recebida pelas coordenadas escritas, ainda não gravada]\n\nsalve a coordenada de pirapozinho", "espera": ["gravar_coordenada"], "origem": "log #441 (coordenadas escritas, 11/11)"},
-{"frase": "Tem alguma garantia aberta para inversor de ibitinga?", "espera": ["manutencao"], "origem": "log #421"},
-{"frase": "Veja o cadastro do donva no meu plano e meuwatt, •••• usuario unico, crie no gestao solar tambem, de acesso a tudo, 55 13 ••••", "espera": ["procurar_pessoa", "formulario_de_cadastro"], "origem": "log #423"},
-{"frase": "me passa a localização de pereiras", "espera": ["local_da_usina"], "origem": "log #430"},
-{"frase": "Qual a senha padrão do inversor Sungro modelo ••••", "espera": ["manutencao"], "origem": "log #431"},
-{"frase": "me de a imagem da camera 10 de pereiras", "espera": ["foto_camera"], "origem": "log #433"},
-{"frase": "me mande uma foto da camera perimetral 2 de pereiras", "espera": ["foto_camera"], "origem": "log #436"},
-{"frase": "me mande uma foto da camera perimetral 1 de pereiras", "espera": ["foto_camera"], "origem": "log #437"},
-{"frase": "me mande o video da camera perimetral 1 de pereiras", "espera": ["ver_camera"], "origem": "log #439"},
-{"frase": "anota que o diogo passou o dia trabalhando com a instalação do CFTV de pereiras", "espera": ["manutencao"], "origem": "log #440"},
-{"frase": "grave a coordenada de ouro fino \nhttps://maps.app.goo.gl/9oH3HXTAWp5mjBYk7", "espera": ["gravar_coordenada"], "origem": "log #444"},
-{"frase": "Cadastre este contato em pirapozinho como pessoa que faz roçagens, cadastre como terceiro", "espera": ["manutencao"], "origem": "log #284"},
-{"frase": "+55 18 ••••\nJaime policial civil", "espera": ["manutencao"], "origem": "log #285"},
-{"frase": "[📷 foto]", "espera": [], "origem": "log #372"},
-{"frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.", "espera": ["manutencao"], "origem": "log #381"},
-{"frase": "[📍 localização recebida, ainda não gravada] parei nesse posto agora", "espera": ["lugar_da_localizacao"], "origem": "lugares não recomendados (12/11)"},
-{"frase": "[📍 localização recebida, ainda não gravada] esse posto não é recomendado, o diesel é batizado", "espera": ["lugar_da_localizacao", "avaliar_lugar"], "origem": "lugares não recomendados (12/11)"},
-{"frase": "quais lugares a equipe não recomenda?", "espera": ["lugares_da_equipe"], "origem": "lugares não recomendados (12/11); desde 16/11 a lista traz os recomendados também"},
-{"frase": "[📍 localização recebida, ainda não gravada] Salve essa lanchonete como maravilhosa", "espera": ["lugar_da_localizacao", "avaliar_lugar"], "origem": "log 16/11 20:19 (o dono: \"Salve essa lanchonete como maravilhosaz browdog\"; o bot só sabia o não recomendado); a frase do dono abre o MENU (sem o atalho do Sim)", "argumentos": {"avaliar_lugar": {"sem_formulario": false}}},
-{"frase": "[📍 localização recebida, ainda não gravada] esse restaurante é ótimo, recomendo", "espera": ["lugar_da_localizacao", "avaliar_lugar"], "origem": "lugar recomendado (16/11)"},
-{"frase": "onde a equipe recomenda parar para comer em São Roque?", "espera": ["lugares_da_equipe"], "origem": "lugar recomendado (16/11)"},
-{"frase": "[📍 localização recebida, ainda não gravada] quero avaliar esse lugar", "espera": ["lugar_da_localizacao", "avaliar_lugar"], "origem": "avaliação de lugar (17/11: \"falta abrir o menu com opções para avaliação, com média de preço, as estrelas, notas etc\")"},
-{"frase": "[📍 localização recebida, ainda não gravada] salva o browdog, 5 estrelas, uns 35 conto", "espera": ["avaliar_lugar"], "argumentos": {"avaliar_lugar": {"estrelas": 5, "preco": 35, "sem_formulario": false}}, "origem": "avaliação de lugar (17/11): estrelas e preço ditos em texto vão ao formulário (avaliação independente)"},
-{"antes": [{"role": "user", "content": "[📍 localização recebida, ainda não gravada]"}, {"role": "assistant", "content": "Você está em qual destes? PAV são roque, Ponto SP (repartição pública); Browdog - Hamburguer Defumado (hamburgueria); Buzzy Gang Tattoo Shop (loja); JF Barbearia; Fire Wireless (distribuidora). Diga o lugar e o que quer fazer com ele."}], "frase": "Salve essa lanchonete como maravilhosaz browdog", "espera": ["avaliar_lugar"], "argumentos": {"avaliar_lugar": {"lugar": "browdog", "sem_formulario": false}}, "origem": "log 16/11 20:19 em duas mensagens (a localização, a pergunta do bot e o pedido): confere o lugar escolhido"},
-{"antes": [{"role": "user", "content": "[📍 localização recebida, ainda não gravada]"}, {"role": "assistant", "content": "Você está em qual destes? PAV são roque, Ponto SP; Browdog - Hamburguer Defumado; Buzzy Gang Tattoo Shop. Diga o lugar e o que quer fazer com ele."}, {"role": "user", "content": "browdog, salva"}, {"role": "assistant", "content": "Toque em Avaliar no formulário que mandei."}], "frase": "o formulário não abriu aqui, salva como recomendado, 5 estrelas", "espera": ["avaliar_lugar"], "argumentos": {"avaliar_lugar": {"lugar": "browdog", "sem_formulario": true, "recomenda": true}}, "origem": "avaliação de lugar (17/11): o formulário não abriu no aparelho, vai o Sim (avaliação independente)"},
-{"frase": "Me mande o manual do trr", "espera": ["manutencao"], "origem": "log #446"},
-{"frase": "Pirapozinho não acordou o skid 1 e 2 e tem trip 27, veja o motivo", "espera": ["diagnostico_usina", "reles"], "origem": "13/11 (Renan: 27 de madrugada, 8 inversores sem ligar; a matriz e a varredura)"},
-{"frase": "O que é o trip 59N?", "espera": ["diagnostico_usina"], "ou_sem_ferramenta": true, "origem": "13/11 (a matriz explica a função)"},
-{"frase": "Me mande uma foto da câmera perimetral 1 de pereiras", "espera": ["foto_camera"], "origem": "log #438"},
-{"frase": "Desativar alarmes de pereiras", "espera": ["alarme_cameras"], "origem": "log #448"},
-{"frase": "Manda outro comando de destravar o tracker de ibitinga", "espera": ["usina_helper"], "origem": "log #450"},
-{"frase": "anexe essas fotos na tarefa de roçagem de ibitinga, o thiago continua roçando ontem e hoje", "espera": ["manutencao", "anexar_fotos"], "origem": "log #210"},
-{"frase": "Valeu escravobot", "espera": [], "origem": "log #462"},
-{"frase": "🎙️ Testando para saber se você consegue transcrever áudio. Me responda sim ou não.", "espera": [], "origem": "log #185"},
-{"frase": "🎙️ Meu bote inútil, me mande uma foto da câmera perimetral 1 de Pereiras.", "espera": ["foto_camera"], "origem": "log #463"},
-{"frase": "🎙️ Meu bot inútil, me mande o link de vídeo da câmera perimetral 1", "espera": ["ver_camera"], "origem": "log #464"},
-{"frase": "Veja se tem tracker parado em ibitinga", "espera": ["usina_helper"], "origem": "log #466 (16/11: o Renan pediu o tracker parado de Ibitinga)"},
-{"frase": "Me mande a foto da Skid 1 da câmera.", "espera": ["foto_camera"], "como": "diogo.dardani", "origem": "log #465 (15/11)"},
-{"frase": "Já sei, o relé do skid 3 de Pirapozinho tá com defeito e não lê a fase A. Não precisa me avisar mais disso", "espera": ["marcar_leitura", "leituras_usina"], "origem": "14/11 (o dono: o aviso da fase A zerada do Skid 3, que ele já sabia)"},
-{"frase": "Quais leituras dos relés de Pirapozinho estão com problema?", "espera": ["leituras_usina", "diagnostico_usina", "reles"], "origem": "14/11 (a tela Leituras do meuWatt)"}
+  {
+    "frase": "oi",
+    "espera": [],
+    "origem": "log #7"
+  },
+  {
+    "frase": "Me fala sobre Porto Ferreira. Tem o anydesk de lá?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #8"
+  },
+  {
+    "frase": "michel roçou ibitinga hoje, não terminou, irá voltar",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #10"
+  },
+  {
+    "frase": "Qual a senha do cadeado de pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #11"
+  },
+  {
+    "frase": "Altere a senha do cadeado de pirapozinho para 4455",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #12"
+  },
+  {
+    "frase": "Me de o pdf de spare part de porto ferreira",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #13"
+  },
+  {
+    "frase": "Quais os parametros que o rele.pextron urp6000 tem",
+    "espera": [
+      "manutencao",
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #14"
+  },
+  {
+    "frase": "Como eu configuro o estado default da saída fault do relé de temperatura ep4?",
+    "espera": [
+      "manutencao",
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #16"
+  },
+  {
+    "frase": "Quem é mais bonito na splendor?",
+    "espera": [],
+    "origem": "log #17"
+  },
+  {
+    "frase": "Quanto gerou de energia atr agora ibitinga?",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #21"
+  },
+  {
+    "frase": "Qual contato de alguem que pode ajudar em pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #23"
+  },
+  {
+    "frase": "Vc é capaz de cadastrar um contato em pirapozinho?",
+    "espera": [
+      "manutencao"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "log #24"
+  },
+  {
+    "frase": "Cadastre o eletricista Thiago na usina de ouro fino, ele é eletricista, experiente, 35 9931-8670",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #26"
+  },
+  {
+    "frase": "Me de o pdf da subestacao de pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #31"
+  },
+  {
+    "frase": "Quem sou eu?",
+    "espera": [
+      "listar_usinas"
+    ],
+    "origem": "log #32",
+    "ou_sem_ferramenta": true
+  },
+  {
+    "frase": "Ta bom seu feio, agora me fala quem atende ouro fino",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #33"
+  },
+  {
+    "frase": "Tem algum tecnico para atender urgencia?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #34"
+  },
+  {
+    "frase": "Qual a geração de hoje de pirapozinho",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #36"
+  },
+  {
+    "frase": "qual e-mail para solicitar liberação de pulso de medição saída serial do usuário grupo A elektro neoenergia",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #37"
+  },
+  {
+    "frase": "Me dê a planta de strings de Pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #42"
+  },
+  {
+    "frase": "Me dê a pranta de trackers de ibitinga",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #43"
+  },
+  {
+    "frase": "Me dê o manual dos trackers de ibitinga",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #44"
+  },
+  {
+    "frase": "Me de a senha da pv operation de ibitinga",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #45"
+  },
+  {
+    "frase": "Me dê o projeto de cftv de Pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #46"
+  },
+  {
+    "frase": "Rocagem de 5 ruas em ibitinga, em 2 horas, michel",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #49"
+  },
+  {
+    "frase": "Ontem o michel rocou 5 ruas em ibitinga, é uma OS nova que nao foi aberta e ele ira continuar hoje",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #53"
+  },
+  {
+    "frase": "Pode criar a OS e concluir a 1638 em aberto",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #55"
+  },
+  {
+    "frase": "Usina de ibitinga 100% rocada por michel, falta apenas acabamento com rocadeira costal e passar veneno",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #57"
+  },
+  {
+    "frase": "1638 pode fechar 1843 é a continuacao, ele começou ontem e acabou hoje",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #58"
+  },
+  {
+    "frase": "Abra uma os de rocagem para pereiras para terça feira agora",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #60"
+  },
+  {
+    "frase": "qual o status de comunicação dos reles de ouro fino?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #64"
+  },
+  {
+    "frase": "Abrir os com tarefa de rocagem para pirapozinho, sao dois terceiros, responsável kewyn.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #67"
+  },
+  {
+    "frase": "Se eu enviar foto aqui vc consegue anexar?",
+    "espera": [],
+    "origem": "log #76"
+  },
+  {
+    "frase": "Qual a tensao atual do rele geral de pirapozinho?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #79"
+  },
+  {
+    "frase": "qual a leitura de corrente do rele geral de pirapozinho?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #80"
+  },
+  {
+    "frase": "qual os ta em aberto hoje",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #85"
+  },
+  {
+    "frase": "Qual a leitura do relé de proteção geral de porto ferreira agora?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #86"
+  },
+  {
+    "frase": "Crie a conta de: Marcos cunha no meuwatt, meuplano, gs. Vincule os tokens do meuwatt e do meuplano no gestao solar. Libere o bot",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #87"
+  },
+  {
+    "frase": "Qual a senha do cadeado de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #88"
+  },
+  {
+    "frase": "Qual a senha do roteador de pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #89"
+  },
+  {
+    "frase": "qual o código do portão de pirapozinho?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "teste 29/10 (cadeado)"
+  },
+  {
+    "frase": "senha do wifi de pereiras",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "teste 29/10 (cadeado)"
+  },
+  {
+    "frase": "cadastra o michel no meuwatt como técnico",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "teste 29/10 (contato × conta)"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada: Rod. SP-304]",
+    "espera": [
+      "lugar_da_localizacao"
+    ],
+    "origem": "teste 29/10 (localização sem dizer a usina); desde 12/11 reconhece o lugar (pedido do Renan: \"pela localização eu quero que o bot sugira o local\")"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] essa é a usina de ibitinga",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "teste 29/10 (localização)"
+  },
+  {
+    "frase": "Criar um contrato de comissionamento para Mairinque. Ainda não tenho a vigência, o valor e quem assina",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (virou assinatura digital)"
+  },
+  {
+    "frase": "Deixe só Roçagem nos centros de custo do comissionamento 1736",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (o meuPlano não tinha a ferramenta)"
+  },
+  {
+    "frase": "Cadastre o Thiago e. Ouro fino, ele socorre, ele é bom eletricista 35 9931-8670",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #25"
+  },
+  {
+    "frase": "Abre um serviço de comissionamento para mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #90"
+  },
+  {
+    "frase": "Crie um contrato de comissionamento para usina de mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #91"
+  },
+  {
+    "frase": "🎙️ Eu preciso da senha do cadeado da entrada de Tietê.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #96"
+  },
+  {
+    "frase": "Cadastre a senha do cadeado de tiete, senha ••••",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #99"
+  },
+  {
+    "frase": "Quero cadastrar o thiago marquezini no meuplano como prestador de servico para Splendor, que ele possa assumir tarefas dentro das OS",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "29/10 (prestador de serviço é conta no meuPlano)"
+  },
+  {
+    "frase": "Marcar dia de trabalho do Thiago, valor 200. Ontem ele trabalhou na construção do barracão",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (dia de trabalho com valor: diário e conta a pagar)"
+  },
+  {
+    "frase": "marca o dia do thiago hoje, 180 reais, na OS 1638",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (dia de trabalho na OS)"
+  },
+  {
+    "frase": "Acrescente diaria de 150 para o tiago marquezini com custo para a OS",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (diária de prestador atrelada à OS)"
+  },
+  {
+    "frase": "marca o dia do Thiago",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (dia sem valor nem lugar: diária e OS do dia)"
+  },
+  {
+    "frase": "o Welinton também é chamado de Gordo",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (apelido da equipe, no meuPlano)"
+  },
+  {
+    "frase": "guarda o apelido Gordo pro Welinton",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (apelido da equipe não é o login do GS)"
+  },
+  {
+    "frase": "Quantas diárias tem em aberto do tiago marquezini",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #118"
+  },
+  {
+    "frase": "O responsavel pela tarefa de rocagem é o Thiago, e o responsavel pela OS sou eu renan",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #119"
+  },
+  {
+    "frase": "quero cadastrar uma pessoa",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "29/10 (cadastro abre o formulário)"
+  },
+  {
+    "frase": "o Michel tem conta no meuWatt?",
+    "espera": [
+      "procurar_pessoa"
+    ],
+    "origem": "29/10 (consulta de conta não é cadastro)"
+  },
+  {
+    "frase": "muda o centro de custo da OS 1846 para roçagem",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (centro de custo da OS)"
+  },
+  {
+    "frase": "o que tenho a pagar essa semana?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (financeiro pelo meuPlano)"
+  },
+  {
+    "frase": "qual o saldo das contas?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (financeiro pelo meuPlano)"
+  },
+  {
+    "frase": "paga a diária do Thiago de hoje pela conta Espresso",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (pagar pelo meuPlano, com Sim)"
+  },
+  {
+    "frase": "quanto entrou de receita em outubro?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (financeiro pelo meuPlano)"
+  },
+  {
+    "frase": "Pause a tarefa de rocagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log (29/10, faltava a ferramenta)"
+  },
+  {
+    "frase": "dá play na roçagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (OS e tarefas pela API)"
+  },
+  {
+    "frase": "comenta na OS 1846 que choveu e paramos às 15h",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (OS e tarefas pela API)"
+  },
+  {
+    "frase": "inicia a OS 1846",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (OS e tarefas pela API)"
+  },
+  {
+    "frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (diária administrativa: escolhe, propõe e manda a lista para trocar)"
+  },
+  {
+    "frase": "Me de quais classificações tem em administrativo",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "29/10 (plano de contas inteiro)"
+  },
+  {
+    "frase": "alou",
+    "espera": [],
+    "origem": "log #9"
+  },
+  {
+    "frase": "Oi",
+    "espera": [],
+    "origem": "log #15"
+  },
+  {
+    "frase": "Ola",
+    "espera": [],
+    "origem": "log #94"
+  },
+  {
+    "frase": "Corredores entre fileiras, ele levou 2hr. Crie a OS e a tarefa. A OS 1638 mova para concluida",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #54"
+  },
+  {
+    "frase": "Me de.o pdf de spare part de porto ferreira",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #78"
+  },
+  {
+    "frase": "Crie o contrato de Comissionamento para a usina de mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #95"
+  },
+  {
+    "frase": "Crie um contrato de comissionamento para mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #102"
+  },
+  {
+    "frase": "Cadastre o contrato de comissionamento para mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #104"
+  },
+  {
+    "frase": "Quero alterar os centros de custos do contrato de mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #107"
+  },
+  {
+    "frase": "Deixe marcados nos centros de custo do contrato #1736: Serviço Contratado à Parte",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #108"
+  },
+  {
+    "frase": "Thiago inicial a rocagem de tiete hoje, abra os e tarefa",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #110"
+  },
+  {
+    "frase": "Abra os de rocagem para tiete, com tarefa de rocagem, responsavel renan, executor Thiago marquezini, registre tambem uma diária de ••••",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #114"
+  },
+  {
+    "frase": "Quantas diárias o Thiago tem em aberto",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #129"
+  },
+  {
+    "frase": "Diárias welinton dias 28 e 29 de outubro 150,00 referente a viagem para comissionamento de Mairinque",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #151"
+  },
+  {
+    "frase": "dar play na roçagem de tiete, ele iniciou as 9hr mas esqueci de dar play",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #153"
+  },
+  {
+    "frase": "registre no diario do diogo dardani que ele trabalhou no contrato de instalação de CFTV de pereiras, nos dias \n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #156"
+  },
+  {
+    "frase": "vc criou o contrato de instalação de CFTV de tiete?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #163"
+  },
+  {
+    "frase": "me de o diario do diogo de outubro",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #167"
+  },
+  {
+    "frase": "Dias de trabalho do diogo em pereiras até o momento, anote do diario, e em usina coloque Pereiras, em serviço coloque INstalação do CFTV\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #150"
+  },
+  {
+    "frase": "cadastre o Thiago Marquezini no meuPlano como prestador de serviço da Splendor",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #120"
+  },
+  {
+    "frase": "Cadastre thiago marquezini como prestador da splendor",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #121"
+  },
+  {
+    "frase": "Cadastre o gabriel no meuplano, no gs e de acesso ao bot, o telefone é  16 •••• e o email gabriel@meuwatt.com.br",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #145"
+  },
+  {
+    "frase": "Qual foi a geração do mês passado da usina de Tietê e da usina de Pirapozinho?",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #162"
+  },
+  {
+    "frase": "Você é capaz de exportar uma planilha com dados de geração diário por inversor do mês de outubro da ufv masini?",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #140"
+  },
+  {
+    "frase": "Me manda o Excel diario de outubro de porto ferreora",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #141"
+  },
+  {
+    "frase": "Me manda o Excel diario de outubro de porto ferreira",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #142"
+  },
+  {
+    "frase": "alguma usina do fernando, principalmente ouro fino que está com instabilidade no datalogger do skid 1, ficou com dados dos inversores faltando na fusion e no meuwatt? Pois hoje é o trigésimo dia do mês, e se houver lacunas vou configurar a recoleta de dados dos inversores pela plataforma da fusion que envia o comando para os dataloggers",
+    "espera": [
+      "geracao",
+      "paradas"
+    ],
+    "origem": "log #169"
+  },
+  {
+    "frase": "Religue pirapozinho",
+    "espera": [
+      "reles",
+      "usina_helper",
+      "usina_helper_catalogo",
+      "diagnostico_usina"
+    ],
+    "origem": "log #178 (31/10: skid 2 parado, o bot disse que não havia trip)"
+  },
+  {
+    "frase": "Pirapozinho esta parado",
+    "espera": [
+      "reles",
+      "geracao",
+      "paradas",
+      "usina_helper",
+      "usina_helper_catalogo",
+      "diagnostico_usina"
+    ],
+    "origem": "31/10 (skid 2 parado)"
+  },
+  {
+    "frase": "Qual a coordenada de tiete",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #92 · 06/11/2026: Google Maps e Waze pelo sistema (pedido do Renan)"
+  },
+  {
+    "frase": "Coloque que a tarefa de rocagem de tiete é responsabilidade do Thiago marquezini",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #126"
+  },
+  {
+    "frase": "Anotei o wiki de pirapozinho: as chaves ficam dentro da caixa do transformador do skid 2",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #175"
+  },
+  {
+    "frase": "O rele da uc2 caiu e tem trip 47 e outros veja se acha",
+    "espera": [
+      "reles",
+      "diagnostico_usina"
+    ],
+    "origem": "log #179 (31/10: a UC2 não tem usina nomeada; o bot perguntou de qual)",
+    "ou_sem_ferramenta": true
+  },
+  {
+    "frase": "cadastre estas diarias no contrato de instalação de CFTV de pereiras, do Diogo Dardani\n\n05/10\n06/10\n07/10\n08/10\n09/10\n10/10\n\n13/10\n14/10\n15/10\n16/10\n\n20/10\n21/10\n22/10\n23/10\n\n25/10\n26/10\n27/10\n28/10 TIETE\n29/10",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #155"
+  },
+  {
+    "frase": "Me de o relatorio de geracao de ibitinga",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #182"
+  },
+  {
+    "frase": "ligue o rele geral de tiete",
+    "espera": [
+      "reles",
+      "usina_helper"
+    ],
+    "origem": "log #183"
+  },
+  {
+    "frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.br · celular +55 41 •••• · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Técnico",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #124"
+  },
+  {
+    "frase": "📝 Cadastro pelo formulário: Gabriel · e-mail gabriel@meuwatt.com.br · celular 16 •••• · meuPlano: Operador · meuWatt: Admin O&M · Gestão Solar: Gerente da O&M",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #146"
+  },
+  {
+    "frase": "Como estão as usinas hoje?",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #184"
+  },
+  {
+    "frase": "Oi",
+    "espera": [],
+    "origem": "log #48"
+  },
+  {
+    "frase": "Tem algum tecnico para atender urgencia?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #35"
+  },
+  {
+    "frase": "Abra uma os de rocagem para pereiras para terça feira agora",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #62"
+  },
+  {
+    "frase": "Qual a senha do cadeado de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #93"
+  },
+  {
+    "frase": "📝 Cadastro pelo formulário: Thiago Marquezini · e-mail thiago@splendoroem.com.combr · celular nenhum · meuPlano: Prestador (terceiro) · meuWatt: Não cadastrar · Gestão Solar: Não cadastrar",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #122"
+  },
+  {
+    "frase": "Pause a tarefa de rocagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #128"
+  },
+  {
+    "frase": "Pausa a tarefa de rocagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #130"
+  },
+  {
+    "frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #136"
+  },
+  {
+    "frase": "Me de quais classificações tem em administrativo",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #138"
+  },
+  {
+    "frase": "Religue pirapozinho",
+    "espera": [
+      "reles",
+      "usina_helper",
+      "diagnostico_usina"
+    ],
+    "origem": "log #178"
+  },
+  {
+    "frase": "Quero acrescentar mais tarefas na os 1874",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #202"
+  },
+  {
+    "frase": "Vamos abrir uma ordem de serviço para a usina UFV Orofino no dia de hoje, com um serviço corretivo não planejado. A criticidade é urgente, que é o reparo do transformador do Skid 2 com a substituição das bobinas de baixa tensão devido a aquecimento interno.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #204"
+  },
+  {
+    "frase": "Me manda o relatório da OS 1878",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "04/11 (relatório da OS pelo bot: o salvo ou um novo)"
+  },
+  {
+    "frase": "gera um relatório novo da OS 1878 com IA e me manda o pdf",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "04/11 (relatório da OS pelo bot: gerar na hora)"
+  },
+  {
+    "frase": "me manda o pdf da OS 1638",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "04/11 (o PDF da OS não é o relatório dela)"
+  },
+  {
+    "frase": "Gere o relatório da OS 1878 com o prompt: relatório curto para a diretoria, foco na falta entre as fases B e C. Segue imagens de apoio\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "04/11 (relatório da OS pelo bot com o prompt e as imagens de apoio)"
+  },
+  {
+    "frase": "Anexa essa foto na tarefa 9388\n[📷 1 foto(s) recebida(s), ainda não anexada(s)]",
+    "espera": [
+      "anexar_fotos"
+    ],
+    "origem": "04/11 (a foto para a ficha não é imagem de apoio do relatório)"
+  },
+  {
+    "frase": "Registra nas informações do relatório da OS 1878: o relé marcou 12 kA na fase B no trip",
+    "espera": [
+      "informacoes_do_relatorio"
+    ],
+    "origem": "05/11 (texto para as informações do relatório, sem gerar)"
+  },
+  {
+    "frase": "Coloca essas fotos nas informações do relatório da OS 1878\n[📷 2 foto(s) recebida(s), ainda não anexada(s)]",
+    "espera": [
+      "informacoes_do_relatorio"
+    ],
+    "origem": "05/11 (fotos para as informações do relatório, sem gerar)"
+  },
+  {
+    "frase": "registra nas informações do relatório da OS do arco de Pereiras: a oscilografia indica arco entre duas fases",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "05/11 (sem o número da OS: acha a OS com continuar=true e segue para o Sim)"
+  },
+  {
+    "frase": "Tem os de troca de bobina do trafo 2 de ouro fino?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #218 (rotina 05/11)"
+  },
+  {
+    "frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?",
+    "espera": [
+      "usina_helper"
+    ],
+    "origem": "log #223 (rotina 05/11)"
+  },
+  {
+    "frase": "Qual o número de série do transformador do skid 1 de ouro fino?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #224 (rotina 05/11)"
+  },
+  {
+    "frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #225 (rotina 05/11)"
+  },
+  {
+    "frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras",
+    "espera": [
+      "manutencao",
+      "relatorio_da_os"
+    ],
+    "origem": "log #227 (rotina 05/11)"
+  },
+  {
+    "frase": "Gere o relatorio da os 1878",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "log #233 (rotina 05/11)"
+  },
+  {
+    "frase": "Como eu configuro o estado default da saída fault do relé de temperatura ep4?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #18"
+  },
+  {
+    "frase": "qual e-mail para solicitar liberação de pulso de medição saída serial do usuário grupo A elektro neoenergia",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #39"
+  },
+  {
+    "frase": "Pause a tarefa de rocagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #131"
+  },
+  {
+    "frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #137"
+  },
+  {
+    "frase": "Qual a senha do cadeado de pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #174"
+  },
+  {
+    "frase": "Tem os de troca de bobina do trafo 2 de ouro fino?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #218"
+  },
+  {
+    "frase": "Qual o número de série do transformador do skid 1 de ouro fino?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #224"
+  },
+  {
+    "frase": "Pesquise no meuplano algum transformador que possui foto da plaqueta e me traga essa foto",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #225"
+  },
+  {
+    "frase": "Cadastre o Marlon no gestao solar, +55 17 ••••, veja que ele ja tem meuwatt e meu plano. Libere o acesso ao bot",
+    "espera": [
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #236"
+  },
+  {
+    "frase": "Me envie o Excel de geração diária para o mês de novembro da UFV Porto Ferreira",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #245"
+  },
+  {
+    "frase": "🎙️ Bot, faz um favor pra mim. Me mostra tudo que foi realizado de OS pra usina UFV Porto Ferreira.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #246"
+  },
+  {
+    "frase": "Abra OS de roçada de pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #249"
+  },
+  {
+    "frase": "me de o PDF da tarefa · Tarefa #9474",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #264"
+  },
+  {
+    "frase": "Ibitinga gerou mal em outubro, foi o clima?",
+    "espera": [
+      "gemeo"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "o que o gêmeo diz de porto ferreira em outubro",
+    "espera": [
+      "gemeo"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "quanto o clima tirou de porto ferreira no mês passado?",
+    "espera": [
+      "gemeo"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "em ibitinga é sujeira ou tracker?",
+    "espera": [
+      "gemeo"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "a régua do gêmeo de ibitinga bate com o pvsyst?",
+    "espera": [
+      "gemeo_regua"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "como foi ibitinga hora a hora ontem no gêmeo",
+    "espera": [
+      "gemeo_dia"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "qual o limite de potência dos inversores de porto ferreira?",
+    "espera": [
+      "gemeo",
+      "gemeo_config"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "o gêmeo de ibitinga usa o arquivo .PAN do módulo?",
+    "espera": [
+      "gemeo_config"
+    ],
+    "origem": "gêmeos 06/11/2026 (pedido do Renan: o bot sabe tudo dos gêmeos)"
+  },
+  {
+    "frase": "Me de a coordenada da usina de tiete",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"
+  },
+  {
+    "frase": "Me manda a localização de ibitinga",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"
+  },
+  {
+    "frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb [📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #312-314 06/11/2026 (pedido do Renan: entender link do Google Maps; loc em Google Maps e Waze)"
+  },
+  {
+    "frase": "Quero um relatório de usina sem cadastro https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"
+  },
+  {
+    "frase": "Relatório de usina sem cadastro: UFV Ouro Fino 2, ensaio do trafo do SKID 3 e da proteção 51/51N, cliente Eldorado. Fotos: https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"
+  },
+  {
+    "frase": "Tira a foto do marimbondo do relatório da OS 1900 e deixa a conclusão mais curta",
+    "espera": [
+      "alterar_relatorio"
+    ],
+    "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"
+  },
+  {
+    "frase": "Manda o pdf do relatório da OS 1900",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "pedido do Renan 07/11/2026: relatório de usina sem cadastro pelo Drive, alterar até convergir, PDF"
+  },
+  {
+    "frase": "Manda o link público do relatório da OS 1995",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"
+  },
+  {
+    "frase": "Gera um link do relatório da OS 1900 pra eu mandar pro cliente",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "pedido do Renan 07/11/2026: enviar o relatório com link público"
+  },
+  {
+    "frase": "Qual a coordenada de tiete",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #92"
+  },
+  {
+    "frase": "Me de a coordenada da usina de pereiras",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #265"
+  },
+  {
+    "frase": "Me de a coordenada da usina de tiete",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #312"
+  },
+  {
+    "frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #139"
+  },
+  {
+    "frase": "Pause a tarefa de rocagem de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #148"
+  },
+  {
+    "frase": "Faça a leitura do relé de proteção do skid 1 de pirapozinho, qual a tensão e corrente?",
+    "espera": [
+      "usina_helper"
+    ],
+    "origem": "log #223"
+  },
+  {
+    "frase": "Gere o relatorio da os 1878",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "log #233"
+  },
+  {
+    "frase": "Qual a senha do cadeado de tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #315"
+  },
+  {
+    "frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada] Salve as coordenadas de tiete",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #319"
+  },
+  {
+    "frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "origem": "log #322"
+  },
+  {
+    "frase": "Na tmOS 1840, abra as seguintes tarefas\nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #303"
+  },
+  {
+    "frase": "Me de o relatorio de geracao de outubro de porto ferreira",
+    "espera": [
+      "relatorio_pdf",
+      "geracao"
+    ],
+    "origem": "log #305"
+  },
+  {
+    "frase": "Lista as OS sem usina",
+    "espera": [
+      "os_sem_cadastro"
+    ],
+    "origem": "dono 07/11 (lista das OS sem cadastro)"
+  },
+  {
+    "frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2",
+    "espera": [
+      "relatorio_sem_cadastro",
+      "os_sem_cadastro"
+    ],
+    "origem": "log #330"
+  },
+  {
+    "frase": "Caíram varias usinas hoje, quero classificar as paradas sem precisar ir no site",
+    "espera": [
+      "classificar_paradas"
+    ],
+    "origem": "pedido do Renan (07/11: classificar paradas pelo WhatsApp)"
+  },
+  {
+    "frase": "vamos classificar as paradas de ontem de Tietê",
+    "espera": [
+      "classificar_paradas"
+    ],
+    "origem": "07/11 (classificar paradas)"
+  },
+  {
+    "frase": "Quantas paradas faltam classificar essa semana?",
+    "espera": [
+      "paradas_a_classificar"
+    ],
+    "origem": "07/11 (classificar paradas: só a contagem)"
+  },
+  {
+    "frase": "Quanto Pirapozinho perdeu com paradas em outubro?",
+    "espera": [
+      "paradas"
+    ],
+    "origem": "07/11 (classificar não rouba a leitura de paradas)"
+  },
+  {
+    "frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #307"
+  },
+  {
+    "frase": "Me passa usuario e senha do gestao solar",
+    "espera": [
+      "conta_do_gs"
+    ],
+    "origem": "log #308"
+  },
+  {
+    "frase": "Monte o relatório de uma usina solar sem cadastro. O nome da usina é Urofino 2. Irei enviar várias fotos. O contexto é... A usina desligou. Foi enviado um técnico em campo, o técnico é o Kevin. Ele verificou que o... que o trafo do Skid 3 teve um curto-circuito, porque um pássaro sentou nas buchas de média tensão, e dá pra ver pelas fotos a marca da bucha, e o pássaro no chão. Foi realizado um ensaio de resistência da... da isolação, medição da resistência da bobina, o TTR, estava tudo normal. Foi verificado também a oscilografia, que deu pra constatar que foi um curto-circuito. Após tudo, após ver que tudo estava ok, a usina foi relegada.",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "log #321"
+  },
+  {
+    "frase": "Abre o Word na web q nao consigo rolar. Nao tem como abrir o Word no app meuplano?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #324"
+  },
+  {
+    "frase": "[📍 localização recebida pelo link do Google Maps, ainda não gravada]\n\nSalve a localizacao de mairinque",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #325"
+  },
+  {
+    "frase": "Gere o pdf da os 1996",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "log #327"
+  },
+  {
+    "frase": "Gere novamente o relatorio da OS1996, foi trocado o template word",
+    "espera": [
+      "relatorio_da_os"
+    ],
+    "origem": "log #328"
+  },
+  {
+    "frase": "Quero classificar as paradas de hoje",
+    "espera": [
+      "classificar_paradas"
+    ],
+    "origem": "log #339"
+  },
+  {
+    "frase": "Uai me passa qual tem para classificar de hoje",
+    "espera": [
+      "paradas_a_classificar"
+    ],
+    "origem": "log #351"
+  },
+  {
+    "frase": "Me a localizacao da usina de mairinque",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #362"
+  },
+  {
+    "frase": "🎙️ Abra uma OS corretiva para Porto Ferreira. Alarme inversor 42.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #363"
+  },
+  {
+    "frase": "Qual o código da instalação da concessionária do TR-01 de Pereiras?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #368"
+  },
+  {
+    "frase": "Como foi a geração das usinas essa semana",
+    "espera": [
+      "geracao",
+      "comparar_usinas"
+    ],
+    "origem": "log #369"
+  },
+  {
+    "frase": "_Monte o relatório de uma usina solar sem cadastro. O nome da usina é Urofino 2. Irei enviar várias fotos. O contexto é... A usina desligou. Foi enviado um técnico em campo, o técnico é o Kevin. Ele verificou que o... que o trafo do Skid 3 teve um curto-circuito, porque um pássaro sentou nas buchas de média tensão, e dá pra ver pelas fotos a marca da bucha, e o pássaro no chão. Foi realizado um ensaio de resistência da... da isolação, medição da resistência da bobina, o TTR, estava tudo normal. Foi verificado também a oscilografia, que deu pra constatar que foi um curto-circuito. Após tudo, após ver que tudo estava ok, a usina foi relegada._",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "origem": "log #332",
+    "ou_sem_ferramenta": true
+  },
+  {
+    "frase": "Lance diária do Thiago de ontem, ele trabalhou no barracao, gasto administrativo, sem OS, apenas registro no diario",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #143"
+  },
+  {
+    "frase": "🎙️ Veja se já tem uma ordem de serviço para substituição, na verdade agora vamos instalar o inversor 8 do Skid 1 da UFV Pereiras. Já existia uma pendência de envio para garantia. Quem vai executar é o técnico Diogo, no dia de hoje a prioridade é a máxima. Em seguida eu já te passo quais são as tarefas que tem que ter.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #187"
+  },
+  {
+    "frase": "Qual a tensão da rede de Pirapozinho?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #222"
+  },
+  {
+    "frase": "Me mande o relatorio da OS do arco que deu no trafo de pereiras",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #227"
+  },
+  {
+    "frase": "Me manda meu usuário e senha",
+    "espera": [
+      "conta_do_gs"
+    ],
+    "origem": "log #234"
+  },
+  {
+    "frase": "Redefina a senha para ••••",
+    "espera": [
+      "conta_do_gs"
+    ],
+    "origem": "log #309"
+  },
+  {
+    "frase": "Na OS 1840, abra as seguintes tarefas \nServiço de troca do inversor 34\nEnsaio da resistência de isolacao dos cabos CA do inversor 34\nEnsaio da resistência de isolamento das strings do inversor 34",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #310"
+  },
+  {
+    "frase": "https://maps.app.goo.gl/E2JmZzNgcWZ7beit9?g_st=awb",
+    "espera": [
+      "lugar_da_localizacao"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "log #313; desde 12/11 o link sozinho também reconhece o lugar"
+  },
+  {
+    "frase": "Salve a senha do cadeado de tiete ••••",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #316"
+  },
+  {
+    "frase": "https://drive.google.com/drive/folders/17K3-tzuAWzmtWXUBK1M2r_2DwT5GvISY\n\nOuro fino 2",
+    "espera": [
+      "relatorio_sem_cadastro"
+    ],
+    "origem": "log #333"
+  },
+  {
+    "frase": "Abra uma os para porto ferreira corretiva barramento principal cabine primária, designar técnico diogo e michel, responsáveis kewyn e renan",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #393"
+  },
+  {
+    "frase": "Já tem OS aberta para o inversor 42 e para o problema de comunicação de rede em porto ferreira?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #397"
+  },
+  {
+    "frase": "Já tem os aberta para roçagem de pereiras?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #416",
+    "como": "kewyn"
+  },
+  {
+    "frase": "Replique as tarefas da OS 1005 para pereiras, data de hoje, prioridade media, responsável técnico diogo",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #417",
+    "como": "kewyn"
+  },
+  {
+    "frase": "Tem OS aberta para pereiras inversor 18 ensaio cc das strings?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #419",
+    "como": "kewyn"
+  },
+  {
+    "frase": "Me de a localizacao de mairinque",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #415"
+  },
+  {
+    "frase": "as usinas geraram bem hoje?",
+    "espera": [
+      "comparar_usinas"
+    ],
+    "origem": "log #420",
+    "como": "marcos"
+  },
+  {
+    "frase": "[📄 PDF recebido: «Contrato Cliente.pdf»] assina",
+    "espera": [
+      "assinar_pdf"
+    ],
+    "origem": "11/11 (PDF encaminhado com a legenda assina)"
+  },
+  {
+    "frase": "[📄 PDF recebido: «Aditivo 02.pdf»]\nassina pra mim",
+    "espera": [
+      "assinar_pdf"
+    ],
+    "origem": "11/11 (PDF encaminhado e depois \"assina pra mim\")"
+  },
+  {
+    "frase": "Pode assinar esse aqui com meu certificado?\n[📄 PDF recebido: «Proposta Splendor.pdf»]",
+    "espera": [
+      "assinar_pdf"
+    ],
+    "origem": "11/11 (o pedido escrito antes do PDF)"
+  },
+  {
+    "frase": "[📄 PDF recebido: «Termo de entrega.pdf»]",
+    "espera": [],
+    "origem": "11/11 (PDF sozinho: pergunta se é para assinar)"
+  },
+  {
+    "frase": "Me manda o PDF da OS 1638 assinado",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "11/11 (o PDF da OS continua indo ao meuPlano)"
+  },
+  {
+    "frase": "quais câmeras de Pereiras estão online?",
+    "espera": [
+      "cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "tem alarme aberto nas câmeras?",
+    "espera": [
+      "cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "a Térmica 08 está online?",
+    "espera": [
+      "cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "quero ver a câmera Perímetro 03",
+    "espera": [
+      "ver_camera"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "manda o link pra eu ver a dome do skid 1 ao vivo",
+    "espera": [
+      "ver_camera"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "me manda uma foto da câmera Térmica 02",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "me manda uma foto da térmica 2 de pereiras",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "foto da câmera perímetro 3",
+    "espera": [
+      "foto_camera"
+    ],
+    "como": "diogo.dardani",
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "me manda a foto da câmera Portão 07",
+    "espera": [
+      "foto_camera",
+      "cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "desliga o alarme das câmeras perímetro 1, 2 e 3 por 4 horas, tem gente roçando",
+    "espera": [
+      "alarme_cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "desliga o alarme da Térmica 05",
+    "espera": [
+      "alarme_cameras"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "liga de novo o alarme das câmeras de Pereiras",
+    "espera": [
+      "alarme_cameras"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "me manda a foto da câmera Perímetro 03",
+    "espera": [],
+    "sem": [
+      "meuguarda_liberado"
+    ],
+    "origem": "meuGuarda (spec 11/11)"
+  },
+  {
+    "frase": "desclassificar todos os eventos de Pereiras, pessoa trabalhando",
+    "espera": [
+      "classificar_eventos"
+    ],
+    "origem": "meuGuarda pedido 2 (spec 11/11)"
+  },
+  {
+    "frase": "os alarmes da Térmica 03 de hoje eram a equipe roçando, classifica como manutenção",
+    "espera": [
+      "classificar_eventos"
+    ],
+    "origem": "meuGuarda pedido 2 (spec 11/11)"
+  },
+  {
+    "frase": "marca como falso alarme os eventos de veículo do Perímetro 01 de ontem, era o carro da vigilância",
+    "espera": [
+      "classificar_eventos"
+    ],
+    "origem": "meuGuarda pedido 2 (spec 11/11)"
+  },
+  {
+    "frase": "classifica os eventos de hoje de Pereiras",
+    "espera": [
+      "classificar_eventos"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "meuGuarda pedido 2 (spec 11/11)"
+  },
+  {
+    "frase": "descarta os eventos da Térmica 03, era o pessoal da roçagem",
+    "espera": [
+      "classificar_eventos"
+    ],
+    "como": "diogo.dardani",
+    "origem": "meuGuarda pedido 2 (spec 11/11)"
+  },
+  {
+    "frase": "desliga o alarme da Térmica 05 por 2 horas, tem gente roçando",
+    "espera": [],
+    "sem": [
+      "bot_meuguarda"
+    ],
+    "origem": "meuGuarda: consulta sem atuação (11/11)"
+  },
+  {
+    "frase": "quais câmeras de Pereiras estão offline?",
+    "espera": [
+      "cameras"
+    ],
+    "sem": [
+      "bot_meuguarda"
+    ],
+    "origem": "meuGuarda: consulta sem atuação (11/11)"
+  },
+  {
+    "frase": "-22,280226, -51,525479 [📍 localização recebida pelas coordenadas escritas, ainda não gravada]\n\nsalve a coordenada de pirapozinho",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #441 (coordenadas escritas, 11/11)"
+  },
+  {
+    "frase": "Tem alguma garantia aberta para inversor de ibitinga?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #421"
+  },
+  {
+    "frase": "Veja o cadastro do donva no meu plano e meuwatt, •••• usuario unico, crie no gestao solar tambem, de acesso a tudo, 55 13 ••••",
+    "espera": [
+      "procurar_pessoa",
+      "formulario_de_cadastro"
+    ],
+    "origem": "log #423"
+  },
+  {
+    "frase": "me passa a localização de pereiras",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #430"
+  },
+  {
+    "frase": "Qual a senha padrão do inversor Sungro modelo ••••",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #431"
+  },
+  {
+    "frase": "me de a imagem da camera 10 de pereiras",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #433"
+  },
+  {
+    "frase": "me mande uma foto da camera perimetral 2 de pereiras",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #436"
+  },
+  {
+    "frase": "me mande uma foto da camera perimetral 1 de pereiras",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #437"
+  },
+  {
+    "frase": "me mande o video da camera perimetral 1 de pereiras",
+    "espera": [
+      "ver_camera"
+    ],
+    "origem": "log #439"
+  },
+  {
+    "frase": "anota que o diogo passou o dia trabalhando com a instalação do CFTV de pereiras",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #440"
+  },
+  {
+    "frase": "grave a coordenada de ouro fino \nhttps://maps.app.goo.gl/9oH3HXTAWp5mjBYk7",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #444"
+  },
+  {
+    "frase": "Cadastre este contato em pirapozinho como pessoa que faz roçagens, cadastre como terceiro",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #284"
+  },
+  {
+    "frase": "+55 18 ••••\nJaime policial civil",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #285"
+  },
+  {
+    "frase": "[📷 foto]",
+    "espera": [],
+    "origem": "log #372"
+  },
+  {
+    "frase": "Coloque que o responsável pela US-2020 é o Paulo Renan e o técnico em campo executor é o Michel. Após isso, gere o PDF e me mande.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #381"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] parei nesse posto agora",
+    "espera": [
+      "lugar_da_localizacao"
+    ],
+    "origem": "lugares não recomendados (12/11)"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] esse posto não é recomendado, o diesel é batizado",
+    "espera": [
+      "lugar_da_localizacao",
+      "avaliar_lugar"
+    ],
+    "origem": "lugares não recomendados (12/11)"
+  },
+  {
+    "frase": "quais lugares a equipe não recomenda?",
+    "espera": [
+      "lugares_da_equipe"
+    ],
+    "origem": "lugares não recomendados (12/11); desde 16/11 a lista traz os recomendados também"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] Salve essa lanchonete como maravilhosa",
+    "espera": [
+      "lugar_da_localizacao",
+      "avaliar_lugar"
+    ],
+    "origem": "log 16/11 20:19 (o dono: \"Salve essa lanchonete como maravilhosaz browdog\"; o bot só sabia o não recomendado); a frase do dono abre o MENU (sem o atalho do Sim)",
+    "argumentos": {
+      "avaliar_lugar": {
+        "sem_formulario": false
+      }
+    }
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] esse restaurante é ótimo, recomendo",
+    "espera": [
+      "lugar_da_localizacao",
+      "avaliar_lugar"
+    ],
+    "origem": "lugar recomendado (16/11)"
+  },
+  {
+    "frase": "onde a equipe recomenda parar para comer em São Roque?",
+    "espera": [
+      "lugares_da_equipe"
+    ],
+    "origem": "lugar recomendado (16/11)"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] quero avaliar esse lugar",
+    "espera": [
+      "lugar_da_localizacao",
+      "avaliar_lugar"
+    ],
+    "origem": "avaliação de lugar (17/11: \"falta abrir o menu com opções para avaliação, com média de preço, as estrelas, notas etc\")"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] salva o browdog, 5 estrelas, uns 35 conto",
+    "espera": [
+      "avaliar_lugar"
+    ],
+    "argumentos": {
+      "avaliar_lugar": {
+        "estrelas": 5,
+        "preco": 35,
+        "sem_formulario": false
+      }
+    },
+    "origem": "avaliação de lugar (17/11): estrelas e preço ditos em texto vão ao formulário (avaliação independente)"
+  },
+  {
+    "antes": [
+      {
+        "role": "user",
+        "content": "[📍 localização recebida, ainda não gravada]"
+      },
+      {
+        "role": "assistant",
+        "content": "Você está em qual destes? PAV são roque, Ponto SP (repartição pública); Browdog - Hamburguer Defumado (hamburgueria); Buzzy Gang Tattoo Shop (loja); JF Barbearia; Fire Wireless (distribuidora). Diga o lugar e o que quer fazer com ele."
+      }
+    ],
+    "frase": "Salve essa lanchonete como maravilhosaz browdog",
+    "espera": [
+      "avaliar_lugar"
+    ],
+    "argumentos": {
+      "avaliar_lugar": {
+        "lugar": "browdog",
+        "sem_formulario": false
+      }
+    },
+    "origem": "log 16/11 20:19 em duas mensagens (a localização, a pergunta do bot e o pedido): confere o lugar escolhido"
+  },
+  {
+    "antes": [
+      {
+        "role": "user",
+        "content": "[📍 localização recebida, ainda não gravada]"
+      },
+      {
+        "role": "assistant",
+        "content": "Você está em qual destes? PAV são roque, Ponto SP; Browdog - Hamburguer Defumado; Buzzy Gang Tattoo Shop. Diga o lugar e o que quer fazer com ele."
+      },
+      {
+        "role": "user",
+        "content": "browdog, salva"
+      },
+      {
+        "role": "assistant",
+        "content": "Toque em Avaliar no formulário que mandei."
+      }
+    ],
+    "frase": "o formulário não abriu aqui, salva como recomendado, 5 estrelas",
+    "espera": [
+      "avaliar_lugar"
+    ],
+    "argumentos": {
+      "avaliar_lugar": {
+        "lugar": "browdog",
+        "sem_formulario": true,
+        "recomenda": true
+      }
+    },
+    "origem": "avaliação de lugar (17/11): o formulário não abriu no aparelho, vai o Sim (avaliação independente)"
+  },
+  {
+    "frase": "Me mande o manual do trr",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #446"
+  },
+  {
+    "frase": "Pirapozinho não acordou o skid 1 e 2 e tem trip 27, veja o motivo",
+    "espera": [
+      "diagnostico_usina",
+      "reles"
+    ],
+    "origem": "13/11 (Renan: 27 de madrugada, 8 inversores sem ligar; a matriz e a varredura)"
+  },
+  {
+    "frase": "O que é o trip 59N?",
+    "espera": [
+      "diagnostico_usina"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "13/11 (a matriz explica a função)"
+  },
+  {
+    "frase": "Me mande uma foto da câmera perimetral 1 de pereiras",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #438"
+  },
+  {
+    "frase": "Desativar alarmes de pereiras",
+    "espera": [
+      "alarme_cameras"
+    ],
+    "origem": "log #448"
+  },
+  {
+    "frase": "Manda outro comando de destravar o tracker de ibitinga",
+    "espera": [
+      "usina_helper"
+    ],
+    "origem": "log #450"
+  },
+  {
+    "frase": "anexe essas fotos na tarefa de roçagem de ibitinga, o thiago continua roçando ontem e hoje",
+    "espera": [
+      "manutencao",
+      "anexar_fotos"
+    ],
+    "origem": "log #210"
+  },
+  {
+    "frase": "Valeu escravobot",
+    "espera": [],
+    "origem": "log #462"
+  },
+  {
+    "frase": "🎙️ Testando para saber se você consegue transcrever áudio. Me responda sim ou não.",
+    "espera": [],
+    "origem": "log #185"
+  },
+  {
+    "frase": "🎙️ Meu bote inútil, me mande uma foto da câmera perimetral 1 de Pereiras.",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #463"
+  },
+  {
+    "frase": "🎙️ Meu bot inútil, me mande o link de vídeo da câmera perimetral 1",
+    "espera": [
+      "ver_camera"
+    ],
+    "origem": "log #464"
+  },
+  {
+    "frase": "Veja se tem tracker parado em ibitinga",
+    "espera": [
+      "usina_helper"
+    ],
+    "origem": "log #466 (16/11: o Renan pediu o tracker parado de Ibitinga)"
+  },
+  {
+    "frase": "Me mande a foto da Skid 1 da câmera.",
+    "espera": [
+      "foto_camera"
+    ],
+    "como": "diogo.dardani",
+    "origem": "log #465 (15/11)"
+  },
+  {
+    "frase": "Já sei, o relé do skid 3 de Pirapozinho tá com defeito e não lê a fase A. Não precisa me avisar mais disso",
+    "espera": [
+      "marcar_leitura",
+      "leituras_usina"
+    ],
+    "origem": "14/11 (o dono: o aviso da fase A zerada do Skid 3, que ele já sabia)"
+  },
+  {
+    "frase": "Quais leituras dos relés de Pirapozinho estão com problema?",
+    "espera": [
+      "leituras_usina",
+      "diagnostico_usina",
+      "reles"
+    ],
+    "origem": "14/11 (a tela Leituras do meuWatt)"
+  },
+  {
+    "frase": "Me dê a localização da UFV Mairink.",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #515"
+  },
+  {
+    "frase": "Me mande a localizacao da ufv mairinque",
+    "espera": [
+      "local_da_usina"
+    ],
+    "origem": "log #472"
+  },
+  {
+    "frase": "Quais as pendencias de pereiras",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #511"
+  },
+  {
+    "frase": "Tem tracker em ibitinga travado?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #469"
+  },
+  {
+    "frase": "Abre uma.OS de rocagem nova",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #476"
+  },
+  {
+    "frase": "Na tarefa 10337 queimou \n\n\nComputador\nSwitch principal\nRoteador das mibos \nSwitch da subestação \nSwitch hikvision, skid 1\nPorta 3 do Mikrotik \n\ncam 08 e cam 09",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #500"
+  }
 ]
