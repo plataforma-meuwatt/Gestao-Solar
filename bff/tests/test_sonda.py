@@ -127,6 +127,10 @@ def _tudo_responde(mock):
     mock.get(f"{BASE}/plants/porto-ferreira/exports/raw/options").respond(
         200, json=OPCOES_COMO_HOJE
     )
+    # A fronteira por medidor (o balanço de energia do bot) também declara `campos_exigidos`: a forma de 17/11/2026.
+    mock.get(f"{BASE}/plants/porto-ferreira/ssu-readers/boundary").respond(200, json={
+        "totals": {"injection_kwh": 7704.9}, "readers": [{"transformer_id": 57, "injection_kwh": 7704.9,
+                                                          "coverage": {"valid_blocks": 96, "expected_blocks": 96}}]})
     # E o cabeçalho da usina, que declara o `id` (o detector de paradas pede o id numérico).
     mock.get(f"{BASE}/plants/porto-ferreira").respond(
         200, json={"id": 9378, "slug": "porto-ferreira", "name": "Porto Ferreira"}

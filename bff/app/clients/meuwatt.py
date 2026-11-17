@@ -435,6 +435,14 @@ class MeuWattClient:
                 continue
         return totais
 
+    async def fronteira_periodo(self, slug: str, inicio: date, fim: date) -> dict[str, Any]:
+        """A fronteira num período qualquer (fim incluso), de CADA medidor — o leitor da concessionária de cada skid:
+        `{totals, data_until, readers: [{transformer_id, transformer_name, injection_kwh, estimated_kwh, coverage,
+        long_gaps, data_until, days}]}`. O medidor já vem ligado ao transformador (UC) pelo meuWatt. É o que o balanço
+        de energia do bot lê, em mês fechado ou em período livre."""
+        return await self._get(f"/plants/{slug}/ssu-readers/boundary", start=inicio.isoformat(), end=fim.isoformat(),
+                               timeout=120)
+
     #: O que pode sair de uma fatura. A listagem do upstream traz também `titular`,
     #: `installation_number` e `tariff` — dado contratual do cliente, que o portal não
     #: usa e não tem por que atravessar a ponte. Os irmãos `/{id}/pdf` e

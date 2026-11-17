@@ -2144,5 +2144,49 @@
       "conta_de_energia"
     ],
     "origem": "17/11 (conta de energia sem dizer a usina: o sistema acha pela UC)"
+  },
+  {
+    "antes": [
+      {
+        "role": "user",
+        "content": "Quanto Porto Ferreira gerou em outubro por skid?"
+      },
+      {
+        "role": "assistant",
+        "content": "Em outubro Porto Ferreira gerou 909.204,4 kWh nos inversores: Skid 1 181.331,0 · Skid 2 182.958,4 · Skid 3 182.739,5 · Skid 4 182.197,0 · Skid 5 179.978,5 kWh."
+      }
+    ],
+    "frase": "Vc pode comparar em uma tabela simples a medicao dos inversores de cada skid vs o medido pelo medidor particular?",
+    "espera": [
+      "balanco_energia"
+    ],
+    "origem": "o dono, 17/11 18:59 (WhatsApp): o bot disse que não tinha o medidor de Porto Ferreira"
+  },
+  {
+    "frase": "Compara a geração dos inversores com a conta de energia de outubro de Porto Ferreira, com a tabela das perdas",
+    "espera": [
+      "balanco_energia"
+    ],
+    "origem": "o dono, 17/11 (\"comparar com a conta de energia tbm\", \"gerar a tabela com as perdas\")"
+  },
+  {
+    "frase": "Faz o gráfico dos inversores contra o medidor e a conta por skid de Porto Ferreira em outubro",
+    "espera": [
+      "balanco_energia"
+    ],
+    "origem": "o dono, 17/11 (\"fazer gráficos\": o balanço manda o gráfico junto)"
+  },
+  {
+    "frase": "Faz o balanço de energia de Porto Ferreira de 1 a 15 de novembro, com o parecer",
+    "espera": [
+      "balanco_energia"
+    ],
+    "argumentos": {
+      "balanco_energia": {
+        "inicio": "2026-11-01",
+        "fim": "2026-11-15"
+      }
+    },
+    "origem": "o dono, 17/11 (\"período personalizado\")"
   }
 ]
