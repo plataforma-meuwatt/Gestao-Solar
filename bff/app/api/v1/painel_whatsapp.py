@@ -16,7 +16,7 @@ Usuários do sistema.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.clients import whatsapp as gateway
+from app.core.datas import BRT, hoje
 from app.core.db import get_db
 from app.core.security import exige_area
 from app.models.conversa_whatsapp import RegistroBot
@@ -272,6 +273,11 @@ class RegistroBotOut(BaseModel):
     resposta: str | None = None
     duracao_ms: int | None = None
     erro: str | None = None
+    #: o gasto de IA da mensagem (nulo = de antes do medidor)
+    chamadas_ia: int | None = None
+    tokens_entrada: int | None = None
+    tokens_cache: int | None = None
+    tokens_saida: int | None = None
 
 
 def registros_do_bot(
@@ -309,9 +315,90 @@ def registros_do_bot(
             resultado=r.resultado,
             ferramentas=[f for f in (r.ferramentas or "").split(",") if f],
             pergunta=r.pergunta, resposta=r.resposta, duracao_ms=r.duracao_ms, erro=r.erro,
+            chamadas_ia=r.chamadas_ia, tokens_entrada=r.tokens_entrada, tokens_cache=r.tokens_cache,
+            tokens_saida=r.tokens_saida,
         )
         for r in linhas
     ]
+
+
+# ------------------------------------------------------------------ o medidor de tokens
+# O dono, 17/11/2026: "Quero que você instale um medidor de tokens e deixe isso para o gestor … dados por dia, mês e
+# tudo". O gasto de IA de cada mensagem do bot está no log (`gs_bot_registros`); aqui ele soma por dia, por mês e por
+# pessoa, no fuso de Brasília. Uma fonte para o adm-gs (tudo, ou uma empresa) e o oem-gs (só a empresa da sessão).
+_MESES = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+class UsoLinha(BaseModel):
+    chave: str
+    rotulo: str
+    mensagens: int = 0
+    chamadas_ia: int = 0
+    entrada: int = 0
+    #: a parte da entrada que veio do cache (mais barata)
+    cache: int = 0
+    saida: int = 0
+    total: int = 0
+
+
+class UsoDoBotOut(BaseModel):
+    de: date
+    ate: date
+    #: a primeira mensagem medida: antes dela não há número (o medidor nasceu em 17/11/2026)
+    medido_desde: datetime | None = None
+    total: UsoLinha
+    por_dia: list[UsoLinha] = []
+    por_mes: list[UsoLinha] = []
+    por_pessoa: list[UsoLinha] = []
+
+
+def uso_do_bot(db: Session, *, empresa_id: int | None = None, de: date | None = None,
+               ate: date | None = None) -> UsoDoBotOut:
+    ate = ate or hoje()
+    de = de or ate.replace(day=1)
+    if de > ate:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "O início vem depois do fim.")
+    ini = datetime.combine(de, datetime.min.time(), BRT)
+    fim = datetime.combine(ate + timedelta(days=1), datetime.min.time(), BRT)
+    medidas = select(RegistroBot).where(RegistroBot.tokens_entrada.is_not(None))
+    if empresa_id is not None:
+        medidas = medidas.where(RegistroBot.empresa_id == empresa_id)
+    # o corte do SQL é largo (UTC sem fuso, um dia a mais de cada lado); o exato é o de Brasília, abaixo
+    folga = timedelta(days=1)
+    linhas = [r for r in db.scalars(medidas.where(
+        RegistroBot.em >= (ini - folga).astimezone(UTC).replace(tzinfo=None),
+        RegistroBot.em < (fim + folga).astimezone(UTC).replace(tzinfo=None))).all()
+        if ini <= (r.em if r.em.tzinfo else r.em.replace(tzinfo=UTC)) < fim]
+    primeira = db.scalar(select(func.min(RegistroBot.em)).where(
+        RegistroBot.tokens_entrada.is_not(None), *([RegistroBot.empresa_id == empresa_id] if empresa_id else [])))
+    contas = {u.id: u for u in db.scalars(
+        select(User).where(User.id.in_({r.gs_user_id for r in linhas if r.gs_user_id}))).all()}
+
+    def somar(grupos: dict[str, UsoLinha], chave: str, rotulo: str, r: RegistroBot) -> None:
+        g = grupos.setdefault(chave, UsoLinha(chave=chave, rotulo=rotulo))
+        g.mensagens += 1
+        g.chamadas_ia += r.chamadas_ia or 0
+        g.entrada += r.tokens_entrada or 0
+        g.cache += r.tokens_cache or 0
+        g.saida += r.tokens_saida or 0
+        g.total = g.entrada + g.saida
+
+    total: dict[str, UsoLinha] = {}
+    dias: dict[str, UsoLinha] = {}
+    meses: dict[str, UsoLinha] = {}
+    pessoas: dict[str, UsoLinha] = {}
+    for r in linhas:
+        local = (r.em if r.em.tzinfo else r.em.replace(tzinfo=UTC)).astimezone(BRT)
+        somar(total, "total", "Total", r)
+        somar(dias, f"{local:%Y-%m-%d}", f"{local:%d/%m}", r)
+        somar(meses, f"{local:%Y-%m}", f"{_MESES[local.month - 1]}/{local.year}", r)
+        u = contas.get(r.gs_user_id)
+        somar(pessoas, str(r.gs_user_id or r.telefone), f"{u.nome} ({u.apelido})" if u else r.telefone, r)
+    return UsoDoBotOut(
+        de=de, ate=ate, medido_desde=primeira, total=total.get("total") or UsoLinha(chave="total", rotulo="Total"),
+        por_dia=[dias[k] for k in sorted(dias)], por_mes=[meses[k] for k in sorted(meses)],
+        por_pessoa=sorted(pessoas.values(), key=lambda x: -x.total),
+    )
 
 
 @router.get("/bot/registros", response_model=list[RegistroBotOut])
@@ -328,6 +415,18 @@ def log_do_bot(
     return registros_do_bot(
         db, empresa_id=empresa_id, usuario_id=usuario_id, resultado=resultado, limite=limite
     )
+
+
+@router.get("/bot/uso", response_model=UsoDoBotOut)
+def uso_do_bot_na_plataforma(
+    de: date | None = None,
+    ate: date | None = None,
+    empresa_id: int | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(EXIGE_BOT),
+) -> UsoDoBotOut:
+    """O medidor de tokens do bot (adm-gs): por dia, mês e pessoa; de todas as empresas ou de uma."""
+    return uso_do_bot(db, empresa_id=empresa_id, de=de, ate=ate)
 
 
 class SaudeDoCanalOut(BaseModel):

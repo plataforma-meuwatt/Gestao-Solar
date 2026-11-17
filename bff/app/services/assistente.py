@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import re
+from contextvars import ContextVar
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -882,6 +883,24 @@ def _sem_segredos(texto: str, valores: Sequence[str] = (), credencial: bool = Fa
                         publicos)
 
 
+#: O gasto de IA da mensagem que está sendo atendida — o medidor do gestor (o dono, 17/11/2026: "um medidor de tokens …
+#: dados por dia, mês e tudo"). `atender` abre um por mensagem, `_llm` soma cada chamada, `_registrar` grava na linha.
+_USO: ContextVar[dict | None] = ContextVar("uso_da_ia", default=None)
+
+
+def _somar_uso(uso: dict) -> None:
+    """Uma chamada à IA. A entrada já inclui o cache (DeepSeek: `prompt_cache_hit_tokens`; a ponte do Claude e o padrão
+    da OpenAI: `prompt_tokens_details.cached_tokens`)."""
+    conta = _USO.get()
+    if conta is None:
+        return
+    cache = uso.get("prompt_cache_hit_tokens") or (uso.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+    conta["chamadas"] += 1
+    conta["entrada"] += int(uso.get("prompt_tokens") or 0)
+    conta["cache"] += int(cache or 0)
+    conta["saida"] += int(uso.get("completion_tokens") or 0)
+
+
 def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
                pergunta: str | None = None, resposta: str | None = None,
                ferramentas: list[str] | None = None, inicio: float | None = None,
@@ -903,6 +922,8 @@ def _registrar(db: Session, telefone: str, user: User | None, resultado: str, *,
             duracao_ms=int((monotonic() - inicio) * 1000) if inicio else None,
             erro=(erro or None) and _sem_segredos(erro, valores, publicos=publicos)[:1000],
             **({"em": em} if em else {}),
+            **({"chamadas_ia": uso["chamadas"], "tokens_entrada": uso["entrada"], "tokens_cache": uso["cache"],
+                "tokens_saida": uso["saida"]} if (uso := _USO.get()) is not None else {}),
         ))
         db.commit()
     except Exception:                                      # noqa: BLE001
@@ -1086,7 +1107,9 @@ async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool
     async with httpx.AsyncClient(timeout=(teto_s or 80) + 10) as c:
         r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers=cabecalhos, json=corpo)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]
+        dados = r.json()
+        _somar_uso(dados.get("usage") or {})
+        return dados["choices"][0]["message"]
 
 
 async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
@@ -1306,6 +1329,7 @@ JUNTADA = "[respondida junto com a mensagem seguinte]"
 async def atender(evento: dict) -> None:
     """Um turno inteiro. Roda em segundo plano: o gateway já recebeu 202. As mensagens do
     mesmo número esperam a vez, na ordem em que chegaram (o `Lock` acorda em fila)."""
+    _USO.set({"chamadas": 0, "entrada": 0, "cache": 0, "saida": 0})   # o medidor desta mensagem
     if evento.get("tipo") in IGNORADOS - {"reaction"}:     # a reação ao resumo esperando o Sim é perguntada de novo
         return
     da_fila = evento.get("_da_fila")                       # a que esperou a vez (`_na_fila`): já foi recebida e guardada

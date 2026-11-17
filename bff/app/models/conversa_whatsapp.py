@@ -57,3 +57,10 @@ class RegistroBot(Base):
     resposta: Mapped[str | None] = mapped_column(Text, nullable=True)
     duracao_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O gasto de IA desta mensagem (o medidor do gestor, pedido do dono 17/11/2026: "um medidor de tokens … dados por
+    #: dia, mês e tudo"), somado de cada chamada à IA da volta. `tokens_cache` é a parte da entrada que veio do cache.
+    #: Nulo = linha de antes do medidor (não medida); zero = medida, sem IA.
+    chamadas_ia: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_entrada: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_cache: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_saida: Mapped[int | None] = mapped_column(Integer, nullable=True)

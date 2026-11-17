@@ -12,7 +12,8 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio, type Tom } from '@/components/base'
-import { listarEmpresas, logDoBot, saudeDoCanal, type RegistroBot } from '@/features/api'
+import { listarEmpresas, logDoBot, saudeDoCanal, usoDoBot, type RegistroBot } from '@/features/api'
+import { UsoDaIa } from '@/features/bot/UsoDaIa'
 import { quando } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
 
@@ -57,6 +58,13 @@ export function LogDoBot() {
       apoio="Cada mensagem que chegou ao bot do WhatsApp: de quem e de qual empresa, o que perguntou, o que o bot respondeu, as ferramentas que usou e quanto levou. Número sem cadastro também aparece: é quem tentou falar com o bot sem conta no Gestão Solar."
     >
       <SaudeDoCanalCartao />
+
+      <div className="mb-4">
+        <UsoDaIa
+          buscar={(f) => usoDoBot({ ...f, empresa_id: empresa ? Number(empresa) : undefined })}
+          chave={['adm', empresa]}
+        />
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <select
@@ -191,6 +199,9 @@ export function LinhaDoLog({ registro: r, primeiro }: { registro: RegistroBot; p
           <p className="text-xs text-fraco">
             {r.telefone}
             {r.ferramentas.length ? ` · ferramentas: ${r.ferramentas.join(', ')}` : ''}
+            {r.tokens_entrada !== null
+              ? ` · IA: ${r.chamadas_ia ?? 0} chamada(s), ${(r.tokens_entrada ?? 0).toLocaleString('pt-BR')} tokens de entrada (${(r.tokens_cache ?? 0).toLocaleString('pt-BR')} do cache) e ${(r.tokens_saida ?? 0).toLocaleString('pt-BR')} de saída`
+              : ''}
           </p>
           {r.pergunta ? (
             <div>
