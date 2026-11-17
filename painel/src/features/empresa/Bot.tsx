@@ -27,11 +27,13 @@ import {
   botOuvindo,
   editarContaDaEmpresa,
   logDoBotDaEmpresa,
+  usoDoBotDaEmpresa,
   usuariosDetalhados,
   type ProdutoDoBot,
   type UsuarioDetalhado,
 } from '@/features/api'
 import { LinhaDoLog } from '@/features/bot/LogDoBot'
+import { UsoDaIa } from '@/features/bot/UsoDaIa'
 import { Tokens } from '@/features/empresa/Usuarios'
 import { NOME_DO_PRODUTO, PAPEL, PARTES_DO_BOT, faltaParaLigar, quando, temOToken } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
@@ -125,6 +127,10 @@ export function BotDaEmpresa() {
           </p>
         ) : null}
       </Cartao>
+
+      <div className="mt-5">
+        <UsoDaIa buscar={usoDoBotDaEmpresa} chave={['empresa']} />
+      </div>
 
       <div className="mt-5">
         <Cartao titulo="Últimas mensagens ao bot">

@@ -23,7 +23,7 @@ recusa esta sessão em qualquer rota de painel.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import EmailStr, Field
@@ -31,7 +31,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.painel_whatsapp import RegistroBotOut, registros_do_bot, saude_atual, ultima_respondida
+from app.api.v1.painel_whatsapp import (RegistroBotOut, UsoDoBotOut, registros_do_bot, saude_atual, ultima_respondida,
+                                        uso_do_bot)
 from app.core.db import get_db
 from app.core.security import gerar_hash_senha, gestor_empresa_atual
 from app.core.telefone import exibir as exibir_telefone
@@ -1903,3 +1904,15 @@ def log_do_bot_da_empresa(
     (a de origem da conta na hora da mensagem) — é o gerente que libera o bot, e é aqui que
     ele vê por que alguém ficou sem resposta. Conversa de outra empresa não aparece."""
     return registros_do_bot(db, empresa_id=svc.empresa_exigida(gerente), limite=limite)
+
+
+@router.get("/bot/uso", response_model=UsoDoBotOut)
+def uso_do_bot_da_empresa(
+    de: date | None = None,
+    ate: date | None = None,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> UsoDoBotOut:
+    """O medidor de tokens do bot para o gestor (o dono, 17/11/2026: "deixe isso para o gestor … dados por dia, mês e
+    tudo"): o gasto de IA das mensagens das pessoas que ESTA empresa cuida, por dia, por mês e por pessoa."""
+    return uso_do_bot(db, empresa_id=svc.empresa_exigida(gerente), de=de, ate=ate)

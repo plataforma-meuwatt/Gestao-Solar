@@ -758,7 +758,43 @@ export type RegistroBot = {
   resposta: string | null
   duracao_ms: number | null
   erro: string | null
+  /** O medidor de tokens (desde 17/11/2026; antes, nulo): chamadas à IA e os tokens desta mensagem. */
+  chamadas_ia: number | null
+  tokens_entrada: number | null
+  tokens_cache: number | null
+  tokens_saida: number | null
 }
+
+/** Uma linha do medidor de tokens: um dia, um mês, uma pessoa ou o total do período. */
+export type UsoLinha = {
+  chave: string
+  rotulo: string
+  mensagens: number
+  chamadas_ia: number
+  entrada: number
+  /** a parte da entrada que veio do cache (mais barata) */
+  cache: number
+  saida: number
+  total: number
+}
+
+export type UsoDoBot = {
+  de: string
+  ate: string
+  medido_desde: string | null
+  total: UsoLinha
+  por_dia: UsoLinha[]
+  por_mes: UsoLinha[]
+  por_pessoa: UsoLinha[]
+}
+
+/** O medidor de tokens do bot, no adm-gs: todas as empresas ou uma. */
+export const usoDoBot = (filtro: { de?: string; ate?: string; empresa_id?: number }) =>
+  api.get<UsoDoBot>('/whatsapp/bot/uso', { params: filtro }).then((r) => r.data)
+
+/** O mesmo medidor no oem-gs: as pessoas que a empresa da sessão cuida. */
+export const usoDoBotDaEmpresa = (filtro: { de?: string; ate?: string }) =>
+  apiEmpresa.get<UsoDoBot>('/bot/uso', { params: filtro }).then((r) => r.data)
 
 export const logDoBot = (filtro: { empresa_id?: number; usuario_id?: number; resultado?: string } = {}) =>
   api.get<RegistroBot[]>('/whatsapp/bot/registros', { params: filtro }).then((r) => r.data)
