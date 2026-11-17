@@ -278,7 +278,8 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
         kwh, ik = i.get("total_yield_kwh"), i.get("capacity_kwp")
         invs.append({"inversor": i.get("slot_label") or i.get("sn"), "skid": i.get("transformer_name"),
                      "energia_kwh": _r(kwh), "produtividade_kwh_kwp": _r(kwh / ik, 2) if kwh is not None and ik else None,
-                     "perdido_kwh": _r(i.get("total_lost_kwh")), "com_falha": i.get("is_faulty")})
+                     "perdido_kwh": _r(i.get("total_lost_kwh")), "com_falha": i.get("is_faulty"),
+                     **_conta_da_perda(i.get("perda_memoria"))})
     prods = [i["produtividade_kwh_kwp"] for i in invs if i["produtividade_kwh_kwp"] is not None]
     med = median(prods) if prods else None
     for i in invs:
@@ -611,6 +612,16 @@ async def excel_energia_diaria(ctx: Contexto, a: dict) -> dict:
             "validacao": val["validacao"], "mensagem_da_validacao": val["mensagem"],
             "nota": "Repasse a mensagem_da_validacao. Se validacao = revisar, diga com destaque que os dados "
                     "PRECISAM SER REVISADOS antes de usar (diferença acima de 0,5% com a plataforma do inversor)."}
+
+
+def _conta_da_perda(memoria: list[dict] | None) -> dict:
+    """De onde veio a perda do inversor, dia a dia, no texto do meuWatt (o dono, 17/11/2026: "preciso de memória para
+    cada cálculo"): pares × kWp − o que produziu, ou PR × irradiância × kWp. Até 6 dias; o resto vira um aviso."""
+    textos = [m["texto"] for m in memoria or [] if m.get("texto")]
+    if not textos:
+        return {}
+    extra = [f"… e mais {len(textos) - 6} dia(s)"] if len(textos) > 6 else []
+    return {"como_a_perda_foi_calculada": textos[:6] + extra}
 
 
 async def resumo_executivo(ctx: Contexto, a: dict) -> dict:
