@@ -194,7 +194,7 @@ async def enviar_conteudo(
     filename: str | None = None, mime: str | None = None, origem: str = "assistente",
     botoes: list[dict[str, str]] | None = None, guardar: str | None = None,
     formulario: dict[str, Any] | None = None, cadastro: dict[str, Any] | None = None,
-    lista: dict[str, Any] | None = None,
+    lista: dict[str, Any] | None = None, avaliacao: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`tipo`: text | document | image | botoes | formulario (`{token, titulo, opcoes, marcados, aviso}`). Arquivo vai em base64 para o gateway subir na
     Meta; `botoes` (até 3, `{id, titulo}`) vão com o `texto` numa mensagem interativa; `lista` (tipo `lista`:
@@ -207,6 +207,7 @@ async def enviar_conteudo(
         **({"botoes": botoes} if botoes else {}), **({"lista": lista} if lista else {}),
         **({"guardar": guardar} if guardar else {}),
         **({"formulario": formulario} if formulario else {}), **({"cadastro": cadastro} if cadastro else {}),
+        **({"avaliacao": avaliacao} if avaliacao else {}),
     })
 
 

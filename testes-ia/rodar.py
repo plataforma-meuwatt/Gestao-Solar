@@ -41,7 +41,9 @@ def _limpo(texto: str, valores=(), credencial: bool = False) -> str:
                            a.publicos_do_turno(texto or ""))
 
 
-async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = ()) -> dict:
+async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = (), antes: tuple = ()) -> dict:
+    """`antes`: a conversa até ali ([{role, content}]), para o caso em mais de uma mensagem (a localização, a pergunta
+    do bot, e então o pedido)."""
     db = SessionLocal()
     try:
         user = _conta(db, apelido)
@@ -71,14 +73,14 @@ async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = ()) -> di
             from app.services import assistente_local as local
             frase = ctx.pedido = await local.do_link(ctx.telefone, frase)
         if inteira:
-            texto = await a.responder(ctx, [{"role": "user", "content": frase}])
+            texto = await a.responder(ctx, [*antes, {"role": "user", "content": frase}])
             if ctx.rodape:                                  # os links do mapa, como no bot
                 texto += "\n\n" + "\n\n".join(ctx.rodape)
             if ctx.proposta is not None:
                 texto += "\n\n" + a.helper.bloco_da_proposta(ctx.proposta)
             return {"ferramentas": ctx.ferramentas,
                     "texto": _limpo(texto, [*ctx.segredos, *ctx.digitados], ctx.credencial)}
-        msgs = [{"role": "system", "content": a._sistema(ctx)}, {"role": "user", "content": frase}]
+        msgs = [{"role": "system", "content": a._sistema(ctx)}, *antes, {"role": "user", "content": frase}]
         ferramentas = [a.FERRAMENTAS[n][1] for n in a.permitidas(user)]
         db.commit()                                        # solta a conexão enquanto a IA pensa
         m = await a._llm(msgs, ferramentas)
@@ -98,7 +100,7 @@ async def _varias(casos: list[dict], inteira: bool, vezes: int) -> list[tuple[di
     async def um(caso):
         async with sem:
             return caso, await _turno(caso.get("como", "renan.marquezini"), caso["frase"], inteira,
-                                      tuple(caso.get("sem", ())))
+                                      tuple(caso.get("sem", ())), tuple(caso.get("antes", ())))
     return await asyncio.gather(*(um(c) for c in casos for _ in range(vezes)))
 
 
@@ -109,7 +111,30 @@ def _passou(caso: dict, r: dict) -> bool:
         return False
     if not r["ferramentas"]:
         return not caso["espera"] or caso.get("ou_sem_ferramenta", False)
-    return bool(set(r["ferramentas"]) & set(caso["espera"]))
+    return bool(set(r["ferramentas"]) & set(caso["espera"])) and _argumentos_certos(caso, r)
+
+
+def _argumentos_certos(caso: dict, r: dict) -> bool:
+    """`argumentos`: {ferramenta: {campo: valor}} — a chamada dessa ferramenta, SE houve, traz cada campo (texto: o
+    valor contido, sem maiúsculas; false: falso ou ausente; o resto: igual). O nome da ferramenta sozinho não via o
+    lugar errado (17/11/2026); para exigir a chamada, ponha só ela no `espera`."""
+    for c in r.get("chamadas", []):
+        esperado = (caso.get("argumentos") or {}).get(c["nome"])
+        if not esperado:
+            continue
+        try:
+            dados = json.loads(c["dados"] or "{}")
+        except ValueError:
+            return False
+        for campo, valor in esperado.items():
+            v = dados.get(campo)
+            if valor is False and not v:                       # false: ausente também vale ("não use o atalho")
+                continue
+            if isinstance(valor, str) and not (isinstance(v, str) and valor.lower() in v.lower()):
+                return False
+            if not isinstance(valor, str) and v != valor:
+                return False
+    return True
 
 
 def _colher(banco: list[dict]) -> None:
@@ -159,7 +184,9 @@ def main() -> None:
             ok = _passou(caso, r)
             erros += not ok
             print(f"{'OK  ' if ok else 'ERRO'} | {caso['frase'][:70]} | esperado {caso['espera'] or 'sem ferramenta'}"
-                  f" | chamou {r['ferramentas'] or 'nada'}" + ("" if ok else f" | {r.get('erro') or r['texto'][:200]}"))
+                  f" | chamou {r['ferramentas'] or 'nada'}" + ("" if ok else f" | {r.get('erro') or r['texto'][:200]}"
+                  + "".join(f" | {c['nome']}: {c['dados'][:200]}" for c in r.get("chamadas", [])
+                            if c["nome"] in (caso.get("argumentos") or {}))))
             continue
         print(f"--- {caso['frase']}\nchamou: {r['ferramentas'] or 'nada'}")
         for c in r.get("chamadas", []):

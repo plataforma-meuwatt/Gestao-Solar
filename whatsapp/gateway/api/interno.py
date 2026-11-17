@@ -242,6 +242,31 @@ class CadastroIn(BaseModel):
 
 #: O formulário de cadastro, publicado na conta da Meta (29/10/2026).
 FLOW_CADASTRO = "gs_cadastro_pessoa"
+
+
+class AvaliacaoIn(BaseModel):
+    """O formulário de AVALIAÇÃO de um lugar (`gs_avaliar_lugar`, tela AVALIAR; o dono, 17/11/2026: "falta abrir o menu
+    com opções para avaliação, com média de preço, as estrelas, notas etc"): recomenda ou não, estrelas, preço médio,
+    notas de atendimento, limpeza e comida, e o comentário (o motivo, obrigatório no "Não recomendo"). Volta como
+    `midia.formulario` = `{recomenda, estrelas, preco, atendimento, limpeza, comida, motivo, comentario, flow_token}`."""
+    token: str = Field(min_length=8, max_length=64)
+    lugar: str = Field(min_length=1, max_length=1000)
+    #: o que vem preenchido: vazio = nada marcado (sem opinião dita, o formulário não escolhe por ela)
+    recomenda: str = Field(default="", pattern="^(sim|nao)?$")
+    comentario: str = Field(default="", max_length=600)       # o tamanho da caixa de texto do formulário
+    motivo: str = Field(default="", max_length=600)           # a caixa do "Não recomendo" (não herda o comentário)
+    estrelas: str = Field(default="", pattern="^[1-5]?$")
+    preco: str = Field(default="", max_length=20)
+    atendimento: str = Field(default="", pattern="^[1-5]?$")
+    limpeza: str = Field(default="", pattern="^[1-5]?$")
+    comida: str = Field(default="", pattern="^[1-5]?$")
+    #: o lugar assinado pelo BFF: volta na resposta (o formulário vale 12 h, sem depender da memória de lá)
+    ref: str = Field(default="", max_length=4000)
+
+
+#: O formulário de avaliação de lugar, publicado na conta da Meta (17/11/2026). O `gs_avaliar_lugar` (o 1º) vinha com
+#: "Recomendo" marcado sem a pessoa dizer e não trazia a avaliação de antes: publicado não se edita, e este o substitui.
+FLOW_AVALIACAO = "gs_avaliar_lugar_2"
 _SISTEMAS = {"meuplano": "mp", "meuwatt": "mw", "gs": "gs"}            # campo do formulário → nome no Flow
 
 
@@ -260,6 +285,7 @@ class ConteudoIn(BaseModel):
     lista: ListaIn | None = None
     formulario: FormularioIn | None = None
     cadastro: CadastroIn | None = None
+    avaliacao: AvaliacaoIn | None = None
     #: O que fica GUARDADO aqui no lugar do `texto`, que vai inteiro à Meta: a resposta sem as senhas que ela
     #: revela (o bot pede ao meuPlano a senha de um equipamento; a pessoa recebe, o banco daqui não guarda).
     guardar: str | None = Field(default=None, max_length=4096)
@@ -295,9 +321,10 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
                     {"id": li.id, "title": li.titulo, **({"description": li.descricao} if li.descricao else {})}
                     for li in ls.linhas]}]}}
         elif corpo.tipo == "formulario":
-            f, c = corpo.formulario, corpo.cadastro
-            if (f is None) == (c is None) or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
-                raise ValueError("Formulário pede as opções (ou o cadastro) e o texto (até 1024 caracteres).")
+            f, c, a = corpo.formulario, corpo.cadastro, corpo.avaliacao
+            if [f, c, a].count(None) != 2 or not (corpo.texto or "").strip() or len(corpo.texto) > 1024:
+                raise ValueError("Formulário pede as opções (ou o cadastro, ou a avaliação) e o texto (até 1024 "
+                                 "caracteres).")
             if f is not None and f.uma:
                 nome, tela, cta, token = FLOW_UMA, "UMA", "Escolher outra", f.token
                 rotulos = [(f.rotulos[i] if i < len(f.rotulos) else o) or o for i, o in enumerate(f.opcoes)]
@@ -314,6 +341,13 @@ async def enviar_conteudo(corpo: ConteudoIn, db: Session = Depends(get_db)) -> E
                          # o título de cada opção vai até 30 caracteres; o que volta é o índice
                          "opcoes": [{"id": str(i), "title": o[:30]} for i, o in enumerate(f.opcoes)],
                          "marcados": [str(f.opcoes.index(m)) for m in f.marcados if m in f.opcoes]}
+            elif a is not None:
+                nome, tela, cta, token = FLOW_AVALIACAO, "AVALIAR", "Avaliar", a.token
+                # sem opinião (ou estrelas) dita, o campo sem valor inicial: com ele vazio, a Meta pinta de vermelho
+                dados = {"lugar": a.lugar, "tem_opiniao": bool(a.recomenda), "recomenda": a.recomenda,
+                         "comentario": a.comentario, "motivo": a.motivo, "tem_estrelas": bool(a.estrelas),
+                         "estrelas": a.estrelas, "preco": a.preco, "atendimento": a.atendimento, "limpeza": a.limpeza,
+                         "comida": a.comida, "ref": a.ref}
             else:
                 nome, tela, cta, token = FLOW_CADASTRO, "CADASTRO", "Preencher", c.token
                 dados = {"nome": c.nome, "email": c.email, "celular": c.celular}

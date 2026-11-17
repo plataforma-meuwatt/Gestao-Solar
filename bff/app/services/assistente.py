@@ -407,8 +407,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER),
                "lugar_da_localizacao": (local.lugar_da_localizacao, local.FERRAMENTA_LUGAR),
-               "marcar_lugar_nao_recomendado": (local.marcar_lugar_nao_recomendado, local.FERRAMENTA_MARCAR),
-               "marcar_lugar_recomendado": (local.marcar_lugar_recomendado, local.FERRAMENTA_RECOMENDAR),
+               "avaliar_lugar": (local.avaliar_lugar, local.FERRAMENTA_AVALIAR),
                "lugares_da_equipe": (local.lugares_da_equipe, local.FERRAMENTA_LISTA_LUGARES),
                **helper.FERRAMENTAS, **cad.FERRAMENTAS,
                **par.FERRAMENTAS, **mg.FERRAMENTAS}
@@ -919,8 +918,7 @@ def permitidas(user) -> list[str]:
         nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "assinar_pdf",
-                  "gravar_coordenada", "lugar_da_localizacao", "marcar_lugar_nao_recomendado",
-                  "marcar_lugar_recomendado", "lugares_da_equipe", "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
+                  "gravar_coordenada", "lugar_da_localizacao", "avaliar_lugar", "lugares_da_equipe", "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
@@ -1022,10 +1020,14 @@ de memória.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização (pelo 📎 ou por link do Google Maps, que o sistema já
   leu). Disse que é a coordenada de uma usina → `gravar_coordenada` com a usina (o sistema diz se grava ou substitui e
   pede o Sim). Sem dizer para que é → `lugar_da_localizacao` e pergunte em qual lugar ela está (a usina perto, senão o
-  1º da lista, com os outros nomes na mesma linha); confirmado, se ela não disse, pergunte o que quer com ele. "Não é
-  recomendado", "ruim", "evitar" (com o motivo) → `marcar_lugar_nao_recomendado`. "Salve/guarde esse lugar", "é bom",
-  "recomendo" → `marcar_lugar_recomendado` (comentário opcional). Onde parar ou comer, quais lugares evitar →
-  `lugares_da_equipe`. Nunca escreva coordenada.
+  1º da lista, com os outros nomes na mesma linha); confirmado, se ela não disse, pergunte o que quer com ele. "Salve a
+  localização de <usina>" é a coordenada da USINA → `gravar_coordenada`. Salvar, guardar ou avaliar o LUGAR onde ela
+  está (posto, restaurante, hotel), "é bom", "recomendo", "não é recomendado", "ruim", "evitar" → `avaliar_lugar` (com
+  `recomenda` se ela disse): o sistema manda o formulário de avaliação (estrelas, preço médio, notas, comentário), não
+  pergunte nada disso; o que ela disser (estrelas, preço) vai junto, e o formulário vem preenchido. Disse que o
+  formulário não abriu, pediu sem ele, ou respondeu por texto o formulário que já recebeu → `avaliar_lugar` com
+  `sem_formulario`. Onde parar ou comer, quais lugares evitar → `lugares_da_equipe`. Nunca escreva
+  coordenada.
 - Pedido da localização, da coordenada ou de como chegar a uma usina → `local_da_usina`: o sistema manda o link do
   Google Maps e o do Waze; você só diz uma linha, sem os links.
 - Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →
@@ -1861,15 +1863,20 @@ async def _atender(evento: dict) -> None:
         aviso_pin = pin_cancelado or pdf.tirar_aviso(user.id)   # o de uma mensagem juntada a esta também
         if aviso_pin:
             nota += f"\n\n{pdf.CANCELADA}"
-        cadastro_dados = None
+        cadastro_dados = avaliacao_dados = None
         if not texto and formulario.e_resposta(evento):
             texto = seguro = pergunta = formulario.texto_da_resposta(telefone, evento)   # o que marcou, em palavras
             if texto is None:
-                await _texto(telefone, formulario.VENCIDO + nota)
-                _registrar(db, telefone, user, "respondeu", pergunta="[formulário]", resposta=formulario.VENCIDO,
+                vencido = formulario.vencido(evento)
+                await _texto(telefone, vencido + nota)
+                _registrar(db, telefone, user, "respondeu", pergunta="[formulário]", resposta=vencido,
                            inicio=inicio, em=enviada)
                 return
             cadastro_dados = formulario.cadastro_respondido(telefone)  # o de cadastro vai ao sistema, não à IA
+            avaliacao_dados = formulario.avaliacao_respondida(telefone)   # o de avaliação de lugar também
+            if avaliacao_dados is not None and desarmada is not None \
+                    and desarmada.resumo.startswith("Marcar como ") and desarmada.resumo.endswith(avaliacao_dados["nome"]):
+                nota = ""         # o formulário é a mesma marcação, com as estrelas: o Sim dela não "foi cancelado"
         if not texto and fotos.e_foto(evento):
             if not await fotos.e_a_ultima(telefone, evento.get("id")):
                 _registrar(db, telefone, user, "respondeu", pergunta="[📷 foto]", resposta="[junto com as fotos seguintes]",
@@ -1941,8 +1948,8 @@ async def _atender(evento: dict) -> None:
         if resposta is not None and helper.digitos_da_senha(texto) is not None:
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
-            juntavel = (cadastro_dados is None and not esperava and not analise.escondeu_senha
-                        and user.id not in helper.PENDENTES)
+            juntavel = (cadastro_dados is None and avaliacao_dados is None and not esperava
+                        and not analise.escondeu_senha and user.id not in helper.PENDENTES)
 
             async def juntar(*, ferramentas=None, mais_revelados=(), mais_digitados=()) -> None:
                 """Esta mensagem fica no histórico, sem resposta: a seguinte responde as duas."""
@@ -1971,6 +1978,8 @@ async def _atender(evento: dict) -> None:
             await ger.preparar(ctx)
             if cadastro_dados is not None:
                 resposta = await cad.pelo_formulario(ctx, cadastro_dados)
+            elif avaliacao_dados is not None:
+                resposta = await local.pelo_formulario(ctx, avaliacao_dados)
             elif not get_settings().deepseek_api_key:
                 resposta = "O bot está desligado neste ambiente (falta a chave da IA)."
             else:
@@ -2022,6 +2031,8 @@ async def _atender(evento: dict) -> None:
             saiu = await _botoes(telefone, bloco_sim, ctx.proposta.codigo, valores) and saiu
             if ctx.escolha is not None and not await formulario.mandar(telefone, ctx.escolha):
                 await _texto(telefone, formulario.em_texto(ctx.escolha), valores)   # a lista para TROCAR a escolha
+            if ctx.avaliacao is not None and not await formulario.mandar_avaliacao(telefone, ctx.avaliacao):
+                await _texto(telefone, local.SEM_FORMULARIO, valores)
         elif ctx is not None and ctx.fluxo:
             # a classificação de paradas que a IA começou: o resumo sai com os botões; o resto (o aviso da ação
             # cancelada, os do sistema) vai ao pé dele
@@ -2035,6 +2046,14 @@ async def _atender(evento: dict) -> None:
             if ctx is not None and ctx.cadastro is not None and ctx.proposta is None \
                     and not await formulario.mandar_cadastro(telefone, ctx.cadastro):
                 await _texto(telefone, cad.FORMULARIO_FALHOU, valores)
+            if ctx is not None and ctx.avaliacao is not None and ctx.proposta is None \
+                    and not await formulario.mandar_avaliacao(telefone, ctx.avaliacao):
+                # o formulário não abriu: o Sim de reserva salva o que ela disse (ou ela diz, se não disse)
+                if local.reserva(ctx, ctx.avaliacao) is not None and ctx.proposta is not None:
+                    saiu = await _botoes(telefone, f"{local.SEM_FORMULARIO_COM_SIM}\n\n"
+                                         f"{helper.bloco_da_proposta(ctx.proposta)}", ctx.proposta.codigo, valores) and saiu
+                else:
+                    await _texto(telefone, local.SEM_FORMULARIO, valores)
         respondeu = True
         _resumo_saiu(db, user, saiu)
         if (executada is not None and executada.conversa is not None and resposta.startswith("✅")

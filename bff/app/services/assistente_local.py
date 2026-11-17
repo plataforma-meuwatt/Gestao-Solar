@@ -329,15 +329,60 @@ def _data(iso: str | None) -> str:
 
 
 def _marcado(m: dict) -> str:
+    """Uma marcação, curta: "★ 5 · maravilhosa (Renan, 16/11/2026)" (o preço e as notas vão na média do lugar; o
+    recomendado pode vir sem comentário, e a de antes de 17/11 sem estrelas)."""
     quem = ", ".join(x for x in (m.get("por"), _data(m.get("em"))) if x)
-    return " ".join(x for x in (m.get("motivo") or "", f"({quem})" if quem else "") if x)   # o recomendado vem sem motivo
+    texto = " · ".join(x for x in (f"★ {m['estrelas']}" if m.get("estrelas") else "", m.get("motivo") or "") if x)
+    return " ".join(x for x in (texto, f"({quem})" if quem else "") if x)
+
+
+def _decimal_br(v: float) -> str:
+    return f"{v:.1f}".replace(".", ",")
 
 
 def _avaliacoes(marcas: list[dict]) -> str:
-    """O que a equipe disse do lugar: « — 👍 RECOMENDADO pela equipe: … — ⚠️ NÃO RECOMENDADO pela equipe: …»."""
-    return "".join(f" — {rotulo} pela equipe: " + "; ".join(_marcado(m) for m in ms)
-                   for rec, rotulo in ((True, "👍 RECOMENDADO"), (False, "⚠️ NÃO RECOMENDADO"))
-                   if (ms := [m for m in marcas if bool(m.get("recomendado")) == rec]))
+    """O que a equipe disse do lugar, de TODAS as marcações dele: « — média da equipe: ★ 4,5 (2 avaliações) · preço
+    médio R$ 32,50 · comida 4,5 — 👍 RECOMENDADO pela equipe: … — ⚠️ NÃO RECOMENDADO pela equipe: …» (o dono,
+    17/11/2026: "média de preço, as estrelas, notas")."""
+    from app.services.assistente_formulario import NOTAS_DO_LUGAR, reais
+
+    def media(valores: list) -> float | None:
+        return sum(valores) / len(valores) if valores else None
+
+    estrelas = [m["estrelas"] for m in marcas if m.get("estrelas")]
+    precos = [m["preco_medio"] for m in marcas if m.get("preco_medio") is not None]
+    preco = media(precos)
+    if preco is not None:     # a média com 2 casas ("R$ 35,33"), menos a do litro, que tem 3 ("R$ 6,245")
+        preco = round(preco, 3 if any(round(v * 100, 6) != round(v * 100) for v in precos) else 2)
+    notas = {k: media([n for m in marcas if (n := (m.get("notas") or {}).get(k))]) for k in NOTAS_DO_LUGAR}
+    partes = [f"★ {_decimal_br(media(estrelas))} ({len(estrelas)} {'avaliação' if len(estrelas) == 1 else 'avaliações'})"
+              if estrelas else "", f"preço médio {reais(preco)}" if preco is not None else "",
+              *(f"{k} {_decimal_br(v)}" for k, v in notas.items() if v is not None)]
+    texto = " · ".join(x for x in partes if x)
+    return (f" — média da equipe: {texto}" if texto else "") + "".join(
+        f" — {rotulo} pela equipe: " + "; ".join(_marcado(m) for m in ms)
+        for rec, rotulo in ((True, "👍 RECOMENDADO"), (False, "⚠️ NÃO RECOMENDADO"))
+        if (ms := [m for m in marcas if bool(m.get("recomendado")) == rec]))
+
+
+#: Até onde duas marcações sem o id do mapa e com o mesmo nome são o MESMO lugar (dois "Posto Graal" em estradas
+#: diferentes não se misturam).
+MESMO_LUGAR_M = 200
+
+
+def _por_lugar(marcas: list[dict]) -> list[list[dict]]:
+    """As marcações agrupadas por LUGAR (cada pessoa tem a sua): o id do mapa, ou o mesmo nome a até MESMO_LUGAR_M."""
+    def o_mesmo(m: dict, g: dict) -> bool:
+        if m.get("place_id") and g.get("place_id"):
+            return m["place_id"] == g["place_id"]
+        return (_sem_acento(m.get("nome")) == _sem_acento(g.get("nome")) and None not in (m.get("lat"), g.get("lat"))
+                and _m(m["lat"], m["lng"], g["lat"], g["lng"]) <= MESMO_LUGAR_M)
+
+    lugares: list[list[dict]] = []
+    for m in marcas:
+        g = next((g for g in lugares if o_mesmo(m, g[0])), None)
+        lugares.append([m]) if g is None else g.append(m)
+    return lugares
 
 
 def _marcas_do_lugar(loc: dict, lugar: dict) -> list[dict]:
@@ -396,8 +441,8 @@ FERRAMENTA_LUGAR = {"type": "function", "function": {
     "name": "lugar_da_localizacao",
     "description": ("QUE LUGAR é a localização que a pessoa mandou («[📍 localização recebida…]»): a usina dela ali perto, "
                     "os estabelecimentos em volta (posto, restaurante, hotel…), do mais perto ao mais longe, e o que a "
-                    "equipe já marcou ali (RECOMENDADO ou NÃO RECOMENDADO). Use quando ela manda a localização sem dizer "
-                    "que é a coordenada de uma usina."),
+                    "equipe já marcou ali (RECOMENDADO ou NÃO RECOMENDADO, com a média de estrelas e de preço). Use "
+                    "quando ela manda a localização sem dizer que é a coordenada de uma usina."),
     "parameters": {"type": "object", "properties": {}}}}
 
 
@@ -420,7 +465,8 @@ async def lugar_da_localizacao(ctx, a: dict) -> dict:
     nos_lugares = {m.get("id") for c in loc["lugares"] for m in _marcas_do_lugar(loc, c)}
     ja = [m for m in loc["marcados"] if m.get("id") not in nos_lugares]
     if ja:
-        out["marcados_aqui"] = [f"{m.get('nome')}, a {_metros(m.get('distancia_m') or 0)}{_avaliacoes([m])}" for m in ja]
+        out["marcados_aqui"] = [f"{g[0].get('nome')}, a {_metros(min(m.get('distancia_m') or 0 for m in g))}"
+                                f"{_avaliacoes(g)}" for g in _por_lugar(ja)]
     if loc["mapa_erro"]:
         out["sem_mapa"] = f"Não deu para ver os lugares em volta: {loc['mapa_erro']}. Diga isso e pergunte o nome do lugar."
     elif not loc["lugares"]:
@@ -439,154 +485,284 @@ async def lugar_da_localizacao(ctx, a: dict) -> dict:
     return out
 
 
+_ORDINAIS = {"primeiro": 1, "primeira": 1, "segundo": 2, "segunda": 2, "terceiro": 3, "terceira": 3, "quarto": 4,
+             "quarta": 4, "quinto": 5, "quinta": 5}
+
+
 def _numero(termo: str) -> int | None:
-    """O número da lista ("1", "1º", "#2"), ou None se é um nome."""
-    t = (termo or "").strip(" .#º°")
-    return int(t) if t.isdigit() else None
+    """O número da lista ("1", "1º", "#2", "o 2", "nº 2", "o segundo"), ou None se é um nome."""
+    t = _sem_acento(termo).strip(" .#°")
+    t = re.sub(r"^(?:o|a|no|n\.|numero|lugar)\s+", "", t).strip(" .#°")
+    if m := re.fullmatch(r"(\d{1,2})\s*[oa]?", t):
+        return int(m[1])
+    return _ORDINAIS.get(t)
 
 
 #: O TIPO do lugar não o escolhe na lista ("o posto", "essa lanchonete"): só uma palavra do NOME.
 _TIPOS_DE_LUGAR = {"auto", "posto", "lanchonete", "lanches", "restaurante", "churrascaria", "pizzaria", "hamburgueria",
                    "padaria", "mercado", "supermercado", "hotel", "pousada", "loja", "oficina", "borracharia", "lugar",
-                   "local", "esse", "essa", "este", "esta", "aqui", "como"}
+                   "local", "esse", "essa", "este", "esta", "aqui", "como", "isso", "bar", "cafe", "ponto", "parada"}
+#: as palavras de ligação: com elas e os tipos, o termo não diz QUAL lugar é ("essa lanchonete aqui")
+_LIGACOES = {"o", "a", "os", "as", "de", "da", "do", "das", "dos", "na", "no", "em", "um", "uma", "ali", "la", "ai"}
+
+
+def _palavras(t: str | None) -> set[str]:
+    return {p for p in re.findall(r"\w+", _sem_acento(t)) if len(p) >= 4}
+
+
+def _so_tipo(termo: str) -> bool:
+    """O termo só diz o tipo ("essa lanchonete", "o posto aqui"): não é o nome de lugar nenhum."""
+    return all(p in _TIPOS_DE_LUGAR or p in _LIGACOES for p in re.findall(r"\w+", _sem_acento(termo)))
 
 
 def _escolher_lugar(lugares: list[dict], termo: str) -> tuple[dict | None, list[dict]]:
     """O lugar pelo número da lista ou pelo nome: (o escolhido, ou None e os candidatos). Sem o nome inteiro, vale uma
-    palavra dele ("maravilhosa browdog" → «Browdog - Hamburguer Defumado», São Roque 16/11)."""
+    palavra dele ("maravilhosa browdog" → «Browdog - Hamburguer Defumado», São Roque 16/11), nunca o tipo nem uma
+    palavra do ENDEREÇO dos lugares da lista ("a lanchonete de São Roque" escolhia a «PAV são roque», uma repartição)."""
     t = _sem_acento(termo)
     if (n := _numero(termo)) is not None:
         return (lugares[n - 1], []) if 1 <= n <= len(lugares) else (None, [])
-    achados = [c for c in lugares if t and (t in _sem_acento(c.get("nome")) or _sem_acento(c.get("nome")) in t)]
+    if t and _so_tipo(termo):
+        # só o tipo ("a padaria", "o posto"): vale o TIPO que o mapa dá ao lugar, se um só da lista é desse tipo — nunca
+        # um pedaço do nome ("bar" não é a «JF Barbearia», "o ponto" não é a «PAV são roque, Ponto SP»)
+        tipos = set(re.findall(r"\w+", t)) & _TIPOS_DE_LUGAR
+        achados = [c for c in lugares if tipos & set(re.findall(r"\w+", _sem_acento(c.get("tipo"))))]
+        return (achados[0], achados) if len(achados) == 1 else (None, achados)
+    # o termo como PALAVRAS do nome ("bar" não escolhe a «JF Barbearia»)
+    achados = [] if not t else [
+        c for c in lugares if re.search(rf"\b{re.escape(t)}\b", _sem_acento(c.get("nome"))) or (
+            _sem_acento(c.get("nome")) and _sem_acento(c.get("nome")) in t)]
     if not achados:
-        palavras = {p for p in re.findall(r"\w+", t) if len(p) >= 4 and p not in _TIPOS_DE_LUGAR}
-        achados = [c for c in lugares if palavras & set(re.findall(r"\w+", _sem_acento(c.get("nome"))))]
+        do_endereco = set().union(*(_palavras(c.get("endereco")) for c in lugares))
+        palavras = _palavras(termo) - _TIPOS_DE_LUGAR - do_endereco
+        achados = [c for c in lugares if palavras & _palavras(c.get("nome"))]
     return (achados[0], achados) if len(achados) == 1 else (None, achados)
 
 
-FERRAMENTA_MARCAR = {"type": "function", "function": {
-    "name": "marcar_lugar_nao_recomendado",
-    "description": ("Põe na lista de lugares da equipe, como NÃO RECOMENDADO, o lugar da localização que a pessoa mandou, "
-                    "com o motivo nas palavras dela. Passe o número da lista de `lugar_da_localizacao` (ou o nome que ela "
-                    "disse, se o lugar não está na lista): os números do lugar vêm do sistema, nunca os escreva. Sem o "
-                    "motivo, pergunte por que não é recomendado."),
+FERRAMENTA_AVALIAR = {"type": "function", "function": {
+    "name": "avaliar_lugar",
+    "description": ("SALVA ou AVALIA, na lista de lugares da equipe, o LUGAR onde a pessoa está (posto, restaurante, "
+                    "hotel…), pela localização que ela mandou: quando ela pede para salvar, guardar ou avaliar o lugar, "
+                    "diz que é bom («salve essa lanchonete», «ótimo, recomendo») ou que não é recomendado. A localização "
+                    "de uma USINA não é isto: é `gravar_coordenada`. O sistema manda o formulário de avaliação (recomenda ou não, "
+                    "estrelas, preço médio, notas, comentário), que grava quando ela envia: não pergunte nada disso. "
+                    "Passe o número da lista de `lugar_da_localizacao` ou o NOME do lugar que ela disse (os números do "
+                    "lugar vêm do sistema, nunca os escreva) e só o que ela disse: `recomenda`, `estrelas`, `preco`, "
+                    "`comentario` (o motivo, se não recomenda)."),
     "parameters": {"type": "object", "properties": {
         "lugar": {"type": "string", "description": "o número da lista ou o nome do lugar"},
-        "motivo": {"type": "string", "description": "por que não é recomendado, nas palavras dela"}},
-        "required": ["lugar", "motivo"]}}}
-
-FERRAMENTA_RECOMENDAR = {"type": "function", "function": {
-    "name": "marcar_lugar_recomendado",
-    "description": ("Põe na lista de lugares da equipe, como RECOMENDADO, o lugar da localização que a pessoa mandou: "
-                    "quando ela pede para salvar ou guardar o lugar, ou diz que é bom («salve essa lanchonete», «ótimo "
-                    "lugar», «recomendo»). Passe o número da lista de `lugar_da_localizacao` (ou o nome que ela disse, se "
-                    "o lugar não está na lista): os números do lugar vêm do sistema, nunca os escreva. O comentário é "
-                    "opcional: não pergunte se ela não disse."),
-    "parameters": {"type": "object", "properties": {
-        "lugar": {"type": "string", "description": "o número da lista ou o nome do lugar"},
-        "comentario": {"type": "string", "description": "o que ela disse do lugar, nas palavras dela, se disse"}},
+        "recomenda": {"type": "boolean", "description": "true se ela disse que é bom; false se disse que não recomenda"},
+        "estrelas": {"type": "integer", "description": "de 1 a 5, se ela disse"},
+        "preco": {"type": "number", "description": "o preço médio em R$, se ela disse"},
+        "comentario": {"type": "string", "description": "o que ela disse do lugar (o motivo, se não recomenda)"},
+        "fora_da_lista": {"type": "boolean", "description": ("true só quando ela confirmou que o lugar NÃO é nenhum "
+                                                             "da lista e disse o nome dele")},
+        "sem_formulario": {"type": "boolean", "description": (
+            "true SÓ quando ela diz que o formulário não abriu, pede para salvar sem ele, ou responde por texto o "
+            "formulário que JÁ recebeu: aí vai o resumo com o Sim, com o que ela disse. Estrelas e preço ditos no "
+            "pedido vão nos campos, e o formulário vem preenchido")}},
         "required": ["lugar"]}}}
+SEM_FORMULARIO = ("Não consegui abrir o formulário de avaliação agora. Diga se recomenda o lugar (e, se não, por quê), "
+                  "que eu preparo para salvar com o Sim.")
+SEM_FORMULARIO_COM_SIM = "Não consegui abrir o formulário de avaliação agora. Para salvar o que você disse, toque em Sim."
 
 
 def _rotulo(recomendado: bool) -> str:
     return "recomendado" if recomendado else "não recomendado"
 
 
-async def _marcar(ctx, a: dict, recomendado: bool) -> dict:
+def _preco_br(v: float | None) -> str:
+    """O preço como o formulário mostra ("35,50"; o litro, "6,299")."""
+    from app.services.assistente_formulario import reais
+    return "" if v is None else reais(v).removeprefix("R$ ").replace(".", "")
+
+
+async def _gravar(db, user, corpo: dict, av: dict, loc: dict | None, lugar: dict | None,
+                  campos: tuple = ("estrelas", "preco_medio", "notas")) -> tuple[str, dict | None]:
+    """Grava a marcação da pessoa no meuPlano: (o que dizer, o que ficou gravado — None se não gravou). `campos`: os da
+    avaliação que VÃO, vazios inclusive (o formulário manda os três); o que não vai, lá fica como estava."""
+    from app.services.integracoes import detalhe_do_upstream
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    nome, recomendado = corpo["nome"], bool(av.get("recomendado"))
+    avaliacao = {k: av.get(k) for k in campos}
+    try:
+        mp = cliente_meuplano(db, user.id, so_proprio=True)
+        db.commit()
+        r = await mp.marcar_lugar(corpo, av.get("motivo") or "", recomendado, **avaliacao)
+    except SemConexao as e:
+        return f"❌ Não executado: {e}", None
+    except httpx.HTTPStatusError as e:
+        motivo_ = str(detalhe_do_upstream(e.response) or e.response.status_code).rstrip(". ")
+        return f"❌ O meuPlano recusou: {motivo_}. Nada foi gravado.", None
+    except httpx.HTTPError:
+        return f"⚠️ O meuPlano não respondeu a tempo: {nome} PODE ter entrado na lista. Confira.", None
+    da_lista = lugar is not None and loc is not None and any(c is lugar for c in loc.get("lugares") or [])
+    if loc is not None and r.get("id") is not None and r.get("lat") is not None and (
+            da_lista or _m(loc["lat"], loc["lng"], r["lat"], r["lng"]) <= MESMO_LUGAR_M):
+        # a marcação nova entra na lista guardada (refazer a busca mudaria o número que a pessoa viu) — só a DESTA
+        # localização: o formulário vale 12 h, e o lugar avaliado de longe não é "aqui" (4ª avaliação, 17/11)
+        loc["marcados"] = [m for m in loc.get("marcados") or [] if m.get("id") != r["id"]] + [
+            {**r, "distancia_m": round(_m(loc["lat"], loc["lng"], r["lat"], r["lng"]))}]
+        if da_lista and r["id"] not in lugar.get("nao_recomendado_ids", []):
+            lugar["nao_recomendado_ids"] = [*lugar.get("nao_recomendado_ids", []), r["id"]]
+    if not r.get("ja_tinha"):
+        return f"✅ {nome} está na lista de lugares {'recomendados' if recomendado else 'não recomendados'} da equipe.", r
+    era = r.get("recomendado_anterior")
+    if era is not None and bool(era) != recomendado:
+        return f"✅ {nome}: a sua marcação mudou de {_rotulo(bool(era))} para {_rotulo(recomendado)}.", r
+    return f"✅ {nome}: a sua avaliação foi atualizada.", r
+
+
+async def avaliar_lugar(ctx, a: dict) -> dict:
+    from app.services.assistente_formulario import NOTAS_DO_LUGAR
     from app.services.vinculos import SemConexao, cliente_meuplano
     loc = recebida(ctx.telefone)
     if loc is None:
         return {"erro": "Não há localização recebida (ela fica guardada 30 min). Peça que a pessoa mande de novo pelo "
                         "📎 → Localização, de onde ela está."}
     termo = (a.get("lugar") or "").strip()
-    motivo = " ".join((a.get("motivo") or a.get("comentario") or "").split())
-    if not motivo and not recomendado:
-        return {"erro": "Falta o motivo: pergunte por que o lugar não é recomendado."}
     if not termo:
         return {"erro": "Falta o lugar: pergunte qual é."}
     loc = await _lugares(ctx, loc, refazer_parcial=False)
     if "erro" in loc:
         return loc
     lugar, candidatos = _escolher_lugar(loc["lugares"], termo)
-    if lugar is None and (candidatos or _numero(termo) is not None):
-        return {"erro": f"O lugar '{termo}' " + ("é ambíguo" if candidatos else "não está na lista") + ": pergunte qual é.",
-                "opcoes": [c.get("nome") for c in (candidatos or loc["lugares"])]}
-    if lugar is None:                                   # o nome que a pessoa disse, no ponto que ela mandou
+    if lugar is None and not candidatos and _numero(termo) is None:
+        # o lugar que a equipe já marcou aqui perto, mesmo fora da lista do mapa ("a borracharia do Zé"): uma marcação
+        # por lugar (cada pessoa tem a sua, e duas do mesmo lugar não são "dois lugares")
+        unicos = list({m.get("place_id") or _sem_acento(m.get("nome")): m for m in loc.get("marcados") or []}.values())
+        marcado, _ = _escolher_lugar(unicos, termo)
+        if marcado is not None:
+            lugar = {k: marcado.get(k) for k in ("nome", "endereco", "tipo", "lat", "lng", "place_id", "fonte")}
+    if lugar is None:
+        nomes = [c.get("nome") for c in (candidatos or loc["lugares"])]
+        if candidatos:
+            return {"erro": f"'{termo}' pode ser mais de um lugar: pergunte qual é.", "opcoes": nomes}
+        if _numero(termo) is not None:
+            return {"erro": f"Não há o número {_numero(termo)} na lista: pergunte qual é.", "opcoes": nomes}
+        if _so_tipo(termo):
+            return {"erro": f"'{termo}' não diz qual lugar é: pergunte em qual da lista ela está, ou o nome dele.",
+                    "opcoes": nomes}
+        if loc["lugares"] and not a.get("fora_da_lista"):
+            # (17/11/2026) o nome que não casa com a lista do mapa virava um lugar novo com as palavras dela
+            return {"erro": f"'{termo}' não está na lista do mapa: pergunte se é um destes. Se ela disser que é outro "
+                            "lugar, chame de novo com fora_da_lista=true e o nome que ela disse.", "opcoes": nomes}
         lugar = {"nome": termo, "endereco": loc.get("endereco") or loc.get("rotulo") or None, "lat": loc["lat"],
                  "lng": loc["lng"], "fonte": "manual"}
     corpo = {k: lugar.get(k) for k in ("nome", "endereco", "tipo", "lat", "lng", "place_id", "fonte")}
+    nome = corpo["nome"]
+    if ctx.avaliacao is not None and ctx.avaliacao["nome"] != nome:
+        return {"erro": f"Um lugar por vez: o formulário de {ctx.avaliacao['nome']} já vai nesta resposta. Diga que este "
+                        "fica para depois."}
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao as e:
         return {"erro": f"Manutenção indisponível: {e}"}
     ctx.db.commit()
     try:
-        if PERMISSAO_FROTA not in (await mp.permissoes()):
-            return {"erro": "O papel desta pessoa no meuPlano não usa a frota, e a lista de lugares é dela. Nada foi "
-                            "gravado: o gestor da O&M pode liberar."}
+        eu = await mp.eu()
     except httpx.HTTPError:
         return {"erro": "O meuPlano não respondeu agora. Nada foi gravado."}
-    nome = corpo["nome"]
-    # o que já está na lista sobre ESTE lugar vai no resumo: a marcação do colega fica (cada um tem a sua), e a da
-    # própria pessoa é trocada pela nova — o ✅ diz qual era
-    linhas = [corpo["endereco"], *(f"Já na lista: {_rotulo(bool(m.get('recomendado')))}, {_marcado(m)}"
-                                   for m in _marcas_do_lugar(loc, lugar)),
-              (f"Comentário: {motivo}" if recomendado else f"Motivo: {motivo}") if motivo else "",
-              _mapa(corpo["lat"], corpo["lng"]),
-              "Não deu para ver a lista agora: se você já marcou este lugar, esta marcação substitui a sua."
-              if not loc.get("marcados_lidos") else ""]
+    if PERMISSAO_FROTA not in set(eu.get("permissions") or []):
+        return {"erro": "O papel desta pessoa no meuPlano não usa a frota, e a lista de lugares é dela. Nada foi "
+                        "gravado: o gestor da O&M pode liberar."}
+    # a avaliação de ANTES desta pessoa neste lugar vem no formulário (reavaliar não começa do zero nem apaga)
+    minha = next((m for m in _marcas_do_lugar(loc, lugar)
+                  if m.get("por_id") is not None and str(m["por_id"]) == str(eu.get("user_id"))), None) or {}
+    antes = bool(minha["recomendado"]) if "recomendado" in minha else None
+    texto_antes = minha.get("motivo") or ""
+    disse_recomenda = a["recomenda"] if isinstance(a.get("recomenda"), bool) else None
+    recomenda = disse_recomenda if disse_recomenda is not None else antes
+    mudou = disse_recomenda is not None and antes is not None and disse_recomenda != antes
+    disse = " ".join((a.get("comentario") or "").split())
+    estrelas = a.get("estrelas") if isinstance(a.get("estrelas"), int) and 1 <= a["estrelas"] <= 5 else None
+    preco = a.get("preco") if isinstance(a.get("preco"), (int, float)) and 0 <= a["preco"] <= 100000 else None
+    av = {
+        "nome": nome, "lugar": corpo, "ref": lugar, "recomenda": "" if recomenda is None else ("sim" if recomenda else "nao"),
+        # o texto de antes só volta na caixa da MESMA opinião: o "maravilhosa" de quem recomendava não vira o motivo
+        # obrigatório de quem agora não recomenda (a avaliação independente de 17/11); e nem as estrelas e notas
+        "comentario": disse if disse and disse_recomenda is not False else (
+            texto_antes if antes is True and disse_recomenda is not False else ""),
+        "motivo": disse if disse and disse_recomenda is False else (
+            texto_antes if antes is False and disse_recomenda is not True else ""),
+        "estrelas": estrelas or (None if mudou else minha.get("estrelas")),
+        "preco": _preco_br(preco if preco is not None else minha.get("preco_medio")),
+        "notas": {} if mudou else {k: str(n) for k, n in (minha.get("notas") or {}).items() if k in NOTAS_DO_LUGAR},
+        # o que ela DISSE agora, para o Sim de reserva: lá, o que não vier fica como estava (o comentário de antes,
+        # se a opinião é a mesma, vai junto: senão o Sim o apagaria)
+        "dito": {"recomendado": disse_recomenda, "estrelas": estrelas, "preco_medio": preco, "notas": None,
+                 "motivo": disse or (texto_antes if antes is not None and antes == disse_recomenda else ""),
+                 # quem muda de opinião não leva as estrelas e as notas da outra (a 3ª avaliação independente de 17/11)
+                 "limpar": ("estrelas", "notas") if mudou else ()},
+        "antes": antes}
+    if a.get("sem_formulario"):
+        return reserva(ctx, av) or {"erro": "Para salvar sem o formulário, falta ela dizer se recomenda o lugar (e, se "
+                                            "não, o motivo): pergunte."}
+    ctx.avaliacao = av
+    return {"lugar": nome, "formulario": "O sistema manda o formulário de avaliação logo depois da sua resposta: diga "
+            "em UMA linha curta que é para tocar em Avaliar. Não pergunte nada: o formulário pergunta."}
+
+
+def reserva(ctx, av: dict) -> dict | None:
+    """O Sim com o que a pessoa DISSE, sem o formulário (ele não abriu, ou ela pediu sem): o resultado de
+    `helper.propor`, ou None se ela não disse se recomenda (ou, no não, o motivo) e não há o que propor."""
+    dito = dict(av["dito"])
+    if dito["recomendado"] is None and av.get("antes") is not None and (
+            dito["estrelas"] or dito["preco_medio"] is not None or dito["motivo"]):
+        # "não abriu, 4 estrelas": disse algo novo e não repetiu a opinião — vale a dela de antes
+        dito["recomendado"] = av["antes"]
+    if dito["recomendado"] is None or (not dito["recomendado"] and not dito["motivo"]):
+        return None
+    from app.services.assistente_formulario import reais
+    rec, corpo = dito["recomendado"], av["lugar"]
+    campos = tuple(dict.fromkeys([*(k for k in ("estrelas", "preco_medio") if dito[k] is not None),
+                                  *dito.get("limpar", ())]))
+    linhas = [corpo["endereco"], f"★ {dito['estrelas']}" if dito["estrelas"] else "",
+              ("As notas de antes saem (a opinião mudou)" if dito["estrelas"] else
+               "As estrelas e as notas de antes saem (a opinião mudou)") if dito.get("limpar") else "",
+              f"Preço médio: {reais(dito['preco_medio'])}" if dito["preco_medio"] is not None else "",
+              (f"Comentário: {dito['motivo']}" if rec else f"Motivo: {dito['motivo']}") if dito["motivo"] else "",
+              _mapa(corpo["lat"], corpo["lng"])]
 
     async def executar(db, user, telefone: str) -> str:
-        from app.services.integracoes import detalhe_do_upstream
-        try:
-            mp = cliente_meuplano(db, user.id, so_proprio=True)
-            db.commit()
-            r = await mp.marcar_lugar(corpo, motivo, recomendado)
-        except SemConexao as e:
-            return f"❌ Não executado: {e}"
-        except httpx.HTTPStatusError as e:
-            motivo_ = str(detalhe_do_upstream(e.response) or e.response.status_code).rstrip(". ")
-            return f"❌ O meuPlano recusou: {motivo_}. Nada foi gravado."
-        except httpx.HTTPError:
-            return f"⚠️ O meuPlano não respondeu a tempo: {nome} PODE ter entrado na lista. Confira."
-        if r.get("id") is not None and r.get("lat") is not None:
-            # a marcação nova entra na lista guardada (refazer a busca mudaria o número que a pessoa viu)
-            loc["marcados"] = [m for m in loc.get("marcados") or [] if m.get("id") != r["id"]] + [
-                {**r, "distancia_m": round(_m(loc["lat"], loc["lng"], r["lat"], r["lng"]))}]
-            if any(c is lugar for c in loc.get("lugares") or []) and r["id"] not in lugar.get("nao_recomendado_ids", []):
-                lugar["nao_recomendado_ids"] = [*lugar.get("nao_recomendado_ids", []), r["id"]]
-        lista = "recomendados" if recomendado else "não recomendados"
-        if r.get("ja_tinha"):
-            era = r.get("recomendado_anterior")
-            if era is not None and bool(era) != recomendado:
-                return f"✅ {nome}: a sua marcação mudou de {_rotulo(bool(era))} para {_rotulo(recomendado)}."
-            if not r.get("motivo_anterior"):
-                return f"✅ {nome} já estava na sua lista de lugares {lista}: a marcação foi atualizada."
-            return (f"✅ {nome} já estava na sua lista de lugares {lista}: o seu "
-                    f"{'comentário' if recomendado else 'motivo'} de antes («{r.get('motivo_anterior')}») foi trocado "
-                    "por este.")
-        return f"✅ {nome} está na lista de lugares {lista} da equipe."
+        from app.services.assistente_formulario import em_palavras
+        feito, salvo = await _gravar(db, user, corpo, dito, recebida(telefone), av.get("ref"), campos)
+        return f"{feito}\n{em_palavras(salvo)}" if salvo is not None else feito
 
-    return helper.propor(ctx, f"Marcar como {_rotulo(recomendado).upper()}: {nome}", PRAZO_S, executar, linhas,
+    return helper.propor(ctx, f"Marcar como {_rotulo(rec).upper()}: {av['nome']}", PRAZO_S, executar, linhas,
                          parte="bot_meuplano", confirmacao="sim")
 
 
-async def marcar_lugar_nao_recomendado(ctx, a: dict) -> dict:
-    return await _marcar(ctx, a, False)
-
-
-async def marcar_lugar_recomendado(ctx, a: dict) -> dict:
-    return await _marcar(ctx, a, True)
+async def pelo_formulario(ctx, av: dict) -> str:
+    """O formulário de avaliação respondido: grava no meuPlano sem passar pela IA (enviar é a confirmação, como o Sim).
+    A confirmação diz o que FICOU gravado; se nada gravou, o formulário volta preenchido com o que ela mandou."""
+    from app.services.assistente_formulario import em_palavras
+    if "bot_meuplano" not in ctx.user.bot_ativo:
+        return "❌ A parte do meuPlano no seu bot está desligada: nada foi gravado. O gestor da O&M pode religar."
+    feito, salvo = await _gravar(ctx.db, ctx.user, av["lugar"], av, recebida(ctx.telefone), av.get("ref"))
+    if salvo is not None:
+        return f"{feito}\n{em_palavras(salvo)}"
+    if feito.startswith("❌"):
+        rec = bool(av.get("recomendado"))
+        ctx.avaliacao = {
+            "nome": av["nome"], "lugar": av["lugar"], "ref": av.get("ref"), "recomenda": "sim" if rec else "nao",
+            "comentario": (av.get("motivo") or "") if rec else "", "motivo": "" if rec else (av.get("motivo") or ""),
+            "estrelas": av.get("estrelas"), "preco": _preco_br(av.get("preco_medio")),
+            "notas": {k: str(n) for k, n in (av.get("notas") or {}).items()},
+            "dito": {"recomendado": av.get("recomendado"), "motivo": av.get("motivo") or "",
+                     "estrelas": av.get("estrelas"), "preco_medio": av.get("preco_medio")}}
+        return f"{feito} O formulário vai de novo, preenchido com o que você mandou."
+    return feito
 
 
 FERRAMENTA_LISTA_LUGARES = {"type": "function", "function": {
     "name": "lugares_da_equipe",
-    "description": ("A lista de lugares que a equipe marcou (posto, restaurante, hotel…), RECOMENDADOS e NÃO "
-                    "RECOMENDADOS, com o comentário ou o motivo, quem marcou e quando. Use quando perguntarem onde "
-                    "parar ou comer, quais lugares evitar ou o que está na lista."),
+    "description": ("A lista de lugares que a equipe marcou (posto, restaurante, hotel…): por lugar, a média da equipe "
+                    "(estrelas, preço, notas) de TODAS as avaliações, e quem recomenda e quem não (com o comentário ou "
+                    "o motivo). Use quando perguntarem onde parar ou comer, quais lugares evitar ou o que está na lista."),
     "parameters": {"type": "object", "properties": {
         "quais": {"type": "string", "enum": ["recomendados", "nao_recomendados"],
-                  "description": "só um dos dois; sem isto, os dois"},
+                  "description": "só os lugares que alguém recomenda (ou que alguém não recomenda); sem isto, todos"},
         "busca": {"type": "string", "description": "parte do nome, da cidade ou do motivo, para ver só esses"}}}}}
 #: Até onde a lista vai inteira na resposta da ferramenta (o teto dela, em `assistente`, é 14.000 letras).
 TETO_LISTA = 12000
@@ -606,26 +782,32 @@ async def lugares_da_equipe(ctx, a: dict) -> dict:
                 if e.response.status_code == 403 else "O meuPlano não conseguiu ler a lista agora."}
     except httpx.HTTPError:
         return {"erro": "O meuPlano não respondeu agora."}
+
+    # um LUGAR por linha, com TODAS as marcações dele: a média e o "quem não recomenda" nunca saem pela metade
+    lugares = _por_lugar(lista)
     if a.get("quais") in ("recomendados", "nao_recomendados"):
-        lista = [m for m in lista if bool(m.get("recomendado")) == (a["quais"] == "recomendados")]
+        quer = a["quais"] == "recomendados"
+        lugares = [g for g in lugares if any(bool(m.get("recomendado")) == quer for m in g)]
     busca = _sem_acento(a.get("busca") or "")
     if busca:
-        lista = [m for m in lista if busca in _sem_acento(" ".join(str(m.get(k) or "")
-                                                                  for k in ("nome", "endereco", "motivo")))]
-    if not lista:
+        lugares = [g for g in lugares if any(busca in _sem_acento(" ".join(str(m.get(k) or "") for k in (
+            "nome", "endereco", "motivo"))) for m in g)]
+    if not lugares:
         return {"lugares": [], "nota": f"Nenhum lugar com '{a['busca']}' na lista." if busca else
                 "Nenhum lugar assim na lista." if a.get("quais") else
                 "A lista está vazia: ninguém da equipe marcou lugar ainda."}
-    # sem o endereço (o do OSM tem 100+ letras); e o que não couber é DITO, com o jeito de ver, nunca cortado calado
+    # o endereço curto (o do Google) diz a cidade; o do OSM tem 100+ letras e fica de fora. O que não couber é DITO,
+    # com o jeito de ver, nunca cortado calado
     linhas, usado = [], 0
-    for m in lista:
-        linha = f"{m.get('nome')}{_avaliacoes([m])}"
+    for g in lugares:
+        end = next((m["endereco"] for m in g if m.get("endereco") and len(m["endereco"]) <= 70), None)
+        linha = f"{g[0].get('nome')}" + (f" ({end})" if end else "") + _avaliacoes(g)
         if usado + len(linha) > TETO_LISTA:
             break
         linhas.append(linha)
         usado += len(linha) + 4
-    out = {"total": len(lista), "lugares": linhas}
-    if len(linhas) < len(lista):
-        out["faltam"] = (f"Mais {len(lista) - len(linhas)} lugares não couberam aqui: diga quantos são e peça o nome, a "
-                         "cidade ou o motivo para procurar (`busca`).")
+    out = {"total": len(lugares), "lugares": linhas}
+    if len(linhas) < len(lugares):
+        out["faltam"] = (f"Mais {len(lugares) - len(linhas)} lugares não couberam aqui: diga quantos são e peça o nome, "
+                         "a cidade ou o motivo para procurar (`busca`).")
     return out

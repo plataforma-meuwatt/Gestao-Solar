@@ -73,6 +73,8 @@ class Contexto:
     escolha: dict | None = None
     #: o formulário de CADASTRO pedido neste turno (o que já se sabe, para vir preenchido): vai depois da resposta
     cadastro: dict | None = None
+    #: o formulário de AVALIAÇÃO do lugar (`assistente_local.avaliar_lugar`): vai depois da resposta (e do resumo)
+    avaliacao: dict | None = None
     #: texto do SISTEMA ao pé da resposta (os links do Google Maps e do Waze de `local_da_usina`): a IA não o reescreve
     rodape: list = field(default_factory=list)
     #: as mensagens da classificação de paradas que este turno começou (`assistente_paradas`): saem pelo sistema, com

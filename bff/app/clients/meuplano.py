@@ -786,6 +786,10 @@ class MeuPlanoClient:
                             data={"description": descricao, "uploaded_by": autor})
         return r.json()
 
+    async def eu(self) -> dict[str, Any]:
+        """O `/auth/me` inteiro: `user_id` e `permissions` (a avaliação de lugar acha a marcação da própria pessoa)."""
+        return await self._get("/api/v1/meuacesso/auth/me") or {}
+
     async def permissoes(self) -> set[str]:
         """As permissões do dono do token (`/auth/me`): o bot avisa ANTES do Sim o que o papel dele não faz."""
         return set((await self._get("/api/v1/meuacesso/auth/me")).get("permissions") or [])
@@ -805,11 +809,13 @@ class MeuPlanoClient:
         nomes são de antes do recomendado (16/11/2026): as marcações vêm todas, cada uma com `recomendado`."""
         return await self._get("/api/v1/meuacesso/veiculos/lugares/perto", lat=lat, lng=lng)
 
-    async def marcar_lugar(self, lugar: dict[str, Any], motivo: str, recomendado: bool) -> dict[str, Any]:
+    async def marcar_lugar(self, lugar: dict[str, Any], motivo: str, recomendado: bool,
+                           **avaliacao: Any) -> dict[str, Any]:
         """Lá, o mesmo lugar marcado de novo troca a marcação da pessoa (`ja_tinha`, `motivo_anterior`,
-        `recomendado_anterior`)."""
+        `recomendado_anterior`). A avaliação (17/11/2026: `estrelas` e `notas` de 1 a 5, `preco_medio` em R$) só muda
+        no campo que VAI (vazio inclusive): sem ele, lá fica a de antes."""
         r = await self._req("POST", "/api/v1/meuacesso/veiculos/lugares-nao-recomendados",
-                            json={**lugar, "motivo": motivo, "recomendado": recomendado})
+                            json={**lugar, "motivo": motivo, "recomendado": recomendado, **avaliacao})
         return r.json()
 
     async def lugares_marcados(self) -> list[dict[str, Any]]:

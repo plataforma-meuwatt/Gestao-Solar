@@ -668,6 +668,56 @@ def test_formulario_de_cadastro_sai_com_os_campos_e_os_papeis(cliente, credencia
     assert r.status_code == 400 and "papéis de meuwatt" in r.json()["detail"]
 
 
+def test_formulario_de_avaliacao_de_lugar(cliente, credencial, monkeypatch, db):
+    """O dono (17/11/2026): "falta abrir o menu com opções para avaliação, com média de preço, as estrelas, notas
+    etc". `gs_avaliar_lugar` vai com o nome do lugar, o recomenda que a conversa disse e o comentário."""
+    from gateway.meta import graph
+
+    enviados, pedidos = [], []
+
+    async def _graph(**k):
+        enviados.append(k)
+        return graph.Resposta(ok=True, wamid=f"wamid.A{len(enviados)}")
+
+    async def _id(**k):
+        pedidos.append(k["nome"])
+        return "30159728400282858", None
+
+    monkeypatch.setattr(graph, "enviar_conteudo", _graph)
+    monkeypatch.setattr(graph, "id_do_flow", _id)
+    h = {CABECALHO_CHAVE_INTERNA: CHAVE}
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "Toque em Avaliar",
+        "avaliacao": {"token": "tok-aval-1234", "lugar": "Browdog - Hamburguer Defumado", "recomenda": "sim",
+                      "comentario": "maravilhosa"}})
+    assert r.status_code == 200 and r.json()["ok"] and pedidos == ["gs_avaliar_lugar_2"]
+    p = enviados[0]["conteudo"]["action"]["parameters"]
+    assert (p["flow_cta"], p["flow_token"]) == ("Avaliar", "tok-aval-1234")
+    assert p["flow_action_payload"] == {"screen": "AVALIAR", "data": {
+        "lugar": "Browdog - Hamburguer Defumado", "tem_opiniao": True, "recomenda": "sim", "comentario": "maravilhosa",
+        "motivo": "", "tem_estrelas": False, "estrelas": "", "preco": "", "atendimento": "", "limpeza": "", "comida": "",
+        "ref": ""}}
+    # sem opinião dita, nada vem marcado; a avaliação de antes vem preenchida
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "Toque em Avaliar",
+        "avaliacao": {"token": "tok-aval-1234", "lugar": "Browdog", "preco": "35,50", "comida": "5", "estrelas": "4",
+                      "motivo": "fila", "ref": "abc.def"}})
+    assert enviados[-1]["conteudo"]["action"]["parameters"]["flow_action_payload"]["data"] == {
+        "lugar": "Browdog", "tem_opiniao": False, "recomenda": "", "comentario": "", "motivo": "fila",
+        "tem_estrelas": True, "estrelas": "4", "preco": "35,50", "atendimento": "", "limpeza": "", "comida": "5",
+        "ref": "abc.def"}
+    for errado in ({"recomenda": "talvez"}, {"comentario": "x" * 601}, {"comida": "6"}, {"estrelas": "0"}):
+        r = cliente.post("/interno/conteudo", headers=h, json={
+            "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
+            "avaliacao": {"token": "tok-aval-1234", "lugar": "Browdog", **errado}})
+        assert r.status_code == 422, errado
+    r = cliente.post("/interno/conteudo", headers=h, json={
+        "telefone": "+5517997377626", "tipo": "formulario", "texto": "x",
+        "avaliacao": {"token": "tok-aval-1234", "lugar": "Browdog"},
+        "cadastro": {"token": "tok-cad-1234", "papeis": {}}})
+    assert r.status_code == 400                                     # um formulário por mensagem
+
+
 def test_o_digitando_sai_na_chegada_antes_de_gravar(cliente, credencial, db, monkeypatch):
     """O "digitando…" só saía depois de ~20 idas ao banco dos EUA (gateway e API): de 4 a 21 s de tela parada
     (01/11/2026). Agora sai quando a Meta entrega, antes de gravar; status, reação e entrega atrasada não o recebem."""
