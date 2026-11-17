@@ -19,6 +19,7 @@ import sys
 
 from sqlalchemy import select
 
+from app.clients import whatsapp
 from app.core.db import SessionLocal
 from app.models.conversa_whatsapp import RegistroBot
 from app.models.user import User
@@ -26,6 +27,12 @@ from app.services import assistente as a, assistente_geracao as ger
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 PARALELO = 5
+
+
+async def _nada_ao_whatsapp(**_kw) -> dict:
+    """No lugar do envio: no `--inteira` as ferramentas rodam de verdade, e o gráfico e o documento que elas mandam
+    iam ao celular da conta (17/11/2026). O que iria fica em `ctx.enviados` e sai na tela."""
+    return {"ok": True}
 
 
 def _conta(db, apelido: str) -> User:
@@ -78,7 +85,7 @@ async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = (), antes
                 texto += "\n\n" + "\n\n".join(ctx.rodape)
             if ctx.proposta is not None:
                 texto += "\n\n" + a.helper.bloco_da_proposta(ctx.proposta)
-            return {"ferramentas": ctx.ferramentas,
+            return {"ferramentas": ctx.ferramentas, "enviados": ctx.enviados,
                     "texto": _limpo(texto, [*ctx.segredos, *ctx.digitados], ctx.credencial)}
         msgs = [{"role": "system", "content": a._sistema(ctx)}, *antes, {"role": "user", "content": frase}]
         ferramentas = [a.FERRAMENTAS[n][1] for n in a.permitidas(user)]
@@ -178,6 +185,7 @@ def main() -> None:
     else:
         sys.exit("Passe uma ou mais frases, --banco ou --colher.")
     print(f"# modelo {a.get_settings().llm_model}", file=sys.stderr)
+    whatsapp.enviar_conteudo = _nada_ao_whatsapp
     erros = 0
     for caso, r in asyncio.run(_varias(casos, o.inteira, o.vezes)):
         if "espera" in caso:
@@ -191,6 +199,8 @@ def main() -> None:
         print(f"--- {caso['frase']}\nchamou: {r['ferramentas'] or 'nada'}")
         for c in r.get("chamadas", []):
             print(f"  {c['nome']}: {c['dados'][:400]}")
+        if r.get("enviados"):
+            print(f"iria ao chat (não foi): {r['enviados']}")
         if r.get("erro") or r["texto"]:
             print(r.get("erro") or r["texto"])
     if o.banco:

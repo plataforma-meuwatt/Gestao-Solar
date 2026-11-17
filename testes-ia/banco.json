@@ -2206,5 +2206,13 @@
       "usina_helper_catalogo"
     ],
     "origem": "o dono, 17/11 (\"faça tudo\": o bot usa o catálogo do conector do Claude); o helper lê ao vivo e também responde (×8: 8/8 no helper com a descrição genérica)"
+  },
+  {
+    "frase": "Monte um grafico da temperatura do trafo 2 de pirapozinho do dia de hoje",
+    "espera": [
+      "procurar_consulta",
+      "consultar"
+    ],
+    "origem": "pedido do Renan 17/11 (o bot de produção, sem o catálogo, disse que não tinha o histórico)"
   }
 ]
