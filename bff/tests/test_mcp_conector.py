@@ -253,3 +253,67 @@ def test_o_nome_do_produto_vira_o_do_servico():
     assert mcp._sem_marca("O meuPlano não abre; veja no meuWatt.") == "A manutenção não abre; veja no monitoramento."
     assert mcp._sem_marca("as OS do meuPlano, pelo meuPlano e ao meuPlano") == \
         "as OS da manutenção, pela manutenção e à manutenção"
+
+
+# ── as câmeras (meuGuarda): as leituras do bot, com a sessão do GS da pessoa ─────────────────────
+class _MeuGuarda:
+    def __init__(self):
+        self.contagens = []
+
+    async def usinas(self):
+        return [{"id": 1, "nome": "UFV Pereiras", "com_sinal": True, "cameras": 2, "cameras_online": 2,
+                 "alarmes_abertos": 1}]
+
+    async def cameras(self, usina_id):
+        return [{"id": 7, "nome": "Perímetro 03", "tipo": "camera", "canais": 1, "online": True,
+                 "deteccao_desligada_ate": None, "alarmes_abertos": 1, "ultimo_evento": None},
+                {"id": 8, "nome": "Térmica 02", "tipo": "camera", "canais": 2, "online": True,
+                 "deteccao_desligada_ate": None, "alarmes_abertos": 0, "ultimo_evento": None}]
+
+    async def alarmes(self):
+        return [{"usina": "UFV Pereiras", "camera": "Perímetro 03", "tipo": "pessoa", "prioridade": 1,
+                 "aberto_em": "2026-11-17T20:21:01+00:00"}]
+
+    async def contar(self, filtro):
+        self.contagens.append(filtro)
+        return {"total": 3, "por_camera": [{"nome": "Perímetro 03", "n": 3}], "por_tipo": [{"tipo": "pessoa", "n": 3}]}
+
+    async def foto(self, camera_id, canal=1):
+        return b"\xff\xd8jpeg", "isapi"
+
+
+@pytest.fixture
+def cameras(monkeypatch, db, fernando):
+    from app.services import assistente_meuguarda
+
+    falso = _MeuGuarda()
+    monkeypatch.setattr(assistente_meuguarda, "cliente", lambda user: falso)
+    fernando.meuguarda_liberado = True
+    db.commit()
+    return falso
+
+
+def test_as_cameras_entram_com_o_acesso_ao_meuguarda(http, db, fernando, produtos, cameras):
+    token = _token(http)
+    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    assert nomes[-3:] == ["meuguarda_cameras", "meuguarda_eventos", "meuguarda_foto"]
+    assert not any("ver" in n or "alarme_" in n or "classificar" in n for n in nomes)  # sem o ao vivo e sem ação
+    estado = _rpc(http, token, "tools/call", {"name": "meuguarda_cameras"}).json()["result"]
+    assert not estado["isError"] and "Perímetro 03" in estado["content"][0]["text"]
+    ev = _rpc(http, token, "tools/call", {"name": "meuguarda_eventos", "arguments": {
+        "cameras": ["perímetro 3"], "de": "2026-11-16", "ate": "2026-11-17"}}).json()["result"]
+    assert '"total": 3' in ev["content"][0]["text"] and cameras.contagens[-1]["camera_ids"] == [7]
+    assert cameras.contagens[-1]["de"].startswith("2026-11-16T00:00:00-03:00")
+    foto = _rpc(http, token, "tools/call", {"name": "meuguarda_foto", "arguments": {"camera": "térmica 2"}}).json()["result"]
+    assert foto["content"][1] == {"type": "image", "data": "/9hqcGVn", "mimeType": "image/jpeg"}
+    assert foto["content"][0]["text"].startswith("Térmica 02 · UFV Pereiras")
+
+
+def test_sem_o_acesso_ao_meuguarda_as_cameras_nao_abrem(http, db, fernando, produtos, cameras):
+    token = _token(http)
+    fernando.meuguarda_liberado = False
+    db.commit()
+    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    assert not any(n.startswith("meuguarda_") for n in nomes)
+    res = _rpc(http, token, "tools/call", {"name": "meuguarda_foto", "arguments": {"camera": "térmica 2"}}).json()["result"]
+    assert res["isError"] and "câmeras" in res["content"][0]["text"]

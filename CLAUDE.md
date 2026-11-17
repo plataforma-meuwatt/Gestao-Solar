@@ -491,7 +491,10 @@ responde a ela (`User.bot_ativo`: liberado pelo gerente E com o token próprio),
 com o token PESSOAL dela; as ferramentas ganham o prefixo do SERVIÇO (`monitoramento_` / `manutencao_`), e o texto de lá
 perde o nome do produto (`_sem_marca`; regra do vocabulário do cliente). A lista de cada produto mora lá
 (no meuWatt, o gate `tests/test_mcp_cobertura.py` do mw-api): aqui não se copia ferramenta. Só consulta; ação segue no
-bot. Produto novo no conector = linha em `PRODUTOS` + o `/mcp` dele aceitando o token pessoal.
+bot. Produto novo no conector = linha em `SERVICOS` + o `/mcp` dele aceitando o token pessoal. O meuGuarda ("quero
+conector do meuguarda também, nesse do GS") não tem conector próprio: as LEITURAS do bot moram em `MEUGUARDA`
+(estado e alarmes abertos, eventos de um período, a foto de agora como imagem), com o acesso ao meuGuarda; o link ao
+vivo fica de fora (abre a câmera sem login).
 
 ### Nada de "chips" para selecionar opção
 

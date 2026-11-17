@@ -14,18 +14,25 @@ fica um so para todos sistemas. Igual é o bot hoje".
    do SERVIÇO, nunca o do produto (`tests/test_vocabulario_do_cliente.py`): as ferramentas ganham o prefixo
    `monitoramento_…` / `manutencao_…`, e o texto que vem de lá passa por `_sem_marca`. Serviço que não abre vira uma
    ferramenta que diz por quê — nunca some calado.
-3. **Só consulta**: os dois conectores de lá só leem. Ação (helper, meuGuarda, criar OS) segue no bot, com a senha de
+3. **meuGuarda (câmeras)**, pedido do dono no mesmo dia ("quero conector do meuguarda também, nesse do GS"): não tem
+   conector próprio, então as LEITURAS do bot moram aqui (`assistente_meuguarda`, com a sessão do GS da pessoa e as
+   permissões de lá): o estado das câmeras e os alarmes abertos, os eventos de um período e a foto de agora (volta como
+   imagem). O link ao vivo fica de fora: abre a câmera sem login e não pode morar numa conversa.
+4. **Só consulta**: ligar ou desligar alarme, classificar eventos, criar OS e o helper seguem no bot, com a senha de
    atuação e o Sim.
 """
 
 import asyncio
+import base64
 import hashlib
 import html
+import json
 import re
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -36,13 +43,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.datas import hora_brt
 from app.core.db import get_db
 from app.core.security import _conta_com_empresa, _empresa_ativa, conferir_senha
 from app.core.tokens_produto import NOME
 from app.models.integracao import Produto
 from app.models.mcp import TokenMcp
 from app.models.user import User
-from app.services import vinculos
+from app.services import assistente_meuguarda, vinculos
 
 router = APIRouter(tags=["Conector do Claude"])
 
@@ -65,7 +73,8 @@ SERVICOS: dict[str, tuple[Produto, str]] = {"monitoramento": (Produto.MEUWATT, "
 INSTRUCOES = (
     "O Gestão Solar reúne os serviços das usinas solares de quem está conectado. Cada ferramenta começa pelo serviço: "
     "monitoramento_… (geração, PR, paradas, alarmes, strings, relés, trackers, gêmeo digital, relatórios) e "
-    "manutencao_… (ordens de serviço, tarefas, cronograma, relatórios de manutenção). Nas instruções de cada serviço, "
+    "manutencao_… (ordens de serviço, tarefas, cronograma, relatórios de manutenção) e meuguarda_… (as câmeras de "
+    "segurança). Nas instruções de cada serviço, "
     "abaixo, o nome da ferramenta vem sem o prefixo. Tudo é SÓ LEITURA e recortado pelo acesso da pessoa. Responda "
     "com datas em dd/mm/aaaa, números no formato brasileiro e horário de Brasília."
 )
@@ -141,9 +150,11 @@ def _erro_oauth(erro: str, desc: str, status: int = 400) -> JSONResponse:
 
 
 def servicos(usuario: User) -> list[str]:
-    """Os serviços que o Claude desta pessoa lê: os que o bot responde a ela (liberado + token próprio)."""
+    """Os serviços que o Claude desta pessoa lê: os que o bot responde a ela (liberado + token próprio; as câmeras,
+    com o acesso ao meuGuarda)."""
     ativos = usuario.bot_ativo
-    return [s for s, (produto, _nome) in SERVICOS.items() if f"bot_{produto.value}" in ativos]
+    lista = [s for s, (produto, _nome) in SERVICOS.items() if f"bot_{produto.value}" in ativos]
+    return lista + (["meuguarda"] if "cameras" in assistente_meuguarda.permitidas(usuario) else [])
 
 
 def _sem_marca(texto: str) -> str:
@@ -227,7 +238,8 @@ def _pagina(pedido: str | None, erro: str | None = None, status: int = 200) -> H
         "margin:4px 8px 0 0;cursor:pointer}button.nao{background:transparent;color:var(--fraco);border:1px solid var(--borda)}"
         ".erro{color:var(--erro);font-weight:600}</style></head><body><main><section>"
         "<h1>Conectar o Claude ao Gestão Solar</h1>"
-        "<p>O Claude vai <b>consultar</b>, em seu nome, o que a sua conta enxerga no monitoramento e na manutenção. "
+        "<p>O Claude vai <b>consultar</b>, em seu nome, o que a sua conta enxerga no monitoramento, na manutenção e "
+        "nas câmeras (meuGuarda). "
         "Só leitura: ele não muda nada nos sistemas.</p>"
         f"{aviso}{form}</section></main></body></html>"
     )
@@ -303,8 +315,8 @@ def aprovar(
     if not servicos(usuario):
         return _pagina(
             pedido,
-            "Sua conta ainda não tem o monitoramento nem a manutenção liberados para consulta. O gerente da O&M libera "
-            "em Usuários (oem-gs), com o seu token de cada serviço.",
+            "Sua conta ainda não tem o monitoramento, a manutenção nem as câmeras liberados para consulta. O gerente "
+            "da O&M libera em Usuários (oem-gs), com o seu token de cada serviço.",
             403,
         )
     _pedidos.pop(pedido, None)
@@ -381,6 +393,85 @@ def _erro(texto: str) -> dict:
     return {"content": [{"type": "text", "text": texto}], "isError": True}
 
 
+# ============================================================================ meuGuarda (as leituras do bot)
+_MG = assistente_meuguarda
+_MG_PARAMS_EVENTOS = {"type": "object", "properties": {
+    "usina": {"type": "string", "description": "nome da usina (opcional se a pessoa vê uma só)"},
+    "cameras": {"type": "array", "items": {"type": "string"}, "description": "nomes das câmeras; vazio = todas"},
+    "tipos": {"type": "array", "items": {"type": "string"}, "description": "só estes tipos (ex.: pessoa, veiculo)"},
+    "de": {"type": "string", "description": "primeiro dia, AAAA-MM-DD (padrão: hoje)"},
+    "ate": {"type": "string", "description": "último dia, AAAA-MM-DD, inclusive (padrão: o mesmo de 'de')"},
+    "so_sem_classificacao": {"type": "boolean", "description": "true = só os que ninguém classificou ainda"}}}
+MEUGUARDA: dict[str, tuple[str, dict]] = {
+    "cameras": (_MG.FERRAMENTA_ESTADO["function"]["description"], _MG.FERRAMENTA_ESTADO["function"]["parameters"]),
+    "eventos": ("Quantos EVENTOS (alarmes) as câmeras de segurança registraram num período, por câmera e por tipo "
+                "(pessoa, veículo…). Sem período, hoje.", _MG_PARAMS_EVENTOS),
+    "foto": ("A FOTO DE AGORA de uma câmera de segurança: a câmera tira na hora (uns 6 s) e a imagem volta aqui.",
+             _MG._PARAMS_CAMERA),
+}
+
+
+def _texto(dado: dict) -> dict:
+    return {"content": [{"type": "text", "text": json.dumps(dado, ensure_ascii=False, default=str)}],
+            "isError": bool(isinstance(dado, dict) and dado.get("erro"))}
+
+
+async def _eventos(db: Session, usuario: User, a: dict) -> dict:
+    periodo = _MG._periodo(a)
+    if periodo is None:
+        return {"erro": "Não entendi o período: de e ate em AAAA-MM-DD, com ate depois de de."}
+    mg = _MG.cliente(usuario)
+    db.commit()  # solta a conexão enquanto o meuGuarda responde
+    try:
+        usina, erro = _MG._usina(await mg.usinas(), a.get("usina"))
+        if erro:
+            return erro
+        ks = await _MG._cameras(mg, usina)
+        ids = set()
+        for n in [n for n in a.get("cameras") or [] if (n or "").strip()]:
+            k, candidatas = _MG.escolher(ks, n)
+            if k is None:
+                return {"erro": f"Câmera '{n}' " + ("é ambígua" if candidatas else f"não existe em {usina['nome']}"),
+                        "opcoes": _MG._nomes(candidatas or ks)}
+            ids.add(int(k["id"]))
+        filtro = {"usina_id": int(usina["id"]), "de": periodo[0].isoformat(), "ate": periodo[1].isoformat(),
+                  "so_sem_classificacao": bool(a.get("so_sem_classificacao")),
+                  **({"camera_ids": sorted(ids)} if ids else {}),
+                  **({"tipos": [t for t in a["tipos"] if t]} if a.get("tipos") else {})}
+        conta = await mg.contar(filtro)
+    except httpx.HTTPError as e:
+        return {"erro": _MG._recusa(e)}
+    return {"usina": usina["nome"], "de": f"{periodo[0]:%d/%m/%Y}", "ate": f"{periodo[1] - timedelta(days=1):%d/%m/%Y}",
+            "so_sem_classificacao": filtro["so_sem_classificacao"], "total": conta.get("total"),
+            "por_camera": conta.get("por_camera"), "por_tipo": conta.get("por_tipo")}
+
+
+async def _foto(db: Session, usuario: User, a: dict) -> dict:
+    mg = _MG.cliente(usuario)
+    db.commit()
+    try:
+        usina, k, erro = await _MG._camera(mg, a.get("usina"), a.get("camera"))
+        if erro:
+            return _texto(erro)
+        jpeg, _fonte = await mg.foto(int(k["id"]), _MG._canal(a, k))
+    except httpx.HTTPError as e:
+        return _erro(_MG._recusa(e))
+    legenda = f"{k['nome']} · {usina['nome']} · {hora_brt(datetime.now(UTC).isoformat())}"
+    return {"content": [{"type": "text", "text": legenda},
+                        {"type": "image", "data": base64.b64encode(jpeg).decode(), "mimeType": "image/jpeg"}],
+            "isError": False}
+
+
+async def _chamar_meuguarda(db: Session, usuario: User, ferramenta: str, a: dict) -> dict:
+    if ferramenta == "cameras":
+        return _texto(await _MG.cameras(SimpleNamespace(user=usuario, db=db), a))
+    if ferramenta == "eventos":
+        return _texto(await _eventos(db, usuario, a))
+    if ferramenta == "foto":
+        return await _foto(db, usuario, a)
+    return _erro(f"Ferramenta desconhecida: meuguarda_{ferramenta}")
+
+
 async def _ferramentas(db: Session, usuario: User) -> list[dict]:
     async def de(servico: str) -> list[dict]:
         rotulo = SERVICOS[servico][1]
@@ -395,12 +486,20 @@ async def _ferramentas(db: Session, usuario: User) -> list[dict]:
                  "description": f"[{rotulo}] {_sem_marca(t.get('description') or '')}".strip()}
                 for t in res.get("tools") or [] if isinstance(t, dict) and t.get("name")]
 
-    listas = await asyncio.gather(*(de(s) for s in servicos(usuario)))
-    return [t for lista in listas for t in lista]
+    ativos = servicos(usuario)
+    listas = await asyncio.gather(*(de(s) for s in ativos if s in SERVICOS))
+    locais = [{"name": f"meuguarda_{n}", "description": f"[meuGuarda] {d}", "inputSchema": esquema}
+              for n, (d, esquema) in MEUGUARDA.items()] if "meuguarda" in ativos else []
+    return [t for lista in listas for t in lista] + locais
 
 
 async def _chamar(db: Session, usuario: User, nome: str, args: Any) -> dict:
     servico, _, ferramenta = nome.partition("_")
+    if servico == "meuguarda":
+        if servico not in servicos(usuario):
+            return _erro("meuGuarda: esta conta não tem o acesso às câmeras liberado no Gestão Solar (o gerente da O&M "
+                         "libera em Usuários).")
+        return await _chamar_meuguarda(db, usuario, ferramenta, args if isinstance(args, dict) else {})
     if servico not in SERVICOS or not ferramenta:
         return _erro(f"Ferramenta desconhecida: {nome}")
     rotulo = SERVICOS[servico][1]
@@ -434,7 +533,12 @@ async def _instrucoes(db: Session, usuario: User) -> str:
             return f"{rotulo}: não abriu agora ({_motivo(e)})."
         return f"{rotulo} (ferramentas {servico}_…): {_sem_marca(res.get('instructions') or '')}".strip()
 
-    partes = await asyncio.gather(*(de(s) for s in servicos(usuario)))
+    ativos = servicos(usuario)
+    partes = list(await asyncio.gather(*(de(s) for s in ativos if s in SERVICOS)))
+    if "meuguarda" in ativos:
+        partes.append("meuGuarda (ferramentas meuguarda_…): as câmeras de segurança (CFTV) das usinas — o estado e os "
+                      "alarmes abertos (meuguarda_cameras), os eventos de um período (meuguarda_eventos) e a foto de "
+                      "agora (meuguarda_foto). O ao vivo e as ações ficam no aplicativo do meuGuarda e no bot.")
     if not partes:
         return INSTRUCOES + "\n\nEsta conta não tem nenhum serviço liberado para consulta: o gerente da O&M libera " \
                             "em Usuários (oem-gs)."
