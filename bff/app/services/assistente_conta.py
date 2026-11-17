@@ -32,7 +32,7 @@ import statistics
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -949,6 +949,7 @@ async def _salvar_todas(db, quem, usina: dict, prontas: list[Leitura]) -> str:
             else:
                 falhas.append(f"⚠️ {rotulo}: o meuWatt não respondeu. A conta PODE ter sido salva: confira em Projeto › "
                               "Faturas antes de mandar de novo.")
+    prova = await _prova(mw, slug, prontas, de_agora) if feitas else []
     relatorio = []
     if feitas:
         for ano, mes in sorted({x.mes for x in prontas}):
@@ -957,7 +958,45 @@ async def _salvar_todas(db, quem, usina: dict, prontas: list[Leitura]) -> str:
             except httpx.HTTPError:
                 relatorio.append(f"📊 Não consegui reler o relatório de {_mes_br((ano, mes))} agora.")
     cabeca = "✅ Conta salva no meuWatt:" if not falhas else ("⚠️ Salvo EM PARTE:" if feitas else "❌ A conta não foi salva:")
-    return "\n".join([cabeca, *feitas, *falhas, *relatorio])
+    return "\n".join([cabeca, *feitas, *falhas, *prova, *relatorio])
+
+
+async def _prova(mw, slug: str, prontas: list[Leitura], de_agora) -> list[str]:
+    """A prova de que gravou certo (o dono, 17/11/2026: "quando eu enviar quero que ele me prove que ele fez certo"):
+    cada conta RELIDA do meuWatt contra o que se leu do PDF, e o medidor da fronteira × a conta de cada UC no mês, pelo
+    balanço de energia do meuWatt (a mesma conciliação da aba Balanço do Excel)."""
+    linhas = ["🔎 Prova, relendo do meuWatt:"]
+    for x in prontas:
+        try:
+            c = await de_agora(x)
+        except httpx.HTTPError:
+            c = None
+        v = None if not c or c.get("billed_mwh") is None else round(float(c["billed_mwh"]), 3)
+        linhas.append(f"{'✅' if v == x.mwh else '❌'} {x.trafo['nome']} · {_mes_br(x.mes)}: o meuWatt tem "
+                      f"{br(v, 3) + ' MWh' if v is not None else 'nada'}" + ("" if v == x.mwh else f"; a conta diz {br(x.mwh, 3)} MWh"))
+    for ano, mes in sorted({x.mes for x in prontas}):
+        ini = date(ano, mes, 1)
+        fim = (ini.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        try:
+            b = await mw.balanco_energia(slug, ini, fim, fabricante=False)
+        except httpx.HTTPError:
+            linhas.append(f"⚖️ Não consegui conferir o medidor × a conta de {_mes_br((ano, mes))} agora.")
+            continue
+        nomes = {x.trafo["nome"] for x in prontas if x.mes == (ano, mes)}
+        for sk in b.get("skids") or []:
+            if sk.get("skid") not in nomes:
+                continue
+            if sk.get("conciliacao"):
+                pct = sk.get("medidor_menos_conta_pct") or 0.0
+                linhas.append(f"⚖️ {sk['skid']} · {_mes_br((ano, mes))}: medidor {br(sk['medidor_kwh'] / 1000, 3)} × conta "
+                              f"{br(sk['conta_kwh'] / 1000, 3)} MWh ({'+' if pct > 0 else ''}{br(pct, 2)}%): "
+                              f"{sk['conciliacao']}")
+            elif sk.get("medidor_kwh") is None:
+                linhas.append(f"⚖️ {sk['skid']} · {_mes_br((ano, mes))}: sem medidor no meuWatt para conferir a conta.")
+            else:
+                linhas.append(f"⚖️ {sk['skid']} · {_mes_br((ano, mes))}: o medidor não fecha com a conta"
+                              + (f" ({sk['falta_dado']})" if sk.get("falta_dado") else "") + ".")
+    return linhas
 
 
 async def _salvar(mw, slug: str, x: Leitura, atual: dict | None) -> str:

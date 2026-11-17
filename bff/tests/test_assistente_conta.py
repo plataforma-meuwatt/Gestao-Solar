@@ -8,6 +8,8 @@ import io
 from types import SimpleNamespace
 
 import httpx
+from datetime import date
+
 import pytest
 
 from app.services import assistente
@@ -180,6 +182,14 @@ class _MeuWatt:
     async def ssu_totais_mensais(self, slug, ano):
         return {}
 
+    async def balanco_energia(self, slug, ini, fim, fabricante=True):
+        """O balanço do meuWatt no mês: o medidor do TR-01 × a conta que está lá AGORA (a prova relê depois de gravar)."""
+        self.balanco = (slug, ini, fim, fabricante)
+        conta = next((c.get("billed_mwh") for c in self.contas.get(slug, []) if c["transformer_id"] == 53
+                      and (c["year"], c["month"]) == (ini.year, ini.month)), None)
+        return {"skids": [{"skid": "TR-01", "medidor_kwh": 64850.0, "conta_kwh": None if conta is None else conta * 1000,
+                           "medidor_menos_conta_pct": -0.02, "conciliacao": "Conciliado", "falta_dado": None}]}
+
     async def relatorio_existente(self, slug, periodo, de):
         return self.emitido
 
@@ -237,6 +247,11 @@ async def test_a_ferramenta_manda_a_prova_e_o_sim_grava_e_diz_o_relatorio(db, co
     assert (corpo["installation_number"], corpo["tariff"], corpo["titular"]) == (UC, None, None)
     assert corpo["pdf_filename"] == "fatura.pdf" and corpo["pdf_base64"] and "pdf_password" not in corpo
     assert "64,860 → 64,861 MWh (PDF anexado como nova versão)" in texto
+    # a prova de que gravou certo (o dono: "quando eu enviar quero que ele me prove que ele fez certo"): relida do
+    # meuWatt e o medidor × a conta da UC no mês, pelo balanço do meuWatt (sem a Huawei, que só atrasaria)
+    assert "🔎 Prova, relendo do meuWatt:" in texto and "✅ TR-01 · set/2026: o meuWatt tem 64,861 MWh" in texto
+    assert "⚖️ TR-01 · set/2026: medidor 64,850 × conta 64,861 MWh (-0,02%): Conciliado" in texto
+    assert t.mw.balanco[1:] == (date(2026, 9, 1), date(2026, 9, 30), False)
     # o relatório lê as contas do meuWatt: a resposta diz o que ele mostra agora, e que faltam as outras UCs
     assert "conta de energia 64,9 MWh (1 de 3 UCs; falta TR-02, TR-03)" in texto
     assert "sem medição na fronteira" in texto
@@ -293,8 +308,12 @@ def test_a_rota_de_gravar_a_conta_esta_no_catalogo_e_nao_e_sondada():
     assert not {"mw.bill_pdf", "mw.bill_senha"} & set(rotas)
 
 
-def test_a_ferramenta_e_da_parte_do_meuwatt(db):
+def test_gravar_conta_e_so_do_gestor(db):
+    """O dono, 17/11/2026: "jamais o cliente pode enviar algo, eu gestor sim"."""
+    from app.models.user import Perfil
     p = _conta(db, "ana", "+5517997001133")
+    assert "conta_de_energia" not in assistente.permitidas(p)                  # dono de usina: não manda conta
+    p.perfil = Perfil.GESTOR_EMPRESA
     assert "conta_de_energia" in assistente.permitidas(p)
     p.bot_meuwatt = False
     assert "conta_de_energia" not in assistente.permitidas(p)

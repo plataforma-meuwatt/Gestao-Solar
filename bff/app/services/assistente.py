@@ -917,7 +917,9 @@ def permitidas(user) -> list[str]:
     nomes: list[str] = []
     ativo = user.bot_ativo
     if "bot_meuwatt" in ativo:
-        nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS, "conta_de_energia"]
+        nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
+        if user.perfil == Perfil.GESTOR_EMPRESA:             # gravar conta: só o gestor ("jamais o cliente pode enviar
+            nomes.append("conta_de_energia")                 # algo, eu gestor sim", o dono, 17/11/2026)
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "assinar_pdf",
                   "gravar_coordenada", "lugar_da_localizacao", "avaliar_lugar", "lugares_da_equipe", "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]

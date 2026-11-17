@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -710,25 +709,16 @@ def _desenhar(pts: list[tuple[str, float]], titulo: str, unid: str) -> bytes:
 
 
 # --------------------------------------------------------------------------- balanço de energia
-# O dono, 17/11/2026: "comparar em uma tabela simples a medição dos inversores de cada skid vs o medido pelo medidor
-# particular … comparar com a conta de energia também … gerar a tabela com as perdas"; e "quero que ele analise … a
-# diferença geralmente é 2% mas não é regra … gráficos, período personalizado, mês fechado … sempre o parecer: se as
-# perdas estão ok, se há falta de dados, se os dados batem com a plataforma do fabricante". Três medições do meuWatt: os
-# inversores por skid (`generation/range`, o da tela Comparativo entre UCs), o leitor da concessionária de cada skid
-# (`ssu-readers/boundary`, que já liga o medidor ao transformador = UC) e a conta de cada UC, que só existe em mês
-# fechado. A régua da perda e da conciliação é a do portal (`api/v1/energia.py`); a do fabricante, a do Excel do meuWatt.
-PERDA_COMUM_PCT = 2.0  # o dono: "geralmente é 2%, mas não é regra" — referência para o parecer, não reprova
-PERDA_ALTA_PCT = 4.0
-#: o skid que perde bem mais que os outros: acima da mediana deles por 0,3 ponto E 1,5 vez a mediana
-DESTOA_PP, DESTOA_X = 0.3, 1.5
-
-
+# O dono, 17/11/2026: os inversores de cada skid × o "medidor particular" × a conta, com as perdas, o parecer e o
+# gráfico, em mês fechado ou período livre. A conta e o parecer moram no meuWatt (`GET /plants/{slug}/energy-balance`, a
+# mesma da aba "Balanço" do Excel de energia diária e do conector do Claude); aqui ficam o período, o gráfico e o que
+# cabe a quem pergunta: só o gestor manda conta ("jamais o cliente pode enviar algo, eu gestor sim").
 def _fim_do_mes(d: date) -> date:
     return (d.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
 
-def _periodo_balanco(a: dict) -> tuple[date, date, list[date]]:
-    """(início, fim, os meses INTEIROS e já FECHADOS do período — os que podem ter conta)."""
+def _periodo_balanco(a: dict) -> tuple[date, date]:
+    """O mês fechado (`mes`) ou o período livre (`inicio`/`fim`); sem nada, o mês até hoje."""
     if a.get("mes") and not a.get("inicio"):
         try:
             ini = date(*(int(x) for x in str(a["mes"]).split("-")[:2]), 1)
@@ -736,220 +726,23 @@ def _periodo_balanco(a: dict) -> tuple[date, date, list[date]]:
             raise Recusa("Mês no formato AAAA-MM.") from None
         if ini > hoje():
             raise Recusa("Esse mês ainda não começou.")
-        fim = min(_fim_do_mes(ini), hoje())
-    else:
-        ini, fim = _periodo(a.get("inicio") or hoje().replace(day=1).isoformat(), a.get("fim") or hoje().isoformat())
-    meses, m = [], ini.replace(day=1)
-    while m <= fim:
-        if m >= ini and _fim_do_mes(m) <= fim and _fim_do_mes(m) < hoje():
-            meses.append(m)
-        m = _fim_do_mes(m) + timedelta(days=1)
-    return ini, fim, meses
-
-
-def _de_dia(a0: datetime, a1: datetime) -> bool:
-    """O intervalo pega horas de sol (06:00–18:30 de Brasília) de algum dia? Queda do medidor de noite não tira energia."""
-    d, e = a0.astimezone(_TZ), a1.astimezone(_TZ)
-    while d < e:
-        if d < d.replace(hour=18, minute=30, second=0, microsecond=0) and e > d.replace(hour=6, minute=0, second=0,
-                                                                                        microsecond=0):
-            return True
-        d = (d + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return False
-
-
-def _corrigido_pela_plataforma(xlsx: bytes) -> list[str]:
-    """Os períodos em que o meuWatt foi gravado a partir da própria Huawei (a nota "Atenção" da aba Validação do Excel
-    do meuWatt): neles a igualdade com a plataforma é esperada. Lido do xlsx sem dependência nova (é um zip de XML)."""
-    import html as _html
-    import zipfile
-    try:
-        with zipfile.ZipFile(io.BytesIO(xlsx)) as z:
-            texto = " ".join(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.endswith(".xml"))
-    except (zipfile.BadZipFile, ValueError):
-        return []
-    return sorted({m for m in re.findall(r"(\d{4}-\d{2}(?:-\d{2})?): os valores do meuWatt foram gravados a partir",
-                                         _html.unescape(texto))})
-
-
-def _br(v: float | None, n: int = 1) -> str:
-    return "—" if v is None else f"{v:,.{n}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return ini, min(_fim_do_mes(ini), hoje())
+    return _periodo(a.get("inicio") or hoje().replace(day=1).isoformat(), a.get("fim") or hoje().isoformat())
 
 
 async def balanco_energia(ctx: Contexto, a: dict) -> dict:
-    from app.api.v1.energia import TOLERANCIA_CONCILIACAO_PCT, _conciliacao, _perda_ate_a_fronteira
     from app.clients import whatsapp
+    from app.models.user import Perfil
     u = _usina(ctx, a.get("usina"))
-    ini, fim, meses = _periodo_balanco(a)
-    g, fr, val, *faturas = await asyncio.gather(
-        ctx.mw.geracao_periodo(u["slug"], ini, fim), ctx.mw.fronteira_periodo(u["slug"], ini, fim),
-        ctx.mw.energia_diaria(u["slug"], ini, fim), *(ctx.mw.faturas_concessionaria(u["slug"], y)
-                                                      for y in sorted({m.year for m in meses})),
-        return_exceptions=True)
-    if isinstance(g, Exception):
-        raise g
-    parecer: list[dict] = []
-
-    def diz(tom: str, texto: str) -> None:
-        parecer.append({"tom": tom, "texto": texto})
-
-    if isinstance(fr, Exception):
-        diz("problema", "O medidor não respondeu agora: sem a coluna do medidor nesta resposta.")
-        fr = {}
-    contas: dict[tuple[int, date], float] = {}
-    for f in faturas:
-        if isinstance(f, Exception):
-            diz("problema", "As contas de energia não responderam agora: sem a coluna da conta nesta resposta.")
-            continue
-        for b in f:
-            if b.get("billed_mwh") is not None and b.get("month") and b.get("year"):
-                k = (b.get("transformer_id"), date(b["year"], b["month"], 1))
-                contas[k] = contas.get(k, 0.0) + float(b["billed_mwh"])
-    leitores: dict[Any, list[dict]] = {}
-    for r in fr.get("readers") or []:
-        leitores.setdefault(r.get("transformer_id"), []).append(r)
-
-    def medido(rs: list[dict], so_meses: list[date] | None = None) -> float | None:
-        if not rs:
-            return None
-        if so_meses is None:
-            return sum(r.get("injection_kwh") or 0.0 for r in rs)
-        return sum(d.get("injection_kwh") or 0.0 for r in rs for d in r.get("days") or []
-                   if date.fromisoformat(d["date"][:10]).replace(day=1) in so_meses)
-
-    def linha(nome: str, inv: float | None, rs: list[dict], tids: list) -> dict:
-        med = medido(rs)
-        perda, nao_cobre = _perda_ate_a_fronteira(med, inv)
-        tem = bool(meses) and all((t, m) in contas for t in tids for m in meses)
-        conta = sum(contas[(t, m)] for t in tids for m in meses) if tem else None
-        med_m = medido(rs, meses) if tem else None
-        c = _conciliacao(None if med_m is None else med_m / 1000, conta, parcial=nao_cobre)
-        return {"skid": nome, "inversores_kwh": _r(inv), "medidor_kwh": _r(med),
-                "perda_ate_o_medidor_kwh": _r(inv - med) if perda is not None else None,
-                "perda_ate_o_medidor_pct": perda, "medidor_nao_cobre_os_inversores": nao_cobre,
-                "conta_kwh": None if conta is None else _r(conta * 1000),
-                "medidor_menos_conta_kwh": None if c.diferenca_mwh is None else _r(med_m - conta * 1000),
-                "medidor_menos_conta_pct": c.diferenca_pct, "conciliacao": c.situacao}
-
-    trafos = sorted(g.get("transformers") or [], key=lambda t: t.get("name") or "")
-    linhas = [linha(t.get("name") or f"UC {t.get('id')}", t.get("total_yield_kwh"), leitores.get(t.get("id"), []),
-                    [t.get("id")]) for t in trafos]
-    total = linha("Total", g.get("total_generation_kwh"), fr.get("readers") or [], [t.get("id") for t in trafos])
-
-    # o dado de cada skid está inteiro? (sem isso, diferença não é perda: "nunca enganar")
-    agora = datetime.now(UTC)
-    limite = min(datetime.combine(fim + timedelta(days=1), datetime.min.time(), _TZ), agora - timedelta(hours=2))
-    falta: dict[Any, list[str]] = {}
-    noites: set[str] = set()
-    for r in fr.get("readers") or []:
-        tid = r.get("transformer_id")
-        ate = r.get("data_until")
-        if ate and datetime.fromisoformat(ate) < limite:
-            falta.setdefault(tid, []).append(
-                f"medidor sem leitura desde {datetime.fromisoformat(ate).astimezone(_TZ):%d/%m %H:%M}")
-        for lac in r.get("long_gaps") or []:
-            a0, a1 = datetime.fromisoformat(lac["start"]), datetime.fromisoformat(lac["end"])
-            if _de_dia(a0, a1):
-                falta.setdefault(tid, []).append(f"medidor sem leitura de {a0.astimezone(_TZ):%d/%m %H:%M} a "
-                                                 f"{a1.astimezone(_TZ):%d/%m %H:%M}")
-            else:
-                noites.add(f"{a0.astimezone(_TZ):%d/%m}")
-    dias = g.get("days_in_range")
-    for i in g.get("inverters") or []:
-        if dias and (i.get("days_with_data") or 0) < dias:
-            falta.setdefault(i.get("transformer_id"), []).append(
-                f"{i.get('slot_label') or i.get('sn')} com {i.get('days_with_data') or 0} de {dias} dias")
-    por_nome = {t.get("name") or f"UC {t.get('id')}": t for t in trafos}
-    for x in linhas:
-        t = por_nome.get(x["skid"]) or {}
-        if not x["inversores_kwh"] and (x["medidor_kwh"] or 0) > 0:   # o skid gerou e os inversores não contaram
-            falta.setdefault(t.get("id"), []).append("os inversores não mandaram dado")
-        x["falta_dado"] = "; ".join(falta.get(t.get("id"), [])) or None
-        if x["falta_dado"]:                                          # diferença com falta de dado não é perda
-            x["perda_ate_o_medidor_kwh"] = x["perda_ate_o_medidor_pct"] = None
-    if any(x["falta_dado"] or x["medidor_nao_cobre_os_inversores"] for x in linhas):
-        total["falta_dado"] = "algum skid com falta de dado"
-        total["perda_ate_o_medidor_kwh"] = total["perda_ate_o_medidor_pct"] = None
-
-    # perdas: só onde o dado está inteiro
-    perdas = {x["skid"]: x["perda_ate_o_medidor_pct"] for x in linhas
-              if x["perda_ate_o_medidor_pct"] is not None and not x["falta_dado"]}
-    altas = {k: v for k, v in perdas.items() if v > PERDA_COMUM_PCT}
-    if perdas:
-        lo, hi = min(perdas.values()), max(perdas.values())
-        faixa = f"{_br(lo, 2)}%" if lo == hi else f"{_br(lo, 2)}% a {_br(hi, 2)}%"
-        tot = total["perda_ate_o_medidor_pct"] if not total.get("falta_dado") else None
-        diz("ok" if not altas else "atencao", f"Perda dos inversores até o medidor: {faixa} por skid"
-            + (f" ({_br(tot, 2)}% no total)" if tot is not None else "")
-            + ("; abaixo dos ~2% comuns." if not altas else "."))
-    for k, v in sorted(altas.items(), key=lambda kv: -kv[1]):
-        diz("problema" if v > PERDA_ALTA_PCT else "atencao",
-            f"{k} perde {_br(v, 2)}% até o medidor, acima dos ~2% comuns: vale conferir o transformador, os cabos e o "
-            "medidor desse skid.")
-    for k, v in perdas.items():
-        outros = [x for kk, x in perdas.items() if kk != k]
-        med_o = median(outros) if outros else None
-        if med_o and k not in altas and v - med_o >= DESTOA_PP and v >= DESTOA_X * med_o:
-            diz("atencao", f"{k} perde mais que os outros skids ({_br(v, 2)}% × {_br(med_o, 2)}% na mediana): pode ser o "
-                           "transformador ou o medidor dele.")
-    for x in linhas:
-        t = por_nome.get(x["skid"]) or {}
-        parada = t.get("total_lost_kwh") or 0
-        if not x["inversores_kwh"] and (x["medidor_kwh"] or 0) > 0:
-            diz("problema", f"{x['skid']}: os inversores não mandaram dado ({_br(x['inversores_kwh'] or 0, 0)} kWh no meuWatt), "
-                            f"mas o medidor marcou {_br(x['medidor_kwh'], 0)} kWh: o skid GEROU sem comunicar — é falha de "
-                            "comunicação, não parada" + (f" (o meuWatt contou {_br(parada, 0)} kWh de parada)."
-                                                         if parada else "."))
-        elif x["falta_dado"]:
-            diz("problema" if "desde" in x["falta_dado"] else "atencao",
-                f"{x['skid']}: sem conclusão da perda, falta dado — {x['falta_dado']}.")
-        elif x["medidor_nao_cobre_os_inversores"] and x["medidor_kwh"] and x["inversores_kwh"]:
-            if x["medidor_kwh"] > x["inversores_kwh"]:
-                diz("problema", f"{x['skid']}: o medidor marcou {_br(100 * (x['medidor_kwh'] / x['inversores_kwh'] - 1), 1)}% "
-                                "a MAIS que os inversores: falta dado do lado dos inversores (comunicação ou o contador do "
-                                "dia)" + (f"; o meuWatt contou {_br(parada, 0)} kWh de parada nesse skid, que pode ter "
-                                          "gerado sem comunicar." if parada > 0.01 * x["inversores_kwh"] else "."))
-            else:
-                diz("problema", f"{x['skid']}: o medidor marcou {_br(100 * (1 - x['medidor_kwh'] / x['inversores_kwh']), 1)}% "
-                                "a MENOS que os inversores, além de qualquer perda: falta dado do medidor (leitura falhada "
-                                "ou instalado no meio do período).")
-        elif x["perda_ate_o_medidor_pct"] is not None and x["perda_ate_o_medidor_pct"] < 0:
-            diz("info", f"{x['skid']}: o medidor marcou {_br(-x['perda_ate_o_medidor_pct'], 2)}% a mais que os inversores, "
-                        "dentro da incerteza dos medidores.")
-    sem_medidor = [x["skid"] for x in linhas if x["medidor_kwh"] is None]
-    if fr and sem_medidor:
-        diz("atencao", "Sem medidor no meuWatt: " + ", ".join(sem_medidor) + ".")
-    if noites:
-        diz("info", "Os medidores ficaram sem leitura só de noite em " + ", ".join(sorted(noites))
-                    + ": sem efeito na energia.")
-    est = (fr.get("totals") or {}).get("estimated_kwh")
-    if est:
-        diz("info", f"{_br(est, 1)} kWh do medidor foram estimados (quedas curtas do leitor), "
-                    f"{_br(100 * est / ((fr.get('totals') or {}).get('injection_kwh') or est), 2)}% do total.")
-    if not meses:
-        diz("info", "Conta de energia: só entra em mês inteiro e já fechado — este período não tem nenhum.")
-    else:
-        falta = [f"{x['skid']}" for x in linhas if x["conta_kwh"] is None]
-        if falta:
-            diz("atencao", "Falta a conta de " + ", ".join(f"{m:%m/%Y}" for m in meses) + " no meuWatt: "
-                           + ", ".join(falta) + ". Pode mandar o PDF por aqui que eu leio e gravo.")
-        conc = {x["skid"]: x["conciliacao"] for x in linhas if x["conciliacao"]}
-        if conc:
-            ruins = {k: v for k, v in conc.items() if v != "Conciliado"}
-            diz("ok" if not ruins else "atencao",
-                ("Medidor × conta: conciliado em " + ", ".join(conc) + f" (tolerância {_br(TOLERANCIA_CONCILIACAO_PCT, 0)}%).")
-                if not ruins else "Medidor × conta: " + "; ".join(f"{k}: {v}" for k, v in ruins.items()) + ".")
-    # a plataforma do fabricante (a validação do Excel do meuWatt)
-    if isinstance(val, Exception):
-        diz("info", "A conferência com a plataforma do fabricante não respondeu agora.")
-    else:
-        v = val[1]
-        corrigido = _corrigido_pela_plataforma(val[0])
-        diz({"ok": "ok", "revisar": "problema"}.get(v.get("validacao"), "info"),
-            "Plataforma do fabricante: " + (v.get("mensagem") or v.get("validacao") or "sem resposta")
-            + (f" Mas em {', '.join(corrigido)} os valores do meuWatt foram corrigidos a partir da própria plataforma: "
-               "aí a igualdade é esperada, não é prova independente." if corrigido else ""))
-
+    ini, fim = _periodo_balanco(a)
+    b = await ctx.mw.balanco_energia(u["slug"], ini, fim)
+    parecer = list(b.get("parecer") or [])
+    if getattr(ctx.user, "perfil", None) == Perfil.GESTOR_EMPRESA and any(
+            p["texto"].startswith("Falta a conta") for p in parecer):
+        parecer.append({"tom": "info", "texto": "Se tiver o PDF da conta, mande por aqui: eu leio, mostro a prova e só "
+                                                "gravo com o seu Sim."})
+    linhas = b.get("skids") or []
+    ini, fim = date.fromisoformat(b["inicio"]), date.fromisoformat(b["fim"])
     grafico = None
     if a.get("grafico", True) and linhas:
         series = {n: [None if x[k] is None else x[k] / 1000 for x in linhas]
@@ -964,19 +757,15 @@ async def balanco_energia(ctx: Contexto, a: dict) -> dict:
         else:
             grafico = None
     return {
-        "usina": u["nome"], "periodo": f"{ini:%d/%m/%Y} a {fim:%d/%m/%Y}", "ate_agora": fim >= hoje(),
-        "meses_com_conta": [f"{m:%m/%Y}" for m in meses], "skids": linhas, "total": total, "parecer": parecer,
-        "grafico_enviado": grafico,
-        "fontes": "Inversores: o contador de energia de cada inversor, somado por skid (meuWatt). Medidor: o leitor da "
-                  "concessionária de cada skid (fronteira). Conta: a fatura da distribuidora de cada UC (UC = skid), "
-                  "só em mês fechado.",
+        "usina": b.get("usina") or u["nome"], "periodo": f"{ini:%d/%m/%Y} a {fim:%d/%m/%Y}", "ate_agora": b.get("ate_agora"),
+        "meses_com_conta": b.get("meses_com_conta"), "skids": linhas, "total": b.get("total"), "parecer": parecer,
+        "grafico_enviado": grafico, "fontes": b.get("fontes"),
         "como_explicar": "Mande UMA tabela: Skid · Inversores (kWh) · Medidor (kWh) · Perda até o medidor (kWh e %) · "
                          "Conta (kWh) · Medidor − conta (kWh e %), com a linha Total; coluna sem dado = 'sem leitura' "
                          "(nunca zero); na linha com falta_dado, a perda é 'falta dado'. Depois o PARECER, um item por "
                          "linha, como veio (✅ ok, ⚠️ atenção, ❌ problema, ℹ️ info), sem outros números. O gráfico já "
-                         "foi enviado (grafico_enviado).",
+                         "foi enviado (grafico_enviado). O mesmo balanço está na aba Balanço do Excel de energia diária.",
     }
-
 
 # --------------------------------------------------------------------------- gêmeo digital
 # O gêmeo mora no módulo de análise do meuWatt (analise.meuwatt.com.br, `ctx.mw.gemeo_*`, o token da pessoa). Dono,
