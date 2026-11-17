@@ -140,6 +140,11 @@ class MeuPlanoClient:
         )
         return r.json()
 
+    async def mcp(self, mensagem: dict[str, Any]) -> dict[str, Any]:
+        """Uma mensagem JSON-RPC ao conector do Claude daqui (`POST /mcp`), com o token PESSOAL da pessoa: o conector
+        único do Gestão Solar (`api/v1/mcp.py`) repassa por aqui o que o Claude dela pede."""
+        return (await self._req("POST", "/mcp", json=mensagem, timeout=120)).json()
+
     # --------------------------------------------------------------- leitura
 
     async def sessao(self, token: str) -> dict[str, Any]:

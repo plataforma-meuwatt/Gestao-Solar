@@ -12,6 +12,7 @@ from app.models.conversa_whatsapp import ConversaWhatsapp, RegistroBot
 from app.models.empresa import Empresa, MembroDaEmpresa
 from app.models.fluxo_paradas import FluxoParadas
 from app.models.integracao import EstadoTeste, Integracao, Produto
+from app.models.mcp import TokenMcp
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.pessoa import Pessoa
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
@@ -38,6 +39,7 @@ __all__ = [
     "SenhaProvisoria",
     "PlantLink",
     "UsinaOculta",
+    "TokenMcp",
     "Permissao",
     "AcessoPainel",
     "ContatoUsina",

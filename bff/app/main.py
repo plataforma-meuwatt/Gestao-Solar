@@ -39,6 +39,7 @@ from app.api.v1 import (
     avisos,
     home,
     manutencao,
+    mcp,
     permissoes,
     notifications,
     pacotes,
@@ -279,6 +280,8 @@ app.include_router(relatorio.router)
 app.include_router(relatorios_ano.router)
 app.include_router(carteira.router)
 app.include_router(tecnico.router)
+# o conector do Claude: /mcp, /oauth/* e /.well-known/* na raiz, como o MCP pede
+app.include_router(mcp.router)
 
 
 @app.get("/health", tags=["infra"])

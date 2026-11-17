@@ -482,6 +482,17 @@ código desta pasta; nada vai ao WhatsApp nem ao Log do bot) tem de dar tudo cer
 feito dos casos REAIS do Log do bot; o terminal `testes` (Haiku, pasta `Gestao Solar/Testes`) colhe os novos todo
 dia (`--colher`) e roda o banco contra o que está no ar.
 
+### O conector do Claude é UM só, aqui, e lê o que o bot lê (17/11/2026)
+
+O dono: "E se fizer isso como se fosse mcp do gestao solar ai fica um so para todos sistemas. Igual é o bot hoje".
+`https://api.gestao.solar/mcp` (`bff/app/api/v1/mcp.py`): a pessoa conecta no Claude dela e entra com a conta do GS
+(página daqui, OAuth + PKCE; token `gs_mcp_…`, 90 dias, só o hash em `gs_mcp_tokens`). Lê os produtos que o bot
+responde a ela (`User.bot_ativo`: liberado pelo gerente E com o token próprio), repassando ao `/mcp` de cada produto
+com o token PESSOAL dela; as ferramentas ganham o prefixo do SERVIÇO (`monitoramento_` / `manutencao_`), e o texto de lá
+perde o nome do produto (`_sem_marca`; regra do vocabulário do cliente). A lista de cada produto mora lá
+(no meuWatt, o gate `tests/test_mcp_cobertura.py` do mw-api): aqui não se copia ferramenta. Só consulta; ação segue no
+bot. Produto novo no conector = linha em `PRODUTOS` + o `/mcp` dele aceitando o token pessoal.
+
 ### Nada de "chips" para selecionar opção
 
 Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tudo é lista

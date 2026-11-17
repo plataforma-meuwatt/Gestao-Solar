@@ -167,6 +167,16 @@ class MeuWattClient:
         r.raise_for_status()
         return r.json() if r.content else None
 
+    async def mcp(self, mensagem: dict[str, Any]) -> dict[str, Any]:
+        """Uma mensagem JSON-RPC ao conector do Claude daqui (`POST /mcp`), com o token PESSOAL da pessoa: o conector
+        único do Gestão Solar (`api/v1/mcp.py`) repassa por aqui o que o Claude dela pede. O gêmeo leva até 150 s."""
+        jwt = await self._token_servico()
+        r = await sessao(self.base_url, self._timeout).post(
+            f"{self.base_url}/mcp", json=mensagem, headers={"Authorization": f"Bearer {jwt}"}, timeout=160
+        )
+        r.raise_for_status()
+        return r.json()
+
     async def funcionarios(self, empresa_id: int) -> list[dict[str, Any]]:
         return await self._get(f"/enterprises/{int(empresa_id)}/employees")
 

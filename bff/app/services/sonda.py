@@ -202,6 +202,9 @@ MEUWATT: list[Rota] = [
          sonda=False, nao_sondada_porque="Escreve: a sonda só lê. Roda só com o Sim de quem opera a usina."),
     Rota("mw.slots", "GET", "/plants/{slug}/slots", "Inversores da tela de Equipamentos",
          captura={"slot_id": "id"}),
+    Rota("mw.mcp", "POST", "/mcp", "O conector do Claude: o meuWatt pelo conector único do Gestão Solar",
+         essencial=False, sonda=False,
+         nao_sondada_porque="JSON-RPC com o token PESSOAL de quem conectou o Claude; a sonda lê com o da empresa."),
     # Achada pelo teste inverso da sonda: o cliente chamava `/slots/{id}` há meses sem
     # linha aqui — a versão por prefixo do teste antigo nunca reclamou.
     Rota("mw.slot", "GET", "/plants/{slug}/slots/{slot_id}",
@@ -375,6 +378,9 @@ MEUPLANO: list[Rota] = [
     Rota("mp.profile", "GET", "/api/v1/meuacesso/auth/me/profile",
          "De quem é o token, com nome — o que Conexões mostra",
          captura={"email": "email"}),
+    Rota("mp.mcp", "POST", "/mcp", "O conector do Claude: o meuPlano pelo conector único do Gestão Solar",
+         essencial=False, sonda=False,
+         nao_sondada_porque="JSON-RPC com o token PESSOAL de quem conectou o Claude; a sonda lê com o da empresa."),
     Rota("mp.me", "GET", "/api/v1/meuacesso/auth/me",
          "O id do dono do token — sem ele não há como vincular a conta de um dono de usina",
          captura={"user_id": "user_id"}),
