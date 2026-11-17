@@ -459,6 +459,23 @@ class MeuWattClient:
             if isinstance(f, dict)
         ]
 
+    # ------------------------------ a conta de energia pelo bot (`assistente_conta`), com o token DA PESSOA
+
+    async def contas_de_energia(self, slug: str, ano: int | None = None) -> list[dict[str, Any]]:
+        """As contas da usina para o bot conferir e gravar a conta de energia: os números, a UC, a tarifa, o titular
+        (só para regravá-lo como está: o salvar de lá é um upsert que troca tudo) e se há PDF."""
+        corpo = await self._get(f"/plants/{slug}/utility-bills", year=int(ano) if ano is not None else None)
+        brutas = corpo.get("bills") if isinstance(corpo, dict) else corpo
+        campos = ("id", "transformer_id", "year", "month", "billed_mwh", "installation_number", "tariff", "titular",
+                  "pdf_file_id", "no_bill")
+        return [{c: f.get(c) for c in campos} for f in brutas or [] if isinstance(f, dict)]
+
+    async def salvar_conta(self, slug: str, corpo: dict[str, Any]) -> dict[str, Any]:
+        """O upsert da conta (UC × mês) com o PDF em base64, que entra como nova versão (o mesmo arquivo não duplica).
+        Troca TODOS os campos pelo que vier (a senha do PDF, só se vier): quem chama manda os de agora. Lá só o
+        administrador da usina grava valores."""
+        return await self._enviar("POST", f"/plants/{slug}/utility-bills", json=corpo)
+
     #: O que pode sair de uma parada CLASSIFICADA. A `AlertDetail` do upstream é o
     #: registro de trabalho da equipe: ela carrega o número de série do inversor, o
     #: `inverter_id`, o número da ordem de serviço, as notas do operador

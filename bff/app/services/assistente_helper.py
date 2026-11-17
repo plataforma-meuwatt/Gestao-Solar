@@ -446,6 +446,8 @@ _FAMILIAS = {
     "alterar": ("alterar", "alteracao"), "fechar": ("fechar", "fechamento", "encerrar", "encerramento"), "associar": ("associar",),
     "mover": ("mover",), "transferir": ("transferir", "transferencia"), "alocar": ("alocar",),
     "devolver": ("devolver", "devolucao"), "lancar": ("lançar", "lancamento"),
+    # a conta de energia pelo bot (`assistente_conta`): "Salva", "Pode salvar" confirmam "Salvar no meuWatt a conta…"
+    "salvar": ("salvar",),
     "anexar": ("anexar",), "programar": ("programar",), "agendar": ("agendar",), "enviar": ("enviar",),
     "arquivar": ("arquivar",), "atualizar": ("atualizar", "atualizacao"), "assinar": ("assinar", "assinatura"),
     # o alarme das câmeras (meuGuarda): "Pode ligar" não confirma "Desligar o alarme…", e vice-versa

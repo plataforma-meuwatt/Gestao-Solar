@@ -143,23 +143,33 @@ FERRAMENTA = {"type": "function", "function": {
         "todos": {"type": "boolean", "description": "true só quando ela pediu para assinar TODOS os PDFs que mandou"}}}}}
 
 
-async def assinar_pdf(ctx, a: dict) -> dict:
+def escolher(ctx, a: dict, verbo: str) -> tuple[list[dict], str | None]:
+    """Os PDFs recebidos de que o pedido fala (assinar ou ler a conta de energia): sem `arquivo` nem `todos`, os deste
+    pedido; com `arquivo`, o daquele nome; com `todos`, todos os guardados. Devolve (pdfs, erro)."""
     pdfs = recebidos(ctx.telefone)
     if not pdfs:
-        return {"erro": "Não há PDF recebido para assinar (cada um fica guardado 30 min). Peça que a pessoa mande ou "
-                        "encaminhe o PDF de novo."}
+        return [], (f"Não há PDF recebido para {verbo} (cada um fica guardado 30 min). Peça que a pessoa mande ou "
+                    "encaminhe o PDF de novo.")
     if qual := str(a.get("arquivo") or "").strip().lower():
         escolhidos = [p for p in pdfs if qual in p["nome"].lower()]
         if not escolhidos:
-            return {"erro": f"Nenhum PDF recebido tem «{a['arquivo']}» no nome. Os recebidos: "
-                            + ", ".join(f"«{p['nome']}»" for p in pdfs)}
-        pdfs = _os_mais_novos(escolhidos, Counter({p["nome"]: 1 for p in escolhidos}))
-    elif not a.get("todos"):
-        # o "assina" vale para o PDF que veio com ele, não para o mandado antes para outra coisa (revisão de 11/11/2026)
-        pdfs = _os_mais_novos(pdfs, do_pedido(ctx))
-        if not pdfs:
-            return {"erro": "Não sei qual PDF assinar: pergunte qual (pelo nome) ou se são todos os que ela mandou. "
-                            "Os recebidos: " + ", ".join(f"«{p['nome']}»" for p in recebidos(ctx.telefone))}
+            return [], (f"Nenhum PDF recebido tem «{a['arquivo']}» no nome. Os recebidos: "
+                        + ", ".join(f"«{p['nome']}»" for p in pdfs))
+        return _os_mais_novos(escolhidos, Counter({p["nome"]: 1 for p in escolhidos})), None
+    if a.get("todos"):
+        return pdfs, None
+    # o pedido vale para o PDF que veio com ele, não para o mandado antes para outra coisa (revisão de 11/11/2026)
+    pdfs = _os_mais_novos(pdfs, do_pedido(ctx))
+    if not pdfs:
+        return [], (f"Não sei qual PDF {verbo}: pergunte qual (pelo nome) ou se são todos os que ela mandou. "
+                    "Os recebidos: " + ", ".join(f"«{p['nome']}»" for p in recebidos(ctx.telefone)))
+    return pdfs, None
+
+
+async def assinar_pdf(ctx, a: dict) -> dict:
+    pdfs, erro = escolher(ctx, a, "assinar")
+    if erro:
+        return {"erro": erro}
     return await pedir_pin(ctx, pdfs)
 
 

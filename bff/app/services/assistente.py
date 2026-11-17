@@ -40,6 +40,7 @@ from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
 from app.services import assistente_pdf as pdf
+from app.services import assistente_conta as conta
 from app.services import assistente_local as local
 from app.services import assistente_relatorio as relatorio
 from app.services import assistente_formulario as formulario
@@ -404,6 +405,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "os_sem_cadastro": (relatorio.os_sem_cadastro, relatorio.FERRAMENTA_LISTA),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "assinar_pdf": (pdf.assinar_pdf, pdf.FERRAMENTA),
+               "conta_de_energia": (conta.conta_de_energia, conta.FERRAMENTA),
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER),
                "lugar_da_localizacao": (local.lugar_da_localizacao, local.FERRAMENTA_LUGAR),
@@ -915,7 +917,7 @@ def permitidas(user) -> list[str]:
     nomes: list[str] = []
     ativo = user.bot_ativo
     if "bot_meuwatt" in ativo:
-        nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS]
+        nomes += [*ger.FERRAMENTAS, *par.FERRAMENTAS, "conta_de_energia"]
     if "bot_meuplano" in ativo:
         nomes += ["manutencao", "relatorio_da_os", "informacoes_do_relatorio", "anexar_fotos", "assinar_pdf",
                   "gravar_coordenada", "lugar_da_localizacao", "avaliar_lugar", "lugares_da_equipe", "local_da_usina", "relatorio_sem_cadastro", "alterar_relatorio", "os_sem_cadastro"]
@@ -1013,7 +1015,9 @@ de memória.
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
 - «[📄 PDF recebido: «nome»]» = um arquivo que a pessoa mandou aqui (você não o lê). Pedido de assinar ESSE arquivo
-  → `assinar_pdf`; sem pedido junto, pergunte se é para assinar.
+  → `assinar_pdf`. CONTA DE ENERGIA (fatura da distribuidora: Elektro, CEMIG…) para ler, conferir, lançar ou salvar →
+  `conta_de_energia`, com a usina se ela disse (o sistema manda a prova e propõe salvar no meuWatt com o Sim). Sem
+  pedido junto, pergunte o que fazer com ele.
 - «[👤 contato compartilhado: nome · telefone…]» = a pessoa mandou um contato pelo botão do WhatsApp: são os dados de
   quem ela chama de "este contato". Siga a regra de sempre para o pedido e use o nome, o telefone e o e-mail EXATOS
   dele. Sem pedido junto, pergunte o que fazer com o contato.
@@ -1065,19 +1069,20 @@ de memória.
 
 
 async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool = False,
-               nenhuma: bool = False) -> dict:
+               nenhuma: bool = False, teto_s: int | None = None) -> dict:
     """`obrigatoria`: a resposta TEM de ser uma chamada de ferramenta (a decisão do resto do pedido). No DeepSeek isso
     exige o modo sem raciocínio: com ele, `tool_choice="required"` volta 400 (conferido em 25/10/2026). `nenhuma`: a
-    resposta TEM de ser texto (as rodadas acabaram)."""
+    resposta TEM de ser texto (as rodadas acabaram). `teto_s`: o pedido longo (a leitura da conta de energia), que a
+    ponte do Claude roda com o esforço padrão e espera até esse teto (`X-Teto-S`)."""
     s = get_settings()
     corpo: dict[str, Any] = {"model": s.llm_model, "messages": mensagens, "temperature": 0.2}
     if ferramentas:
         corpo.update(tools=ferramentas, tool_choice="none" if nenhuma else "required" if obrigatoria else "auto")
     if obrigatoria:
         corpo["thinking"] = {"type": "disabled"}
-    async with httpx.AsyncClient(timeout=90) as c:
-        r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions",
-                         headers={"Authorization": f"Bearer {s.deepseek_api_key}"}, json=corpo)
+    cabecalhos = {"Authorization": f"Bearer {s.deepseek_api_key}", **({"X-Teto-S": str(teto_s)} if teto_s else {})}
+    async with httpx.AsyncClient(timeout=(teto_s or 80) + 10) as c:
+        r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers=cabecalhos, json=corpo)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]
 

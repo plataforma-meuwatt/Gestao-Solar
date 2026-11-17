@@ -16,6 +16,10 @@ python-multipart==0.0.20
 # PDF sob demanda (Fase 5) — Chromium headless rodando o motor vetorial do mw-fe
 playwright==1.55.0
 
+# A conta de energia mandada pelo WhatsApp (`assistente_conta`): abre o PDF com senha, lê o texto com a posição de
+# cada letra e desenha a página para a prova. Sem dependência do sistema (o PDFium vem na roda).
+pypdfium2==4.30.0
+
 # Testes
 pytest==8.4.2
 pytest-asyncio==1.2.0

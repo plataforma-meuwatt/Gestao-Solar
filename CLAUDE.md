@@ -800,6 +800,36 @@ navegador sem tela com o token do meuWatt DA PESSOA), com carimbo em toda folha 
 do relatório (mw-analise) marcados como dela. O de geração leva ~3 min quando a IA ainda não comentou o mês: o bot avisa
 antes. Mês com relatório emitido segue mandando o arquivo de sempre. Teste: `tests/test_relatorio_nao_revisado.py`.
 
+**Conta de energia pelo WhatsApp** (dono, 17/11/2026: "enviar uma conta de energia, falar a usina, o bot analisar e
+enviar a prova, mostrando os valores lado a lado, da conta e o que ele retirou; se o usuário aceitar, o bot salva a conta
+de energia no projeto e o relatório já é atualizado"; `bff/app/services/assistente_conta.py`, ferramenta
+`conta_de_energia` da parte meuWatt). O PDF é o que a pessoa mandou (o mesmo guardado do `assinar_pdf`, escolhido por
+`assistente_pdf.escolher`) e abre com o pypdfium2, numa thread só e fechando tudo o que abre (o PDFium não aguenta duas
+threads, e o erro derrubaria a API); com senha, a que ela escreveu (vai a `ctx.segredos`): a do meuWatt não se lê, a
+trava de 30/09 continua (o cliente não tem as rotas `/pdf` nem `/password` da fatura). As linhas de cada página são
+remontadas pela posição das letras (o texto corrido da Elektro solta os rótulos de um lado e os números do outro) e a IA
+(a ponte, `_llm(..., teto_s=170)`; na conta digitalizada, a imagem da página) copia cada valor como impresso. Quem
+confere e soma é o código, e nada se salva sem: a UC que a usina JÁ tem no meuWatt, impressa na conta (a IA trocava pelo
+"Seu código" do boleto); cada número numa linha de energia INJETADA com o rótulo; a leitura do medidor × a constante
+fechando o consumo em 1 kWh, SEMPRE, com as leituras lado a lado numa linha de injetada e a constante impressas (a
+coluna "Faturado" da CEMIG está na mesma linha da "Registrado", e as leituras da energia ATIVA fechavam com ela; na
+digitalizada é a única conferência); nenhum posto repetido nem esquecido (par andando na "kWh Injet." da CEMIG sem posto;
+o registro total "ENERGIA INJETADA" da Elektro batendo com a soma); e as duas datas do período lado a lado na conta, de
+20 a 40 dias (na Elektro os rótulos das datas são desenho: o par deslocado também tinha 31 dias). A regra veio das contas que já
+estavam no meuWatt (5 usinas): o MWh é a energia INJETADA medida (ponta + fora ponta; na CEMIG, HFP + HP), nunca a
+compensada; o mês é o do MEIO do período de leitura (a Elektro "Outubro/2026" lê de 31/08 a 30/09 = setembro; a que lê
+no dia 1º, de 31/08 a 01/10, também). A prova é UMA imagem por conta: a UC, o titular, o período e cada energia (só o
+rótulo e o número, no tamanho da conta) recortados ao lado do que o bot leu, com a conta do medidor; na digitalizada, a
+página inteira. A proposta só sai com a prova no chat, avisa mudança de mais de 5% no valor e conta "N conta(s)" (com
+duas, "Salva o TR-01" pergunta de novo em vez de gravar as duas); o Sim (para quem o meuWatt deixa gravar valores: admin da
+plataforma ou admin O&M da usina; o dono vê a prova, mas não salva) relê a conta do mês NA HORA e grava pelo salvar de lá
+(o upsert de UC × mês, que troca TODOS os campos: vai o que a conta já tem, o MWh novo, a UC se faltava; titular e
+tarifa nunca vêm da IA), com o PDF em base64 como nova versão e a senha que o abriu. A resposta relê o que o relatório de
+geração mostra (a conta do `ReportView` do mw-fe: a soma das UCs do mês, as que faltam e o Δ com a fronteira SSU,
+"conciliado" abaixo de 1%) e, se o PDF mensal já foi emitido (`/reports/existing`), avisa que ele fica com o valor
+antigo até a equipe gerar de novo. "Salva" confirma (a família "salvar" do `assistente_helper._FAMILIAS`). Achado nos
+exemplos: Ouro Fino 09/2026 está com 143,5 MWh no meuWatt e a conta diz 144,9 (o HP ficou de fora).
+
 **Câmeras pelo bot: o meuGuarda** (dono, 11/11/2026: "integrar já, criar rotina de teste e ligar para todos"; spec em
 `/root/DEVV/CFTV/docs/bot-gs.md`, dúvida do meuGuarda é do terminal CFTV; `bff/app/services/assistente_meuguarda.py`):
 `cameras` (online, alarme ligado ou desligado até quando e por quem, alarmes abertos em resumo), `ver_camera` (link

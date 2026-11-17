@@ -2113,5 +2113,36 @@
       "manutencao"
     ],
     "origem": "log #500"
+  },
+  {
+    "frase": "[📄 PDF recebido: «2026_10 Tiete 45605521.pdf»] conta de energia de Tietê, lança no meuWatt",
+    "espera": [
+      "conta_de_energia"
+    ],
+    "argumentos": {
+      "conta_de_energia": {
+        "usina": "tiet"
+      }
+    },
+    "origem": "17/11 (conta de energia: o teste do Renan, ler, provar e salvar no meuWatt)"
+  },
+  {
+    "frase": "[📄 PDF recebido: «2026_09 Fatura Cemig 12.050.453.018-97.pdf»]\nconfere essa conta de Ouro Fino e salva",
+    "espera": [
+      "conta_de_energia"
+    ],
+    "argumentos": {
+      "conta_de_energia": {
+        "usina": "ouro"
+      }
+    },
+    "origem": "17/11 (conta de energia da CEMIG mandada e depois o pedido)"
+  },
+  {
+    "frase": "[📄 PDF recebido: «NEOENERGIA ELEKTRO - FATURA (45824681).pdf»] lê essa fatura da Elektro",
+    "espera": [
+      "conta_de_energia"
+    ],
+    "origem": "17/11 (conta de energia sem dizer a usina: o sistema acha pela UC)"
   }
 ]

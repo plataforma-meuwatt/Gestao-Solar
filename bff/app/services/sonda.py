@@ -217,6 +217,11 @@ MEUWATT: list[Rota] = [
     Rota("mw.bills", "GET", "/plants/{slug}/utility-bills",
          "Faturas da concessionária — o MWh faturado por UC, na conciliação do Painel",
          essencial=False, params={"year": "{ano}"}),
+    # A conta de energia pelo bot do WhatsApp (`assistente_conta`): o PDF que a pessoa mandou, lido, provado e gravado
+    # com o Sim dela, com o token dela.
+    Rota("mw.bill_salvar", "POST", "/plants/{slug}/utility-bills",
+         "Grava a conta de energia (UC × mês, com o PDF) que a pessoa confirmou pelo bot", essencial=False,
+         sonda=False, nao_sondada_porque="Escreve: a sonda só lê. Roda só com o Sim de quem administra a usina."),
     # A aba "Baixar dados" do portal do dono de usina: as opções dizem o que ESTA usina tem
     # (inversores, colunas da estação, leitores da fronteira, PR, retenção e tetos), e é
     # o que permite a tela desabilitar o impossível com o motivo escrito em vez de
