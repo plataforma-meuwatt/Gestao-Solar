@@ -46,6 +46,7 @@ from app.services import assistente_relatorio as relatorio
 from app.services import assistente_formulario as formulario
 from app.services import assistente_helper as helper
 from app.services import assistente_paradas as par
+from app.services import assistente_catalogo as catalogo
 from app.services import assistente_meuguarda as mg
 
 log = logging.getLogger("gs.assistente")
@@ -406,6 +407,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "anexar_fotos": (fotos.anexar_fotos, fotos.FERRAMENTA),
                "assinar_pdf": (pdf.assinar_pdf, pdf.FERRAMENTA),
                "conta_de_energia": (conta.conta_de_energia, conta.FERRAMENTA),
+               **catalogo.FERRAMENTAS,
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER),
                "lugar_da_localizacao": (local.lugar_da_localizacao, local.FERRAMENTA_LUGAR),
@@ -926,6 +928,7 @@ def permitidas(user) -> list[str]:
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
+    nomes += catalogo.permitidas(user)                       # o catálogo do conector do Claude: o resto que se lê
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
         nomes += list(cad.FERRAMENTAS)
     return nomes

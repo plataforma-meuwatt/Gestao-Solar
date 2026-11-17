@@ -2188,5 +2188,23 @@
       }
     },
     "origem": "o dono, 17/11 (\"período personalizado\")"
+  },
+  {
+    "frase": "Quais strings estão sem corrente em Ibitinga hoje?",
+    "espera": [
+      "procurar_consulta",
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "o dono, 17/11 (\"faça tudo\": o bot usa o catálogo do conector do Claude); o helper lê ao vivo e também responde (×8: 8/8 no helper com a descrição genérica)"
+  },
+  {
+    "frase": "Qual a temperatura dos trafos de Porto Ferreira agora?",
+    "espera": [
+      "procurar_consulta",
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "o dono, 17/11 (\"faça tudo\": o bot usa o catálogo do conector do Claude); o helper lê ao vivo e também responde (×8: 8/8 no helper com a descrição genérica)"
   }
 ]

@@ -295,7 +295,8 @@ def test_sem_o_token_a_parte_liberada_fica_parada_e_o_resto_do_cadastro_salva(db
     db.refresh(u)
     # dono de usina: lê o meuWatt, mas conta de energia só o gestor grava ("jamais o cliente pode enviar algo")
     assert u.bot_ativo == {"bot_meuwatt"} and assistente.permitidas(u) == [*ger.FERRAMENTAS,
-                                                                           *assistente.par.FERRAMENTAS]
+                                                                           *assistente.par.FERRAMENTAS,
+                                                                           "procurar_consulta", "consultar"]
     cadastro.liberar_bot(u, "bot_meuplano", True)          # já estava ligada: não reconfere
     assert u.bot_meuplano
 
