@@ -71,6 +71,8 @@ const CompararEnergia = lazyRetry(() => import('@/features/comparar/Energia'))
 const CompararManutencao = lazyRetry(() => import('@/features/comparar/Manutencao'))
 // Guarda as duas famílias, e por isso fica fora das duas.
 const Relatorios = lazyRetry(() => import('@/features/relatorios/Pagina'))
+const Mapa = lazyRetry(() => import('@/features/mapa/Pagina'))
+const AtalhoDoMapa = lazyRetry(() => import('@/features/mapa/Atalho'))
 
 /** O véu enquanto o chunk da tela chega — nunca uma tela branca. */
 function Esperando() {
@@ -188,6 +190,10 @@ export function App() {
 
               {/* Relatórios guarda as duas famílias, e por isso fica fora das duas. */}
               <Route path="/usinas/:id/relatorios" element={<Relatorios />} />
+              {/* o MAPA ÚNICO (o mesmo no meuPlano, no meuWatt e no meuGuarda) e o atalho que os outros produtos abrem */}
+              <Route path="/usinas/:id/mapa" element={<Mapa />} />
+              <Route path="/mapa" element={<AtalhoDoMapa />} />
+              <Route path="/mapa/:id" element={<AtalhoDoMapa />} />
 
               {/* O comparativo é da carteira: a usina no meio do endereço é descartada. */}
               <Route

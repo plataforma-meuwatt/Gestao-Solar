@@ -40,6 +40,7 @@ import {
   Gauge,
   LayoutGrid,
   ListChecks,
+  MapPinned,
   Scale,
   Wrench,
   Zap,
@@ -118,6 +119,8 @@ export const SECOES: ItemDeSecao[] = [
   },
   { fim: '/manutencao/pendencias', rotulo: 'Pendências', icone: ListChecks, familia: 'manutencao' },
   { fim: '/relatorios', rotulo: 'Relatórios', icone: FileText, familia: 'geral' },
+  // o MAPA ÚNICO da usina (18/11/2026): serve às duas famílias, como Relatórios — o voo, os equipamentos, as câmeras
+  { fim: '/mapa', rotulo: 'Mapa', icone: MapPinned, familia: 'geral' },
 ]
 
 export type GrupoDeSecoes = {

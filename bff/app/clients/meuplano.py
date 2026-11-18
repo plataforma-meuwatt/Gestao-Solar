@@ -813,6 +813,11 @@ class MeuPlanoClient:
         tipo e local — lá não se adivinha qual é."""
         return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/equipamentos/pelo-nome", nome=nome)
 
+    async def mapa_da_usina(self, usina_id: int) -> dict[str, Any]:
+        """O mapa da usina como o meuPlano o mostra: o pino e o contorno, o voo e os objetos do mapa do meuWatt, cada um
+        ligado ao nó da árvore (`node_id`) — com o `aviso` quando o meuWatt recusou ou caiu."""
+        return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/mapa")
+
     async def ponto_no_mapa_previa(self, usina_id: int, nome: str) -> dict[str, Any]:
         """`equipamento_pelo_nome` + onde cada um já está no mapa da usina (o do meuWatt) e se está desenhado como
         área/linha (`desenhado_como`): a prévia de marcar a coordenada."""

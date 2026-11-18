@@ -197,6 +197,8 @@ describe('os comparativos de carteira', () => {
       '/manutencao/ordens',
       '/manutencao/pendencias',
       '/relatorios',
+      // o mapa único (18/11/2026), no fim da família geral
+      '/mapa',
     ])
   })
 })

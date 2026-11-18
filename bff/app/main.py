@@ -60,6 +60,7 @@ from app.api.v1 import (
     resumo,
     sessao,
     tecnico,
+    mapa,
 )
 from app.clients import http as http_upstream
 from app.core.config import get_settings
@@ -280,6 +281,7 @@ app.include_router(relatorio.router)
 app.include_router(relatorios_ano.router)
 app.include_router(carteira.router)
 app.include_router(tecnico.router)
+app.include_router(mapa.router)
 # o conector do Claude: /mcp, /oauth/* e /.well-known/* na raiz, como o MCP pede
 app.include_router(mcp.router)
 
