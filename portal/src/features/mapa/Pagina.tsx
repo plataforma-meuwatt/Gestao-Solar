@@ -269,7 +269,7 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
       ;(c as L.Path).bindTooltip(dica, { sticky: true })
       c.on('click', () => setEscolhido(o))
       c.addTo(grupo)
-      if (!d.mapa?.orto) enquadrar.push(...pontosDo(o))
+      if (!d.mapa?.orto?.url) enquadrar.push(...pontosDo(o))   // sem a imagem do voo, enquadra os objetos
     }
     if (enquadrado.current) return
     enquadrado.current = true
