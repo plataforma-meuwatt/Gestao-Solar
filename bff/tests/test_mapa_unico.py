@@ -30,7 +30,7 @@ class _MeuPlano:
     async def equipamento_pelo_nome(self, usina_id, nome):
         return {"achados": [{"node_id": 71, "nome": "Câmera 01"}], "parecidos": []}
 
-    async def marcar_no_mapa(self, usina_id, node_id, lat, lng, novo_nome=None):
+    async def marcar_no_mapa(self, usina_id, node_id, lat, lng, novo_nome=None, apelido=None):
         if self.falha:
             raise self.falha
         self.marcados.append((usina_id, node_id, lat, lng))

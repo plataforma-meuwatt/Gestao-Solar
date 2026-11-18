@@ -70,8 +70,8 @@ class _MeuPlano:
     async def equipamento_pelo_nome(self, usina_id, nome):
         return self.previa
 
-    async def marcar_no_mapa(self, usina_id, node_id, lat, lng, novo_nome=None):
-        self.marcados.append((usina_id, node_id, lat, lng, novo_nome))
+    async def marcar_no_mapa(self, usina_id, node_id, lat, lng, novo_nome=None, apelido=None):
+        self.marcados.append((usina_id, node_id, lat, lng, novo_nome, apelido))
         return {"ok": True, "avisos": []}
 
     async def foto_no_equipamento(self, eid, nome, conteudo, tipo, legenda):
@@ -96,14 +96,15 @@ async def test_a_camera_vai_ao_mapa_unico_e_o_nome_dito_corrige_o_cadastro(db, m
     r = await campo.posicionar_equipamento(ctx, {"usina": "pereiras", "equipamento": "câmera 1"})
     assert r["nomes_no_meuplano"] == [{"node_id": 71, "nome": "Perímetro 01", "local": "Poste 1"},
                                       {"node_id": 72, "nome": "Térmica 01", "local": "Poste 2"}]
-    assert "renomear_para" in r["como_seguir"] and ctx.proposta is None
+    assert "`apelido`" in r["como_seguir"] and "nunca se renomeia" in r["como_seguir"] and ctx.proposta is None
+    # o nome da câmera é do meuGuarda (o dono, 18/11/2026): mesmo pedido como "renomear", o nome dito vira APELIDO
     r = await campo.posicionar_equipamento(ctx, {"usina": "pereiras", "equipamento": "câmera 1", "node_id": 71,
-                                                 "renomear_para": "Câmera 1"})
+                                                 "renomear_para": "câmera 1"})
     p = ctx.proposta
-    assert r["proposta_pendente"] == "Renomear e marcar Câmera 1 (Câmera) de UFV PEREIRAS no mapa da usina"
-    assert p.parte == "bot_meuplano" and p.detalhes[0] == "Renomear: 'Perímetro 01' → 'Câmera 1'"
+    assert r["proposta_pendente"] == "Marcar Perímetro 01 (Câmera) de UFV PEREIRAS no mapa da usina"
+    assert p.parte == "bot_meuplano" and p.detalhes[0] == "Apelido: 'câmera 1' (o nome 'Perímetro 01' fica)"
     feito = await helper._rodar(p, db, ctx.user, ctx.telefone)
-    assert meuplano.marcados == [(4, 71, LAT, LNG, "Câmera 1")] and feito.startswith("✅ Câmera 1 renomeado e marcado")
+    assert meuplano.marcados == [(4, 71, LAT, LNG, None, "câmera 1")] and feito.startswith("✅ Perímetro 01 marcado")
     assert local.recebida(ctx.telefone) is None                         # a localização foi usada
 
 
@@ -124,7 +125,7 @@ async def test_o_equipamento_vai_ao_mapa_da_usina(db, meuplano):
     assert r["proposta_pendente"] == "Marcar Inversor 03 (Inversor) de UFV PEREIRAS no mapa da usina"
     assert p.parte == "bot_meuplano" and p.detalhes[0].startswith("Hoje no mapa:")
     feito = await helper._rodar(p, db, ctx.user, ctx.telefone)
-    assert meuplano.marcados == [(4, 51, LAT, LNG, None)] and feito.startswith("✅ Inversor 03 marcado no mapa")
+    assert meuplano.marcados == [(4, 51, LAT, LNG, None, None)] and feito.startswith("✅ Inversor 03 marcado no mapa")
     # desenhado como área: não é substituído; sem o nome: os parecidos voltam
     meuplano.previa["achados"][0]["desenhado_como"] = "Polygon"
     ctx2 = _ctx(db)

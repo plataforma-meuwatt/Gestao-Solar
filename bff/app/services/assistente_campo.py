@@ -47,13 +47,15 @@ FERRAMENTA_POSICIONAR = {"type": "function", "function": {
                     "EQUIPAMENTO que a pessoa nomeou ('câmera 1', 'inversor 3', 'o switch da cabine'), na LOCALIZAÇÃO "
                     "que ela mandou («[📍 localização recebida…]»). Passe a usina e o nome como ela disse: os números vêm "
                     "da própria localização, nunca os escreva. Se o nome não existe ou é repetido, a ferramenta devolve "
-                    "os nomes com o local e o `node_id`: mostre e pergunte qual é, e chame de novo com o `node_id`. Para "
-                    "CORRIGIR o nome do equipamento (o dito em campo é o certo), passe também `renomear_para`."),
+                    "os nomes com o local e o `node_id`: mostre e pergunte qual é, e chame de novo com o `node_id` e "
+                    "`apelido` = o nome que a pessoa usou (fica guardado e da próxima vez acha direto). CÂMERA: o nome é "
+                    "do meuGuarda — nunca renomeie, só apelido. Outro equipamento com o nome errado: `renomear_para`."),
     "parameters": {"type": "object", "properties": {
         "usina": {"type": "string", "description": "nome da usina"},
         "equipamento": {"type": "string", "description": "o nome como a pessoa disse ('câmera 1')"},
         "node_id": {"type": "integer", "description": "o equipamento escolhido na lista que a ferramenta devolveu"},
-        "renomear_para": {"type": "string", "description": "o nome certo, quando o da lista está errado"}},
+        "apelido": {"type": "string", "description": "o nome que a pessoa usou ('câmera 1'), guardado como apelido"},
+        "renomear_para": {"type": "string", "description": "só fora da câmera: o nome certo, quando o da lista está errado"}},
         "required": ["usina", "equipamento"]}}}
 
 #: a localização longe da usina não é dela: é a do posto onde a pessoa parou, a de ontem (o "📍" fica 30 min guardado)
@@ -80,8 +82,9 @@ async def _equipamento(mp, usina: dict, a: dict, previa: bool) -> tuple[dict | N
     return None, {"erro": (f"Há {len(achados)} equipamentos '{a['equipamento']}' em {usina.get('name')}: pergunte qual "
                            "(pelo local)." if achados else f"Não há '{a['equipamento']}' em {usina.get('name')}."),
                   "nomes_no_meuplano": _lista(achados or parecidos),
-                  "como_seguir": ("Mostre os nomes com o local e pergunte qual é; chame de novo com o `node_id`. Se o nome "
-                                  "dela é o certo, passe também `renomear_para`." if (achados or parecidos) else
+                  "como_seguir": ("Mostre os nomes com o local e pergunte qual é; chame de novo com o `node_id` e o "
+                                  "`apelido` (o nome que ela usou). Câmera nunca se renomeia (o nome é do meuGuarda)."
+                                  if (achados or parecidos) else
                                   "Diga que não existe e pergunte se é para cadastrar (pela `manutencao`).")}
 
 
@@ -127,6 +130,11 @@ async def posicionar_equipamento(ctx, a: dict) -> dict:
                         "desenho. Quem muda é o mapa do meuWatt (Editar no meuWatt)."}
     novo = (a.get("renomear_para") or "").strip()
     novo = novo if novo and novo != eq["nome"] else ""
+    apelido = (a.get("apelido") or "").strip()
+    if novo and eq.get("tipo") in ("camera", "dvr"):      # o nome da câmera é do meuGuarda: o dito vira apelido
+        apelido, novo = apelido or novo, ""
+    if apelido and (apelido == eq["nome"] or apelido in (eq.get("apelidos") or [])):
+        apelido = ""
     uid, idade = int(usina["id"]), max(0, int((monotonic() - loc["em"]) // 60))
     linhas = [f"Local: {_onde(lat, lng, loc['rotulo'])} (mandada há {idade} min)", local._mapa(lat, lng)]
     if eq.get("no_mapa"):
@@ -134,6 +142,8 @@ async def posicionar_equipamento(ctx, a: dict) -> dict:
         linhas.insert(0, f"Hoje no mapa: {local._ponto(p['lat'], p['lng'])} (a {local._distancia(p['lat'], p['lng'], lat, lng)} da nova)")
     if novo:
         linhas.insert(0, f"Renomear: '{eq['nome']}' → '{novo}'")
+    if apelido:
+        linhas.insert(0, f"Apelido: '{apelido}' (o nome '{eq['nome']}' fica)")
     nome = novo or eq["nome"]
     resumo = (f"{'Renomear e marcar' if novo else 'Marcar'} {nome} ({eq.get('tipo_rotulo') or eq.get('tipo')}) de "
               f"{usina.get('name')} no mapa da usina")
@@ -143,7 +153,7 @@ async def posicionar_equipamento(ctx, a: dict) -> dict:
         try:
             mp = cliente_meuplano(db, user.id, so_proprio=True)
             db.commit()
-            r = await mp.marcar_no_mapa(uid, int(eq["node_id"]), lat, lng, novo or None)
+            r = await mp.marcar_no_mapa(uid, int(eq["node_id"]), lat, lng, novo or None, apelido or None)
         except SemConexao as e:
             return f"❌ Não executado: {e}"
         except httpx.HTTPStatusError as e:

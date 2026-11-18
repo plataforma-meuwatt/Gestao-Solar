@@ -824,11 +824,11 @@ class MeuPlanoClient:
         return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/mapa/ponto", nome=nome)
 
     async def marcar_no_mapa(self, usina_id: int, node_id: int, lat: float, lng: float,
-                             novo_nome: str | None = None) -> dict[str, Any]:
+                             novo_nome: str | None = None, apelido: str | None = None) -> dict[str, Any]:
         """O equipamento como ponto no mapa ÚNICO da usina (a posição mora no do meuWatt), com o token de quem manda;
-        `novo_nome` renomeia junto (lá com a régua de renomear da tela)."""
+        `novo_nome` renomeia junto (lá com a régua de renomear da tela; câmera não), `apelido` guarda o nome dito."""
         r = await self._req("POST", f"/api/v1/meuacesso/usinas/{usina_id}/mapa/ponto", timeout=60,
-                            json={"node_id": node_id, "lat": lat, "lng": lng, "novo_nome": novo_nome})
+                            json={"node_id": node_id, "lat": lat, "lng": lng, "novo_nome": novo_nome, "apelido": apelido})
         return r.json()
 
     async def foto_no_equipamento(self, equipment_id: int, nome: str, conteudo: bytes, tipo: str | None,
