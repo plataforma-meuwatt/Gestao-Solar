@@ -149,6 +149,10 @@ def _sabido(linha: dict, pode: bool = True) -> str | None:
     return (m.get("note") or "sem observação") + (f" ({quem})" if quem else "")
 
 
+#: Acima disto o skid está gerando: à noite o relé mede ruído de 10 a 12 kW, e com o corte em 10 kW a "fase zerada com o
+#: skid gerando" saía entre 00h e 02h30 (Pirapozinho, 15 a 18/11/2026).
+GERANDO_KW = 50
+
 #: O snapshot do relé passou disto: o valor dele não é "de agora" (o STALE_SNAPSHOT_THRESHOLD do meuWatt).
 RESERVA_FRESCO = timedelta(minutes=10)
 
@@ -305,7 +309,7 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
         pot = (lido.get("total_active_power") or {}).get("value")
         for f in "abc":                                 # zerada com o skid gerando = a MEDIÇÃO, não a rede
             fase = lido.get(f"voltage_{f}") or {}
-            if fase.get("status") != "zeroed" or not isinstance(pot, (int, float)) or pot <= 10:
+            if fase.get("status") != "zeroed" or not isinstance(pot, (int, float)) or pot <= GERANDO_KW:
                 continue
             i = matriz.MATRIZ["FASE_ZERO_MEDICAO"]
             v = [(lido.get(f"voltage_{x}") or {}).get("value") for x in "abc"]

@@ -189,6 +189,9 @@ async def test_rele_mudo_e_fase_zerada_vem_do_meuwatt_e_o_x_cala():
     assert mudo.evidencias[0].startswith("Sem leitura válida no meuWatt desde ")
     assert mudo.evidencias[0].endswith("13:07.")                # outro dia sai "13/11 13:07"
 
+    # à noite o relé mede ruído de 10 a 12 kW: isso não é "skid gerando" (a fase zerada saía entre 00h e 02h30)
+    assert await diagnostico.diagnosticar(Tiete(_lido("Relé Skid 3", "TR-03", 21, va=0.0, fase_a="zeroed", pot=12.6)),
+                                          u, [], agora=agora) == []
     x = {"ignored": True, "note": "Relé com defeito, não lê a fase A", "user_name": "Renan", "created_at": "2026-11-13T12:00:00Z"}
     fase, = await diagnostico.diagnosticar(Tiete(_lido("Relé Skid 3", "TR-03", 21, va=52.0, fase_a="zeroed", marca_a=x)),
                                            u, [], agora=agora)
