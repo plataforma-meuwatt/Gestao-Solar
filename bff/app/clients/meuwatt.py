@@ -167,6 +167,30 @@ class MeuWattClient:
         r.raise_for_status()
         return r.json() if r.content else None
 
+    # ------------------------------------------- o MAPA ÚNICO (a camada do monitoramento), 18/11/2026
+    # Sempre com o token de QUEM edita: o papel de operação na usina, lá, decide (`require_plant_operation`).
+
+    async def mapa(self, slug: str) -> dict[str, Any]:
+        """O mapa da usina como o meuWatt o guarda (o voo e os objetos, cru)."""
+        return await self._get(f"/plants/{slug}/mapa", timeout=20)
+
+    async def mapa_estado(self, slug: str) -> dict[str, Any]:
+        """O estado de cada objeto (alarme, string com problema, sem dado) — a cor no mapa único."""
+        return await self._get(f"/plants/{slug}/mapa/estado", timeout=15)
+
+    async def strings_por_vaga(self, slug: str) -> dict[str, Any]:
+        """As vagas de inversor da usina e as strings de cada uma (a tela Leituras): a quem um objeto do mapa se liga."""
+        return await self._get(f"/plants/{slug}/readings/strings", timeout=20)
+
+    async def mapa_criar(self, slug: str, objeto: dict[str, Any]) -> Any:
+        return await self._enviar("POST", f"/plants/{slug}/mapa/objetos", json={"objetos": [objeto]})
+
+    async def mapa_alterar(self, slug: str, objeto_id: int, campos: dict[str, Any]) -> Any:
+        return await self._enviar("PATCH", f"/plants/{slug}/mapa/objetos/{int(objeto_id)}", json=campos)
+
+    async def mapa_apagar(self, slug: str, objeto_id: int) -> Any:
+        return await self._enviar("DELETE", f"/plants/{slug}/mapa/objetos/{int(objeto_id)}")
+
     async def mcp(self, mensagem: dict[str, Any]) -> dict[str, Any]:
         """Uma mensagem JSON-RPC ao conector do Claude daqui (`POST /mcp`), com o token PESSOAL da pessoa: o conector
         único do Gestão Solar (`api/v1/mcp.py`) repassa por aqui o que o Claude dela pede. O gêmeo leva até 150 s."""

@@ -34,6 +34,10 @@ def _params_do_periodo(de: str, ate: str, container_id: int | None) -> dict[str,
             if v is not None}
 
 
+#: a origem dos objetos que a manutenção marca no mapa único (`meuplano:node:<id>`): o ponto do equipamento da árvore
+ORIGEM_NO_MAPA = "meuplano:"
+
+
 class MeuPlanoClient:
     """A credencial de serviço vem do que o gestor gravou no painel, não do ambiente."""
 
