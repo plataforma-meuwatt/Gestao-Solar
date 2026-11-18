@@ -658,7 +658,8 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
             pts, unid = [(_dm(x["data"]), x["pr_pct"]) for x in ds if x["pr_pct"] is not None], "PR %"
         else:
             pts, unid = [(_dm(x["data"]), x["energia_kwh"]) for x in ds if x["energia_kwh"] is not None], "kWh"
-        titulo = f"{d['usina']} · {unid} · {_periodo_br(d['inicio'], d['fim'])}"
+        o_que = {"kWh": "energia por dia", "PR %": "PR por dia", "kWh/kWp": "produtividade por inversor"}[unid]
+        titulo = f"{d['usina']} · {o_que} ({unid}) · {_periodo_br(d['inicio'], d['fim'])}"
     if not pts:
         return {"erro": "Sem dados no período para desenhar."}
     png = await asyncio.to_thread(_desenhar, pts, titulo, unid)
@@ -669,11 +670,17 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
         ctx.enviados.append(titulo)
     mx, mn = max(pts, key=lambda p: p[1]), min(pts, key=lambda p: p[1])
     # o texto que acompanha o gráfico tem números (a avaliação de 17/11/2026: barras de energia e nenhum número)
-    return {"grafico": titulo, "enviado_no_chat": ok, "unidade": unid, "maior": [mx[0], round(mx[1], 2)],
-            "menor": [mn[0], round(mn[1], 2)],
-            **({"total": round(sum(v for _r, v in pts), 1)} if unid == "kWh" else {"media": round(
-                sum(v for _r, v in pts) / len(pts), 2)}),
+    tot = sum(v for _r, v in pts)
+    return {"grafico": titulo, "enviado_no_chat": ok, "unidade": unid, "maior": [mx[0], _arred(mx[1])],
+            "menor": [mn[0], _arred(mn[1])],
+            **(({"total_mwh": round(tot / 1000, 1)} if tot >= 10_000 else {"total": _arred(tot)}) if unid == "kWh"
+               else {"media": _arred(tot / len(pts))}),
             "nota": "Comente com 1 a 3 números: o total (ou a média), o melhor e o pior; datas em dd/mm."}
+
+
+def _arred(v: float) -> float:
+    """Sem precisão falsa: 21.239,5 kWh vira 21.240; 82,37 % fica 82,4."""
+    return round(v) if abs(v) >= 100 else round(v, 1) if abs(v) >= 10 else round(v, 2)
 
 
 def _dm(iso: str) -> str:

@@ -22,5 +22,6 @@ async def test_barras_de_energia_com_data_do_brasil_e_numeros(monkeypatch):
     monkeypatch.setattr(whatsapp, "enviar_conteudo", envia)
     r = await ger.grafico(ger.Contexto(db=None, user=types.SimpleNamespace(id=7), telefone="+5517999990000"),
                           {"tipo": "geracao_diaria"})
-    assert r["grafico"] == "Pirapozinho · kWh · 01/11 a 17/11/2026" and enviados[0]["arquivo"][:4] == b"\x89PNG"
-    assert r["maior"] == ["17/11", 14017.0] and r["menor"] == ["01/11", 14001.0] and r["total"] == 238153.0
+    assert r["grafico"] == "Pirapozinho · energia por dia (kWh) · 01/11 a 17/11/2026"
+    assert enviados[0]["arquivo"][:4] == b"\x89PNG"
+    assert r["maior"] == ["17/11", 14017] and r["menor"] == ["01/11", 14001] and r["total_mwh"] == 238.2
