@@ -80,7 +80,10 @@ INTRADAY_32_MUDO = {**INTRADAY, "points": [
     {**p, "inverters": [{**i, "power_kw": 0.0} if i["serial_number"] == "S32" else i for i in p["inverters"]]}
     for p in INTRADAY["points"]]}
 
+DETALHE = {"slug": "pirapozinho", "transformers": [{"id": 50, "name": "TR-01", "power_kva": 1000.0},
+                                                   {"id": 52, "name": "TR-03", "power_kva": 500.0}]}
 RESPOSTAS = {"monitoramento_curva_5min": INTRADAY, "monitoramento_curva_horaria": HORARIA,
+             "monitoramento_detalhe_usina": DETALHE,
              "monitoramento_leituras_strings": LIGADAS, "monitoramento_monitoramento_usina": AGORA, "monitoramento_correntes_strings_dia": STRINGS,
              "monitoramento_reles_dia": RELES, "monitoramento_temperatura_trafos": TEMPERATURA,
              "monitoramento_isolacao_inversores": ISOLACAO, "monitoramento_serie_grandezas": GRANDEZAS,
@@ -174,7 +177,7 @@ def test_a_analise_traz_a_hora_do_maximo_e_a_correlacao():
     a = ser.analise(rele + inv)
     r, i = a["series"]
     # no teto, o máximo é o trecho (a hora de um ponto dentro do teto não diz nada)
-    assert r["maximo"] == [250, "no teto de 12:00 a 12:30"] and i["maximo"] == [250, "no teto de 12:00 a 12:30"]
+    assert r["maximo"] == [250, "no teto por 30 min: 12:00–12:30"] and i["maximo"] == r["maximo"]
     # geração: quando começou e parou (não a última leitura), a média só com sol e a energia do dia
     assert i["comecou"] == "06:00" and i["parou"] == "17:30" and i["ultima_leitura"] == [71.4, "17:30"]
     assert "media" not in i and i["media_com_sol"] > 100 and i["energia_kwh"] > 1000
@@ -196,14 +199,24 @@ def test_a_analise_traz_a_hora_do_maximo_e_a_correlacao():
         "Inversores do Skid 1")
     # as maiores quedas do dia (nuvem), também fora do teto
     nuvem5 = ser.Serie("Inv 12", "kW", [(t, 100.0 if t.minute == 45 and t.hour == 10 else 250.0) for t in ts])
-    assert ser.analise([nuvem5])["series"][0]["maiores_quedas"] == [["10:45", 100]]
+    assert ser.analise([nuvem5])["series"][0]["maiores_quedas"] == ["às 10:45 caiu de 250 para 100 kW"]
+    # o que cai e não volta (a tarde descendo, o inversor que desarmou) não é a queda de uma nuvem
+    tarde = ser.Serie("Inv 12", "kW", [(t, 250.0 if k < 20 else 100.0) for k, t in enumerate(ts)])
+    assert "maiores_quedas" not in ser.analise([tarde])["series"][0]
+    # a temperatura que pula 8,6 °C em 5 min (o ambiente às 23:50) é leitura suspeita
+    pulo = ser.Serie("ambiente", "°C", [(t, 25.7 if k == 20 else 34.0) for k, t in enumerate(ts)])
+    assert ser.analise([pulo])["series"][0]["leitura_suspeita"][0] == "às 11:40 pulou de 34,0 para 25,7 °C"
     dia, _ = ser.series_de(ser.observacoes(GRANDEZAS, DIA), _mapa(), ["energia"], [])
     assert ser.e_diario(dia) and ser.analise(dia)["series"][0]["soma_mwh"] == round((14000 * 17 + 153) / 1000, 1)
     # o patamar: o teto do skid, ou a sonda que parou num valor
     teto = ser.Serie("skid", "kW", [(ser.instante(h, DIA), 1000.0 if "10:00" <= h <= "12:30" else 300.0 + 20 * k)
                                     for k, h in enumerate(HORAS)])
-    assert ser.analise([teto])["series"][0]["no_teto"] == {"valor": 1000, "de": "10:00", "ate": "12:30",
+    assert ser.analise([teto])["series"][0]["no_teto"] == {"valor": 1000, "trechos": [["10:00", "12:30"]],
                                                            "minutos": 150, "de_quem": "da usina"}
+    # todos os trechos no teto (o Inv 13 voltou a 250 kW das 12:05 às 12:20 e só o 1º era dito)
+    volta = ser.Serie("Inv 13", "kW", [(ser.instante(h, DIA), 250.0 if h in ("10:00", "10:30", "11:00", "13:00",
+                                                                          "13:30") else 150.0) for h in HORAS])
+    assert ser.analise([volta])["series"][0]["no_teto"]["trechos"] == [["10:00", "11:00"], ["13:00", "13:30"]]
     nuvem = ser.Serie("skid", "kW", [(t, 188.0 if t.strftime("%H:%M") == "11:00" else v) for t, v in teto.pontos])
     assert ser.analise([nuvem])["series"][0]["no_teto"]["quedas"] == [["11:00", 188]]
     # corrente de string não tem teto (o limite é da potência do inversor)
@@ -300,18 +313,20 @@ async def test_entrada_sem_string_nao_e_string_zerada(conector):
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["string 1"], "so": ["inversor 1 do skid 1"]}]})
     erro = r["problemas"][0]["erro"]
-    assert "PV1 do Inv 11 (TR-01) não tem string ligada" in erro and "PV2–4, 6, 10" in erro
+    assert "A entrada PV1 do Inv 11 (TR-01) está vazia, sem string ligada (não é string zerada" in erro
+    assert "as ligadas são PV2–4, 6, 10" in erro
     # pergunta antes de desenhar (a pessoa pode chamar de "string 1" a 1ª string ligada): nada vai ao chat
     assert "a mais próxima é a PV2 (1S02)" in erro and r["problemas"][0]["pergunte"]
     assert r["como_seguir"].startswith("Não desenhe ainda: pergunte") and conector.enviados == []
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["pv5"], "so": ["Inv 11"]}]})
-    assert "as mais próximas são a PV4 (1S04) e a PV6 (1S06)" in r["problemas"][0]["erro"]
+    assert "as mais próximas são a PV4 (1S04) e a PV6 (1S06); contando pela ordem das ligadas, a 5ª é a PV10 " \
+        "(1S10)" in r["problemas"][0]["erro"]
     # o número da string só no rótulo (campos ["corrente"]): a mesma pergunta, não todas as strings do inversor
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["corrente"], "so": ["Inv 11"],
         "rotulo": "Corrente da string 5 (PV5) do Inv 11"}]})
-    assert "PV5 do Inv 11 (TR-01) não tem string ligada" in r["problemas"][0]["erro"]
+    assert "A entrada PV5 do Inv 11 (TR-01) está vazia" in r["problemas"][0]["erro"]
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["pv2"], "so": ["Inv 11"]}]})
     assert r["analise"]["series"][0]["serie"] == "Inv 11 (TR-01) · string 2 (1S02)"
@@ -330,8 +345,9 @@ async def test_limite_numa_linha_so_e_hora_a_hora(conector):
         "slug": "pirapozinho"}, "campos": ["isolação"]}]})
     nomes = [x["serie"] for x in r["analise"]["series"]]
     assert nomes == ["Inv 13 (TR-01) · isolação", "limite (0,05 MΩ)"]
-    assert r["analise"]["series"][0]["abaixo_do_minimo"] == [] and "NÃO é a hora em que ele ligou" in \
-        r["sobre_a_isolacao"]
+    i13 = r["analise"]["series"][0]
+    assert i13["abaixo_do_minimo"] == [] and "naquele_dia" in r["sobre_a_isolacao"] and "media" not in i13
+    assert i13["media_da_1a_leitura_do_dia"] == 0.49 and r["a_menor_isolacao"].startswith("0,41 MΩ no Inv 13 (TR-01)")
     # abaixo do mínimo: os trechos por manhã (17/11/2026: "45 vezes" eram três manhãs)
     pts = [(datetime(2026, 11, d, 6, m, tzinfo=BRT), 0.03) for d in (3, 15) for m in range(20, 60, 10)] + \
           [(datetime(2026, 11, 4, 10, 0, tzinfo=BRT), 0.6)]
@@ -340,6 +356,8 @@ async def test_limite_numa_linha_so_e_hora_a_hora(conector):
     assert ser.analise([s, ser.dataclasses.replace(lim, pontos=[(pts[0][0], 0.05)])])["series"][0][
         "abaixo_do_minimo"] == [{"dia": "03/11", "de": "06:20", "ate": "06:50"},
                                 {"dia": "15/11", "de": "06:20", "ate": "06:50"}]
+    # a média justa é a da 1ª leitura de cada dia (nos dias ruins o inversor repete a medida a cada 10 min)
+    assert ser.analise([s])["series"][0]["media_da_1a_leitura_do_dia"] == round((0.03 + 0.6 + 0.03) / 3, 3)
     # quem chegou perto sem passar (o Inv 23 a 0,052 MΩ, 4% acima)
     perto = ser.Serie("Inv 23 · isolação", "MΩ", [(pts[0][0], 0.052), (pts[-1][0], 0.4)])
     assert ser.analise([perto, ser.dataclasses.replace(lim, pontos=[(pts[0][0], 0.05)])])["series"][0][
@@ -426,14 +444,20 @@ async def test_trafo_com_os_limites_do_rele_de_temperatura(conector):
     assert [a[f"{k} do relé de temperatura ({v} °C)"]["limite"] for k, v in (
         ("ventilação", 90), ("alarme", 130), ("desligamento", 140))] == [90, 130, 140]
     # os outros trafos no mesmo dia: a sonda mais quente e o teto do skid pelo relé
-    # a carga é a soma dos inversores do skid (o relé pode estar mudo: o do Skid 2 de Pirapozinho parou às 08:40)
+    # a carga é a soma dos inversores do skid (o relé pode estar mudo: o do Skid 2 de Pirapozinho parou às 08:40), em %
+    # da potência do trafo (o TR-03 é de 500 kVA: 500 kW é 100%, não "50% da carga")
     assert r["trafos_no_dia"] == [
         "TEMP-SKID-01 (TR-01) (o do gráfico): a sonda 1 chegou a 68,0 °C às 17:00; os inversores do skid ficaram no "
-        "teto de 712 kW das 12:00 às 12:30",
+        "teto de 712 kW por 30 min (12:00–12:30) (71% dos 1.000 kVA do trafo)",
         "TEMP-SKID-02: a sonda 1 chegou a 69,0 °C às 17:00",
         "TEMP-SKID-03 (TR-03): a sonda 1 chegou a 70,0 °C às 17:00; os inversores do skid ficaram no teto de 200 kW "
-        "das 12:00 às 12:30 (28% da carga do TR-01) (Inv 32 sem comunicação desde 17/11 06:00: o que gerou depois "
-        "disso não está na soma)"]
+        "por 30 min (12:00–12:30) (40% dos 500 kVA do trafo) (Inv 32 sem comunicação desde 17/11 06:00: o que gerou "
+        "depois disso não está na soma)"]
+    # sem gráfico (consultar): a temperatura máxima vem com os limites do relé
+    c = await cat.consultar(_ctx(), {"nome": "monitoramento_temperatura_trafos", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}})
+    lida = {x["serie"]: x for x in c["series_no_tempo"]["analise"]}
+    assert lida["TEMP-SKID-01 · sonda 1"]["folga_ate_o_alarme"] == 62.0
     assert s1["folga_ate_o_alarme"] == round(130 - (51 + 17), 1)
     assert s1["maxima_guardada_no_rele"] == "148,2 °C, acima do desligamento (140 °C); o relé não diz quando foi"
     assert "maxima_guardada_no_rele" not in a["TEMP-SKID-01 · sonda 2"]       # 99 °C: abaixo do alarme, não diz
@@ -465,8 +489,11 @@ async def test_inversor_que_gera_menos_e_as_strings_dele_com_problema(conector, 
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "curva_5min", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"], "so": ["Inv 11", "Inv 12", "Inv 13"]}]})
     a = {x["serie"]: x for x in r["analise"]["series"]}
-    assert a["Inv 11 (TR-01) · potência"]["strings_com_problema"] == {
-        "strings": ["1S06 zerada desde 19/10/2026 ou antes", "1S10 zerada desde 19/10/2026"], "perda_kwh_dia": 174.5}
+    z = a["Inv 11 (TR-01) · potência"]["strings_com_problema"]
+    assert z["strings"] == ["1S06 zerada desde 19/10/2026 ou antes", "1S10 zerada desde 19/10/2026"]
+    # a estimativa do monitoramento E o que o dia mediu (no teto do inversor, a perda real é a medida)
+    assert z["perda_estimada_pelo_monitoramento_kwh_dia"] == 174.5 and z["medido_no_dia"].startswith("gerou ")
+    assert "teto do inversor" in z["sobre_a_estimativa"]
     assert "strings_com_problema" not in a["Inv 12 (TR-01) · potência"]
 
 
@@ -484,3 +511,31 @@ async def test_isolacao_abaixo_do_minimo_e_o_que_aconteceu_no_dia(conector, monk
         "slug": "pirapozinho"}, "campos": ["isolação"]}]})
     jan = r["analise"]["series"][0]["abaixo_do_minimo"]
     assert jan[0]["dia"] == "03/11" and jan[0]["naquele_dia"].startswith("não ligou o dia todo (0 kWh) (os outros: ")
+
+
+async def test_barras_de_pico_com_a_linha_do_teto(conector, monkeypatch):
+    """Porto Ferreira bate 5.005 kW em vários dias: é o teto da usina, com uma linha de referência no gráfico."""
+    picos = {**GRANDEZAS, "series": [{"plant": "pirapozinho", "unidade": None, "label": None,
+                                      "grandeza": "potencia_pico_dia", "values": [3000.0 + (2005 if d in (3, 13) else d)
+                                                                                for d in range(1, 18)]}]}
+    monkeypatch.setitem(RESPOSTAS, "monitoramento_serie_grandezas", picos)
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "serie_grandezas", "argumentos": {
+        "plants": "pirapozinho", "grandezas": "potencia_pico_dia", "start": "2026-11-01", "end": "2026-11-17"},
+        "campos": ["potencia_pico_dia"]}], "tipo": "barras"})
+    a = {x["serie"]: x for x in r["analise"]["series"]}
+    assert a["teto da usina (5.005 kW)"]["limite"] == 5005
+    assert a["pirapozinho · potencia_pico_dia"]["dias_no_teto"]["dias"] == [["03/11", 5005], ["13/11", 5005]]
+
+
+async def test_a_energia_do_skid_pelos_contadores(conector, monkeypatch):
+    """A potência do skid pela série de grandezas: a energia é a soma dos contadores dos inversores dele, a mesma conta
+    de cada inversor (17/11/2026: o Skid 1 com 6.605 kWh num gráfico e 6.585 kWh no outro)."""
+    skid = {"family": "intradiario", "timestamps": [f"2026-11-17T{h}:00" for h in HORAS], "series": [
+        {"plant": "pirapozinho", "unidade": 50, "label": None, "grandeza": "potencia_ativa", "values": [500.0] * len(HORAS)}]}
+    monkeypatch.setitem(RESPOSTAS, "monitoramento_serie_grandezas", skid)
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "serie_grandezas", "argumentos": {
+        "plants": "pirapozinho", "grandezas": "potencia_ativa", "start": "2026-11-17", "end": "2026-11-17",
+        "escopo": "skid"}, "campos": ["potencia_ativa"]}]})
+    e = r["analise"]["series"][0]
+    assert e["serie"].startswith("TR-01") and e["energia_kwh"] == 3.0          # S11 + S12 + S13: 1 kWh cada
+    assert e["energia_fonte"].startswith("a soma dos contadores")

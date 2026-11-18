@@ -63,7 +63,8 @@ def _memoria_do_bot_limpa():
                      assistente_geracao._USINAS_MW, assistente._ATENDIDAS, assistente._ESPERAM_A_VEZ, assistente._SOLTAS,
                      # a trava por número presa ao laço de eventos do teste anterior estoura no seguinte
                      assistente._TRAVAS, assistente_catalogo._CACHE, assistente_series._APELIDOS,
-                     assistente_series._GRANDEZAS, assistente_series._STRINGS, assistente_series._COMUNICACAO):
+                     assistente_series._GRANDEZAS, assistente_series._STRINGS, assistente_series._COMUNICACAO,
+                     assistente_series._GERACAO):
         guardado.clear()
     assistente_helper._VPN = None                     # a VPN conferida num teste não vale no seguinte
     yield

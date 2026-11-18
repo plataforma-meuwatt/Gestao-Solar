@@ -172,7 +172,9 @@ async def consultar(ctx, a: dict) -> dict:
             texto = texto[:TETO_TEXTO * 2 // 3] + "\n… (cortado no meio) …\n" + texto[-TETO_TEXTO // 3:]
         return {"consulta": nome, "resultado": texto, **extra}
     obs = ser.observacoes(dados, ser.dia_dos(args))
-    resumo = ser.series_para_ler(obs, await ser.apelidos(ctx, nome, args)) if obs else None
+    slug = ser.slug_dos(nome, args)
+    sit = await ser.situacao(ctx, slug) if slug and any(re.fullmatch(r"temp_s\d", c) for _e, c in obs) else None
+    resumo = ser.series_para_ler(obs, await ser.apelidos(ctx, nome, args), sit=sit) if obs else None
     return {"consulta": nome, **({"series_no_tempo": resumo} if resumo else {}),
             "dados": _enxuto(dados, 5_000 if resumo else TETO_TEXTO), **extra}
 
