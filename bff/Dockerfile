@@ -19,6 +19,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# O Chromium do Playwright (a foto do mapa único que o bot manda; o motor de PDF da Fase 5 também roda nele), numa camada
+# própria ANTES das dependências: mudar o requirements.txt não baixa o navegador de novo. A versão é a do requirements
+# (tests/test_dockerfile.py confere). Fica numa pasta de todos (o app roda como gestaosolar) e só sobe quando alguém pede
+# a foto. O tini é o processo 1: recolhe os processos do Chromium que sobrarem (o uvicorn não recolhe).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir playwright==1.55.0 \
+    && playwright install --with-deps --only-shell chromium && chmod -R a+rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
 # As dependências antes do código: enquanto `requirements.txt` não muda, esta camada é
 # reaproveitada e o deploy salta a instalação inteira.
 COPY requirements.txt ./
@@ -43,4 +52,5 @@ USER gestaosolar
 # Migração que FALHA não derruba a API (avaliação de 24/10/2026): com o healthcheck do Coolify
 # desligado, o contêiner morreria em laço e o aplicativo, o portal, os painéis e o bot iriam junto.
 # Ela sobe com o banco como está e o log grita "MIGRACAO FALHOU" (como no meuPlano, 91393817).
+ENTRYPOINT ["tini", "--"]
 CMD ["sh", "-c", "alembic upgrade head || echo 'MIGRACAO FALHOU: a API sobe com o banco como esta. Rode alembic upgrade head e confira o log acima.' >&2; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8100}"]

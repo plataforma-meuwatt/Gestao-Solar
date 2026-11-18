@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").
     meuplano_web_url: str = "https://app.meuplano.solar"
+    #: O PORTAL do GS (o cliente; o mapa único mora nele): a foto do mapa que o bot manda abre a página daqui.
+    portal_web_url: str = "https://gestao.solar"
     # `api.meuplano.com.br` não resolve — o domínio nunca foi apontado. O host real é o do
     # Railway, e deixar o padrão errado fazia a primeira conexão falhar com "não foi
     # possível alcançar o endereço" antes mesmo de o gestor ter chance de suspeitar da URL.

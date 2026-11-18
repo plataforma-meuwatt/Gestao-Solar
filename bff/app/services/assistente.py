@@ -50,6 +50,7 @@ from app.services import assistente_paradas as par
 from app.services import assistente_catalogo as catalogo
 from app.services import assistente_meuguarda as mg
 from app.services import assistente_campo as campo
+from app.services import assistente_mapa as mapa
 
 log = logging.getLogger("gs.assistente")
 
@@ -418,6 +419,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                **catalogo.FERRAMENTAS,
                "gravar_coordenada": (local.gravar_coordenada, local.FERRAMENTA),
                "local_da_usina": (local.local_da_usina, local.FERRAMENTA_LER),
+               "mapa_equipamento": (mapa.mapa_equipamento, mapa.FERRAMENTA),
                "lugar_da_localizacao": (local.lugar_da_localizacao, local.FERRAMENTA_LUGAR),
                "avaliar_lugar": (local.avaliar_lugar, local.FERRAMENTA_AVALIAR),
                "lugares_da_equipe": (local.lugares_da_equipe, local.FERRAMENTA_LISTA_LUGARES),
@@ -956,6 +958,8 @@ def permitidas(user) -> list[str]:
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
+    if {"bot_meuplano", "bot_meuwatt"} <= ativo:            # a foto do mapa: o mapa e a cor com os tokens DELA
+        nomes.append("mapa_equipamento")
     nomes += [n for n in campo.permitidas(user) if n not in nomes]   # o técnico em campo: posição, plaqueta, foto
     nomes += catalogo.permitidas(user)                       # o catálogo do conector do Claude: o resto que se lê
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
@@ -1076,6 +1080,7 @@ de memória.
   coordenada.
 - Pedido da localização, da coordenada ou de como chegar a uma usina → `local_da_usina`: o sistema manda o link do
   Google Maps e o do Waze; você só diz uma linha, sem os links.
+{mapa.PROMPT if "mapa_equipamento" in permitidas(ctx.user) else ""}
 - Relatório de usina SEM CADASTRO, com uma pasta do Google Drive (drive.google.com/drive/folders/…) →
   `relatorio_sem_cadastro`, com o contexto que a pessoa escreveu. Comentário sobre o relatório em revisão ("tira a foto
   X", "melhora a conclusão") → `alterar_relatorio` com a OS dele; "manda o PDF" → `relatorio_da_os` escolha=word;

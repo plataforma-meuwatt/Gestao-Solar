@@ -68,9 +68,10 @@ def conferir_senha(senha: str, guardado: str | None) -> bool:
         return False
 
 
-def criar_token(user_id: int) -> tuple[str, datetime]:
+def criar_token(user_id: int, *, minutos: int | None = None) -> tuple[str, datetime]:
+    """A sessão do app e do portal. `minutos` encurta o prazo (a foto do mapa que o bot tira dura 5 min)."""
     s = get_settings()
-    expira = datetime.now(UTC) + timedelta(hours=s.gs_jwt_expira_horas)
+    expira = datetime.now(UTC) + (timedelta(minutes=minutos) if minutos is not None else timedelta(hours=s.gs_jwt_expira_horas))
     token = jwt.encode(
         {"sub": str(user_id), "exp": expira}, s.gs_jwt_secret, algorithm=ALGORITMO
     )

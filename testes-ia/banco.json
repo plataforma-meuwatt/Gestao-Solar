@@ -2352,5 +2352,26 @@
       "ler_plaqueta"
     ],
     "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
+  },
+  {
+    "frase": "Onde fica a string U1-3S22 de Ouro Fino?",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "18/11/2026: a foto do mapa com o equipamento em destaque (pedido do Renan)"
+  },
+  {
+    "frase": "Me mostra no mapa a câmera 1 de Pereiras",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "18/11/2026: a foto do mapa com o equipamento em destaque (pedido do Renan)"
+  },
+  {
+    "frase": "manda o print do mapa com o inversor 13 de ouro fino",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "18/11/2026: a foto do mapa com o equipamento em destaque (pedido do Renan)"
   }
 ]
