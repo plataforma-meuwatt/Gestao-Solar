@@ -2317,5 +2317,40 @@
       "geracao"
     ],
     "origem": "log #520"
+  },
+  {
+    "frase": "Em Pereiras o switch da cabine liga por fibra no switch do skid 2, arruma isso no cadastro",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
+  },
+  {
+    "frase": "O DJ geral BT de Pereiras é Schneider NSX 400, série 7788A, e o Gateway Novus lê o estado dele no DI 1",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
+  },
+  {
+    "frase": "🎙️ tô em Ibitinga, o logger do skid 1 usa a COM1 a 9600, os inversores 1 a 4 são escravos 1 a 4 por RS485",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada] essa é a câmera 1 de Pereiras",
+    "espera": [
+      "posicionar_equipamento"
+    ],
+    "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
+  },
+  {
+    "frase": "[📷 1 foto(s) recebida(s), ainda não anexada(s)] plaqueta do inversor 3 de Pereiras, completa o cadastro dele",
+    "espera": [
+      "ler_plaqueta"
+    ],
+    "origem": "pedido do dono 18/11/2026 (cadastro de campo)"
   }
 ]
