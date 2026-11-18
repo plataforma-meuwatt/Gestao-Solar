@@ -2214,5 +2214,108 @@
       "consultar"
     ],
     "origem": "pedido do Renan 17/11 (o bot de produção, sem o catálogo, disse que não tinha o histórico)"
+  },
+  {
+    "frase": "Gere o Excel da geracao de outubro de porto ferreira",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #533"
+  },
+  {
+    "frase": "Mande o Excel das energias de outubro de porto ferreira",
+    "espera": [
+      "excel_energia_diaria"
+    ],
+    "origem": "log #553"
+  },
+  {
+    "frase": "Qual inversor, ao longo da última semana, acumulou a maior diferença de geração da média para menos no skid 2 em ouro fino?",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #560"
+  },
+  {
+    "frase": "Gere um grafico da potencia do rele com a potencia dos inversores de pirapozinho do skid 1",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #549"
+  },
+  {
+    "frase": "Plote o grafico da string 1 do inversor 1 do skid 1 com a string 10 do inversor 2 do skid 3 de pirapozinho do dia de hoje",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #547"
+  },
+  {
+    "frase": "Plote o grafico de potencia dos inversores do slid 1 de pirapozinho",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #548"
+  },
+  {
+    "frase": "Faça um gráfico de temperatura interna vs potência dos inversores do SKID 2 de Ouro Fino 1, do dia de ontem",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #559"
+  },
+  {
+    "frase": "Deixe o trackers de Ibitinga todos no modo automático.",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #525"
+  },
+  {
+    "frase": "Os trackers estão todos na posição em que deveriam estar?",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #526"
+  },
+  {
+    "frase": "Lei o ângulo dos atuadores da SKC 8",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #527"
+  },
+  {
+    "frase": "Coloque os trackers de bitinga na posição de roçagem.",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #563"
+  },
+  {
+    "frase": "O SKID 02 de Porto Ferreira está gerando?",
+    "espera": [
+      "geracao",
+      "reles",
+      "paradas"
+    ],
+    "origem": "log #521"
+  },
+  {
+    "frase": "qual inversor de pirapozinho teve problema com isolação mesmo",
+    "espera": [
+      "diagnostico_usina",
+      "paradas",
+      "geracao"
+    ],
+    "origem": "log #520"
   }
 ]
