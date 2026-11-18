@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+from contextvars import ContextVar
 
 from sqlalchemy import select
 
@@ -29,10 +30,30 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 PARALELO = 5
 
 
-async def _nada_ao_whatsapp(**_kw) -> dict:
+#: `--avaliar`: o que cada pergunta mandaria ao chat (os arquivos) e cada ferramenta que rodou, para o avaliador
+_ARQUIVOS: ContextVar[list | None] = ContextVar("arquivos_do_caso", default=None)
+_TRILHA: ContextVar[list | None] = ContextVar("trilha_do_caso", default=None)
+
+
+async def _nada_ao_whatsapp(**kw) -> dict:
     """No lugar do envio: no `--inteira` as ferramentas rodam de verdade, e o gráfico e o documento que elas mandam
-    iam ao celular da conta (17/11/2026). O que iria fica em `ctx.enviados` e sai na tela."""
+    iam ao celular da conta (17/11/2026). O que iria fica em `ctx.enviados` e sai na tela (com `--avaliar`, o arquivo
+    também)."""
+    if (lst := _ARQUIVOS.get()) is not None and isinstance(kw.get("arquivo"), bytes):
+        lst.append({"nome": kw.get("filename") or "arquivo", "texto": kw.get("texto") or "", "dados": kw["arquivo"]})
     return {"ok": True}
+
+
+def _gravar_trilha() -> None:
+    original = a._executar
+
+    async def executar(ctx, c):
+        res = await original(ctx, c)
+        if (lst := _TRILHA.get()) is not None:
+            lst.append({"ferramenta": c["function"]["name"], "argumentos": c["function"].get("arguments"),
+                        "resultado": json.dumps(res, ensure_ascii=False, default=str)[:2500]})
+        return res
+    a._executar = executar
 
 
 def _conta(db, apelido: str) -> User:
@@ -52,6 +73,8 @@ async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = (), antes
     """`antes`: a conversa até ali ([{role, content}]), para o caso em mais de uma mensagem (a localização, a pergunta
     do bot, e então o pedido)."""
     db = SessionLocal()
+    _ARQUIVOS.set([])
+    _TRILHA.set([])
     try:
         user = _conta(db, apelido)
         if sem:
@@ -85,8 +108,8 @@ async def _turno(apelido: str, frase: str, inteira: bool, sem: tuple = (), antes
                 texto += "\n\n" + "\n\n".join(ctx.rodape)
             if ctx.proposta is not None:
                 texto += "\n\n" + a.helper.bloco_da_proposta(ctx.proposta)
-            return {"ferramentas": ctx.ferramentas, "enviados": ctx.enviados,
-                    "texto": _limpo(texto, [*ctx.segredos, *ctx.digitados], ctx.credencial)}
+            return {"ferramentas": ctx.ferramentas, "enviados": ctx.enviados, "arquivos": _ARQUIVOS.get(),
+                    "trilha": _TRILHA.get(), "texto": _limpo(texto, [*ctx.segredos, *ctx.digitados], ctx.credencial)}
         msgs = [{"role": "system", "content": a._sistema(ctx)}, *antes, {"role": "user", "content": frase}]
         ferramentas = [a.FERRAMENTAS[n][1] for n in a.permitidas(user)]
         db.commit()                                        # solta a conexão enquanto a IA pensa
@@ -173,6 +196,7 @@ def main() -> None:
     p.add_argument("--colher", action="store_true")
     p.add_argument("--como", default="renan.marquezini")
     p.add_argument("--vezes", type=int, default=1)
+    p.add_argument("--avaliar", action="store_true", help="com --inteira: a trilha das ferramentas e os arquivos")
     o = p.parse_args(json.loads(base64.b64decode(sys.argv[1])) if len(sys.argv) > 1 else [])
     with open(os.path.join(AQUI, "banco.json"), encoding="utf-8") as f:
         banco = json.load(f)
@@ -186,6 +210,8 @@ def main() -> None:
         sys.exit("Passe uma ou mais frases, --banco ou --colher.")
     print(f"# modelo {a.get_settings().llm_model}", file=sys.stderr)
     whatsapp.enviar_conteudo = _nada_ao_whatsapp
+    if o.avaliar:
+        _gravar_trilha()
     erros = 0
     for caso, r in asyncio.run(_varias(casos, o.inteira, o.vezes)):
         if "espera" in caso:
@@ -201,6 +227,11 @@ def main() -> None:
             print(f"  {c['nome']}: {c['dados'][:400]}")
         if r.get("enviados"):
             print(f"iria ao chat (não foi): {r['enviados']}")
+        if o.avaliar:
+            for t in r.get("trilha") or []:
+                print("@@TRILHA " + json.dumps(t, ensure_ascii=False))
+            for n, f in enumerate(r.get("arquivos") or []):
+                print(f"@@ARQ {n} {f['nome']} {base64.b64encode(f['dados']).decode()}")
         if r.get("erro") or r["texto"]:
             print(r.get("erro") or r["texto"])
     if o.banco:

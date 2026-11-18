@@ -53,6 +53,9 @@ from app.services import assistente_meuguarda as mg
 log = logging.getLogger("gs.assistente")
 
 MAX_RODADAS = 6
+#: com o catálogo: achar a consulta, ler e desenhar duas ou três séries não cabia em 6 (o dono, 17/11/2026: "Gere um
+#: gráfico da potência do relé com a potência dos inversores do skid 1" — as 6 voltas acabaram antes da série do relé)
+MAX_RODADAS_CATALOGO = 10
 HISTORICO = 20                # mensagens guardadas (user + assistant)
 TETO_RESULTADO = 14000        # caracteres de cada resultado de ferramenta que vão ao modelo
 
@@ -1108,11 +1111,18 @@ async def _llm(mensagens: list[dict], ferramentas: list[dict], obrigatoria: bool
         corpo["thinking"] = {"type": "disabled"}
     cabecalhos = {"Authorization": f"Bearer {s.deepseek_api_key}", **({"X-Teto-S": str(teto_s)} if teto_s else {})}
     async with httpx.AsyncClient(timeout=(teto_s or 80) + 10) as c:
-        r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers=cabecalhos, json=corpo)
-        r.raise_for_status()
-        dados = r.json()
-        _somar_uso(dados.get("usage") or {})
-        return dados["choices"][0]["message"]
+        for tentativa in (1, 2):
+            r = await c.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers=cabecalhos, json=corpo)
+            # 502/503 de passagem (a IA escreveu JSON torto, as vagas da ponte cheias): uma 2ª vez antes de a
+            # mensagem inteira cair (17/11/2026, o gráfico das strings de Pirapozinho)
+            if getattr(r, "status_code", 200) in (502, 503) and tentativa == 1:
+                await asyncio.sleep(1)
+                continue
+            r.raise_for_status()
+            dados = r.json()
+            _somar_uso(dados.get("usage") or {})
+            return dados["choices"][0]["message"]
+    raise RuntimeError("sem resposta da IA")                # inalcançável: a 2ª volta devolve ou levanta
 
 
 async def _executar(ctx: ger.Contexto, chamada: dict) -> dict:
@@ -1165,7 +1175,9 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
     msgs: list[dict] = [{"role": "system", "content": _sistema(ctx) + aviso}, *historico]
     ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
     cobrou = False
-    for _ in range(MAX_RODADAS):
+    rodada, limite = 0, MAX_RODADAS
+    while rodada < limite:
+        rodada += 1
         ctx.db.commit()                                   # solta a conexão enquanto a IA pensa
         m = await _llm(msgs, ferramentas, **({"obrigatoria": True} if cobrou and not ctx.ferramentas else {}))
         chamadas = m.get("tool_calls") or []
@@ -1177,6 +1189,8 @@ async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -
                 continue
             return texto or "Não consegui montar a resposta. Pode reformular?"
         msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": chamadas})
+        if any(c["function"]["name"] in catalogo.FERRAMENTAS for c in chamadas):
+            limite = MAX_RODADAS_CATALOGO
         resultados = await asyncio.gather(*(_executar(ctx, c) for c in chamadas))
         if ctx.fluxo:                                     # a classificação de paradas começou: o passo a passo é do
             if ctx.proposta is not None:                  # sistema, e a resposta é o resumo dele (com os botões).

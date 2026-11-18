@@ -646,8 +646,8 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
         d = await irradiacao(ctx, a)
         ds = d["dias"] if isinstance(d["dias"], list) else []
         k, unid = ("poa_estacao", "kWh/m² (POA, estação)") if d["tem_estacao"] else ("ghi_satelite", "kWh/m² (GHI, satélite)")
-        pts = [(x["data"][5:], x[k]) for x in ds if x[k] is not None]
-        titulo = f"{d['usina']} · irradiação · {d['inicio']} a {d['fim']}"
+        pts = [(_dm(x["data"]), x[k]) for x in ds if x[k] is not None]
+        titulo = f"{d['usina']} · irradiação · {_periodo_br(d['inicio'], d['fim'])}"
     else:
         d = await geracao(ctx, a)
         ds = d["dias"] if isinstance(d["dias"], list) else []
@@ -655,10 +655,10 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
             pts, unid = [(i["inversor"], i["produtividade_kwh_kwp"]) for i in d["inversores_do_melhor_ao_pior"]
                          if i["produtividade_kwh_kwp"] is not None], "kWh/kWp"
         elif tipo == "pr_diario":
-            pts, unid = [(x["data"][5:], x["pr_pct"]) for x in ds if x["pr_pct"] is not None], "PR %"
+            pts, unid = [(_dm(x["data"]), x["pr_pct"]) for x in ds if x["pr_pct"] is not None], "PR %"
         else:
-            pts, unid = [(x["data"][5:], x["energia_kwh"]) for x in ds if x["energia_kwh"] is not None], "kWh"
-        titulo = f"{d['usina']} · {unid} · {d['inicio']} a {d['fim']}"
+            pts, unid = [(_dm(x["data"]), x["energia_kwh"]) for x in ds if x["energia_kwh"] is not None], "kWh"
+        titulo = f"{d['usina']} · {unid} · {_periodo_br(d['inicio'], d['fim'])}"
     if not pts:
         return {"erro": "Sem dados no período para desenhar."}
     png = await asyncio.to_thread(_desenhar, pts, titulo, unid)
@@ -667,7 +667,29 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
     ok = bool(r and r.get("ok"))
     if ok:
         ctx.enviados.append(titulo)
-    return {"grafico": titulo, "enviado_no_chat": ok}
+    mx, mn = max(pts, key=lambda p: p[1]), min(pts, key=lambda p: p[1])
+    # o texto que acompanha o gráfico tem números (a avaliação de 17/11/2026: barras de energia e nenhum número)
+    return {"grafico": titulo, "enviado_no_chat": ok, "unidade": unid, "maior": [mx[0], round(mx[1], 2)],
+            "menor": [mn[0], round(mn[1], 2)],
+            **({"total": round(sum(v for _r, v in pts), 1)} if unid == "kWh" else {"media": round(
+                sum(v for _r, v in pts) / len(pts), 2)}),
+            "nota": "Comente com 1 a 3 números: o total (ou a média), o melhor e o pior; datas em dd/mm."}
+
+
+def _dm(iso: str) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}"
+
+
+def _periodo_br(ini: str, fim: str) -> str:
+    """"2026-11-01", "2026-11-17" → "01/11 a 17/11/2026" (a data do Brasil no título, nunca a ISO)."""
+    a, b = date.fromisoformat(str(ini)[:10]), date.fromisoformat(str(fim)[:10])
+    return f"{a:%d/%m/%Y}" if a == b else f"{a:%d/%m} a {b:%d/%m/%Y}"
+
+
+def _milhar(ax) -> None:
+    from matplotlib.ticker import FuncFormatter
+    ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda v, _p: f"{v:,.0f}".replace(",", ".") if abs(v) >= 100 else f"{v:g}".replace(".", ",")))
 
 
 def _desenhar_grupos(rot: list[str], series: dict[str, list[float | None]], titulo: str, unid: str) -> bytes:
@@ -688,6 +710,7 @@ def _desenhar_grupos(rot: list[str], series: dict[str, list[float | None]], titu
     ax.set_xticks(range(len(rot)))
     ax.set_xticklabels(rot, fontsize=9)
     ax.set_ylabel(unid)
+    _milhar(ax)
     ax.set_title(titulo, fontsize=11)
     ax.legend(fontsize=8)
     ax.grid(axis="y", alpha=.3)
@@ -709,6 +732,7 @@ def _desenhar(pts: list[tuple[str, float]], titulo: str, unid: str) -> bytes:
     ax.set_xticks(range(len(rot)))
     ax.set_xticklabels(rot, rotation=60 if len(rot) > 8 else 0, ha="right" if len(rot) > 8 else "center", fontsize=8)
     ax.set_ylabel(unid)
+    _milhar(ax)
     ax.set_title(titulo, fontsize=11)
     ax.grid(axis="y", alpha=.3)
     ax.spines[["top", "right"]].set_visible(False)

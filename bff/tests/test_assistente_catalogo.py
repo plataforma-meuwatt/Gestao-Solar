@@ -87,8 +87,9 @@ async def test_procura_pelo_assunto_e_guarda_o_catalogo(conector):
 
 async def test_consulta_roda_com_o_conector_e_devolve_o_texto(conector):
     r = await cat.consultar(_ctx(), {"nome": "monitoramento_strings_sem_corrente", "argumentos": {"slug": "ibitinga"}})
-    assert r == {"consulta": "monitoramento_strings_sem_corrente", "resultado": '{"strings": 3}'}
-    assert conector.chamadas[-1] == ("monitoramento_strings_sem_corrente", {"slug": "ibitinga"})
+    assert r == {"consulta": "monitoramento_strings_sem_corrente", "dados": '{"strings":3}'}
+    # do monitoramento, o dado inteiro (o texto do conector para nos 120 mil caracteres)
+    assert conector.chamadas[-1] == ("monitoramento_strings_sem_corrente", {"slug": "ibitinga", "_completo": True})
     assert (await cat.consultar(_ctx(), {"nome": "fora"}))["erro"].startswith("Monitoramento: não respondeu")
 
 
@@ -102,40 +103,23 @@ async def test_a_foto_vai_ao_chat_e_nao_a_ia(conector):
 async def test_resposta_grande_e_cortada(conector):
     r = await cat.consultar(_ctx(), {"nome": "monitoramento_grande"})
     t = r["resultado"]                                   # o começo e o fim ficam: o "agora" de uma série é o fim
-    assert len(t) < 40_200 and t.startswith("início") and t.endswith("AGORA") and "cortado no meio" in t
+    assert len(t) < 11_200 and t.startswith("início") and t.endswith("AGORA") and "cortado no meio" in t
 
 
-async def test_grafico_desenha_so_o_equipamento_pedido_e_volta_so_o_resumo(conector):
-    """O dono, 17/11/2026: "Monte um gráfico da temperatura do trafo 2 de Pirapozinho do dia de hoje"."""
-    ctx = _ctx()
-    r = await cat.consultar(ctx, {"nome": "monitoramento_temperatura_trafos", "argumentos": {"slug": "pirapozinho"},
-                                  "grafico": {"so": "skid-02", "titulo": "Trafo 2", "unidade": "°C"}})
-    assert len(conector.enviados) == 1 and conector.enviados[0]["tipo"] == "image"
-    assert conector.enviados[0]["arquivo"][:4] == b"\x89PNG" and r["enviado_no_chat"] is True
-    s = {x["serie"]: x for x in r["series"]}
-    assert set(s) == {"TEMP-SKID-02 · temp_s1", "TEMP-SKID-02 · temp_s2", "TEMP-SKID-02 · temp_s3",
-                      "TEMP-SKID-02 · temp_ambient"}               # os outros skids ficam de fora
-    s1 = s["TEMP-SKID-02 · temp_s1"]
-    assert s1["pontos"] == 10                                     # 06:00–11:55 sem as 8h (o buraco)
-    assert s1["minimo"] == {"valor": 58.0, "em": "06:00"} and s1["maximo"] == {"valor": 63.0, "em": "11:00"}
-    assert s1["ultimo"] == {"valor": 63.0, "em": "11:05"}
-    assert s["TEMP-SKID-02 · temp_s3"]["pontos"] == 8              # None não vira ponto
-    assert "points" not in json.dumps(r) and "time" not in json.dumps(r)   # os dados não voltam à IA
-
-
-async def test_grafico_sem_o_campo_ou_o_equipamento_diz_o_que_existe(conector):
-    r = await cat.consultar(_ctx(), {"nome": "monitoramento_temperatura_trafos", "grafico": {"y": ["temp_x"]}})
-    assert "erro" in r and "temp_s1" in r["listas"]["sensors[].points"] and "TEMP-SKID-01" in r["equipamentos"]
-    r = await cat.consultar(_ctx(), {"nome": "monitoramento_temperatura_trafos", "grafico": {"so": "skid-09"}})
-    assert "skid-09" in r["erro"] and r["equipamentos"] == ["TEMP-SKID-01", "TEMP-SKID-02", "TEMP-SKID-03"]
-    assert "erro" in await cat.consultar(_ctx(), {"nome": "monitoramento_strings_sem_corrente", "grafico": {}})
-    assert conector.enviados == []
-    # instante com fuso vira a hora de Brasília (regra da casa); hora solta fica como veio
-    assert cat._eixo_x("2026-11-17T13:05:00Z")[1].endswith("10:05") and cat._eixo_x("08:15") == ((0, 29700), "08:15")
+async def test_serie_longa_vem_resumida_para_a_ia(conector):
+    """A série do dia (as sondas dos três trafos) chega à IA como os equipamentos, os campos e o mínimo, máximo e último
+    de cada série, mais o JSON encurtado: nunca os 14 mil caracteres cortados no meio de um número."""
+    r = await cat.consultar(_ctx(), {"nome": "monitoramento_temperatura_trafos", "argumentos": {"slug": "pirapozinho"}})
+    s = r["series_no_tempo"]
+    assert s["equipamentos"] == ["TEMP-SKID-01", "TEMP-SKID-02", "TEMP-SKID-03"]
+    assert "temp_s1 (°C)" in s["campos"] and s["series"] == 12
+    s1 = next(x for x in s["analise"] if x["serie"] == "TEMP-SKID-02 · sonda 1")
+    assert s1["leituras"] == 10 and s1["minimo"] == [58.0, "06:00"] and s1["maximo"] == [63.0, "11:00"]
+    assert len(r["dados"]) <= 5_100
 
 
 def test_so_quem_tem_algum_servico_no_bot_recebe_o_catalogo(monkeypatch):
     monkeypatch.setattr(mcp, "servicos", lambda u: ["monitoramento"])
-    assert cat.permitidas(object()) == ["procurar_consulta", "consultar"]
+    assert cat.permitidas(object()) == ["procurar_consulta", "consultar", "grafico_de_series"]
     monkeypatch.setattr(mcp, "servicos", lambda u: [])
     assert cat.permitidas(object()) == []
