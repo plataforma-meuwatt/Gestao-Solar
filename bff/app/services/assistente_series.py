@@ -282,7 +282,7 @@ def nome_do_campo(campo: str) -> str:
         return f"MPPT {m[1]}"
     return {"powerkw": "potência", "totalactivepower": "potência ativa", "insulationmohm": "isolação",
             "dailygenkwh": "energia do dia", "temps1": "sonda 1", "temps2": "sonda 2", "temps3": "sonda 3",
-            "temps4": "sonda 4", "tempambient": "ambiente", "temperature": "temperatura"}.get(c, campo)
+            "temps4": "sonda 4", "tempambient": "ambiente do skid", "temperature": "temperatura"}.get(c, campo)
 
 
 def campos_pedidos(pedidos: list[str], disponiveis: list[str]) -> list[str]:
@@ -326,6 +326,7 @@ class Serie:
     limites_temp: dict | None = None       # do relé de temperatura do trafo: ventilação, alarme e desligamento (°C)
     traco: str = ""                        # o traço da linha de referência ("--", ":"): o alarme e o desligamento
     incompletos: frozenset = frozenset()   # dias sem parte dos equipamentos (sem comunicação): a barra vem marcada
+    componentes: tuple = ()                # na soma: os números de série somados (a energia é a soma dos contadores)
 
 
 def series_de(obs: Obs, apelidos: Apelidos, campos: list[str], so: list[str], somar: bool = False,
@@ -357,7 +358,8 @@ def series_de(obs: Obs, apelidos: Apelidos, campos: list[str], so: list[str], so
             for t, v in s.pontos:
                 soma[t] += v
         eqs = ", ".join(dict.fromkeys(s.equipamento for s in out if s.equipamento))
-        out = [Serie(rotulo or f"soma de {len(out)} séries", out[0].unidade, sorted(soma.items()), eqs)]
+        out = [Serie(rotulo or f"soma de {len(out)} séries", out[0].unidade, sorted(soma.items()), eqs,
+                     componentes=tuple(s.serial for s in out if s.serial))]
     elif rotulo and len(out) == 1 and not out[0].equipamento:
         # o rótulo da IA só sem equipamento (a usina); com ele, o nome do cadastro ("Inv 32 (TR-03) · string 10"),
         # que diz QUAL é (17/11/2026: "String 10 · Inv 2 · Skid 3 — Inv 32 (TR-03)" na legenda e no título)
@@ -390,6 +392,10 @@ def e_diario(series: list[Serie]) -> bool:
 #: unidades de geração: começa, para, a média é só com sol, o teto e a energia
 _DE_SOL = ("kW", "kW/kWp", "A", "W/m²")
 _LIMITE = re.compile(r"threshold|limite|limit|alarm|trip|setpoint")
+
+
+def agora_brt() -> datetime:
+    return datetime.now(BRT)
 
 
 def arred(v: float) -> float:
@@ -448,24 +454,51 @@ def _leitura_parada(pts: list[tuple[datetime, float]]) -> dict | None:
     junto = max(timedelta(minutes=20), passos[len(passos) // 2] * 1.5)
     melhor, i = None, 0
     while i < len(pts):
-        j = i
+        j, soltas = i, []
         while True:
             if j + 1 < len(pts) and pts[j + 1][0] - pts[j][0] <= junto and abs(pts[j + 1][1] - pts[i][1]) <= 0.05:
                 j += 1
             elif j + 2 < len(pts) and pts[j + 2][0] - pts[j][0] <= 2 * junto and \
                     abs(pts[j + 2][1] - pts[i][1]) <= 0.05:
-                j += 2                    # uma leitura solta no meio do valor parado
+                soltas.append(j + 1)      # uma leitura solta no meio do valor parado
+                j += 2
             else:
                 break
         dur = pts[j][0] - pts[i][0]
         if dur >= timedelta(minutes=45) and pts[i][1] >= alto and (melhor is None or dur > melhor[2]):
-            melhor = (i, j, dur)
+            melhor = (i, j, dur, soltas)
         i = j + 1
     if melhor is None:
         return None
-    i, j, dur = melhor
+    i, j, dur, soltas = melhor
     return {"valor": round(pts[i][1], 1), "de": pts[i][0].strftime("%H:%M"), "ate": pts[j][0].strftime("%H:%M"),
-            "minutos": int(dur.total_seconds() // 60)}
+            "minutos": int(dur.total_seconds() // 60),
+            **({"exceto": [[pts[k][0].strftime("%H:%M"), round(pts[k][1], 1)] for k in soltas]} if soltas else {})}
+
+
+def _quedas(pts: list[tuple[datetime, float]]) -> list[list]:
+    """As maiores quedas do dia (nuvem): a leitura abaixo de 60% do maior valor dos 15 min antes, com o dia já alto;
+    uma por episódio, as 3 mais fundas (17/11/2026: só as quedas dentro do teto eram ditas; às 08:45 os inversores
+    foram a 85–100 kW)."""
+    mx = max(v for _t, v in pts)
+    achadas = sorted((v / antes, t, v) for i in range(3, len(pts)) if (t := pts[i][0]) - pts[i - 3][0] <= timedelta(
+        minutes=20) and (antes := max(x for _t, x in pts[i - 3:i])) >= 0.2 * mx and (v := pts[i][1]) < 0.6 * antes)
+    out: list[tuple[float, datetime, float]] = []
+    for q in achadas:
+        if all(abs((q[1] - o[1]).total_seconds()) > 1800 for o in out):
+            out.append(q)
+    return [[t.strftime("%H:%M"), arred(v)] for _f, t, v in sorted(out[:3], key=lambda o: o[1])]
+
+
+def _de_quem(s: Serie) -> str:
+    """De quem é o teto: o limite do inversor, do skid ou da usina (17/11/2026: os 5.005 kW de Porto Ferreira são o
+    limite de 5 MW da usina, não "do equipamento")."""
+    c = chave(s.equipamento)
+    if s.serial:
+        return "do inversor"
+    if s.componentes:
+        return "dos inversores somados"
+    return "do skid" if re.search(r"skid|tr\d", c) and "geral" not in c else "da usina"
 
 
 def _janelas(pts: list[tuple[datetime, float]], fora) -> list[dict]:
@@ -519,6 +552,13 @@ def por_dia(s: Serie) -> Serie:
     return dataclasses.replace(s, rotulo=rot, pontos=pts)
 
 
+def _num(v: float) -> str:
+    """O número arredondado como se escreve, no formato do Brasil: 5.005; 6,95; 0,052 (o `_br` dos eixos corta 0,052
+    para 0,05)."""
+    v = arred(v)
+    return f"{v:,.0f}".replace(",", ".") if abs(v) >= 100 else str(v).replace(".", ",")
+
+
 def _c(v: float) -> str:
     """Temperatura no texto: uma casa, vírgula (148,2 °C; o `_br` cortaria para 148)."""
     return f"{v:.1f}".replace(".", ",")
@@ -534,9 +574,10 @@ def _frase(a: Serie, b: Serie, va: float, vb: float, energia: bool) -> str | Non
         return f"{n1} ficou, em média, {_c(v2 - v1)} °C abaixo de {n2} nos mesmos horários"
     pct = f"{(1 - v1 / v2) * 100:.1f}".replace(".", ",")
     if energia:
-        return f"{n1} gerou {_br(arred(v1))} kWh, {pct}% menos que {n2} ({_br(arred(v2))} kWh), nos mesmos horários"
-    return (f"{n1} teve média de {_br(arred(v1))} {a.unidade}, {pct}% menos que {n2} ({_br(arred(v2))} {a.unidade}), "
-            "nos mesmos horários")
+        return f"{n1} somou {_num(v1)} kWh, {pct}% menos que {n2} ({_num(v2)} kWh), nos mesmos horários"
+    sol = " com sol" if a.unidade in _DE_SOL else ""
+    return (f"{n1} teve média{sol} de {_num(v1)} {a.unidade}, {pct}% menos que {n2} ({_num(v2)} "
+            f"{a.unidade})" + ("" if sol else ", nos mesmos horários"))
 
 
 def analise(series: list[Serie]) -> dict:
@@ -557,7 +598,8 @@ def analise(series: list[Serie]) -> dict:
 
         def r(v: float, _u: str = s.unidade) -> float:
             return round(v, 1) if _u == "°C" else arred(v)
-        base = [p for p in s.pontos if p[0].date() not in s.incompletos] if diario else s.pontos
+        hoje = ger.hoje() if diario and agora_brt().hour < 19 else None     # o dia de hoje ainda não acabou
+        base = [p for p in s.pontos if p[0].date() not in s.incompletos and p[0].date() != hoje] if diario else s.pontos
         base = base or s.pontos
         vals = [v for _t, v in base]
         mn = min(base, key=lambda p: p[1])
@@ -565,10 +607,12 @@ def analise(series: list[Serie]) -> dict:
         item = {"serie": s.rotulo, **({"equipamento": s.equipamento} if s.equipamento else {}), "unidade": s.unidade,
                 "maximo": [r(mx[1]), _quando(mx[0], diario, varios)],
                 "minimo": [r(mn[1]), _quando(mn[0], diario, varios)]}
-        if diario and len(base) < len(s.pontos):
+        if diario and s.incompletos & {t.date() for t, _ in s.pontos}:
             item["dias_incompletos"] = sorted({t.strftime("%d/%m") for t, _ in s.pontos if t.date() in s.incompletos})
             item["por_que"] = ("parte dos inversores sem comunicação nesses dias: o número deles está abaixo do real "
                                "e ficou fora do máximo, do mínimo e da média")
+        if hoje and any(t.date() == hoje for t, _ in s.pontos):
+            item["dia_em_andamento"] = f"{hoje:%d/%m}: o dia ainda não acabou; fica fora do máximo, do mínimo e da média"
         if not diario:
             item["ultima_leitura"] = [r(s.pontos[-1][1]), _quando(s.pontos[-1][0], diario, varios)]
         if s.unidade in _DE_SOL and not diario:
@@ -579,8 +623,10 @@ def analise(series: list[Serie]) -> dict:
                             media_com_sol=arred(statistics.fmean(ativos)))
             if s.unidade == "kW":
                 if teto := _teto(s.pontos):
-                    item["no_teto"] = teto
+                    item["no_teto"] = {**teto, "de_quem": _de_quem(s)}
                     item["maximo"] = [teto["valor"], f"no teto de {teto['de']} a {teto['ate']}"]
+                if quedas := _quedas(s.pontos):
+                    item["maiores_quedas"] = quedas
                 item.update(_energia_item(s.energia_contador or _energia(s.pontos)))
                 if s.energia_contador:
                     item["energia_fonte"] = "contador do inversor (o número da tela)"
@@ -588,10 +634,8 @@ def analise(series: list[Serie]) -> dict:
             item["media"] = r(statistics.fmean(vals))
             if not diario and s.unidade == "°C" and (parada := _leitura_parada(s.pontos)):
                 item["leitura_parada"] = parada
-                item["maximo"] = (f"não medido: a sonda repetiu {_c(parada['valor'])} °C de {parada['de']} a "
-                                  f"{parada['ate']}")
-        if diario and s.unidade == "kW" and len(no := [t for t, v in base if v >= 0.995 * mx[1]]) >= 2:
-            item["dias_no_teto"] = {"valor": r(mx[1]), "dias": [t.strftime("%d/%m") for t in no]}
+        if diario and s.unidade == "kW" and len(no := [(t, v) for t, v in base if v >= 0.995 * mx[1]]) >= 2:
+            item["dias_no_teto"] = {"de_quem": _de_quem(s), "dias": [[t.strftime("%d/%m"), r(v)] for t, v in no]}
         if s.unidade in ("kWh", "kWh/m²"):
             tot = sum(v for _t, v in s.pontos)
             item.update({"soma_mwh": round(tot / 1000, 1)} if s.unidade == "kWh" and tot >= 10_000 else
@@ -601,6 +645,9 @@ def analise(series: list[Serie]) -> dict:
                 ref = lim.pontos[0][1]
                 if s.unidade == "MΩ":
                     item["abaixo_do_minimo"] = _janelas(s.pontos, lambda v, ref=ref: v < ref)
+                    if not item["abaixo_do_minimo"] and mn[1] < 1.1 * ref:
+                        item["perto_do_minimo"] = f"{_num(mn[1])} MΩ em {_quando(mn[0], False, True)}, " \
+                                                  f"{(mn[1] / ref - 1) * 100:.0f}% acima do mínimo"
                 else:
                     item["acima_do_limite"] = _janelas(s.pontos, lambda v, ref=ref: v > ref)
         if (lt := s.limites_temp) and not diario:
@@ -615,10 +662,9 @@ def analise(series: list[Serie]) -> dict:
             if dl is not None and (acima := _janelas(s.pontos, lambda v, dl=dl: v >= dl)):
                 item["acima_do_desligamento"] = acima
             if (g := lt.get("maxima_guardada")) is not None and al is not None and g >= al:
-                passou = "desligamento" if dl is not None and g >= dl else "alarme"
-                item["maxima_guardada_no_rele"] = (f"{_c(g)} °C, acima do {passou} "
-                                                   f"({_br(dl if passou == 'desligamento' else al)} °C); o relé não "
-                                                   "diz quando foi")
+                lim, qual = (dl, "desligamento") if dl is not None and g >= dl else (al, "alarme")
+                item["maxima_guardada_no_rele"] = (f"{_c(g)} °C, {'acima do' if g > lim else 'igual ao'} {qual} "
+                                                   f"({_br(lim)} °C); o relé não diz quando foi")
         if s.sem_com_desde:
             item["sem_comunicacao_desde"] = s.sem_com_desde.strftime("%d/%m %H:%M")
         out.append(item)
@@ -648,15 +694,29 @@ def analise(series: list[Serie]) -> dict:
                     else:
                         va, vb = _energia([(t, da[t]) for t in comum]), _energia([(t, db[t]) for t in comum])
                     par["energia_kwh_nos_mesmos_horarios"] = [arred(va), arred(vb)]
+                elif a.unidade in _DE_SOL and not diario and (sa := _sol(a.pontos)) and (sb := _sol(b.pontos)):
+                    va = statistics.fmean(v for _t, v in a.pontos[sa[0]:sa[1] + 1])
+                    vb = statistics.fmean(v for _t, v in b.pontos[sb[0]:sb[1] + 1])
                 else:
                     va, vb = statistics.fmean(x), statistics.fmean(y)
                     par["medias_nos_mesmos_horarios"] = [arred(va), arred(vb)]
                 if frase := _frase(a, b, va, vb, energia):
                     par["frase"] = frase
                 rele = next((s for s in (a, b) if s.campo == "total_active_power"), None)
-                if energia and rele and any(s is not rele and "," in s.equipamento for s in (a, b)):
-                    par["o_que_e_a_diferenca"] = ("a perda no trafo e nos cabos entre os inversores e o relé (o normal "
-                                                  "é até uns 2%)")
+                soma = next((s for s in (a, b) if s is not rele and s.componentes), None)
+                if energia and rele and soma:
+                    dr, ds = dict(rele.pontos), dict(soma.pontos)
+                    mr, ms = max(dr.values()), max(ds.values())
+                    alto = [t for t in comum if dr[t] >= 0.99 * mr and ds[t] >= 0.99 * ms]
+                    if len(alto) < 6:
+                        alto = [t for t in comum if dr[t] >= 0.9 * mr and ds[t] >= 0.9 * ms]
+                    if len(alto) >= 6:
+                        d = (statistics.fmean(dr[t] for t in alto) / statistics.fmean(ds[t] for t in alto) - 1) * 100
+                        pct = f"{abs(d):.1f}".replace(".", ",")
+                        par["no_trecho_alto"] = (
+                            f"com a potência alta (entre {alto[0]:%H:%M} e {alto[-1]:%H:%M}), {rele.rotulo} mediu "
+                            f"{pct}% {'a mais' if d > 0 else 'a menos'} que {soma.rotulo}" if abs(d) >= 0.05 else
+                            f"com a potência alta, {rele.rotulo} e {soma.rotulo} mediram igual")
             quente = next((s for s in (a, b) if s.unidade == "°C"), None)
             pot = next((s for s in (a, b) if s.unidade == "kW"), None)
             if quente and pot and not diario and (tr := _trecho_no_teto(pot.pontos)):
@@ -721,14 +781,14 @@ def desenhar(series: list[Serie], titulo: str, tipo: str = "auto") -> bytes:
             xs = [pos[t.date()] + (k - (len(nas_barras) - 1) / 2) * larg for t, _ in s.pontos]
             bs = ax.bar(xs, [v for _t, v in s.pontos], larg, label=s.rotulo, color=cor[id(s)])
             for barra, (t, _v) in zip(bs, s.pontos, strict=True):
-                if t.date() in s.incompletos:
+                if t.date() in s.incompletos or (t.date() == ger.hoje() and agora_brt().hour < 19):
                     barra.set_hatch("//")
                     barra.set_alpha(0.45)
             linhas_leg.append(bs)
-        if any(s.incompletos & set(dias) for s in nas_barras):
+        if any(s.incompletos & set(dias) for s in nas_barras) or (ger.hoje() in dias and agora_brt().hour < 19):
             from matplotlib.patches import Patch
             linhas_leg.append(Patch(facecolor="white", edgecolor="#555555", hatch="//",
-                                    label="dia sem parte dos inversores (sem comunicação)"))
+                                    label="dia incompleto (sem comunicação ou ainda em andamento)"))
         for s in series:
             if s in nas_barras:
                 continue
@@ -736,9 +796,10 @@ def desenhar(series: list[Serie], titulo: str, tipo: str = "auto") -> bytes:
                 (ln,) = eixos[s.unidade].plot([-0.5, len(dias) - 0.5], [s.pontos[0][1]] * 2, s.traco or "--",
                                               color="#222222", linewidth=1.3, label=s.rotulo)
             else:
-                (ln,) = eixos[s.unidade].plot([pos[t.date()] for t, _ in s.pontos], [v for _t, v in s.pontos], "o--",
+                (ln,) = eixos[s.unidade].plot([pos[t.date()] for t, _ in s.pontos], [v for _t, v in s.pontos], "o-",
                                               color=cor[id(s)], label=s.rotulo)
             linhas_leg.append(ln)
+        ax.set_ylim(top=ax.get_ylim()[1] * 1.18)       # a legenda cabe em cima, sem cobrir barra (17/11/2026)
         passo = max(1, len(dias) // 16)
         ax.set_xticks(range(0, len(dias), passo))
         ax.set_xticklabels([d.strftime("%d/%m") for d in dias][::passo], fontsize=8,
@@ -761,8 +822,7 @@ def desenhar(series: list[Serie], titulo: str, tipo: str = "auto") -> bytes:
                     py.append(float("nan"))
                 px.append(t)
                 py.append(v)
-            segundo = len(unidades) > 1 and s.unidade == unidades[1]
-            (ln,) = eixos[s.unidade].plot(px, py, "--" if segundo else "-", linewidth=1.4, color=cor[id(s)],
+            (ln,) = eixos[s.unidade].plot(px, py, "-", linewidth=1.4, color=cor[id(s)],
                                           label=s.rotulo, marker="." if len(xs) < 400 else None, markersize=3)
             linhas_leg.append(ln)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m" if varios_dias else "%H:%M", tz=BRT))
@@ -806,7 +866,8 @@ FERRAMENTA_GRAFICO = {"type": "function", "function": {
                 "rotulo": {"type": "string"}},
             "required": ["consulta"]}},
         "tipo": {"type": "string", "enum": ["auto", "linha", "barras"]},
-        "titulo": {"type": "string"}},
+        "titulo": {"type": "string", "description": "a usina e o que é: \"Pirapozinho: temperatura do trafo 1 × "
+                                                    "potência do Inv 12\""}},
         "required": ["series"]}}}
 
 _APELIDOS: dict[tuple[int, str], tuple[float, Apelidos]] = {}
@@ -933,7 +994,9 @@ async def situacao(ctx, slug: str) -> dict:
                                "desligamento": (por_sonda.get(f"temp_s{n}") or sp).get("trip_c"),
                                "maxima_guardada": x.get(f"temp_max_s{n}")}
                 for n in (1, 2, 3, 4) if x.get(f"temp_s{n}") is not None or f"temp_s{n}" in por_sonda}
-    out = {"sem_com": sem_com, "reles": dict(reles), "temps": temps}
+    out = {"sem_com": sem_com, "reles": dict(reles), "temps": temps,
+           "trafo_do_sensor": {str(x["name"]): str(x.get("transformer_name") or "")
+                               for x in d.get("temp_sensors") or [] if x.get("name")}}
     _COMUNICACAO[k] = (time.monotonic(), out)
     return out
 
@@ -971,8 +1034,11 @@ async def _o_rele_mediu(ctx, slug: str, dia: date, nomes: list[str]) -> list[str
         ss, _p = series_de(obs, {}, ["total_active_power"], [nome])
         if ss and (pts := ss[0].pontos):
             mx = max(pts, key=lambda p: p[1])
-            out.append(f"o relé {nome} mediu {_br(arred(_energia(pts)))} kWh em {dia:%d/%m} (pico de "
-                       f"{_br(arred(mx[1]))} kW às {mx[0]:%H:%M})")
+            buraco = max(itertools.pairwise(pts), key=lambda ab: ab[1][0] - ab[0][0], default=None)
+            out.append(f"o relé {nome} mediu {_num(_energia(pts))} kWh em {dia:%d/%m} (pico de "
+                       f"{_num(mx[1])} kW às {mx[0]:%H:%M})" + (
+                           f"; leitura incompleta: sem dado das {buraco[0][0]:%H:%M} às {buraco[1][0]:%H:%M}"
+                           if buraco and buraco[1][0] - buraco[0][0] > timedelta(hours=1) else ""))
     return out
 
 
@@ -986,21 +1052,6 @@ async def _sem_leitura(ctx, nome: str, slug: str, dia: date, mudos: dict, mapa: 
 
 def _exibir_do(nome: str, mapa: Apelidos) -> str:
     return next((eq.exibir for (k, v), eq in mapa.items() if k == "label" and v == nome), nome)
-
-
-async def strings_ligadas(ctx, slug: str, dia: date) -> dict[str, dict[int, str]]:
-    """{número de série: {entrada PV: etiqueta}} das strings que o cadastro do meuWatt tem LIGADAS em cada inversor. A
-    entrada sem string lê 0 A o dia todo e não é string zerada (17/11/2026: a PV1 não tem string em Pirapozinho)."""
-    k = (ctx.user.id, slug, dia.isoformat())
-    if (c := _STRINGS.get(k)) and time.monotonic() - c[0] < CACHE_S:
-        return c[1]
-    r = await chamar(ctx, "monitoramento_leituras_strings", {"slug": slug, "date": dia.isoformat()})
-    d = dados_de(r) if not r.get("isError") else None
-    out = {str(i["serial_number"]): {int(x["number"]): str(x.get("tag") or "") for x in i.get("strings") or []
-                                     if x.get("registered") and x.get("number") is not None}
-           for i in ((d or {}).get("inverters") or [] if isinstance(d, dict) else []) if i.get("serial_number")}
-    _STRINGS[k] = (time.monotonic(), out)
-    return out
 
 
 def _faixas(nums: list[int]) -> str:
@@ -1057,6 +1108,8 @@ async def _serie(ctx, spec: dict) -> tuple[list[Serie], dict]:
             s.sem_com_desde = com[s.serial][0]
         if s.unidade == "kW" and s.serial and contador.get(s.serial):
             s.energia_contador = contador[s.serial]
+        elif s.unidade == "kW" and s.componentes and all(contador.get(x) for x in s.componentes):
+            s.energia_contador = sum(contador[x] for x in s.componentes)   # a soma: a mesma conta do item de cada um
     series = [s for s in series if s.pontos]
     mudos = {} if series or not com else {
         eq.serial: com[eq.serial] for ent, _c in obs if (eq := equipamento(ent, mapa)).serial in com
@@ -1091,23 +1144,15 @@ async def _serie(ctx, spec: dict) -> tuple[list[Serie], dict]:
             elif n in pedidas:
                 dist = min((abs(x - n) for x in reg), default=None)
                 perto = sorted(x for x in reg if abs(x - n) == dist)
-                sub = next((k for k in obs if len(perto) == 1 and perto[0] not in pedidas and k[1] == f"pv{perto[0]}"
-                            and equipamento(k[0], mapa).serial == s.serial), None)
-                diz = f"A entrada PV{n} do {s.equipamento} não tem string ligada no cadastro (ligadas: " \
-                      f"{_faixas(sorted(reg))})"
-                if sub:        # a única mais próxima entra no lugar, com o nome dizendo isso (avaliação de 17/11/2026)
-                    p = perto[0]
-                    fica.append(Serie(f"{s.equipamento} · {nome_do_campo(sub[1])} ({reg[p]}), no lugar da PV{n} "
-                                      "(sem string)", s.unidade, sorted(dict(obs[sub]).items()), s.equipamento,
-                                      campo=sub[1], serial=s.serial, achados=s.achados))
-                    sem_string.append(f"{diz}: no gráfico foi a mais próxima, a PV{p} ({reg[p]}).")
-                else:
-                    sem_string.append(diz + ("; as mais próximas são " + " e ".join(
-                        f"a PV{x} ({reg[x]})" for x in perto) + ": pergunte qual" if perto else "") + ".")
+                sem_string.append(
+                    f"A entrada PV{n} do {s.equipamento} não tem string ligada no cadastro (ligadas: "
+                    f"{_faixas(sorted(reg))})" + (("; a mais próxima é " if len(perto) == 1 else
+                                                   "; as mais próximas são ") + " e ".join(
+                        f"a PV{x} ({reg[x]})" for x in perto) if perto else "") + ".")
         series = fica
-        if sem_string:     # não barra: desenha o que existe e diz da entrada vazia
-            return series, {"consulta": nome,
-                            "aviso": " ".join(sem_string) + " Não é string zerada: a entrada não tem string."}
+        if sem_string:     # pergunta antes: a pessoa pode chamar de "string 1" a 1ª string ligada, que é outra entrada
+            return [], {"consulta": nome, "erro": " ".join(sem_string) + " Não é string zerada: a entrada não tem "
+                                                  "string.", "pergunte": "qual entrada a pessoa quer no lugar"}
     return series, ({"consulta": nome, **problema} if problema else {})
 
 
@@ -1145,35 +1190,174 @@ async def sugestoes(ctx, spec: dict) -> list[str]:
 
 
 _NOTA = ("O gráfico já está no chat: não o desminta. Escreva à pessoa em até 10 linhas, com os números da `analise` "
-         "(já arredondados) e as `frase` prontas das comparações (não refaça porcentagem): o máximo e quando (no teto — "
-         "o limite de potência do equipamento, não defeito —, o trecho e as quedas); nas de sol, quando começou e parou "
-         "e a energia; `strings_sem_corrente` é a causa provável de o inversor gerar menos (diga quais); "
-         "`leitura_parada`: a sonda repetiu o mesmo valor nesse trecho (parece travada) e o pico dela não foi medido; "
-         "trafo: os limites do relé e a folga até o alarme (ou quando passou), e `maxima_guardada_no_rele` (o relé não "
-         "diz quando foi); `abaixo_do_minimo`/`acima_do_limite`: os trechos, por dia; `dias_incompletos`, "
-         "`dias_no_teto`, `no_teto_da_potencia`, `o_que_e_a_diferenca`. Num período, 1 a 3 números (o total, o melhor e "
-         "o pior dia completos). Números no formato do Brasil (5.005 kW; 6,9 A). Datas dd/mm/aaaa. Repita os `avisos` e a `comunicacao` (sem comunicação não é parada). "
-         "Sem as palavras correlação, r, pontos, leituras, série, consulta, campo ou ferramenta, e sem nome entre "
-         "crases.")
-_ISOLACAO = ("O inversor mede a isolação ao ligar, de manhã, e repete a medida a cada poucos minutos enquanto não liga. "
-             "Ela cai com a umidade da madrugada e sobe com o sol (todos caem juntos de manhã). Abaixo do mínimo o "
-             "inversor não liga: o trecho de `abaixo_do_minimo` é o tempo em que ele ficou sem gerar.")
+         "(já arredondados) e as `frase` prontas das comparações (não refaça porcentagem). O máximo e quando; no "
+         "teto (o limite de potência `de_quem`, não defeito), o trecho e as quedas; `maiores_quedas` do dia; nas de sol, "
+         "quando começou e parou e a energia (relé MEDE, não gera). `strings_com_problema`: a causa provável de o "
+         "inversor gerar menos — diga quais, desde quando e a perda do dia. `leitura_parada`: a sonda repetiu o mesmo "
+         "valor nesse trecho (fora as leituras de `exceto`), parece travada; não suponha o que ela mediria. Trafo: os "
+         "limites do relé, a folga até o alarme (ou quando passou), `maxima_guardada_no_rele` e `trafos_no_dia` (a "
+         "mesma carga com outra temperatura diz que é o trafo). Isolação: os trechos por dia e `naquele_dia`. "
+         "`dias_incompletos`, `dias_no_teto`, `no_teto_da_potencia`, `no_trecho_alto`. Num período, 1 a 3 números (o "
+         "total, o melhor e o pior dia completos). Números no formato do Brasil (5.005 kW; 6,9 A). Datas dd/mm/aaaa. "
+         "Repita os `avisos` e a `comunicacao` (sem comunicação não é parada). Sem as palavras correlação, r, pontos, "
+         "leituras, série, consulta, campo ou ferramenta, e sem nome entre crases.")
+_ISOLACAO = ("Cada ponto é a isolação que o inversor mede antes de ligar, de manhã; a sonda de diagnóstico só lê das 6h "
+             "às 10h, nos que ainda não ligaram: o fim de um trecho abaixo do mínimo NÃO é a hora em que ele ligou (isso "
+             "está em `naquele_dia`). Ela cai com a umidade da madrugada e sobe com o sol (todos caem juntos de manhã); "
+             "abaixo do mínimo o inversor não liga.")
 
 
-async def strings_sem_corrente(ctx, slug: str, dia: date, serial: str) -> list[str]:
-    """As strings LIGADAS de um inversor que não deram corrente no dia (máx. abaixo de 0,2 A enquanto as outras dele
-    passaram de 2 A): a causa provável de ele gerar menos que os outros (17/11/2026: o Inv 13 de Pirapozinho, 5% abaixo
-    dos outros, com a 6S27 e a 6S28 zeradas desde 19/10)."""
-    ligadas = (await strings_ligadas(ctx, slug, dia)).get(serial) or {}
-    if not ligadas:
-        return []
-    r = await chamar(ctx, "monitoramento_correntes_strings_dia", {"slug": slug, "date": dia.isoformat()})
+async def _leituras_strings(ctx, slug: str, dia: date) -> list[dict]:
+    """Os inversores da tela Leituras do meuWatt (`readings/strings`): as strings ligadas de cada um, o estado (a regra
+    é a de lá: zerada, intermitente, fraca), desde quando está zerada, a perda do dia e a marca da equipe."""
+    k = (ctx.user.id, slug, dia.isoformat())
+    if (c := _STRINGS.get(k)) and time.monotonic() - c[0] < CACHE_S:
+        return c[1]
+    r = await chamar(ctx, "monitoramento_leituras_strings", {"slug": slug, "date": dia.isoformat()})
     d = dados_de(r) if not r.get("isError") else None
-    maximos = {int(m[1]): max(v for _t, v in pts) for (ent, c), pts in (observacoes(d, dia) if d else {}).items()
-               if pts and (m := re.fullmatch(r"pv(\d+)", c)) and int(m[1]) in ligadas and ("serial_number", serial) in ent}
-    if not any(v >= 2 for v in maximos.values()):
-        return []
-    return [ligadas[n] or f"PV{n}" for n, v in sorted(maximos.items()) if v < 0.2]
+    out = [i for i in (d.get("inverters") or [] if isinstance(d, dict) else []) if i.get("serial_number")]
+    _STRINGS[k] = (time.monotonic(), out)
+    return out
+
+
+async def strings_ligadas(ctx, slug: str, dia: date) -> dict[str, dict[int, str]]:
+    """{número de série: {entrada PV: etiqueta}} das strings que o cadastro do meuWatt tem LIGADAS em cada inversor. A
+    entrada sem string lê 0 A o dia todo e não é string zerada (17/11/2026: a PV1 não tem string em Pirapozinho)."""
+    return {str(i["serial_number"]): {int(x["number"]): str(x.get("tag") or "") for x in i.get("strings") or []
+                                      if x.get("registered") and x.get("number") is not None}
+            for i in await _leituras_strings(ctx, slug, dia)}
+
+
+_ESTADO = {"zero": "zerada", "intermittent": "intermitente", "weak": "fraca"}
+
+
+async def strings_com_problema(ctx, slug: str, dia: date, serial: str) -> dict | None:
+    """As strings ligadas do inversor que a regra do meuWatt dá como zeradas, intermitentes ou fracas, desde quando,
+    a perda do dia e o que a equipe já marcou — a fonte da tela Leituras, nada calculado aqui (17/11/2026: o Inv 13 de
+    Pirapozinho com a 6S27 e a 6S28 zeradas desde 19/10, 174,5 kWh por dia)."""
+    inv = next((i for i in await _leituras_strings(ctx, slug, dia) if str(i["serial_number"]) == serial), {})
+    ruins = [x for x in inv.get("strings") or [] if x.get("registered") and x.get("status") in _ESTADO]
+    if not ruins:
+        return None
+    textos = []
+    for x in ruins:
+        t = f"{x.get('tag') or 'PV' + str(x.get('number'))} {_ESTADO[x['status']]}"
+        if x.get("zero_since"):
+            t += f" desde {date.fromisoformat(str(x['zero_since'])[:10]):%d/%m/%Y}" + (
+                " ou antes" if x.get("zero_since_before_window") else "")
+        if (m := x.get("mark") or {}).get("note"):
+            t += f" (a equipe já marcou: {m['note']})"
+        textos.append(t)
+    return {"strings": textos, **({"perda_kwh_dia": inv["loss_kwh_day"]} if inv.get("loss_kwh_day") else {})}
+
+
+async def _geracao_do_dia(ctx, slug: str, dia: date) -> dict[str, tuple[datetime | None, float]]:
+    """{número de série: (quando ligou, kWh do dia)} pela curva de 5 min do meuWatt."""
+    r = await chamar(ctx, "monitoramento_curva_5min", {"slug": slug, "date": dia.isoformat()})
+    d = dados_de(r) if not r.get("isError") else None
+    pot: dict[str, list] = {}
+    cont: dict[str, float] = {}
+    for (ent, c), pts in (observacoes(d, dia) if d else {}).items():
+        if (sn := dict(ent).get("serial_number")) and pts:
+            if c == "power_kw":
+                pot[sn] = sorted(pts)
+            elif c == "daily_gen_kwh":
+                cont[sn] = max(v for _t, v in pts)
+    out = {}
+    for sn, pts in pot.items():
+        ij = _sol(pts)
+        out[sn] = (pts[ij[0]][0] if ij else None, cont.get(sn) or _energia(pts))
+    return out
+
+
+def _o_dia_do_inversor(serial: str, g: dict[str, tuple[datetime | None, float]]) -> str:
+    ligou, kwh = g[serial]
+    outros = [v for sn, v in g.items() if sn != serial]
+    horas = sorted(t for t, _k in outros if t)
+    cmp = (f" (os outros: {_num(statistics.median(k for _t, k in outros))} kWh" +
+           (f", ligaram por volta das {horas[len(horas) // 2]:%H:%M}" if horas else "") + ")") if outros else ""
+    return ("não ligou o dia todo (0 kWh)" if ligou is None else
+            f"ligou às {ligou:%H:%M} e gerou {_num(kwh)} kWh") + cmp
+
+
+async def _trafos_no_dia(ctx, slug: str, dia: date, no_grafico: set[str]) -> list[str]:
+    """Cada trafo da usina no dia: a sonda mais quente e a carga dele — a soma dos inversores do skid, que é o que passa
+    pelo trafo (o relé do skid pode estar mudo: 17/11/2026, o do Skid 2 de Pirapozinho parou às 08:40 com 717 kW e o
+    skid ficou no teto de 1.000 kW até as 13:10). Mesma carga com 20 °C a menos diz que o problema é do trafo."""
+    q = {"slug": slug, "date": dia.isoformat()}
+    rt, ri, sit, mapa = await asyncio.gather(chamar(ctx, "monitoramento_temperatura_trafos", q),
+                                             chamar(ctx, "monitoramento_curva_5min", q), situacao(ctx, slug),
+                                             apelidos(ctx, "monitoramento_curva_5min", q))
+
+    def obs_de(r: dict) -> Obs:
+        d = dados_de(r) if not r.get("isError") else None
+        return observacoes(d, dia) if d else {}
+    quente: dict[str, tuple[datetime, float, str]] = {}
+    for (ent, c), pts in obs_de(rt).items():
+        if (nome := dict(ent).get("name")) and re.fullmatch(r"temp_s\d", c) and pts:
+            t, v = max(pts, key=lambda p: p[1])
+            if nome not in quente or v > quente[nome][1]:
+                quente[nome] = (t, v, nome_do_campo(c))
+    carga: dict[str, dict[datetime, float]] = defaultdict(lambda: defaultdict(float))
+    for (ent, c), pts in obs_de(ri).items():
+        if c == "power_kw" and (m := re.search(r"\(([^)]+)\)", equipamento(ent, mapa).exibir)):
+            for t, v in pts:
+                carga[m[1]][t] += v
+    mudos = defaultdict(list)
+    for d0, n in sorted((sit.get("sem_com") or {}).values()):
+        if d0.date() <= dia:
+            mudos[_skid_do(n, mapa)].append(f"{n} sem comunicação desde {d0:%d/%m %H:%M}")
+    out = []
+    for nome, (t, v, sonda) in sorted(quente.items()):
+        tr = (sit.get("trafo_do_sensor") or {}).get(nome, "")
+        linha = (f"{nome}{f' ({tr})' if tr else ''}{' (o do gráfico)' if nome in no_grafico else ''}: a {sonda} "
+                 f"chegou a {_c(v)} °C às {t:%H:%M}")
+        if pts := sorted(carga.get(tr, {}).items()):
+            tt, mx = _teto(pts), max(pts, key=lambda p: p[1])
+            linha += (f"; os inversores do skid ficaram no teto de {_num(tt['valor'])} kW das {tt['de']} às {tt['ate']}"
+                      if tt else f"; os inversores do skid chegaram a {_num(mx[1])} kW às {mx[0]:%H:%M}")
+            if mudos.get(tr):
+                linha += f" ({', '.join(mudos[tr])}: o que gerou depois disso não está na soma)"
+        out.append(linha)
+    return out if len(out) > 1 else []
+
+
+def _args(specs: list[dict], s: Serie) -> dict:
+    a = specs[s.grupo].get("argumentos")
+    return a if isinstance(a, dict) else {}
+
+
+async def _o_que_explica(ctx, specs: list[dict], series: list[Serie], res: dict) -> dict:
+    """O que a análise diz a mais, buscado no meuWatt: as strings do inversor que gera menos que os outros (a causa,
+    não só a diferença), o que a isolação baixa custou no dia e os outros trafos da usina no mesmo dia."""
+    item = {x["serie"]: x for x in res["series"]}
+    extra: dict = {}
+    pot = [s for s in series if s.unidade == "kW" and s.serial and s.estilo != "limite" and not s.sem_com_desde]
+    if len(pot) >= 2 and not e_diario(pot):
+        ens = {id(s): s.energia_contador or _energia(s.pontos) for s in pot}
+        for s in [s for s in pot if (ref := statistics.median(ens[id(o)] for o in pot if o is not s))
+                  and ens[id(s)] < 0.97 * ref][:3]:
+            if (slug := slug_dos("monitoramento_", _args(specs, s))) and (
+                    z := await strings_com_problema(ctx, slug, dia_dos(_args(specs, s)), s.serial)):
+                item[s.rotulo]["strings_com_problema"] = z
+    # a isolação abaixo do mínimo: o que aconteceu no dia. A leitura para às 10h (a sonda de diagnóstico só lê de
+    # manhã): o fim do trecho NÃO é a hora em que o inversor ligou (17/11/2026: o Inv 14 não gerou nada em 03/11)
+    iso = [s for s in series if s.unidade == "MΩ" and s.serial and s.estilo != "limite"]
+    lim = next((x.pontos[0][1] for x in series if x.estilo == "limite" and x.unidade == "MΩ"), None)
+    if iso and lim is not None and (slug := slug_dos("monitoramento_", _args(specs, iso[0]))):
+        dias = sorted({t.date() for s in iso for t, v in s.pontos if v < lim})[-5:]
+        gens = dict(zip(dias, await asyncio.gather(*(_geracao_do_dia(ctx, slug, d) for d in dias)), strict=True))
+        for s in iso:
+            for jan in item[s.rotulo].get("abaixo_do_minimo") or []:
+                d = next((d for d in gens if d.strftime("%d/%m") == jan["dia"]), None)
+                if d and s.serial in gens[d]:
+                    jan["naquele_dia"] = _o_dia_do_inversor(s.serial, gens[d])
+    sondas = [s for s in series if s.limites_temp]
+    if sondas and (slug := slug_dos("monitoramento_", _args(specs, sondas[0]))) and (
+            t := await _trafos_no_dia(ctx, slug, dia_dos(_args(specs, sondas[0])),
+                                      {s.equipamento.split(" (")[0] for s in sondas})):
+        extra["trafos_no_dia"] = t
+    return extra
 
 
 async def grafico_de_series(ctx, a: dict) -> dict:
@@ -1187,34 +1371,34 @@ async def grafico_de_series(ctx, a: dict) -> dict:
             s.grupo = g
     series = _limites_juntos([s for ss, _p in feitos for s in ss])
     problemas = [p for _ss, p in feitos if p and "erro" in p]
-    avisos_das_series = [p["aviso"] for _ss, p in feitos if p and "aviso" in p]
     if a.get("tipo") == "barras":     # barras = um valor por dia (o máximo; a energia, somada)
         series = [s if s.estilo == "limite" or e_diario([s]) else por_dia(s) for s in series]
-    if not series and avisos_das_series and not problemas:
-        return {"erro": "Nada para desenhar.", "avisos": avisos_das_series,
-                "como_seguir": "Diga isso à pessoa e ofereça a entrada mais próxima, que tem string."}
     diario = e_diario(series)
     if not diario:   # curva no tempo com 1 ou 2 pontos: a consulta não dá curva (17/11/2026: a hora a hora "num ponto")
         problemas += [{"serie": s.rotulo, "erro": f"Só {len(s.pontos)} leitura(s): não dá curva no tempo com isso."}
                       for s in series if s.estilo != "limite" and len(s.pontos) < 3]
     if problemas:
         # nada pela metade (17/11/2026: o gráfico saiu só com o relé e a pessoa leu "os inversores ficaram de fora"):
-        # volta o que errou, com o que existe, e a IA chama de novo com tudo certo — ou sem a série que não tem como
+        # volta o que errou, com o que existe, e a IA chama de novo com tudo certo — ou pergunta antes à pessoa
         return {"erro": "Nada desenhado ainda: " + ("nenhuma série saiu." if not series else
                                                      f"{len(problemas)} problema(s) nas entradas."),
                 "problemas": problemas, **({"ja_deram": [s.rotulo for s in series][:12]} if series else {}),
-                "como_seguir": "Corrija a consulta (veja `sugestoes`), os campos ou o equipamento pelo que existe "
-                               "acima e chame de novo com TODAS as séries. Se uma delas não tem como sair, chame sem "
-                               "ela e diga à pessoa por quê."}
+                "como_seguir": ("Não desenhe ainda: pergunte à pessoa o que está em `pergunte` (com as opções do "
+                                "erro) e desenhe tudo junto depois da resposta." if any(p.get("pergunte") for p in
+                                                                                       problemas) else
+                                "Corrija a consulta (veja `sugestoes`), os campos ou o equipamento pelo que existe "
+                                "acima e chame de novo com TODAS as séries. Se uma delas não tem como sair, chame sem "
+                                "ela e diga à pessoa por quê.")}
     fora = []
     if len(series) > MAX_SERIES:
         fora = [s.rotulo for s in series[MAX_SERIES:]]
         series = series[:MAX_SERIES]
-    trafo = {}          # o alarme e o desligamento do relé de temperatura, uma linha de cada
+    trafo = {}          # a ventilação, o alarme e o desligamento do relé de temperatura: uma linha de cada, no valor dele
     for s in series:
-        for k, traco in (("alarme", ":"), ("desligamento", "--")):
+        for k, nome, traco in (("ventilacao", "ventilação", "-."), ("alarme", "alarme", ":"),
+                               ("desligamento", "desligamento", "--")):
             if s.limites_temp and (v := s.limites_temp.get(k)) is not None and (k, v) not in trafo:
-                trafo[(k, v)] = Serie(f"{k} do relé de temperatura ({_br(v)} °C)", "°C", s.pontos[:1],
+                trafo[(k, v)] = Serie(f"{nome} do relé de temperatura ({_br(v)} °C)", "°C", [(s.pontos[0][0], float(v))],
                                       estilo="limite", campo="limite_trafo", traco=traco)
     series += list(trafo.values())
     unidades = list(dict.fromkeys(s.unidade for s in series))
@@ -1222,15 +1406,8 @@ async def grafico_de_series(ctx, a: dict) -> dict:
         return {"erro": f"Unidades demais num gráfico só ({', '.join(u or 'sem unidade' for u in unidades)}): um "
                         "gráfico tem no máximo duas (dois eixos). Divida em dois gráficos.",
                 "series": [f"{s.rotulo} ({s.unidade or '—'})" for s in series]}
-    titulo = str(a.get("titulo") or "")
-    if avisos_das_series or not titulo:   # o título diz o que foi desenhado, não o que se pediu e não existe
-        grupos: dict[str, list[str]] = defaultdict(list)
-        for x in series:
-            if x.estilo != "limite":
-                eq, _, o_que = x.rotulo.split(", no lugar")[0].partition(" · ")
-                grupos[eq].append(o_que)
-        titulo = " × ".join(f"{eq}: {', '.join(oq)}" if any(oq) else eq for eq, oq in grupos.items())
-    titulo = titulo_com_data(titulo[:120], series)
+    titulo = titulo_com_data(str(a.get("titulo") or " × ".join(dict.fromkeys(
+        s.rotulo for s in series if s.estilo != "limite")))[:120], series)
     tipo = a.get("tipo") if a.get("tipo") in ("linha", "barras") else "auto"
     png = await asyncio.to_thread(desenhar, series, titulo, tipo)
     r = await whatsapp.enviar_conteudo(telefone=ctx.telefone, tipo="image", arquivo=png, filename="grafico.png",
@@ -1252,26 +1429,15 @@ async def grafico_de_series(ctx, a: dict) -> dict:
                               "no monitoramento), então não é parada nem produção zero.")
     achados = {k: v for s in series if s.achados for k, v in s.achados.items()}
     res = analise(series)
-    # quem gerou menos que os outros no dia: as strings dele sem corrente (a causa, não só a diferença)
-    pot = [s for s in series if s.unidade == "kW" and s.serial and s.estilo != "limite" and not s.sem_com_desde]
-    if len(pot) >= 2 and not e_diario(pot):
-        ens = {id(s): s.energia_contador or _energia(s.pontos) for s in pot}
-        baixos = [s for s in pot if (ref := statistics.median(ens[id(o)] for o in pot if o is not s))
-                  and ens[id(s)] < 0.97 * ref]
-        for s in baixos[:3]:
-            args = specs[s.grupo].get("argumentos") if isinstance(specs[s.grupo].get("argumentos"), dict) else {}
-            slug = slug_dos("monitoramento_", args)
-            if slug and (tags := await strings_sem_corrente(ctx, slug, dia_dos(args), s.serial)):
-                next(x for x in res["series"] if x["serie"] == s.rotulo)["strings_sem_corrente"] = tags
+    extra = await _o_que_explica(ctx, specs, series, res)
     return {"grafico": titulo, "enviado_no_chat": ok, **({} if ok else {"erro": (r or {}).get("erro") or "não enviou"}),
             **({"pedido_e_achado": achados, "como_achou": "pelo cadastro do meuWatt; nos nomes Inv XY, X é o skid e Y "
                                                           "o inversor (Inv 12 = skid 1, inversor 2): já confirmado, não "
                                                           "peça para conferir"} if achados else {}),
-            "analise": res,
+            "analise": res, **extra,
             **({"sobre_a_isolacao": _ISOLACAO} if any(s.unidade == "MΩ" for s in series) else {}),
             **({"ficaram_de_fora": fora, "por_que": f"no máximo {MAX_SERIES} linhas num gráfico"} if fora else {}),
             **({"comunicacao": sorted(set(avisos))} if avisos else {}),
-            **({"avisos": avisos_das_series} if avisos_das_series else {}),
             "nota": _NOTA}
 
 
