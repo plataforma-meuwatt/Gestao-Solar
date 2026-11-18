@@ -17,16 +17,17 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const camadas: { tooltip: HTMLElement | null; clique: (() => void) | null }[] = []
+const camadas: { tooltip: HTMLElement | null; clique: (() => void) | null; eventos: Record<string, () => void> }[] = []
 let cliqueNoMapa: ((e: { latlng: { lat: number; lng: number } }) => void) | null = null
+let fundoCarregou: (() => void) | null = null
 
 vi.mock('leaflet', () => {
   const camada = () => {
-    const c = { tooltip: null as HTMLElement | null, clique: null as (() => void) | null }
+    const c = { tooltip: null as HTMLElement | null, clique: null as (() => void) | null, eventos: {} as Record<string, () => void> }
     camadas.push(c)
     const api = {
       bindTooltip: (el: HTMLElement) => { c.tooltip = el; return api },
-      on: (_ev: string, fn: () => void) => { c.clique = fn; return api },
+      on: (ev: string, fn: () => void) => { c.eventos[ev] = fn; if (ev === 'click') c.clique = fn; return api },
       addTo: () => api,
     }
     return api
@@ -37,7 +38,7 @@ vi.mock('leaflet', () => {
     remove: () => undefined, fitBounds: () => undefined, setView: () => undefined,
   }
   const L = {
-    map: () => mapa, tileLayer: () => ({ on: () => undefined, addTo: () => undefined }),
+    map: () => mapa, tileLayer: () => ({ on: (_ev: string, fn: () => void) => { fundoCarregou = fn }, addTo: () => undefined }),
     layerGroup: () => ({ addTo: () => ({ clearLayers: () => undefined }) }),
     imageOverlay: camada, polygon: camada, polyline: camada, circleMarker: camada, latLngBounds: () => ({}),
   }
@@ -95,6 +96,7 @@ describe('mapa único', () => {
     identificarCache(7)
     camadas.length = 0
     cliqueNoMapa = null
+    fundoCarregou = null
   })
   afterEach(() => {
     cleanup()
@@ -263,5 +265,21 @@ describe('mapa único', () => {
     await screen.findByText('Esta usina está ligada a outra usina do monitoramento.')
     expect(screen.queryByText(/Desenhar string/)).toBeNull()
     expect(screen.getByLabelText(/Marcar no mapa/)).toBeTruthy()
+  })
+
+  it('a foto: "pronto" só com o satélite E o voo carregados; o voo que falha diz', async () => {
+    const comVoo = resposta({})
+    comVoo.mapa!.orto = { voo: '2026-08-26', url: 'https://r2/voo.webp', bounds: [[-23.21, -48], [-23.19, -47.96]] }
+    vi.spyOn(api, 'get').mockResolvedValue({ data: comVoo })
+    const r = montar('/usinas/7/mapa?destaque=2&print=1')
+    await screen.findByText(/Com problema: corrente zero/)
+    const caixa = r.container.querySelector('#mapa-unico')!
+    const voo = camadas.find((c) => c.eventos.load)!
+    fundoCarregou!()
+    expect(caixa.getAttribute('data-pronto')).toBeNull()              // o satélite sozinho não basta
+    voo.eventos.load()
+    expect(caixa.getAttribute('data-pronto')).toBe('1')
+    voo.eventos.error()
+    expect(caixa.getAttribute('data-voo')).toBe('falhou')
   })
 })

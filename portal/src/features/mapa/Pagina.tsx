@@ -191,6 +191,11 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
   const camadas = useRef<L.LayerGroup | null>(null)
   const rascunho = useRef<L.LayerGroup | null>(null)
   const enquadrado = useRef(false)
+  // a foto do bot só sai com o satélite E o voo (quando há voo) carregados: `#mapa-unico[data-pronto="1"]`
+  const carregado = useRef({ fundo: false, voo: true })
+  const marcarPronto = () => {
+    if (carregado.current.fundo && carregado.current.voo) caixa.current?.setAttribute('data-pronto', '1')
+  }
   const objetos = useMemo(() => d.mapa?.objetos ?? [], [d])
   const [escolhido, setEscolhido] = useState<ObjetoDoMapa | null>(() => objetos.find((o) => o.id === destaque) ?? null)
   const [modo, setModo] = useState<Modo>({ tipo: 'nada' })
@@ -210,8 +215,7 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
     m.attributionControl.setPrefix('Leaflet')
     // o Esri só tem imagem até o zoom 18 (medido em 08/11/2026): acima disso, aumenta o 18 em vez do "sem imagem"
     const fundo = L.tileLayer(ESRI, { maxZoom: 21, maxNativeZoom: 18, attribution: 'Imagens © Esri' })
-    // a foto do bot espera o fundo carregar: `data-pronto` diz quando
-    fundo.on?.('load', () => caixa.current?.setAttribute('data-pronto', '1'))
+    fundo.on?.('load', () => { carregado.current.fundo = true; marcarPronto() })
     fundo.addTo(m)
     camadas.current = L.layerGroup().addTo(m)
     rascunho.current = L.layerGroup().addTo(m)
@@ -237,7 +241,12 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
     const enquadrar: L.LatLngTuple[] = []
     const u = d.mapa?.usina
     if (d.mapa?.orto?.url) {
-      L.imageOverlay(d.mapa.orto.url, d.mapa.orto.bounds).addTo(grupo)
+      const voo = L.imageOverlay(d.mapa.orto.url, d.mapa.orto.bounds)
+      if (!caixa.current?.hasAttribute('data-pronto')) carregado.current.voo = false
+      voo.on?.('load', () => { carregado.current.voo = true; marcarPronto() })
+      // o voo que não carrega não vira foto "sem voo" calada: `data-voo="falhou"` diz ao bot para desistir
+      voo.on?.('error', () => caixa.current?.setAttribute('data-voo', 'falhou'))
+      voo.addTo(grupo)
       enquadrar.push(...(d.mapa.orto.bounds as L.LatLngTuple[]))
     }
     const contorno = (u?.area_poligono ?? []).filter((p) => Array.isArray(p) && p.length >= 2) as L.LatLngTuple[]
