@@ -614,3 +614,27 @@ async def test_titulo_de_um_skid_com_inversores_de_outro_nao_sai(conector):
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"], "so": ["Skid 1"]}],
         "titulo": "Pirapozinho: potência dos inversores do Skid 1"})
     assert r["enviado_no_chat"]
+
+
+async def test_inversores_no_titulo_e_um_inversor_so_no_grafico_nao_sai(conector):
+    """"Inversores do skid 1" virou so=["inversor 1 do skid 1"]: saiu só o Inv 11 com o título no plural (18/11/2026)."""
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "curva_5min", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"], "so": ["inversor 1 do skid 1"]}],
+        "titulo": "Pirapozinho: potência do relé × inversores do Skid 1"})
+    assert r["erro"].startswith("Nada desenhado ainda: o título fala de inversores") and conector.enviados == []
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "curva_5min", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"], "so": ["Skid 1"], "somar": True}],
+        "titulo": "Pirapozinho: potência dos inversores do Skid 1"})
+    assert r["enviado_no_chat"]                        # a soma dos inversores do skid: vários, passa
+
+
+async def test_dia_sem_leitura_nao_e_consulta_sem_serie(conector, monkeypatch):
+    """18/11/2026 01:07: as strings de hoje vinham com os horários e nenhum inversor; o bot disse que a consulta "não
+    traz série no tempo" e que o "inversor 1 do skid 1" era ambíguo."""
+    monkeypatch.setitem(RESPOSTAS, "monitoramento_correntes_strings_dia", {"plant": "Pirapozinho", "date": "2026-11-17",
+                                                                         "points": [{"time": "00:00", "inverters": []}]})
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["pv2"], "so": ["inversor 1 do skid 1"]}]})
+    p = r["problemas"][0]
+    assert p["erro"].startswith("Sem leitura em 17/11/2026") and "não traz série" not in p["erro"]
+    assert p["pedido_e_achado"] == {"inversor 1 do skid 1": ["Inv 11 (TR-01)"]}

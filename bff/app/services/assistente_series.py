@@ -77,6 +77,13 @@ def _dia_do(dados, padrao: date) -> date:
     return padrao
 
 
+def _tem_tempo(no) -> bool:
+    """O JSON tem eixo do tempo (horários), mesmo sem nenhuma medida neles."""
+    if isinstance(no, dict):
+        return any(k in _TEMPO and no[k] for k in no) or any(_tem_tempo(v) for v in no.values())
+    return isinstance(no, list) and any(_tem_tempo(x) for x in no[:5])
+
+
 def observacoes(dados, dia: date) -> Obs:
     """Toda medida no tempo do JSON, por (equipamento, campo). Entende: o item com hora (`time`) e números; a lista de
     números no item com hora (`strings` = pv1…pv32); a coluna de valores alinhada a uma coluna de horas
@@ -1183,6 +1190,13 @@ async def _serie(ctx, spec: dict) -> tuple[list[Serie], dict]:
     dia = dia_dos(args)
     obs = observacoes(dados, dia)
     if not obs:
+        if _tem_tempo(dados):   # tem os horários e nenhuma leitura: o dia sem dado (18/11/2026 01:07: as strings de hoje)
+            so = _lista(spec.get("so"))
+            achados = {x: sorted({eq.exibir for eq in mapa.values() if casa_equipamento(x, eq)}) for x in so}
+            return [], {"consulta": nome, "erro": f"Sem leitura em {dia:%d/%m/%Y}" + (
+                " ainda: o dia de hoje acabou de começar" if dia == ger.hoje() else "") + ".",
+                        **({"pedido_e_achado": achados} if any(achados.values()) else {}),
+                        "como_seguir": "Diga isso à pessoa e ofereça o dia anterior (ou outro dia)."}
         return [], {"consulta": nome, "erro": "Esta consulta não traz série no tempo (é um total ou um cadastro).",
                     "sugestoes": await sugestoes(ctx, spec)}
     if com:   # zero depois do "sem comunicação desde" é falta de dado: sai do gráfico e das contas
@@ -1484,7 +1498,9 @@ async def _o_que_explica(ctx, specs: list[dict], series: list[Serie], res: dict)
     extra: dict = {}
     pot = [s for s in series if s.unidade == "kW" and s.serial and s.estilo != "limite" and not s.sem_com_desde]
     if len(pot) >= 2 and not e_diario(pot):
-        ens = {id(s): s.energia_contador or _energia(s.pontos) for s in pot}
+        kw = [s for s in series if s.unidade == "kW" and s.estilo != "limite"]
+        curva = any(map(_e_rele, kw)) and not all(map(_e_rele, kw))      # a mesma conta da análise (com relé, a curva)
+        ens = {id(s): s.energia_contador if s.energia_contador and not curva else _energia(s.pontos) for s in pot}
         for s in [s for s in pot if (ref := statistics.median(ens[id(o)] for o in pot if o is not s))
                   and ens[id(s)] < 0.97 * ref][:3]:
             if (slug := slug_dos("monitoramento_", _args(specs, s))) and (
@@ -1576,6 +1592,15 @@ async def grafico_de_series(ctx, a: dict) -> dict:
                for n in re.findall(r"\b(?:skid|trafo|tr)[\s-]*0*(\d+)\b", x, re.IGNORECASE)}
     de_outro = sorted({s.equipamento for s in series if s.estilo != "limite" and (
         m := re.search(r"(?:skid|tr)(\d+)", chave(s.equipamento))) and int(m[1]) not in citados})
+    # "inversores" no título e um inversor só no gráfico: o `so` virou "inversor 1 do skid 1" (17/11/2026: o pedido
+    # "inversores do skid 1" saiu só com o Inv 11 e o texto desmentiu o gráfico depois)
+    seriais = {x for s in series for x in (s.componentes or ((s.serial,) if s.serial else ()))}
+    if len(seriais) == 1 and any(re.search(r"\binversores\b", x, re.IGNORECASE) for x in [
+            str(a.get("titulo") or ""), *(str(sp.get("rotulo") or "") for sp in specs)]):
+        return {"erro": "Nada desenhado ainda: o título fala de inversores (vários), mas veio um só: "
+                        f"{next(s.equipamento for s in series if s.serial or s.componentes)}.",
+                "como_seguir": "Para os inversores de um skid, passe so=[\"Skid 1\"] (cada um) ou somar; para um só, "
+                               "título no singular. Chame de novo antes de responder."}
     if citados and de_outro:
         return {"erro": f"Nada desenhado ainda: o título fala do skid/trafo {', '.join(map(str, sorted(citados)))}, mas "
                         f"vieram equipamentos de outro: {', '.join(de_outro[:8])}.",
