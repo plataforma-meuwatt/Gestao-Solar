@@ -1567,6 +1567,16 @@ async def grafico_de_series(ctx, a: dict) -> dict:
         return {"erro": f"Unidades demais num gráfico só ({', '.join(u or 'sem unidade' for u in unidades)}): um "
                         "gráfico tem no máximo duas (dois eixos). Divida em dois gráficos.",
                 "series": [f"{s.rotulo} ({s.unidade or '—'})" for s in series]}
+    # o título fala de um skid/trafo e veio equipamento de outro: o pedido esqueceu o `so` (17/11/2026: "Skid 1" no
+    # título com os 10 inversores da usina no gráfico, mandado antes do certo)
+    citados = {int(n) for x in [str(a.get("titulo") or ""), *(str(sp.get("rotulo") or "") for sp in specs)]
+               for n in re.findall(r"\b(?:skid|trafo|tr)[\s-]*0*(\d+)\b", x, re.IGNORECASE)}
+    de_outro = sorted({s.equipamento for s in series if s.estilo != "limite" and (
+        m := re.search(r"(?:skid|tr)(\d+)", chave(s.equipamento))) and int(m[1]) not in citados})
+    if citados and de_outro:
+        return {"erro": f"Nada desenhado ainda: o título fala do skid/trafo {', '.join(map(str, sorted(citados)))}, mas "
+                        f"vieram equipamentos de outro: {', '.join(de_outro[:8])}.",
+                "como_seguir": "Passe `so` com o skid ou os equipamentos pedidos (ex.: so=[\"Skid 1\"]) e chame de novo."}
     titulo = titulo_com_data(str(a.get("titulo") or " × ".join(dict.fromkeys(
         s.rotulo for s in series if s.estilo != "limite")))[:120], series)
     tipo = a.get("tipo") if a.get("tipo") in ("linha", "barras") else "auto"

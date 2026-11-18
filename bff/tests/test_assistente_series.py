@@ -584,3 +584,16 @@ async def test_os_trafos_na_mesma_carga_e_a_conclusao(conector, monkeypatch):
         "slug": "pirapozinho", "date": "2026-11-17"}, "so": ["TEMP-SKID-01"]}]})
     assert r["trafos_no_dia"][-1] == ("conclusão: com a mesma carga (102% do trafo), o TR-01 ficou 23 °C mais quente "
                                       "que o TR-03: vale verificar a ventilação e as sondas do TR-01")
+
+
+async def test_titulo_de_um_skid_com_inversores_de_outro_nao_sai(conector):
+    """"Skid 1" no título e os inversores da usina toda no gráfico: o pedido esqueceu o `so` (17/11/2026)."""
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "curva_5min", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"]}],
+        "titulo": "Pirapozinho: potência dos inversores do Skid 1"})
+    assert r["erro"].startswith("Nada desenhado ainda: o título fala do skid/trafo 1") and "Inv 32 (TR-03)" in r["erro"]
+    assert conector.enviados == []
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "curva_5min", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["potência"], "so": ["Skid 1"]}],
+        "titulo": "Pirapozinho: potência dos inversores do Skid 1"})
+    assert r["enviado_no_chat"]
