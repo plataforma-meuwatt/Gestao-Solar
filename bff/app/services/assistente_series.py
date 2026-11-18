@@ -203,6 +203,11 @@ def apelidos_do_meuwatt(inversores, catalogo, slug: str) -> Apelidos:
     for tid, nome in skids.items():
         mapa[("unidade", str(tid))] = Equip(nome, _pecas(nome))
         mapa[("transformer_id", str(tid))] = Equip(nome, _pecas(nome))
+    for p in (catalogo or {}).get("plants") or []:      # a usina pelo nome ("porto-ferreira" → "Porto Ferreira")
+        if p.get("slug") == slug and p.get("name"):
+            mapa[("plant", slug)] = Equip(str(p["name"]), _pecas(str(p["name"])) | {slug})
+    _GRANDEZAS.update({str(g["key"]): (str(g.get("label") or g["key"]), str(g.get("unit") or ""))
+                       for g in (catalogo or {}).get("grandezas") or [] if isinstance(g, dict) and g.get("key")})
     return mapa
 
 
@@ -256,12 +261,20 @@ _UNIDADES = (
 )
 
 
+#: as grandezas do meuWatt (chave → nome, unidade), do catálogo delas: o mesmo para todos
+_GRANDEZAS: dict[str, tuple[str, str]] = {}
+
+
 def unidade(campo: str) -> str:
+    if campo in _GRANDEZAS and _GRANDEZAS[campo][1]:
+        return _GRANDEZAS[campo][1]
     c = chave(campo)
     return next((u for padrao, u in _UNIDADES if re.search(padrao, c)), "")
 
 
 def nome_do_campo(campo: str) -> str:
+    if campo in _GRANDEZAS:          # "potencia_ativa" → "Potência ativa" (17/11/2026: a chave crua na legenda)
+        return _GRANDEZAS[campo][0]
     c = chave(campo)
     if m := re.fullmatch(r"pv(\d+)", c):
         return f"string {m[1]}"

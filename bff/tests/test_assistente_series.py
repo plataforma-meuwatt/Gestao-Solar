@@ -149,6 +149,13 @@ def test_os_equipamentos_pelo_nome_que_a_pessoa_usa():
     assert _rotulos(RELES, ["potência fase a"], ["relé do skid 1"])[0] == ["Relé Skid 1 · active_power_a"]
     assert _rotulos(ISOLACAO, ["isolação"])[0] == ["Inv 13 (TR-01) · isolação", "Inv 13 (TR-01) · threshold_mohm"]
     assert _rotulos(GRANDEZAS, ["energia"])[0] == ["pirapozinho · energia_dia"]
+    # com o catálogo trazendo os nomes: a usina e a grandeza pelo nome, e a unidade dele
+    nomes = {**CATALOGO_GRANDEZAS, "plants": [{**CATALOGO_GRANDEZAS["plants"][0], "name": "Pirapozinho"}],
+             "grandezas": [{"key": "energia_dia", "label": "Energia gerada", "unit": "kWh"}]}
+    s, _p = ser.series_de(ser.observacoes(GRANDEZAS, DIA), ser.apelidos_do_meuwatt({"itens": SLOTS}, nomes,
+                                                                                    "pirapozinho"), ["energia"], [])
+    assert [(x.rotulo, x.unidade) for x in s] == [("Pirapozinho · Energia gerada", "kWh")]
+    ser._GRANDEZAS.clear()
     nada, problema = _rotulos(INTRADAY, ["potência"], ["Inv 99"])
     assert nada == [] and "Inv 32 (TR-03)" in problema["equipamentos"]
     nada, problema = _rotulos(RELES, ["frequência"])
