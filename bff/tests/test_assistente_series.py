@@ -578,12 +578,24 @@ async def test_os_trafos_na_mesma_carga_e_a_conclusao(conector, monkeypatch):
                                                                                        "TEMP-SKID-01" else 0)}
                                                          for p in x["points"]]} for x in TEMPERATURA["sensors"]]}
     monkeypatch.setitem(RESPOSTAS, "monitoramento_temperatura_trafos", quente)
+    # o mesmo tamanho (700 kVA) e a mesma carga: vale, e com o trafo do gráfico sendo o mais frio também
     monkeypatch.setitem(RESPOSTAS, "monitoramento_detalhe_usina", {"transformers": [
-        {"name": "TR-01", "power_kva": 700.0}, {"name": "TR-03", "power_kva": 200.0}]})
+        {"name": "TR-01", "power_kva": 700.0}, {"name": "TR-03", "power_kva": 700.0}]})
+    monkeypatch.setitem(RESPOSTAS, "monitoramento_curva_5min", {**INTRADAY, "points": [
+        {**p, "inverters": [{**i, "power_kw": i["power_kw"] * 3.5} if i["serial_number"] == "S32" else i
+                            for i in p["inverters"]]} for p in INTRADAY["points"]]})
+    for sensor in ("TEMP-SKID-01", "TEMP-SKID-03"):
+        ser._GERACAO.clear()
+        r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "temperatura_trafos", "argumentos": {
+            "slug": "pirapozinho", "date": "2026-11-17"}, "so": [sensor]}]})
+        assert r["trafos_no_dia"][-1] == ("conclusão: com a mesma carga (102% de 700 kVA), o TR-01 ficou 23 °C mais "
+                                          "quente que o TR-03: vale verificar a ventilação e as sondas do TR-01")
+    # tamanhos diferentes (o de 500 kVA esquenta diferente): sem conclusão
+    monkeypatch.setitem(RESPOSTAS, "monitoramento_detalhe_usina", {"transformers": [
+        {"name": "TR-01", "power_kva": 700.0}, {"name": "TR-03", "power_kva": 500.0}]})
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "temperatura_trafos", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "so": ["TEMP-SKID-01"]}]})
-    assert r["trafos_no_dia"][-1] == ("conclusão: com a mesma carga (102% do trafo), o TR-01 ficou 23 °C mais quente "
-                                      "que o TR-03: vale verificar a ventilação e as sondas do TR-01")
+    assert not any(x.startswith("conclusão") for x in r["trafos_no_dia"])
 
 
 async def test_titulo_de_um_skid_com_inversores_de_outro_nao_sai(conector):

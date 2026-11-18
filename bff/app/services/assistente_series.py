@@ -1443,14 +1443,13 @@ async def _trafos_no_dia(ctx, slug: str, dia: date, no_grafico: set[str]) -> lis
     trafo = {nome: (sit.get("trafo_do_sensor") or {}).get(nome, "") for nome in quente}
     pico = {tr: max(v for _t, v in pts.items()) for tr, pts in carga.items() if pts}
     pct = {tr: pico[tr] / kva[tr] * 100 for tr in pico if kva.get(tr)}
-    conclusao = []
-    for n1 in (n for n in sorted(quente) if n in no_grafico):
-        for n2 in (n for n in sorted(quente) if n not in no_grafico):
-            t1, t2 = trafo[n1], trafo[n2]
-            if pct.get(t1, 0) >= 90 and pct.get(t2, 0) >= 90 and abs(pct[t1] - pct[t2]) <= 10 and \
-                    (d := quente[n1][1] - quente[n2][1]) >= 10:
-                conclusao.append(f"com a mesma carga ({pct[t1]:.0f}% do trafo), o {t1} ficou {d:.0f} °C mais quente "
-                                 f"que o {t2}: vale verificar a ventilação e as sondas do {t1}")
+    conclusao = []        # só entre trafos do MESMO tamanho e na mesma carga (o de 500 kVA esquenta diferente)
+    for n1, n2 in itertools.permutations(sorted(quente), 2):
+        t1, t2 = trafo[n1], trafo[n2]
+        if kva.get(t1) and kva.get(t1) == kva.get(t2) and pct.get(t1, 0) >= 90 and pct.get(t2, 0) >= 90 and \
+                abs(pct[t1] - pct[t2]) <= 10 and (d := quente[n1][1] - quente[n2][1]) >= 10:
+            conclusao.append(f"com a mesma carga ({pct[t1]:.0f}% de {_num(kva[t1])} kVA), o {t1} ficou {d:.0f} °C mais "
+                             f"quente que o {t2}: vale verificar a ventilação e as sondas do {t1}")
     out = []
     for nome, (t, v, sonda) in sorted(quente.items()):
         tr = trafo[nome]
