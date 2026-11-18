@@ -1093,6 +1093,10 @@ async def _serie(ctx, spec: dict) -> tuple[list[Serie], dict]:
                 obs[(ent, campo)] = [(t, v) for t, v in pts if not (t >= com[serial][0] and v == 0)]
     campos = _lista(spec.get("campos"))
     so = _lista(spec.get("so"))
+    pvs = sorted({int(n) for x in [*campos, str(spec.get("rotulo") or "")]
+                  for n in re.findall(r"(?:\bpv|\bstring)\s*(\d{1,2})\b", x, re.IGNORECASE)})
+    if pvs and any(re.fullmatch(r"pv\d+", c) for _e, c in obs):
+        campos = [f"pv{n}" for n in pvs]   # a string pedida pelo número, mesmo quando ele veio só no rótulo
     calados = {d_n for d_n in com.values() if any(chave(x) == chave(d_n[1]) for x in so)}
     if calados and not any(casa_equipamento(x, equipamento(ent, mapa)) for x in so for ent, _c in obs):
         return [], await _sem_leitura(ctx, nome, slug, dia, {n: (d, n) for d, n in calados}, mapa, sit)
@@ -1307,15 +1311,22 @@ async def _trafos_no_dia(ctx, slug: str, dia: date, no_grafico: set[str]) -> lis
     for d0, n in sorted((sit.get("sem_com") or {}).values()):
         if d0.date() <= dia:
             mudos[_skid_do(n, mapa)].append(f"{n} sem comunicação desde {d0:%d/%m %H:%M}")
+    trafo = {nome: (sit.get("trafo_do_sensor") or {}).get(nome, "") for nome in quente}
+    pico = {tr: max(v for _t, v in pts.items()) for tr, pts in carga.items() if pts}
+    ref = next((trafo[n] for n in sorted(quente) if n in no_grafico and pico.get(trafo[n])), "")
     out = []
     for nome, (t, v, sonda) in sorted(quente.items()):
-        tr = (sit.get("trafo_do_sensor") or {}).get(nome, "")
+        tr = trafo[nome]
         linha = (f"{nome}{f' ({tr})' if tr else ''}{' (o do gráfico)' if nome in no_grafico else ''}: a {sonda} "
                  f"chegou a {_c(v)} °C às {t:%H:%M}")
         if pts := sorted(carga.get(tr, {}).items()):
             tt, mx = _teto(pts), max(pts, key=lambda p: p[1])
             linha += (f"; os inversores do skid ficaram no teto de {_num(tt['valor'])} kW das {tt['de']} às {tt['ate']}"
                       if tt else f"; os inversores do skid chegaram a {_num(mx[1])} kW às {mx[0]:%H:%M}")
+            if ref and tr != ref:          # a carga contra a do trafo do gráfico (o TR-03 tem metade dos inversores)
+                q = pico[tr] / pico[ref]
+                linha += (f" (a mesma carga do {ref})" if 0.95 <= q <= 1.05 else
+                          f" ({q * 100:.0f}% da carga do {ref})")
             if mudos.get(tr):
                 linha += f" ({', '.join(mudos[tr])}: o que gerou depois disso não está na soma)"
         out.append(linha)

@@ -307,6 +307,11 @@ async def test_entrada_sem_string_nao_e_string_zerada(conector):
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["pv5"], "so": ["Inv 11"]}]})
     assert "as mais próximas são a PV4 (1S04) e a PV6 (1S06)" in r["problemas"][0]["erro"]
+    # o número da string só no rótulo (campos ["corrente"]): a mesma pergunta, não todas as strings do inversor
+    r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
+        "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["corrente"], "so": ["Inv 11"],
+        "rotulo": "Corrente da string 5 (PV5) do Inv 11"}]})
+    assert "PV5 do Inv 11 (TR-01) não tem string ligada" in r["problemas"][0]["erro"]
     r = await ser.grafico_de_series(_ctx(), {"series": [{"consulta": "correntes_strings_dia", "argumentos": {
         "slug": "pirapozinho", "date": "2026-11-17"}, "campos": ["pv2"], "so": ["Inv 11"]}]})
     assert r["analise"]["series"][0]["serie"] == "Inv 11 (TR-01) · string 2 (1S02)"
@@ -427,7 +432,8 @@ async def test_trafo_com_os_limites_do_rele_de_temperatura(conector):
         "teto de 712 kW das 12:00 às 12:30",
         "TEMP-SKID-02: a sonda 1 chegou a 69,0 °C às 17:00",
         "TEMP-SKID-03 (TR-03): a sonda 1 chegou a 70,0 °C às 17:00; os inversores do skid ficaram no teto de 200 kW "
-        "das 12:00 às 12:30 (Inv 32 sem comunicação desde 17/11 06:00: o que gerou depois disso não está na soma)"]
+        "das 12:00 às 12:30 (28% da carga do TR-01) (Inv 32 sem comunicação desde 17/11 06:00: o que gerou depois "
+        "disso não está na soma)"]
     assert s1["folga_ate_o_alarme"] == round(130 - (51 + 17), 1)
     assert s1["maxima_guardada_no_rele"] == "148,2 °C, acima do desligamento (140 °C); o relé não diz quando foi"
     assert "maxima_guardada_no_rele" not in a["TEMP-SKID-01 · sonda 2"]       # 99 °C: abaixo do alarme, não diz
