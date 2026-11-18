@@ -49,6 +49,7 @@ from app.services import assistente_helper as helper
 from app.services import assistente_paradas as par
 from app.services import assistente_catalogo as catalogo
 from app.services import assistente_meuguarda as mg
+from app.services import assistente_campo as campo
 
 log = logging.getLogger("gs.assistente")
 
@@ -95,7 +96,10 @@ _MANUTENCAO = {"type": "function", "function": {
     "name": "manutencao",
     "description": ("Pergunta ao meuPlano (manutenção/O&M): ordens de serviço, cronograma, pendências, estoque, "
                     "spare parts, documentos, projetos, manuais, wiki e procedimentos, contatos de usina, de "
-                    "concessionária e de fornecedor. Passe a pergunta COMPLETA, com usina e período. Também o "
+                    "concessionária e de fornecedor; o CADASTRO dos equipamentos e da REDE da usina (switch, roteador, "
+                    "gateway, logger, DJ, marca/modelo/série, IP, fibra, cabo de rede, RS485, COM, escravo, I/O: o "
+                    "diagrama de rede), criar, completar, mudar e apagar. Passe a pergunta COMPLETA, com usina e período "
+                    "(descrição de rede ou de equipamento: a mensagem da pessoa INTEIRA, palavra por palavra). Também o "
                     "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
                     "contratos, diária e dia de trabalho de prestador. O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
                     "para as INFORMAÇÕES DO RELATÓRIO de uma OS são `informacoes_do_relatorio`."),
@@ -418,7 +422,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "avaliar_lugar": (local.avaliar_lugar, local.FERRAMENTA_AVALIAR),
                "lugares_da_equipe": (local.lugares_da_equipe, local.FERRAMENTA_LISTA_LUGARES),
                **helper.FERRAMENTAS, **cad.FERRAMENTAS,
-               **par.FERRAMENTAS, **mg.FERRAMENTAS}
+               **par.FERRAMENTAS, **mg.FERRAMENTAS, **campo.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -952,6 +956,7 @@ def permitidas(user) -> list[str]:
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
+    nomes += [n for n in campo.permitidas(user) if n not in nomes]   # o técnico em campo: posição, plaqueta, foto
     nomes += catalogo.permitidas(user)                       # o catálogo do conector do Claude: o resto que se lê
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
         nomes += list(cad.FERRAMENTAS)
@@ -1018,6 +1023,10 @@ de memória.
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo. Nunca pergunte "posso fazer? (Sim/Não)" em texto: chame a ferramenta, e o sistema mostra o resumo com o
   botão Sim.
+- CADASTRO e REDE em campo (descrever a rede, "o switch liga por fibra no da cabine", marca, modelo e série de
+  equipamento, IP, RS485, COM, escravo, I/O, DJ; criar, completar, mudar ou apagar) → `manutencao` com a mensagem da
+  pessoa INTEIRA (o áudio transcrito palavra por palavra, nunca resumido): o meuPlano confere o cadastro e o meuWatt,
+  pergunta o que falta e propõe com o Sim. Não é o `usina_helper` (o helper lê o equipamento ao vivo).
 - Mensagens seguidas da pessoa, sem resposta sua no meio, são UM pedido: responda todas juntas, e a última corrige as
   de antes ("ibitinga" e depois "é Tietê" = Tietê).
 - "[senha oculta]" numa mensagem = a pessoa escreveu a senha de atuação no meio da frase: ela foi escondida e
@@ -1043,6 +1052,8 @@ de memória.
   ou a OS (da legenda ou da conversa); pediu NA OS, não numa tarefa → `anexos_da_os`. Disse a usina e o
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
+  Foto de EQUIPAMENTO para o CADASTRO (plaqueta, etiqueta, o equipamento instalado) → `ler_plaqueta` e, com o que ela
+  leu, `manutencao` para completar o equipamento; guardar a foto na ficha do equipamento → `fotos_no_equipamento`.
 - «[📄 PDF recebido: «nome»]» = um arquivo que a pessoa mandou aqui (você não o lê). Pedido de assinar ESSE arquivo
   → `assinar_pdf`. CONTA DE ENERGIA (fatura da distribuidora: Elektro, CEMIG…) para ler, conferir, lançar ou salvar →
   `conta_de_energia`, com a usina se ela disse (o sistema manda a prova e propõe salvar no meuWatt com o Sim). Sem
@@ -1052,7 +1063,9 @@ de memória.
   dele. Sem pedido junto, pergunte o que fazer com o contato.
 - «[📍 localização recebida…]» = a pessoa mandou uma localização (pelo 📎 ou por link do Google Maps, que o sistema já
   leu). Disse que é a coordenada de uma usina → `gravar_coordenada` com a usina (o sistema diz se grava ou substitui e
-  pede o Sim). Sem dizer para que é → `lugar_da_localizacao` e pergunte em qual lugar ela está (a usina perto, senão o
+  pede o Sim). Disse que é de um EQUIPAMENTO ("câmera 1", "inversor 3", "o switch da cabine") → `posicionar_equipamento`
+  com a usina e o nome como ela disse (vai ao mapa único da usina, a câmera inclusive); se o nome não existir ou se
+  repetir, mostre os nomes com o local que a ferramenta devolveu, pergunte qual é e chame de novo com o `node_id`. Sem dizer para que é → `lugar_da_localizacao` e pergunte em qual lugar ela está (a usina perto, senão o
   1º da lista, com os outros nomes na mesma linha); confirmado, se ela não disse, pergunte o que quer com ele. "Salve a
   localização de <usina>" é a coordenada da USINA → `gravar_coordenada`. Salvar, guardar ou avaliar o LUGAR onde ela
   está (posto, restaurante, hotel), "é bom", "recomendo", "não é recomendado", "ruim", "evitar" → `avaliar_lugar` (com

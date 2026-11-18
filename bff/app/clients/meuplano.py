@@ -806,6 +806,33 @@ class MeuPlanoClient:
                             json={"lat": lat, "lng": lng, "substituir": substituir})
         return r.json()
 
+    # ------------------------------------------- o técnico em campo: o equipamento pelo nome, o mapa, a foto
+
+    async def equipamento_pelo_nome(self, usina_id: int, nome: str) -> dict[str, Any]:
+        """O nome DITO em campo ("câmera 1" = "Câmera 01"): `{achados, parecidos}`, cada um com node_id, equipment_id,
+        tipo e local — lá não se adivinha qual é."""
+        return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/equipamentos/pelo-nome", nome=nome)
+
+    async def ponto_no_mapa_previa(self, usina_id: int, nome: str) -> dict[str, Any]:
+        """`equipamento_pelo_nome` + onde cada um já está no mapa da usina (o do meuWatt) e se está desenhado como
+        área/linha (`desenhado_como`): a prévia de marcar a coordenada."""
+        return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/mapa/ponto", nome=nome)
+
+    async def marcar_no_mapa(self, usina_id: int, node_id: int, lat: float, lng: float,
+                             novo_nome: str | None = None) -> dict[str, Any]:
+        """O equipamento como ponto no mapa ÚNICO da usina (a posição mora no do meuWatt), com o token de quem manda;
+        `novo_nome` renomeia junto (lá com a régua de renomear da tela)."""
+        r = await self._req("POST", f"/api/v1/meuacesso/usinas/{usina_id}/mapa/ponto", timeout=60,
+                            json={"node_id": node_id, "lat": lat, "lng": lng, "novo_nome": novo_nome})
+        return r.json()
+
+    async def foto_no_equipamento(self, equipment_id: int, nome: str, conteudo: bytes, tipo: str | None,
+                                  legenda: str) -> dict[str, Any]:
+        """Uma foto na ficha do equipamento (a seção Fotos do equipamento, no site e no app), com o token de quem manda."""
+        r = await self._req("POST", f"/api/v1/meuacesso/equipment/{equipment_id}/photos", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "image/jpeg")}, data={"caption": legenda[:500]})
+        return r.json()
+
     # ------------------------------------------- lugares marcados pela equipe: recomendados e não (a frota)
 
     async def lugares_perto(self, lat: float, lng: float) -> dict[str, Any]:
