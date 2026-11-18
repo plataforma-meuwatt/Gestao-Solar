@@ -692,10 +692,12 @@ def analise(series: list[Serie]) -> dict:
                 item["leitura_parada"] = parada
                 item["maximo"] = (f"desconhecido: a sonda repetiu {_c(parada['valor'])} °C de {parada['de']} a "
                                   f"{parada['ate']}")
+            # 3 °C em até 10 min não é temperatura de verdade (a sonda do trafo no teto sobe ~1,5 °C em 10 min; o ar
+            # da madrugada de Pirapozinho pulava 3 a 8 °C a cada 10 min, 17/11/2026); muitas vezes = sensor instável
             saltos = [(t1, a, b) for (t0, a), (t1, b) in itertools.pairwise(s.pontos)
-                      if abs(b - a) >= 5 and t1 - t0 <= timedelta(minutes=10)] if s.unidade == "°C" and not diario else []
-            if len(saltos) >= 4:      # 5 °C em minutos não é temperatura de verdade; muitas vezes = sensor instável
-                item["sensor_instavel"] = (f"pulou {len(saltos)} vezes (5 °C ou mais em até 10 min) entre "
+                      if abs(b - a) >= 3 and t1 - t0 <= timedelta(minutes=10)] if s.unidade == "°C" and not diario else []
+            if len(saltos) >= 4:
+                item["sensor_instavel"] = (f"pulou {len(saltos)} vezes (3 °C ou mais em até 10 min) entre "
                                            f"{saltos[0][0]:%H:%M} e {saltos[-1][0]:%H:%M}: leitura não confiável")
             elif saltos:
                 item["leitura_suspeita"] = [f"às {t:%H:%M} pulou de {_c(a)} para {_c(b)} °C" for t, a, b in saltos]

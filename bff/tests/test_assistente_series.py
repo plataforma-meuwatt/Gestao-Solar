@@ -568,7 +568,11 @@ def test_sensor_que_pula_a_noite_toda_e_instavel():
     ts = [datetime(2026, 11, 17, 0, 0, tzinfo=BRT) + ser.timedelta(minutes=10 * k) for k in range(12)]
     amb = ser.Serie("TEMP-SKID-02 · ambiente do skid", "°C", [(t, 29.5 if k % 2 else 35.0) for k, t in enumerate(ts)])
     a = ser.analise([amb])["series"][0]
-    assert a["sensor_instavel"].startswith("pulou 11 vezes (5 °C ou mais em até 10 min) entre 00:10 e 01:50")
+    assert a["sensor_instavel"].startswith("pulou 11 vezes (3 °C ou mais em até 10 min) entre 00:10 e 01:50")
+    # a sonda do trafo esquentando de verdade (1,5 °C em 10 min) não é salto
+    sobe = ser.Serie("sonda 2", "°C", [(t, 100.0 + 1.5 * k) for k, t in enumerate(ts)])
+    assert "sensor_instavel" not in ser.analise([sobe])["series"][0] and \
+        "leitura_suspeita" not in ser.analise([sobe])["series"][0]
 
 
 async def test_os_trafos_na_mesma_carga_e_a_conclusao(conector, monkeypatch):
