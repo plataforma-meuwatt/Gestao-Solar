@@ -127,7 +127,11 @@ async def procurar_consulta(ctx, a: dict) -> dict:
                         "ferramentas."}
     todas = {t["name"] for t in await _catalogo(ctx)}
     dica = (" Potência de CADA inversor: monitoramento_curva_5min (a série de grandezas é por usina ou skid, não por "
-            "inversor)." if "monitoramento_curva_5min" in todas else "")
+            "inversor); relé × inversores: some os inversores (somar) para comparar com o relé."
+            if "monitoramento_curva_5min" in todas else "")
+    dica += (" Período: 'último mês' = os últimos 30 dias até hoje (sem datas, a consulta já traz isso); 'mês passado' = o "
+             "mês fechado. Pedido de ANÁLISE de relação (temperatura × potência…): grafico_de_series, que desenha e "
+             "compara nos mesmos horários.")
     return {"consultas": [{"nome": t["name"], "descricao": (t.get("description") or "")[:400],
                            **({"serie_no_tempo": True} if ser.SERIE_NO_TEMPO.search(t.get("description") or "")
                               else {}),

@@ -114,7 +114,7 @@ async def test_serie_longa_vem_resumida_para_a_ia(conector):
     assert s["equipamentos"] == ["TEMP-SKID-01", "TEMP-SKID-02", "TEMP-SKID-03"]
     assert "temp_s1 (°C)" in s["campos"] and s["series"] == 12
     s1 = next(x for x in s["analise"] if x["serie"] == "TEMP-SKID-02 · sonda 1")
-    assert s1["leituras"] == 10 and s1["minimo"] == [58.0, "06:00"] and s1["maximo"] == [63.0, "11:00"]
+    assert s1["minimo"] == [58.0, "06:00"] and s1["maximo"] == [63.0, "11:00"]
     assert len(r["dados"]) <= 5_100
 
 
