@@ -282,4 +282,14 @@ describe('mapa único', () => {
     voo.eventos.error()
     expect(caixa.getAttribute('data-voo')).toBe('falhou')
   })
+
+  it('o voo cadastrado sem a imagem é dito (nunca "voo de …" com o voo fora da tela)', async () => {
+    const semImagem = resposta({})
+    semImagem.mapa!.orto = { voo: '2026-08-26', url: null, bounds: [[-23.21, -48], [-23.19, -47.96]] }
+    vi.spyOn(api, 'get').mockResolvedValue({ data: semImagem })
+    const r = montar()
+    await screen.findByText(/está cadastrado, mas a imagem dele não pôde ser/)
+    expect(screen.getByText(/voo de 26\/08\/2026 \(sem a imagem agora\)/)).toBeTruthy()
+    expect(r.container.querySelector('[data-voo="sem-imagem"]')).not.toBeNull()
+  })
 })

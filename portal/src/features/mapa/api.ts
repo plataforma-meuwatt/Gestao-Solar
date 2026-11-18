@@ -52,7 +52,8 @@ export type MapaDoMeuPlano = {
   vinculado: boolean
   slug: string | null
   editar_url: string | null
-  orto: { voo: string; url: string; bounds: [[number, number], [number, number]] } | null
+  /** `url` nula: o voo está cadastrado, mas o armazenamento não entregou a imagem agora. */
+  orto: { voo: string; url: string | null; bounds: [[number, number], [number, number]] } | null
   objetos: ObjetoDoMapa[]
   aviso: string | null
 }

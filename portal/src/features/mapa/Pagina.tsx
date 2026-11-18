@@ -249,6 +249,8 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
       voo.addTo(grupo)
       enquadrar.push(...(d.mapa.orto.bounds as L.LatLngTuple[]))
     }
+    // o voo cadastrado SEM imagem (o armazenamento não a entregou): a foto do bot sabe por `data-voo`, a tela diz
+    if (d.mapa?.orto && !d.mapa.orto.url) caixa.current?.setAttribute('data-voo', 'sem-imagem')
     const contorno = (u?.area_poligono ?? []).filter((p) => Array.isArray(p) && p.length >= 2) as L.LatLngTuple[]
     if (contorno.length >= 3) L.polygon(contorno, { color: '#fbbf24', weight: 2, fillOpacity: 0.04, dashArray: '6 4' }).addTo(grupo)
     if (u?.latitude != null && u?.longitude != null) {
@@ -334,6 +336,7 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
             {e && e !== 'ok' ? <> · {ROTULO_ESTADO[e]}{d.estado?.objetos[String(alvo.id)]?.motivo ? `: ${d.estado.objetos[String(alvo.id)].motivo}` : ''}</> : null}</> : null}
         </div>
         {d.aviso || d.estado_aviso ? <div className="text-[13px] text-corpo">{d.aviso || d.estado_aviso}</div> : null}
+        {d.mapa?.orto && !d.mapa.orto.url ? <div className="text-[13px] text-corpo">Sem a imagem do voo agora: o fundo é o satélite.</div> : null}
         {/* abaixo do cabeçalho e acima do rodapé fixos do portal: a foto pega o mapa inteiro e a legenda */}
         <div id="mapa-unico" ref={caixa} className="h-[calc(100dvh-200px)] min-h-[360px] w-full overflow-hidden rounded-campo border border-borda" />
         <div className="text-[12px] text-fraco">{legendaEstado}</div>
@@ -345,6 +348,10 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
     <div className="space-y-3">
       {d.aviso ? <Aviso>{d.aviso}</Aviso> : null}
       {d.estado_aviso && objetos.length ? <Aviso tom="semDados">{d.estado_aviso} As cores mostram só o tipo de cada objeto.</Aviso> : null}
+      {d.mapa?.orto && !d.mapa.orto.url ? (
+        <Aviso tom="semDados">O voo de {d.mapa.orto.voo.split('-').reverse().join('/')} está cadastrado, mas a imagem dele não pôde ser
+          carregada agora: o fundo é o satélite.</Aviso>
+      ) : null}
       {d.mapa && !d.mapa.vinculado ? (
         <Aviso>O voo e as marcações ainda não estão ligados a esta usina: o mapa mostra só o pino e o contorno.</Aviso>
       ) : null}
@@ -364,7 +371,7 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
           </button>
         ) : null}
         {legendaEstado}
-        {d.mapa?.orto ? <span>· voo de {d.mapa.orto.voo.split('-').reverse().join('/')}</span> : null}
+        {d.mapa?.orto ? <span>· voo de {d.mapa.orto.voo.split('-').reverse().join('/')}{d.mapa.orto.url ? '' : ' (sem a imagem agora)'}</span> : null}
       </div>
       {filtrando && visiveis.length === 0 ? (
         <Aviso tom="semDados">Nenhum objeto passa nesse filtro. <button type="button" className="underline" onClick={() => setFiltro(SEM_FILTRO)}>Mostrar todos</button></Aviso>
