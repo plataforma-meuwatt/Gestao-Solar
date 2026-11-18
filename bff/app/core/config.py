@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     #: mundo na hora de mandar mensagem — e o gateway do resto do mundo na hora de avisar.
     whatsapp_chave_interna: str = ""
 
+    # ── o meuGuarda lê as posições das câmeras no mapa único (`api/v1/interno_meuguarda.py`) ──
+    #: A chave própria do meuGuarda (a mesma lá). Vazia = a porta recusa tudo (503).
+    meuguarda_chave_interna: str = ""
+
     # ── o helper (mw-modbus-helper) pelo assistente ─────────────────────────
     #: A porta do bot do helper (contrato `docs/bot.md` do helper): pelo túnel SSH reverso,
     #: `http://10.0.1.1:18080`, só de dentro da rede `coolify`. Vazio = o assistente não
@@ -145,6 +149,9 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Variáveis obrigatórias ausentes em produção: " + ", ".join(faltando)
             )
+        # cada porta interna com a SUA chave: quem guarda a do WhatsApp (o gateway) não pode ler as câmeras
+        if self.meuguarda_chave_interna and self.meuguarda_chave_interna == self.whatsapp_chave_interna:
+            raise RuntimeError("MEUGUARDA_CHAVE_INTERNA não pode ser igual à WHATSAPP_CHAVE_INTERNA.")
 
         # Sem origem liberada, a API sobe saudável e o painel abre numa tela em branco com
         # um erro de CORS no console — a falha mais cara de diagnosticar do conjunto,

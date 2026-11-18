@@ -132,3 +132,71 @@ async def test_marcar_e_da_om_com_o_token_pessoal(db, cenario):
     assert e.value.status_code == 409 and "desenhado como área" in e.value.detail
     achados = await rotas.equipamentos(c["pereiras"].id, "câmera 1", db, c["gerente"])
     assert achados["achados"][0]["node_id"] == 71
+
+
+async def test_o_meuguarda_le_as_posicoes_com_a_chave_e_o_recorte_da_pessoa(db, cenario, monkeypatch):
+    """A porta interna do meuGuarda: sem a chave configurada recusa tudo; com a chave errada, 401; a pessoa sem o
+    meuGuarda ou a usina fora das dela, 404; o mapa fora do ar é 502 (nunca uma lista vazia que parece certa); e só
+    saem as câmeras ligadas ao meuGuarda, com a posição."""
+    from app.api.v1 import interno_meuguarda as interno
+    from app.core.config import get_settings
+    c = cenario
+    with pytest.raises(HTTPException) as e:
+        interno._porta("qualquer")
+    assert e.value.status_code == 503
+    monkeypatch.setattr(get_settings(), "meuguarda_chave_interna", "chave-certa")
+    with pytest.raises(HTTPException) as e:
+        interno._porta("chave-errada")
+    assert e.value.status_code == 401
+    interno._porta("chave-certa")
+
+    with pytest.raises(HTTPException) as e:                 # o dono sem o meuGuarda liberado
+        await interno.posicoes(c["pereiras"].id, "dono.a", db)
+    nao = e.value.detail
+    assert e.value.status_code == 404
+    c["dono"].meuguarda_liberado = True
+    db.commit()
+    with pytest.raises(HTTPException) as e:                 # a usina que não é dele: a MESMA resposta (não enumera)
+        await interno.posicoes(c["tiete"].id, "dono.a", db)
+    assert e.value.status_code == 404 and e.value.detail == nao
+
+    async def mapa_com_cameras(usina_id):
+        return {"aviso": None, "objetos": [
+            {"id": 1, "nome": "Câmera 01", "node_id": 71, "node_nome": "Câmera 01", "mg_camera_id": 501,
+             "geometria": {"type": "Point", "coordinates": [-47.99, -23.2]}},
+            {"id": 2, "nome": "Inversor 03", "node_id": 51, "mg_camera_id": None,
+             "geometria": {"type": "Point", "coordinates": [-47.98, -23.21]}},
+            {"id": 3, "nome": "Câmera da cerca", "node_id": 72, "mg_camera_id": 502, "geometria": {"type": "LineString",
+             "coordinates": [[-47.9, -23.2], [-47.91, -23.2]]}}]}
+    monkeypatch.setattr(_MeuPlano, "mapa_da_usina", lambda self, uid: mapa_com_cameras(uid))
+    r = await interno.posicoes(c["pereiras"].id, " Dono.A ", db)
+    assert r["cameras"] == [{"mg_camera_id": 501, "nome": "Câmera 01", "lat": -23.2, "lng": -47.99, "sem_posicao": None},
+                            {"mg_camera_id": 502, "nome": "Câmera da cerca", "lat": None, "lng": None,
+                             "sem_posicao": "desenhada como linha"}]   # nunca some calada
+    assert r["usina"]["id"] == c["pereiras"].id and r["lido_em"]
+
+    # a empresa desativada para de ler (como nas sessões do GS)
+    from app.models.empresa import Empresa
+    emp = db.get(Empresa, c["pereiras"].empresa_id)
+    emp.ativa = False
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        await interno.posicoes(c["pereiras"].id, "dono.a", db)
+    assert e.value.status_code == 404
+    emp.ativa = True
+    db.commit()
+
+    # usina sem mapa ligado: é dito (409), não "nenhuma câmera"
+    async def sem_mapa(usina_id):
+        return {"vinculado": False, "objetos": [], "aviso": None}
+    monkeypatch.setattr(_MeuPlano, "mapa_da_usina", lambda self, uid: sem_mapa(uid))
+    with pytest.raises(HTTPException) as e:
+        await interno.posicoes(c["pereiras"].id, "dono.a", db)
+    assert e.value.status_code == 409
+
+    async def fora(usina_id):
+        raise httpx.ConnectError("x")
+    monkeypatch.setattr(_MeuPlano, "mapa_da_usina", lambda self, uid: fora(uid))
+    with pytest.raises(HTTPException) as e:
+        await interno.posicoes(c["pereiras"].id, "dono.a", db)
+    assert e.value.status_code in (502, 503, 504)
