@@ -2373,5 +2373,57 @@
       "mapa_equipamento"
     ],
     "origem": "18/11/2026: a foto do mapa com o equipamento em destaque (pedido do Renan)"
+  },
+  {
+    "frase": "Monte o grafico da temperatura do trafo 1 de pirapozinho e coloque no mesmo grafico a potência dos inversores, de cedo ate o momento",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #580"
+  },
+  {
+    "frase": "Me dê o procedimento de reset de senha da huawei",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #566"
+  },
+  {
+    "frase": "Veja as correntes e potências nos reles de porto ferreira e me monte uma tabela com desvio em % e valores absolutos",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #574"
+  },
+  {
+    "frase": "Coloque os tracker de Ibitinga em modo automático",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #578"
+  },
+  {
+    "frase": "Liste todos os números de série, por usina, dos inversores Huawei",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #530"
+  },
+  {
+    "frase": "O manual da Huawei menciona manutenção periódica com troca de pasta térmica?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #570"
+  },
+  {
+    "frase": "Me traga imagem de alguma câmera de Ibitinga",
+    "espera": [
+      "cameras"
+    ],
+    "origem": "log #572"
   }
 ]
