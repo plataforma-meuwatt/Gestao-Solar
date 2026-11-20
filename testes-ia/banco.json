@@ -2425,5 +2425,84 @@
       "cameras"
     ],
     "origem": "log #572"
+  },
+  {
+    "frase": "[📍 localização recebida, ainda não gravada]",
+    "espera": [
+      "lugar_da_localizacao"
+    ],
+    "origem": "log #513"
+  },
+  {
+    "frase": "Plote o grafico da string 1 do inversor 1 do skid 1 com a string 10 do inversor 2 do skid 3 de pirapozinho do dia de ontem",
+    "espera": [
+      "grafico_de_series",
+      "procurar_consulta"
+    ],
+    "origem": "log #554"
+  },
+  {
+    "frase": "Qual o número de série dos inversores huawei por usina?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #556"
+  },
+  {
+    "frase": "Gere o relatorio de pereiras e me envie",
+    "espera": [
+      "relatorio_pdf"
+    ],
+    "origem": "log #568"
+  },
+  {
+    "frase": "Pode voltar os trackers de Ibitinga para automático",
+    "espera": [
+      "usina_helper_catalogo",
+      "usina_helper"
+    ],
+    "origem": "log #575"
+  },
+  {
+    "frase": "Me de o manual huawei •••• ktl",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #584"
+  },
+  {
+    "frase": "Como esta tiere?",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #586"
+  },
+  {
+    "frase": "onde fica a string U1-3S22 de Ouro Fino",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #587"
+  },
+  {
+    "frase": "Senha do cadeado de Tiete",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #589"
+  },
+  {
+    "frase": "Me de o manual do huawei ••••",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #512"
+  },
+  {
+    "frase": "No meuplano, busque o manual do inversor Huawei ••••, e verifique qual o procedimento de reset de senha",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #567"
   }
 ]
