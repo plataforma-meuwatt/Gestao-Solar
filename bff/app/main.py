@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import (
+    meuwatt_webhook,
     auth,
     billing,
     carteira,
@@ -94,7 +95,7 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
     Nada aqui derruba a API: uma volta que estoura é registrada e a próxima acontece.
     """
     from app.api.v1 import plants
-    from app.api.v1.avisos import disparar_avisos_de_parada
+    from app.api.v1.avisos import TRAVA, disparar_avisos_de_parada
     from app.core.db import SessionLocal
     from app.services import motor
 
@@ -127,7 +128,8 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
         # primeiro: uma falha do segundo não pode calar o primeiro.
         try:
             with SessionLocal() as db:
-                r = await disparar_avisos_de_parada(simular=False, db=db)
+                async with TRAVA:
+                    r = await disparar_avisos_de_parada(simular=False, db=db)
             _log.info(
                 "avisos/push: %s candidatos, %s enviados, %s repetidos",
                 r.candidatos, r.enviados, r.repetidos,
@@ -139,7 +141,8 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
 
         try:
             with SessionLocal() as db:
-                rel = await motor.disparar(db)
+                async with TRAVA:
+                    rel = await motor.disparar(db)
             _log.info(
                 "motor/whatsapp: %s eventos, %s enviadas, %s avisos",
                 rel.eventos, rel.enviadas, len(rel.avisos),
@@ -275,6 +278,7 @@ app.include_router(pacotes.router)
 app.include_router(pendencias.router)
 app.include_router(permissoes.router)
 app.include_router(avisos.router)
+app.include_router(meuwatt_webhook.router)
 app.include_router(documents.router)
 app.include_router(energia.router)
 app.include_router(exportacao.router)

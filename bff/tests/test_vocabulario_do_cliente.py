@@ -55,7 +55,10 @@ DO_GESTOR = {"painel_clientes.py", "empresa.py"}
 #: deixaria o cliente sem conseguir conciliar o que paga com o que contratou — e o campo
 #: vizinho `fornece` já diz, na língua dele, o que aquilo entrega ("Monitoramento da
 #: geração"). Renomear produto em fatura é decisão comercial, não de tela.
-COM_MOTIVO = {"billing.py"}
+#:
+#: `meuwatt_webhook.py` não é lido por pessoa nenhuma: quem chama é o SERVIDOR do meuWatt (o aviso de parada
+#: confirmada), e o nome do produto é o endereço que se configura lá.
+COM_MOTIVO = {"billing.py", "meuwatt_webhook.py"}
 
 PRODUTOS = ("meuwatt", "meuplano")
 

@@ -110,7 +110,7 @@ PERSISTENCIA_MINUTOS = 20
 JANELA_HORAS = 72
 
 
-def _vale_avisar(inv: dict[str, Any]) -> bool:
+def _vale_avisar(inv: dict[str, Any], imediata: bool = False) -> bool:
     """A parada já persistiu o bastante, e ainda é notícia?
 
     Três perguntas, nesta ordem, e cada uma já custou um aviso errado:
@@ -121,11 +121,14 @@ def _vale_avisar(inv: dict[str, Any]) -> bool:
       campo veio preenchido;
     * **jovem demais** não avisa: ver `PERSISTENCIA_MINUTOS`;
     * **velha demais** não avisa: ver `JANELA_HORAS`.
+
+    `imediata`: o meuWatt acabou de CONFIRMAR parada nesta usina (webhook, `api/v1/meuwatt_webhook`). A
+    confirmação é a régua dele (a falha de comunicação já esperou lá), então a persistência daqui não se soma.
     """
     aberta = _aberta_ha(inv)
     if aberta is None:
         return False
-    return timedelta(minutes=PERSISTENCIA_MINUTOS) <= aberta <= timedelta(hours=JANELA_HORAS)
+    return timedelta(minutes=0 if imediata else PERSISTENCIA_MINUTOS) <= aberta <= timedelta(hours=JANELA_HORAS)
 
 
 def _aberta_ha(inv: dict[str, Any]) -> timedelta | None:
@@ -202,7 +205,7 @@ async def _so_as_materiais(
     return materiais
 
 
-def _parados(monitoramento: Any) -> list[dict[str, Any]]:
+def _parados(monitoramento: Any, imediata: bool = False) -> list[dict[str, Any]]:
     """Inversores em falha material, pela mesma régua das telas.
 
     `down` é o detector do mw-api afirmando parada aberta, e vence o `status`, que
@@ -221,7 +224,7 @@ def _parados(monitoramento: Any) -> list[dict[str, Any]]:
         if estado == "bedtime":
             continue
         # Parada jovem ou velha demais não entra: ver `_vale_avisar`.
-        if (inv.get("down") is True or estado == "fault") and _vale_avisar(inv):
+        if (inv.get("down") is True or estado == "fault") and _vale_avisar(inv, imediata):
             saida.append(inv)
     return saida
 
@@ -237,7 +240,7 @@ def _leitores(db: Session, pessoas: list[User], escopos: dict[int, list[PlantLin
     return leitor_da_usina
 
 
-async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
+async def paradas_por_usuario(db: Session, imediatas: frozenset[str] = frozenset()) -> list[AvisoDeParada]:
     """Todos os avisos que caberiam agora, um por (pessoa, inversor parado).
 
     Consulta o monitoramento UMA vez por usina, mesmo quando dez pessoas têm acesso
@@ -288,7 +291,7 @@ async def paradas_por_usuario(db: Session) -> list[AvisoDeParada]:
         # Primeiro a régua local (persistência e janela), que é de graça; só o que
         # sobreviver a ela custa a ida à fila de paradas.
         estado[link.id] = await _so_as_materiais(
-            clientes[dono], link.mw_plant_slug, _parados(resposta)
+            clientes[dono], link.mw_plant_slug, _parados(resposta, link.mw_plant_slug in imediatas)
         )
 
     # ── as MICRO usinas, que o laço acima não alcança ──────────────────────────

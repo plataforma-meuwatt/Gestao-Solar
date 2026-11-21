@@ -101,6 +101,8 @@ class Relatorio:
     #: Tipos que não puderam ser coletados, com o motivo. Não é erro do motor: upstream
     #: fora do ar, usina sem vínculo, ninguém com token.
     avisos: list[str] = field(default_factory=list)
+    #: Usinas em que o meuWatt acabou de confirmar parada (webhook): sem a persistência daqui.
+    imediatas: frozenset[str] = frozenset()
 
 
 # ── formatação ──────────────────────────────────────────────────────────────
@@ -208,7 +210,7 @@ async def _coletar_parada(db: Session, rel: Relatorio) -> list[Evento]:
             rel.avisos.append(f"{link.nome}: monitoramento indisponível ({exc}).")
             continue
 
-        for inv in svc_avisos._parados(agora):
+        for inv in svc_avisos._parados(agora, link.mw_plant_slug in rel.imediatas):
             equipamento = str(inv.get("id") or "")
             nome = str(inv.get("name") or inv.get("serial_number") or "Inversor")
             desde = inv.get("down_since")
@@ -403,14 +405,15 @@ COLETORES = {
 
 
 async def disparar(
-    db: Session, *, tipos: list[str] | None = None, simular: bool = False
+    db: Session, *, tipos: list[str] | None = None, simular: bool = False,
+    imediatas: frozenset[str] = frozenset(),
 ) -> Relatorio:
     """Coleta, decide quem recebe e envia. Idempotente por construção.
 
     `simular=True` percorre tudo e não manda nada — é o que a rota de diagnóstico usa
     para provar o caminho inteiro sem acordar cliente às duas da manhã.
     """
-    rel = Relatorio()
+    rel = Relatorio(imediatas=imediatas)
     escolhidos = tipos or list(TEMPLATE_POR_TIPO)
 
     for tipo in escolhidos:

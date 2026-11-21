@@ -12,6 +12,7 @@ tudo** — falhar fechado é o único padrão aceitável para um endpoint que en
 mensagem ao celular de todo mundo.
 """
 
+import asyncio
 import hmac
 import os
 
@@ -25,6 +26,10 @@ from app.models.permissao import AvisoEnviado, Dispositivo
 from app.services import avisos, push
 
 router = APIRouter(prefix="/api/v1/interno", tags=["interno · avisos"])
+
+#: Uma volta de avisos por vez: a do motor (10 min) e a do webhook do meuWatt leriam a mesma parada antes de
+#: uma gravar a trava, e o celular tocaria duas vezes.
+TRAVA = asyncio.Lock()
 
 
 class DisparoOut(BaseModel):
@@ -63,16 +68,20 @@ async def disparar_avisos_de_parada(
     `simular=true` percorre tudo e devolve a contagem sem enviar nem gravar — é como
     conferir a régua antes de acordar alguém às três da manhã.
     """
+    return await disparar(db, simular)
+
+
+async def disparar(db: Session, simular: bool = False, imediatas: frozenset[str] = frozenset()) -> DisparoOut:
     saida = DisparoOut()
-    await _paradas(db, simular, saida)
+    await _paradas(db, simular, saida, imediatas)
     await _sem_comunicacao(db, simular, saida)
     await _trackers(db, simular, saida)
     await _diagnosticos(db, simular, saida)
     return saida
 
 
-async def _paradas(db: Session, simular: bool, saida: DisparoOut) -> None:
-    candidatos = await avisos.paradas_por_usuario(db)
+async def _paradas(db: Session, simular: bool, saida: DisparoOut, imediatas: frozenset[str] = frozenset()) -> None:
+    candidatos = await avisos.paradas_por_usuario(db, imediatas=imediatas)
     saida.candidatos = len(candidatos)
     if not candidatos:
         return

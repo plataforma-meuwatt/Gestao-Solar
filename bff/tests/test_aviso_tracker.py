@@ -96,7 +96,7 @@ def cenario(db, monkeypatch):
         enviados.append((titulo, corpo, dados))
         return type("R", (), {"enviados": len(tokens), "erros": [], "invalidos": []})()
 
-    async def _nada(db_):
+    async def _nada(db_, **_):
         return []
 
     monkeypatch.setattr(rota_avisos.push, "enviar", _enviar)

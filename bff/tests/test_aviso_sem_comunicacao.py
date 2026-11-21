@@ -115,7 +115,7 @@ def cenario(db, pessoa, monkeypatch):
 
     monkeypatch.setattr(rota_avisos.push, "enviar", _enviar)
 
-    async def _sem_paradas(db_):
+    async def _sem_paradas(db_, **_):
         return []
 
     monkeypatch.setattr(avisos, "paradas_por_usuario", _sem_paradas)
