@@ -18,7 +18,7 @@
 import 'leaflet/dist/leaflet.css'
 
 import L from 'leaflet'
-import { Crosshair, MapPinned, PenLine } from 'lucide-react'
+import { Crosshair, MapPinned, Maximize2, Minimize2, PenLine } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 
@@ -187,6 +187,15 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
   d: MapaOut; usinaId: number; recarregar: () => void; destaque: number | null; soMapa?: boolean
 }) {
   const caixa = useRef<HTMLDivElement>(null)
+  // tela cheia (o dono: "SEMPRE quero tela cheia"): o mapa e as ferramentas por cima de tudo; Esc volta
+  const [cheia, setCheia] = useState(false)
+  useEffect(() => {
+    mapa.current?.invalidateSize()
+    if (!cheia) return
+    const sair = (e: KeyboardEvent) => { if (e.key === 'Escape') setCheia(false) }
+    window.addEventListener('keydown', sair)
+    return () => window.removeEventListener('keydown', sair)
+  }, [cheia])
   const mapa = useRef<L.Map | null>(null)
   const camadas = useRef<L.LayerGroup | null>(null)
   const rascunho = useRef<L.LayerGroup | null>(null)
@@ -377,11 +386,19 @@ function Conteudo({ d, usinaId, recarregar, destaque, soMapa = false }: {
         <Aviso tom="semDados">Nenhum objeto passa nesse filtro. <button type="button" className="underline" onClick={() => setFiltro(SEM_FILTRO)}>Mostrar todos</button></Aviso>
       ) : null}
 
-      <Ferramentas usinaId={usinaId} edicao={edicao} modo={modo} recarregar={recarregar}
-        setModo={(m) => { setModo(m); setPonto(null) }} />
-
-      <div ref={caixa} className={`h-[calc(100dvh-360px)] min-h-[420px] w-full overflow-hidden rounded-campo border border-borda ${
-        modo.tipo !== 'nada' ? 'cursor-crosshair' : ''}`} />
+      <div className={cheia ? 'fixed inset-0 z-[1000] flex flex-col gap-2 bg-fundo p-2' : 'space-y-3'}>
+        <Ferramentas usinaId={usinaId} edicao={edicao} modo={modo} recarregar={recarregar}
+          setModo={(m) => { setModo(m); setPonto(null) }} />
+        <div className={`relative w-full ${cheia ? 'min-h-0 flex-1' : 'h-[calc(100dvh-360px)] min-h-[420px]'}`}>
+          <div ref={caixa} className={`h-full w-full overflow-hidden rounded-campo border border-borda ${
+            modo.tipo !== 'nada' ? 'cursor-crosshair' : ''}`} />
+          <button type="button" onClick={() => setCheia((c) => !c)} title={cheia ? 'Sair da tela cheia (Esc)' : 'Tela cheia'}
+            aria-label={cheia ? 'Sair da tela cheia' : 'Tela cheia'}
+            className="absolute right-2 top-2 z-[1001] inline-flex items-center gap-1 rounded-campo border border-borda bg-superficie px-2 py-1 text-[13px] text-forte shadow">
+            {cheia ? <Minimize2 size={16} aria-hidden /> : <Maximize2 size={16} aria-hidden />}{cheia ? 'Sair' : 'Tela cheia'}
+          </button>
+        </div>
+      </div>
 
       {escolhido ? (
         <Escolhido d={d} usinaId={usinaId} o={escolhido} edicao={edicao} fechar={() => setEscolhido(null)}

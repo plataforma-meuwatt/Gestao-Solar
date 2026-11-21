@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     #: plataforma passa lá — o módulo confere o token no `/auth/me` do meuWatt.
     meuwatt_analise_url: str = "https://analise.meuwatt.com.br"
     meuwatt_web_url: str = "https://app.meuwatt.com.br"
+    #: O R2 do meuWatt (bucket do orto das usinas): o GS assina o GET da imagem do voo direto, sem depender do mw-api
+    #: (pedido do dono, 21/11/2026). Vazio = o mapa diz que o voo não carregou.
+    meuwatt_r2_endpoint: str = ""
+    meuwatt_r2_bucket: str = ""
+    meuwatt_r2_access_key_id: str = ""
+    meuwatt_r2_secret_access_key: str = ""
     #: O meuGuarda (CFTV das usinas, da família GS): câmeras e alarmes pelo bot. Sem token: o bot manda a sessão do GS
     #: da própria pessoa, e o meuGuarda a confere no `/eu` daqui (`clients/meuguarda.py`). Vazio = o bot não oferece.
     #: Pela rede interna do Docker (apelido fixo no Coolify, como o gateway): o DNS do sslip.io já calou o bot uma vez.

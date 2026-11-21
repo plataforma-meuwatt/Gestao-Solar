@@ -83,6 +83,25 @@ def _edita(user: User, produto: Produto = Produto.MEUPLANO) -> str | None:
     return None
 
 
+async def _url_do_voo(db: Session, user: User, slug: str | None) -> str | None:
+    """O GS lê o voo direto do R2 (o dono, 21/11/2026): o mw-api do Render não tem a chave e devolve `url` nula. A
+    chave do arquivo vem do mapa do meuWatt (o meuPlano não a repassa); sem leitura, segue nula e a tela avisa."""
+    from app.services.r2 import presign_get
+    from app.services.vinculos import SemConexao, cliente_meuwatt
+    if not slug:
+        return None
+    try:
+        mw = cliente_meuwatt(db, user.id)
+    except SemConexao:
+        return None
+    db.commit()
+    try:
+        chave = ((await mw.mapa(slug)).get("orto") or {}).get("chave") or ""
+    except (httpx.HTTPError, AttributeError):
+        return None
+    return presign_get(chave) if chave.startswith(f"orto/{slug}/") else None
+
+
 async def _estado(db: Session, user: User, slug: str | None) -> tuple[dict | None, str | None, bool]:
     """O estado de cada objeto, lido no monitoramento (o token da pessoa, senão o da empresa: a régua do portal).
     (estado, aviso, a rota existe): sem leitura, `None` e o porquê — a tela não pinta nada de "ok". A rota ausente
@@ -163,6 +182,8 @@ async def mapa_da_usina(usina_id: int, db: Session = Depends(get_db), user: User
         mapa = await cliente.mapa_da_usina(link.mp_usina_id)
     except httpx.HTTPError as exc:
         return {**base, "aviso": _do_upstream(exc, MANUTENCAO).detail}
+    if isinstance(mapa.get("orto"), dict) and not mapa["orto"].get("url"):
+        mapa["orto"]["url"] = await _url_do_voo(db, user, mapa.get("slug"))
     aviso = mapa.get("aviso")
     if aviso and user.perfil not in _O_E_M:                # o motivo de lá cita os produtos: ao dono, o serviço
         aviso = "O mapa desta usina não pôde ser lido agora: o voo e as marcações voltam quando o serviço responder."
