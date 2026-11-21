@@ -2504,5 +2504,34 @@
       "manutencao"
     ],
     "origem": "log #567"
+  },
+  {
+    "frase": "No plano de manutenção de Porto Ferreira, está previsto no cronograma termografia aérea nos meses de setembro a novembro de 2026? E em dezembro de 2026?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #591"
+  },
+  {
+    "frase": "Qual senha de criptografia das câmeras de Pereiras?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #593"
+  },
+  {
+    "frase": "Qual senha do cadeado do depósito/garagem da splendor?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #595"
+  },
+  {
+    "frase": "Religue Tiete",
+    "espera": [
+      "reles",
+      "usina_helper"
+    ],
+    "origem": "log #598"
   }
 ]
