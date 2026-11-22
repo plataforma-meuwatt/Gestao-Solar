@@ -23,6 +23,7 @@ from app.api.v1.plants import usinas_do_usuario
 from app.core.config import get_settings
 from app.core.tokens_produto import NOME
 from app.core.db import get_db
+from app.models.empresa import Empresa
 from app.core.security import (
     conferir_senha,
     criar_token,
@@ -86,7 +87,8 @@ def _perfil(db: Session, usuario: User) -> UsuarioOut:
         nome=usuario.nome,
         apelido=usuario.apelido,
         email=usuario.email,
-        empresa=usuario.empresa,
+        # o campo antigo é texto livre e ficou vazio nas contas novas: vale a empresa de O&M
+        empresa=usuario.empresa or (db.get(Empresa, usuario.empresa_id).nome if usuario.empresa_id else None),
         tem_meuwatt=Produto.MEUWATT.value in produtos,
         tem_meuplano=Produto.MEUPLANO.value in produtos,
         nivel_acesso=usuario.nivel_acesso,

@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import {
   AtualizadoAs,
@@ -59,6 +60,7 @@ export default function Conta() {
   // para a grade normal, o React o remonta e o aviso morreria junto com o estado dele —
   // justamente no caso em que a confirmação mais importa.
   const [trocada, setTrocada] = useState(false)
+  const navegar = useNavigate()
 
   const leitura = useLeitura<UsinasOut>('plants')
   const usinas = leitura.dados?.usinas ?? null
@@ -87,7 +89,7 @@ export default function Conta() {
             A sua senha foi criada pelo gestor da conta e é provisória. Enquanto ela não for
             trocada, esta é a única tela disponível.
           </Aviso>
-          <TrocaDeSenha aoTrocar={() => setTrocada(true)} />
+          <TrocaDeSenha aoTrocar={() => navegar('/', { replace: true })} />
         </div>
       </Pagina>
     )
