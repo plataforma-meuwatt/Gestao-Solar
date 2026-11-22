@@ -2533,5 +2533,29 @@
       "usina_helper"
     ],
     "origem": "log #598"
+  },
+  {
+    "frase": "Monte o grafico da temperatura do trafo 1 de pirapozinho e coloque no mesmo grafico a potência dos inversores, de cedo ate o momento",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #581"
+  },
+  {
+    "frase": "Quais trackers de Ibitinga que costumam travar?",
+    "espera": [
+      "procurar_consulta",
+      "consultar"
+    ],
+    "origem": "log #597"
+  },
+  {
+    "frase": "Leia tensão do relé de proteção geral de porto ferreira",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #607"
   }
 ]
