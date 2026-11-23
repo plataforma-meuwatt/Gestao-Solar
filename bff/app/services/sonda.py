@@ -160,6 +160,12 @@ MEUWATT: list[Rota] = [
              "rows[].loss_method",
          ),
          exige_itens=True),
+    # O veredito da matriz do meuWatt (R0–R9) de cada parada do detector: só "parada" vira aviso no WhatsApp
+    # (`services/diagnostico.py`, regra 0; o dono, 23/11/2026).
+    Rota("mw.shadow_verification", "GET", "/shadow-breakdowns/verification",
+         "O que é parada de verdade (a matriz do meuWatt) no aviso do WhatsApp e no diagnóstico do bot", essencial=False,
+         sonda=False, nao_sondada_porque="Pede uma parada do detector (groupId ou rowId) e custa 2–5 s lá: roda na varredura "
+         "quando há parada. Resposta sem um `kind` conhecido vale como \"não conferida\", e o aviso sai como antes."),
     # A classificação de paradas pelo bot do WhatsApp (`assistente_paradas`): o par detector × ao vivo diz o que
     # ainda falta classificar e em QUAL parada ao vivo gravar (`live_id`); a cascata vem do vocabulário de lá.
     Rota("mw.shadow_compare", "GET", "/shadow-breakdowns/compare",

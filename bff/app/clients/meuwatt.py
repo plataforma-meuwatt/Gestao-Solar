@@ -648,6 +648,13 @@ class MeuWattClient:
         (`api/v1/paradas.py`) e do bot; o coletor antigo (`breakdowns/range`) não serve."""
         return await self._get("/shadow-breakdowns/queue", plantId=plant_id, start=inicio, end=fim)
 
+    async def verificacao_da_parada(self, plant_id: int, *, grupo: int | None = None,
+                                    linha: int | None = None) -> dict[str, Any]:
+        """O veredito da matriz do meuWatt para UMA parada do detector (`verification.py` de lá: os 6 checks e a
+        linha R0–R9 que decide; `kind` = parada | avaliar | comunicacao | nao_parada). Um grupo OU uma linha solta.
+        A mesma permissão da fila (`paradas_detector`)."""
+        return await self._get("/shadow-breakdowns/verification", plantId=plant_id, groupId=grupo, rowId=linha)
+
     # ------------------------- classificar paradas pelo bot (o token é o DA PESSOA; o meuWatt aplica o papel dela)
 
     async def paradas_casadas(self, plant_id: int, inicio: str, fim: str) -> dict[str, Any]:

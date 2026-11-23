@@ -7,13 +7,22 @@ enviar a mensagem … pesquisar o motivo … uma varredura de rotina … uma mat
 manda é a varredura (`varredura.py`) e quem explica é o bot (`diagnostico_usina`).
 
 As regras, em ordem:
+0. Parada é o que a MATRIZ do meuWatt diz que é parada (o dono, 23/11/2026: "Não foi parada, só vamos mostrar no whats
+   o que for realmente parada. Já temos uma matriz"). Tietê 23/11 16:41: os 10 inversores a zero com tensão nos relés,
+   sem trip e sem falha do inversor, R9 "nuvem ou fim de tarde" no meuWatt, e saíram três avisos de parada. Cada
+   parada do detector (o grupo, ou a linha solta) passa pela verificação de lá (`/shadow-breakdowns/verification`);
+   só `kind` = "parada" segue nas regras 1 e 2. Avaliar, comunicação e não-parada ficam na tela de Paradas do
+   meuWatt (e o bot diz o veredito se perguntarem). Sem resposta da verificação, a parada segue como antes, dizendo
+   que não foi conferida: "não consegui conferir" não é "não é parada".
 1. Parada (ou inversor sem ligar) num skid + trip no relé DAQUELE skid até 12 h antes = a função do trip é a causa (a
    última antes da parada; as de antes entram como contexto: a 47 que precede a 27). Vários relés com a mesma função no
    mesmo minuto = a REDE, não a usina.
 2. Parada sem trip no relé do skid = "não ligou" ou a causa do detector, com os alarmes do inversor. Falha de
    comunicação sem trip não é parada (faltou o dado, não a energia) e não vira achado.
 3. Trip que disparou e não limpou = skid DESARMADO agora (antes de qualquer parada: de madrugada já se sabe que o skid
-   não vai ligar).
+   não vai ligar). Com o PRÓPRIO relé medindo energia passando (leitura válida acima de `FLUXO_KW`), o disjuntor está
+   fechado: a bandeira não desarmou nada e não vira achado (Pereiras 23/11 14:48: 27 "disparado" até 16:01 com os
+   inversores do skid gerando; disjuntor aberto lê zero, fechado lê de 0 a 30 kW mesmo à noite).
 4. Relé sem comunicação (estado desconhecido) e 5. fase zerada na medição com o skid gerando (fusível do TP): quem
    diz é a tela Leituras do meuWatt (`GET /plants/{slug}/readings`, a regra de lá: 15 min sem leitura válida E duas
    voltas do coletor sem medida dele, porque o `comm` sozinho fica falso numa leitura vazia de um minuto, Tietê 13/11,
@@ -42,6 +51,14 @@ JANELA_TRIP = timedelta(hours=12)
 #: Trips da mesma função em relés diferentes dentro disto = o mesmo evento da rede.
 MESMO_EVENTO = timedelta(minutes=5)
 _ORDEM = {"critica": 0, "alta": 1, "media": 2, "info": 3}
+#: O relé do skid medindo mais que isto (leitura válida da tela Leituras) = o disjuntor está fechado.
+FLUXO_KW = 1.0
+#: Verificações de uma vez no meuWatt (cada uma faz várias consultas no banco de lá, 2–5 s).
+VERIFICACOES_JUNTAS = 3
+#: O veredito de uma parada ENCERRADA não muda: guardado, a varredura de 10 em 10 min não refaz a conta. A aberta é
+#: conferida a cada volta (a duração entra no veredito).
+_VEREDITOS: dict[tuple, dict] = {}
+KINDS = ("parada", "avaliar", "comunicacao", "nao_parada")
 
 
 @dataclass
@@ -157,6 +174,58 @@ GERANDO_KW = 50
 RESERVA_FRESCO = timedelta(minutes=10)
 
 
+def _unidade(p: dict) -> tuple | None:
+    """A parada que a matriz julga: o grupo do detector ou a linha solta. `None` = sem como perguntar."""
+    if p.get("plant_id") is None:
+        return None
+    if p.get("group_id") is not None:
+        return (int(p["plant_id"]), "g", int(p["group_id"]))
+    return (int(p["plant_id"]), "r", int(p["id"])) if p.get("id") is not None else None
+
+
+async def _vereditos(mw, paradas: list[dict]) -> dict[tuple, dict | None]:
+    """{unidade: {row, result, kind} da matriz do meuWatt, ou `None` quando a verificação não respondeu}."""
+    unidades: dict[tuple, list[dict]] = {}
+    for p in paradas:
+        if (u := _unidade(p)) is not None:
+            unidades.setdefault(u, []).append(p)
+    vagas = asyncio.Semaphore(VERIFICACOES_JUNTAS)
+
+    async def um(u: tuple, linhas: list[dict]) -> dict | None:
+        encerrada = all(p.get("resolved_at") for p in linhas)
+        assinatura = tuple(sorted((str(p.get("id")), str(p.get("resolved_at"))) for p in linhas))
+        guardado = _VEREDITOS.get(u)
+        if encerrada and guardado and guardado["assinatura"] == assinatura:
+            return guardado["veredito"]
+        try:
+            async with vagas:
+                v = await mw.verificacao_da_parada(u[0], **({"grupo": u[2]} if u[1] == "g" else {"linha": u[2]}))
+        except Exception as e:                             # noqa: BLE001 — sem o veredito, segue como antes
+            logger.warning("diagnostico: a verificação do meuWatt falhou em %s (%s)", u, type(e).__name__)
+            return None
+        veredito = {k: v.get(k) for k in ("row", "result", "kind")}
+        if veredito["kind"] not in KINDS:                  # a forma mudou lá: não cala parada nenhuma
+            logger.warning("diagnostico: veredito sem kind conhecido em %s: %r", u, veredito["kind"])
+            return None
+        if encerrada:
+            if len(_VEREDITOS) > 5000:                     # ponytail: zera tudo de vez; um dia da frota cabe com folga
+                _VEREDITOS.clear()
+            _VEREDITOS[u] = {"assinatura": assinatura, "veredito": veredito}
+        return veredito
+
+    pares = list(unidades.items())
+    return dict(zip([u for u, _ in pares], await asyncio.gather(*(um(u, ls) for u, ls in pares))))
+
+
+def _verificacao(ps: list[dict], vereditos: dict[tuple, dict | None]) -> str:
+    """A linha de prova que diz o veredito da matriz (ou que não deu para conferir)."""
+    vs = [vereditos.get(_unidade(p)) for p in ps]
+    if any(v is None for v in vs):
+        return "Verificação do meuWatt indisponível agora: avisado sem conferir se foi nuvem ou falha de leitura."
+    ditos = sorted({f"{v['result']} (linha {v['row']} do mapa)" for v in vs})
+    return "Verificação do meuWatt: " + "; ".join(ditos) + "."
+
+
 def _da_reserva(r: dict, evidencia_ok: bool, agora: datetime) -> dict:
     """Um relé do /monitoring/current no formato da tela Leituras, só quando ela não responde. A reserva NÃO julga relé
     mudo nem fase zerada (sem a tela não há o «já sei» de lá, e o aviso que alguém já marcou sairia de novo): a
@@ -218,12 +287,25 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
             do_skid.setdefault(r["transformer_name"], []).extend(h)
     achados: list[Achado] = []
 
-    # ── regra 1 e 2: o que parou hoje, por skid ────────────────────────────────────────────────────────────────
+    # ── regra 0: a matriz do meuWatt diz o que é parada ────────────────────────────────────────────────────────
+    materiais = [p for p in paradas if p.get("materiality") in (None, "material")]
+    vereditos = await _vereditos(mw, materiais)
     grupos: dict[str, list[dict]] = {}
-    for p in paradas:
-        if p.get("materiality") not in (None, "material"):
+    nao: dict[tuple, list[dict]] = {}
+    for p in materiais:
+        v = vereditos.get(_unidade(p))
+        if v is not None and v.get("kind") != "parada":
+            nao.setdefault(_unidade(p), []).append(p)
             continue
         grupos.setdefault(p.get("transformer_name") or "?", []).append(p)
+    if info is not None and nao:                           # o bot diz o veredito em vez de calar
+        info["nao_paradas"] = [{
+            "skids": sorted({p.get("transformer_name") or "?" for p in ps}), "inversores": len(ps),
+            "desde": _h(min(_quando(p.get("stopped_at")) for p in ps)),
+            "ate": _h(max(_quando(p.get("resolved_at")) for p in ps)) if all(p.get("resolved_at") for p in ps) else None,
+            "veredito": f"{vereditos[u]['result']} (linha {vereditos[u]['row']} do mapa)"} for u, ps in nao.items()]
+
+    # ── regra 1 e 2: o que parou hoje, por skid ────────────────────────────────────────────────────────────────
     causas: dict[tuple, Achado] = {}
     for skid, ps in grupos.items():
         inicio = min(_quando(p.get("stopped_at")) for p in ps if _quando(p.get("stopped_at")))
@@ -236,6 +318,7 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                  + timedelta(minutes=30)]
         parada_txt = (f"{len(ps)} inversor(es) ({nomes}) parados desde {_h(inicio)}"
                       + (f" até {_h(fim)}" if fim else "") + (f", {perda:.0f} kWh perdidos" if perda else "") + ".")
+        prova = _verificacao(ps, vereditos)
         if antes:
             principal = antes[-1]
             item = principal["item"]
@@ -243,7 +326,7 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
             if chave in causas:                            # o mesmo trip em outro skid: um achado só
                 a = causas[chave]
                 a.skids.append(skid)
-                a.evidencias.append(parada_txt)
+                a.evidencias += [parada_txt] + ([prova] if prova not in a.evidencias else [])
                 a.desde = min(a.desde, inicio)
                 continue
             rede = _da_rede(item, principal["quando"], por_rele)
@@ -254,7 +337,7 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                         else f": {item.causas[0][0].lower() + item.causas[0][1:]}") )
             a = Achado(item.codigo, "skid desarmado, inversores sem gerar" if fim is None else
                        "skid desarmou e os inversores ficaram sem gerar", item.gravidade, usina["nome"], [skid], inicio,
-                       fim, causa, [parada_txt], list(item.fazer), item.religar_remoto)
+                       fim, causa, [parada_txt, prova], list(item.fazer), item.religar_remoto)
             causas[chave] = a
             achados.append(a)
         elif all(p.get("cause") == "communication_failure" for p in ps):
@@ -268,22 +351,25 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                 "NAO_LIGOU" if nao_ligou else f"PARADA:{ps[0].get('cause')}",
                 "inversores não ligaram" if nao_ligou else "inversores parados", "alta", usina["nome"], [skid], inicio,
                 fim, "sem trip no relé do skid" + (": " + item.causas[1][0].lower() + item.causas[1][1:] if nao_ligou
-                                                   else ""), [parada_txt],
+                                                   else ""), [parada_txt, prova],
                 list(item.fazer) if nao_ligou else ["Conferir os alarmes dos inversores e o teste de comunicação."]))
 
     # ── regra 3, 4 e 5: o estado dos relés agora ────────────────────────────────────────────────────────────────
     ja = {s for a in achados for s in a.skids if a.resolvido_em is None}
     for r, hist in zip(protecao, historicos):
         skid = r.get("transformer_name") or r.get("name")
+        lido = {x.get("key"): x for x in r.get("readings") or []}
+        pot = (lido.get("total_active_power") or {}).get("value")
+        fluxo = (lido.get("total_active_power") or {}).get("status") == "ok" and isinstance(pot, (int, float)) \
+            and pot > FLUXO_KW                             # o relé mede energia passando: o disjuntor está fechado
         for e in _ativos(hist):
-            if e["item"] is None or skid in ja or agora - e["quando"] > timedelta(days=2):
+            if e["item"] is None or skid in ja or fluxo or agora - e["quando"] > timedelta(days=2):
                 continue
             i = e["item"]
             achados.append(Achado(i.codigo, "skid DESARMADO agora", i.gravidade, usina["nome"], [skid], e["quando"],
                                   None, f"trip {e['funcao']} ({i.nome.lower()}) disparou às {_h(e['quando'])} e não limpou.",
                                   ["Os inversores deste skid não vão gerar até rearmar."], list(i.fazer), i.religar_remoto))
             ja.add(skid)
-        lido = {x.get("key"): x for x in r.get("readings") or []}
         comm = lido.get("comm") or {}
         if comm.get("status") == "unknown" and info is not None:   # nem mudo nem ok: quem chama não pode dizer "ok"
             info.setdefault("nao_conferidos", []).append(r.get("name") or str(r.get("relay_id")))
@@ -306,7 +392,6 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                                       None, i.o_que_e, [f"Sem leitura válida no meuWatt desde {_h(ultima)}." if ultima
                                                         else "Sem leitura válida no meuWatt nas últimas 48 h."],
                                       list(i.fazer), conhecido=_sabido(comm, pode)))
-        pot = (lido.get("total_active_power") or {}).get("value")
         for f in "abc":                                 # zerada com o skid gerando = a MEDIÇÃO, não a rede
             fase = lido.get(f"voltage_{f}") or {}
             if fase.get("status") != "zeroed" or not isinstance(pot, (int, float)) or pot <= GERANDO_KW:

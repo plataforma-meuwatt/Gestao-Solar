@@ -2,9 +2,12 @@
 às 03:17 nos relés dos Skids 1 e 2, os oito inversores deles sem ligar até o trip limpar; o relé do Skid 2 mudo e a
 fase A do Skid 3 zerada só na medição)."""
 
+import itertools
 from datetime import UTC, datetime
 
 from app.services import diagnostico, matriz
+
+_ids = itertools.count(1)
 
 
 def test_matriz_le_o_codigo_como_o_rele_escreve():
@@ -51,9 +54,14 @@ class _MW:
                                _ev("10:34", "27C", "CLEARED"), _ev("10:30", "47", "CLEARED")]}
         return {"events": []}
 
+    async def verificacao_da_parada(self, plant_id, grupo=None, linha=None):
+        """A matriz do meuWatt: os inversores que não ligaram com o relé sem corrente são parada (R5)."""
+        return {"row": "R5", "result": "Parada: zerou tudo, e o relé confirma", "kind": "parada", "checks": {}}
+
 
 def _parada(skid, inv):
-    return {"transformer_name": skid, "slot_label": inv, "stopped_at": "2026-11-13T08:46:00Z",
+    return {"id": next(_ids), "plant_id": 9376, "group_id": None, "transformer_name": skid, "slot_label": inv,
+            "stopped_at": "2026-11-13T08:46:00Z",
             "resolved_at": "2026-11-13T10:36:00Z", "cause": "never_woke_up", "materiality": "material",
             "shadow_loss_kwh": 68.5}
 
@@ -69,6 +77,7 @@ async def test_pirapozinho_rede_rele_mudo_e_tp():
     assert sorted(rede.skids) == ["TR-01", "TR-02"] and rede.resolvido_em is not None
     assert "03:17" in rede.causa and "47" in rede.causa and "REDE" in rede.causa
     assert "05:46" in rede.texto() and "07:36" in rede.texto() and "274 kWh" in rede.texto()
+    assert "Verificação do meuWatt: Parada: zerou tudo, e o relé confirma (linha R5 do mapa)." in rede.texto()
     assert rede.chave == "diag:pirapozinho:27:TR-01+TR-02:2026-11-13T08:46"
 
     assert por["RELE_SEM_COMUNICACAO"].skids == ["TR-02"]
@@ -82,6 +91,11 @@ async def test_pirapozinho_rede_rele_mudo_e_tp():
 
 async def test_sem_trip_e_nao_ligou_e_trip_ativo_e_desarmado():
     class Sem(_MW):
+        async def leituras(self, slug):                  # o skid desarmado: o relé dele não mede energia passando
+            lido = await super().leituras(slug)
+            lido["relays"][2] = _lido("Relé Skid 3", "TR-03", 3, pot=0.0)
+            return lido
+
         async def eventos_de_trip(self, slug, rele, n):
             # Skid 1 sem trip; Skid 3 com 86 que disparou e não limpou (desarmado agora).
             return {"events": [_ev("06:00", "86")]} if rele == 3 else {"events": []}
@@ -215,3 +229,79 @@ async def test_rele_mudo_e_fase_zerada_vem_do_meuwatt_e_o_x_cala():
                                                     _lido("Geral", "TR-02", 17, comm="no_comm", marca_comm=sabido)),
                                               u, [], agora=agora)
     assert os_dois.conhecido and os_dois.conhecido.startswith("Geral desligado")
+
+
+R9 = {"row": "R9", "result": "Não é parada: nuvem ou fim de tarde", "kind": "nao_parada"}
+R1 = {"row": "R1", "result": "Problema de comunicação: a energia está saindo pelo relé", "kind": "comunicacao"}
+R8 = {"row": "R8", "result": "Parada para avaliar: começou lenta e não voltou", "kind": "avaliar"}
+R4 = {"row": "R4", "result": "Parada", "kind": "parada"}
+
+
+class _Matriz(_MW):
+    """O meuWatt de 23/11/2026 com a matriz de lá (os vereditos que ela deu às 18:30)."""
+
+    def __init__(self, vereditos, reles=(), trips=None, falha=False):
+        self.vereditos, self.reles, self.trips, self.falha, self.pedidos = vereditos, reles, trips or {}, falha, []
+
+    async def leituras(self, slug):
+        return {"relays": list(self.reles)}
+
+    async def eventos_de_trip(self, slug, rele, n):
+        return {"events": self.trips.get(rele, [])}
+
+    async def verificacao_da_parada(self, plant_id, grupo=None, linha=None):
+        self.pedidos.append(grupo if grupo is not None else linha)
+        if self.falha:
+            raise RuntimeError("503 Service Unavailable")
+        return {**self.vereditos[grupo if grupo is not None else linha], "checks": {}}
+
+
+def _linha(i, skid, grupo, ini, fim, causa="zero_active_power"):
+    return {"id": i, "plant_id": 9377, "group_id": grupo, "transformer_name": skid, "slot_label": f"Inv {i}",
+            "stopped_at": f"2026-11-23T{ini}:00Z", "resolved_at": fim and f"2026-11-23T{fim}:00Z", "cause": causa,
+            "materiality": "material", "shadow_loss_kwh": 0.1}
+
+
+async def test_parada_e_o_que_a_matriz_do_meuwatt_diz():
+    """O dono, 23/11/2026: "Não foi parada, só vamos mostrar no whats o que for realmente parada. Já temos uma matriz".
+    Tietê 16:41: os 10 inversores a zero com tensão nos relés, sem trip e sem falha do inversor = R9 (nuvem ou fim de
+    tarde) no meuWatt, e saíram três avisos de parada. Pereiras: a falha de leitura com a energia saindo pelo relé (R1),
+    o fim da tarde (R8, para avaliar) e o 27 "disparado" com o skid gerando também viraram aviso."""
+    diagnostico._VEREDITOS.clear()
+    tiete = [_linha(i, f"TR-0{1 + i % 3}", 29039, "19:41", "19:52") for i in range(10)]
+    info, mw, u = {}, _Matriz({29039: R9}), {"slug": "tiete", "nome": "Tietê"}
+    assert await diagnostico.diagnosticar(mw, u, tiete, agora=datetime(2026, 11, 23, 20, tzinfo=UTC), info=info) == []
+    assert info["nao_paradas"] == [{"skids": ["TR-01", "TR-02", "TR-03"], "inversores": 10, "desde": "16:41",
+                                    "ate": "16:52", "veredito": "Não é parada: nuvem ou fim de tarde (linha R9 do mapa)"}]
+    await diagnostico.diagnosticar(mw, u, tiete, agora=datetime(2026, 11, 23, 20, 10, tzinfo=UTC))
+    assert mw.pedidos == [29039]                         # encerrada: a volta seguinte não pergunta de novo
+
+    pereiras = ([_linha(100 + i, "TR-01" if i < 8 else "TR-02", 29036, "15:29", "19:40", "communication_failure")
+                 for i in range(12)] + [_linha(200 + i, "TR-01" if i < 8 else "TR-02", 29037, "19:46", None)
+                                        for i in range(12)])
+    vinte_e_sete = {9: [_ev("17:48", f"27{f}", dia=23) for f in "ABC"]}     # disparou às 14:48 e não limpou
+    gerando = [_lido("UFV 01", "TR-01", 11, pot=13.0), _lido("UFV 02", "TR-02", 9, pot=6.0)]
+    mw = _Matriz({29036: R1, 29037: R8}, gerando, vinte_e_sete)
+    u = {"slug": "pereiras", "nome": "Pereiras"}
+    assert await diagnostico.diagnosticar(mw, u, pereiras, agora=datetime(2026, 11, 23, 20, tzinfo=UTC)) == []
+    await diagnostico.diagnosticar(mw, u, pereiras, agora=datetime(2026, 11, 23, 20, 10, tzinfo=UTC))
+    assert mw.pedidos == [29036, 29037, 29037]           # a aberta é conferida a cada volta (a duração entra)
+
+    # O mesmo 27 com o relé do skid sem medir energia passando: o disjuntor abriu, e o aviso sai como antes.
+    aberto = _Matriz({29036: R1, 29037: R8}, [gerando[0], _lido("UFV 02", "TR-02", 9, pot=0.0)], vinte_e_sete)
+    desarmado, = await diagnostico.diagnosticar(aberto, u, pereiras, agora=datetime(2026, 11, 23, 20, tzinfo=UTC))
+    assert desarmado.codigo == "27" and desarmado.titulo == "skid DESARMADO agora" and desarmado.skids == ["TR-02"]
+
+    # Parada de verdade (R4): o aviso sai, com o veredito da matriz na prova.
+    real = [_linha(300, "TR-02", None, "16:00", None)]
+    a, = await diagnostico.diagnosticar(_Matriz({300: R4}, gerando), u, real, agora=datetime(2026, 11, 23, 17, tzinfo=UTC))
+    assert a.codigo == "PARADA:zero_active_power" and "Verificação do meuWatt: Parada (linha R4 do mapa)." in a.texto()
+
+    # A verificação não respondeu: "não consegui conferir" não é "não é parada". Sai como antes, e diz isso.
+    b, = await diagnostico.diagnosticar(_Matriz({}, gerando, falha=True), u, real,
+                                        agora=datetime(2026, 11, 23, 17, tzinfo=UTC))
+    assert b.codigo == "PARADA:zero_active_power" and "Verificação do meuWatt indisponível agora" in b.texto()
+    # O meuWatt renomeou o campo: a forma estranha também não cala a parada.
+    c, = await diagnostico.diagnosticar(_Matriz({300: {"row": "R4", "result": "Parada", "tipo": "parada"}}, gerando), u,
+                                        real, agora=datetime(2026, 11, 23, 17, tzinfo=UTC))
+    assert "Verificação do meuWatt indisponível agora" in c.texto()

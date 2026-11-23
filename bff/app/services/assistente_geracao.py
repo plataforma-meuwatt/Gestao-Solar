@@ -514,12 +514,17 @@ async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
         except Exception:                                 # noqa: BLE001 (sem o helper, fica o que o meuWatt disse)
             pass
     return {"usina": u["nome"], "achados": [x.para_ia() for x in achados],
+            **({"nao_sao_parada": info["nao_paradas"]} if info.get("nao_paradas") else {}),
             "nota": (("Relés com a comunicação NÃO conferida agora: " + ", ".join(info["nao_conferidos"])
                       + " (nenhum equipamento da usina mandou leitura há pouco: não diga que estão ok nem que não há "
                       "relé mudo neles). " if info.get("nao_conferidos") else "")
                      + "Lista vazia = nenhum trip, parada, relé mudo ou fase zerada HOJE"
                      + (" nos relés conferidos" if info.get("nao_conferidos") else "")
-                     + " (não quer dizer que a usina gerou bem: veja `geracao`). 'Helper agora' é a leitura ao vivo do "
+                     + " (não quer dizer que a usina gerou bem: veja `geracao`). "
+                     + ("`nao_sao_parada` = o que o detector marcou e a verificação do meuWatt (a matriz R0–R9) julgou "
+                        "NÃO parada (nuvem ou fim de tarde, falha de comunicação ou para avaliar): não chame de parada, "
+                        "diga o veredito. " if info.get("nao_paradas") else "")
+                     + "'Helper agora' é a leitura ao vivo do "
                      "equipamento. `ja_sabido` = alguém "
                      "marcou «já sei» na tela Leituras do meuWatt: diga que é conhecido, com a observação, e que o aviso "
                      "não sai; não trate como novidade.")
