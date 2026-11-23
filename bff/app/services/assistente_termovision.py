@@ -110,10 +110,7 @@ async def processar_usina(ctx, a: dict) -> dict:
         return {"erro": f"Há {o['usinas_com_o_nome']} usinas com o nome '{pasta}' no TermoVision: diga isso, não escolha."}
     if o.get("processando"):
         nome = (usina or {}).get("nome") or pasta
-        from sqlalchemy import select
-        p = db.scalar(select(ProcessamentoTV).where(ProcessamentoTV.usina == nome)
-                      .order_by(ProcessamentoTV.id.desc()).limit(1))
-        link = f" Andamento: {_base()}/p/{p.token}" if p else " O link do andamento não foi pedido por aqui."
+        link = f" Andamento: {o['status_url']}" if o.get("status_url") else ""
         return {"erro": f"{nome} já está sendo processada: não abri outro.{link}"}
     if not usina and not envio.get("arquivos"):
         return {"erro": f"Não achei a usina nem a pasta '{pasta}' no drive de envio do TermoVision. As fotos vão numa "

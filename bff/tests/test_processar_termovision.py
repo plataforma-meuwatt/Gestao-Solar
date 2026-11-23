@@ -108,3 +108,13 @@ def test_provisionar_liga_e_desliga_e_a_plataforma_nunca(monkeypatch):
     adm = SimpleNamespace(**{**vars(ctx.user), "perfil": Perfil.ADMINISTRADOR})
     rota.reset()
     assert asyncio.run(tv.provisionar(ctx.db, adm, True)) is None and not rota.called
+
+
+@respx.mock
+def test_ja_processando_manda_o_link_que_esta_rodando(monkeypatch):
+    ctx = _ctx(monkeypatch)
+    respx.post(f"{B}/api/conta/gs").respond(200)
+    respx.get(f"{B}/api/processar/opcoes").respond(200, json={
+        **OPC, "usina": {"nome": "Ibitinga"}, "usinas_com_o_nome": 1, "processando": True, "status_url": f"{B}/p/tvp_x"})
+    r = asyncio.run(tv.processar_usina(ctx, {"usina": "ibitinga"}))
+    assert f"{B}/p/tvp_x" in r["erro"] and ctx.proposta is None
