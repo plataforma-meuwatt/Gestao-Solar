@@ -2557,5 +2557,133 @@
       "usina_helper_catalogo"
     ],
     "origem": "log #607"
+  },
+  {
+    "frase": "••••, ••••\n\nsalve a coordenada de pirapozinho",
+    "espera": [
+      "gravar_coordenada"
+    ],
+    "origem": "log #441"
+  },
+  {
+    "frase": "🎙️ Me mande a foto da Skid 1 da câmera.",
+    "espera": [
+      "foto_camera"
+    ],
+    "origem": "log #465"
+  },
+  {
+    "frase": "No manual. Aos tem a senha?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #432"
+  },
+  {
+    "frase": "🎙️ Você consegue acessar o Novos da cabine de Pereiras?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #590"
+  },
+  {
+    "frase": "Qual a senha do cadeado do depósito?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #594"
+  },
+  {
+    "frase": "Traga imagem de uma câmera speed dome de Pereiras",
+    "espera": [
+      "foto_camera",
+      "ver_camera"
+    ],
+    "origem": "log #596"
+  },
+  {
+    "frase": "Limpe os flags do relé geral",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #599"
+  },
+  {
+    "frase": "Feche o disjuntor do relé geral",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #601"
+  },
+  {
+    "frase": "Ligue o TR-Geral",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #602"
+  },
+  {
+    "frase": "🎙️ Desligue o ski de 5 de Porto Ferreiro.",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #605"
+  },
+  {
+    "frase": "Leia a tensão no relé geral de porto ferreira",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #609"
+  },
+  {
+    "frase": "Leia a tensão do relé geral de porto ferreira",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #611"
+  },
+  {
+    "frase": "Verifique o status dos disjuntores MT da UFV Porto Ferreira",
+    "espera": [
+      "reles",
+      "usina_helper"
+    ],
+    "origem": "log #610"
+  },
+  {
+    "frase": "Me de a cascata de perda do gemeo",
+    "espera": [
+      "gemeo"
+    ],
+    "origem": "log #535"
+  },
+  {
+    "frase": "Me mande a comparação das energias de outubro",
+    "espera": [
+      "balanco_energia"
+    ],
+    "origem": "log #538"
+  },
+  {
+    "frase": "Me de as energias de hoje",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #540"
+  },
+  {
+    "frase": "As usinas estao saudáveis hoje?",
+    "espera": [
+      "comparar_usinas",
+      "paradas"
+    ],
+    "origem": "log #573"
   }
 ]
