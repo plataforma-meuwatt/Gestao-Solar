@@ -17,6 +17,7 @@ from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.pessoa import Pessoa
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
 from app.models.plant import PlantLink
+from app.models.processamento_tv import ProcessamentoTV
 from app.models.usina_oculta import UsinaOculta
 from app.models.user import (
     Perfil,
@@ -27,6 +28,7 @@ from app.models.user import (
 )
 
 __all__ = [
+    "ProcessamentoTV",
     "Empresa",
     "MembroDaEmpresa",
     "RegistroBot",

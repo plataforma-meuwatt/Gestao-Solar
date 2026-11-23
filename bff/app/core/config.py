@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     meuguarda_web_url: str = "https://meuguarda.gestao.solar"
     #: O SITE do TermoVision (o botão "TermoVision" dos portões: a entrada pelo Gestão Solar fica em `/entrar.html`).
     termovision_web_url: str = "https://termovision.gestao.solar"
+    #: a API do TermoVision que o bot chama ("Processar <usina>", provisionar a conta)
+    termovision_api_url: str = "https://app.termovision.tech"
+    #: o endereço público desta API (o TermoVision só avisa a hosts que ele conhece)
+    gs_api_publica: str = "https://api.gestao.solar"
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").
