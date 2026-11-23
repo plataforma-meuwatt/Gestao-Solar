@@ -49,6 +49,7 @@ from app.services import assistente_helper as helper
 from app.services import assistente_paradas as par
 from app.services import assistente_catalogo as catalogo
 from app.services import assistente_meuguarda as mg
+from app.services import assistente_termovision as tv
 from app.services import assistente_campo as campo
 from app.services import assistente_mapa as mapa
 
@@ -424,7 +425,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "avaliar_lugar": (local.avaliar_lugar, local.FERRAMENTA_AVALIAR),
                "lugares_da_equipe": (local.lugares_da_equipe, local.FERRAMENTA_LISTA_LUGARES),
                **helper.FERRAMENTAS, **cad.FERRAMENTAS,
-               **par.FERRAMENTAS, **mg.FERRAMENTAS, **campo.FERRAMENTAS}
+               **par.FERRAMENTAS, **mg.FERRAMENTAS, **campo.FERRAMENTAS, **tv.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -958,6 +959,7 @@ def permitidas(user) -> list[str]:
     if "bot_helper" in ativo and helper.configurado():
         nomes += list(helper.FERRAMENTAS)
     nomes += mg.permitidas(user)
+    nomes += tv.permitidas(user)                             # 'Processar <usina>' no TermoVision
     if {"bot_meuplano", "bot_meuwatt"} <= ativo:            # a foto do mapa: o mapa e a cor com os tokens DELA
         nomes.append("mapa_equipamento")
     nomes += [n for n in campo.permitidas(user) if n not in nomes]   # o técnico em campo: posição, plaqueta, foto
@@ -997,6 +999,8 @@ def _sistema(ctx: ger.Contexto) -> str:
              and (c != "bot_helper" or helper.configurado())]
     if mg.permitidas(ctx.user):                       # consultar vem com o acesso; atuar é a caixa do GS
         areas.append("as câmeras de segurança das usinas (meuGuarda)")
+    if tv.permitidas(ctx.user):
+        areas.append("processar voos de drone no TermoVision ('Processar <usina>' → `processar_usina`)")
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} e agora são {agora():%H:%M} (America/Sao_Paulo,
 o relógio do servidor: é a ÚNICA hora que vale; nunca a deduza das mensagens nem do relógio de câmera, inversor ou
 outro sistema).
