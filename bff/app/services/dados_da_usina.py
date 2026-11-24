@@ -123,7 +123,11 @@ def parecidas(db: Session, empresa_id: int, nome: str, latitude: float | None = 
     achadas = []
     for u in db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id)).all():
         outro = _nome(u.nome)
-        por_nome = bool(alvo and outro) and (
+        # o número no nome separa usinas ("Monte Sião 6" e "Monte Sião 7", "Stuqui UFV 1" e "UFV 4"): com número dos
+        # dois lados e diferente, o nome não as aproxima (a distância ainda pode)
+        numeros = (set(re.findall(r"\d+", alvo)), set(re.findall(r"\d+", outro)))
+        outro_numero = all(numeros) and numeros[0] != numeros[1]
+        por_nome = bool(alvo and outro) and not outro_numero and (
             alvo == outro or (min(len(alvo), len(outro)) >= 4 and (alvo in outro or outro in alvo))
             or difflib.SequenceMatcher(None, alvo, outro).ratio() >= 0.85)
         km = (distancia_km((latitude, longitude), (u.latitude, u.longitude))

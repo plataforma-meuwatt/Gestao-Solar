@@ -185,3 +185,16 @@ def test_a_tela_dados_e_a_troca_de_nome_no_catalogo(db, c, monkeypatch):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+def test_o_numero_no_nome_separa_usinas(db, c):
+    for nome in ("Monte Sião 6", "Stuqui - UFV 1 - Loja", "Mairinque"):
+        db.add(PlantLink(nome=nome, empresa_id=c["a"].id))
+    db.commit()
+    acha = lambda nome: [p["nome"] for p in dados_da_usina.parecidas(db, c["a"].id, nome)]
+    assert acha("Monte Sião 7") == []                                    # outro número: outra usina
+    assert acha("Monte Sião 6") == ["Monte Sião 6"]
+    assert acha("UFV Stuqui") == ["Stuqui - UFV 1 - Loja"]               # sem número de um lado: o gerente decide
+    assert acha("Stuqui - UFV 4 - Elias") == []
+    assert acha("Mairinque 205") == ["Mairinque"]
+    assert acha("ibitinga") == ["UFV Ibitinga"]
