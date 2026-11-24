@@ -13,11 +13,9 @@
  * metade disso — e o caso real é conhecido: gestor e dono no mesmo computador, as usinas de
  * quem saiu aparecendo para quem entrou.
  *
- * **A senha esquecida NÃO se resolve sozinha.** O BFF não envia e-mail (não há remetente do
- * lado do cliente): a senha provisória é gerada pelo gestor de conta, no painel de
- * administração. Escrever "Esqueci minha senha" com um link que não leva a lugar nenhum
- * seria pior que não escrever nada — então a tela DIZ o caminho verdadeiro. E não há link
- * para o painel: são dois sites, dois públicos, duas sessões.
+ * **A senha esquecida se resolve pelo WhatsApp do GS** (24/11/2026, R12): a página `/esqueci-a-senha` diz o número, e a
+ * pessoa manda "esqueci a senha" do celular cadastrado; o link de 30 minutos cria a senha nova (`/nova-senha`). Quem
+ * não tem celular cadastrado pede a senha provisória ao gestor de conta, e a tela diz isso.
  *
  * **O erro é o que o servidor disse.** `mensagemDeErro` (dentro do store) já achata o
  * `detail`, inclusive a lista do 422, numa frase; a tela não reescreve motivo de recusa —
@@ -26,11 +24,11 @@
  */
 
 import { useEffect, useState, type InputHTMLAttributes } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { Aviso } from '@/components/base'
 import { LockupGS } from '@/components/marca'
-import { useAuth } from '@/store/auth'
+import { useAuth, type DuasEtapas } from '@/store/auth'
 
 /** Campo de formulário — rótulo, `id` amarrado e as classes de `index.css`. */
 function Campo({
@@ -53,6 +51,10 @@ export default function Entrar() {
   const entrando = useAuth((s) => s.entrando)
   const erro = useAuth((s) => s.erro)
   const entrar = useAuth((s) => s.entrar)
+  const duasEtapas = useAuth((s) => s.duasEtapas)
+  const entrarComCodigo = useAuth((s) => s.entrarComCodigo)
+  const cancelarCodigo = useAuth((s) => s.cancelarCodigo)
+  const [codigo, setCodigo] = useState('')
 
   const navegar = useNavigate()
   const local = useLocation() as { state?: { de?: string } }
@@ -76,8 +78,9 @@ export default function Entrar() {
     e.preventDefault()
     // O `entrar` do store devolve `false` e guarda o motivo em `erro`; os campos ficam como
     // estão, porque refazer o apelido por causa de senha errada é o atrito que faz alguém
-    // desistir na segunda tentativa.
-    const ok = await entrar(apelido, senha)
+    // desistir na segunda tentativa. Quando a conta usa a verificação em duas etapas, ele
+    // para no pedido do código (`duasEtapas`) e a tela mostra o segundo passo.
+    const ok = duasEtapas ? await entrarComCodigo(codigo) : await entrar(apelido, senha)
     if (ok) navegar(destino, { replace: true })
   }
 
@@ -142,6 +145,20 @@ export default function Entrar() {
               </div>
             ) : null}
 
+            {duasEtapas ? (
+              <SegundoPasso
+                pedido={duasEtapas}
+                codigo={codigo}
+                aoMudar={setCodigo}
+                entrando={entrando}
+                aoVoltar={() => {
+                  cancelarCodigo()
+                  setCodigo('')
+                }}
+              />
+            ) : (
+            <>
+
             {/*
               O LOGIN OU O E-MAIL (24/11/2026). A identidade de uma conta é o login (`bff/app/core/apelido.py`); o
               e-mail também entra, e quando a mesma pessoa tem duas contas com ele (gestora e dona de usina) a senha
@@ -181,20 +198,90 @@ export default function Entrar() {
             <button type="submit" className="btn-primario mt-1 h-[46px]" disabled={!podeEnviar}>
               {entrando ? 'Entrando…' : 'Entrar'}
             </button>
+            </>
+            )}
           </form>
 
           <div className="mt-8 space-y-2 border-t border-borda pt-5 text-xs leading-relaxed text-fraco">
             <p>
-              Esqueceu a senha? Peça uma senha provisória ao seu gestor de conta — ela é gerada
-              na hora, e o portal pede a troca no primeiro acesso.
-            </p>
-            <p>
-              A senha provisória é entregue junto com o apelido. Não há autoatendimento de
-              senha neste portal.
+              Esqueceu a senha?{' '}
+              <Link className="underline text-corpo" to="/esqueci-a-senha">
+                Crie uma nova pelo WhatsApp do Gestão Solar
+              </Link>
+              , do celular cadastrado na sua conta. Sem celular cadastrado, peça uma senha provisória ao seu gestor de
+              conta.
             </p>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+
+/** O segundo passo: o código do autenticador (e, na primeira vez, o cadastro dele com o QR). */
+function SegundoPasso({
+  pedido,
+  codigo,
+  aoMudar,
+  entrando,
+  aoVoltar,
+}: {
+  pedido: DuasEtapas
+  codigo: string
+  aoMudar: (c: string) => void
+  entrando: boolean
+  aoVoltar: () => void
+}) {
+  return (
+    <>
+      {pedido.cadastrar ? (
+        <div className="grid gap-3 text-sm text-corpo">
+          <p className="font-semibold text-forte">Verificação em duas etapas</p>
+          <p>
+            Esta conta passa a pedir, além da senha, um código do celular. Abra o Google Authenticator ou o
+            Microsoft Authenticator, toque em + e leia este QR:
+          </p>
+          {pedido.qr ? (
+            <img src={pedido.qr} alt="QR code para cadastrar o Gestão Solar no autenticador"
+                 className="mx-auto h-48 w-48 rounded bg-white p-1" />
+          ) : null}
+          <p>
+            Sem câmera? Digite a chave no autenticador:{' '}
+            <span className="mono break-all text-forte">{pedido.segredo}</span>
+          </p>
+          {pedido.otpauth ? (
+            <a className="underline" href={pedido.otpauth}>
+              No celular: abrir direto no autenticador
+            </a>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-sm text-corpo">Digite o código de 6 números do autenticador do seu celular.</p>
+      )}
+      <Campo
+        id="codigo"
+        rotulo="Código do autenticador"
+        value={codigo}
+        onChange={(e) => aoMudar(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        placeholder="000000"
+        autoFocus
+        required
+      />
+      <button type="submit" className="btn-primario mt-1 h-[46px]" disabled={entrando || codigo.length !== 6}>
+        {entrando ? 'Conferindo…' : 'Entrar'}
+      </button>
+      <button type="button" className="btn-fantasma" onClick={aoVoltar}>
+        Voltar
+      </button>
+      {!pedido.cadastrar ? (
+        <p className="text-xs text-fraco">
+          Perdeu o celular? Peça ao gerente da sua empresa (ou a quem administra a plataforma) para refazer a verificação
+          em duas etapas da sua conta.
+        </p>
+      ) : null}
+    </>
   )
 }

@@ -59,7 +59,8 @@ export type MapaDoMeuPlano = {
 }
 
 export type MapaOut = {
-  usina: { id: number; nome: string }
+  /** `tv_codigo`: o mapa desta usina no TermoVision (o GS embute a tela dele, R6); nulo = sem mapa lá. */
+  usina: { id: number; nome: string; tv_codigo?: string | null }
   pode_editar: boolean
   por_que_nao_edita: string | null
   /** Cada camada com a permissão do produto dela: `null` = edita; o texto = por que não. */

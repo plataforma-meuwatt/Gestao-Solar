@@ -55,8 +55,18 @@ export type Usuario = {
   trocar_senha: boolean
 }
 
-/** O que o BFF devolve no login e na renovação. */
-type Sessao = { token: string; expira_em?: string | null; usuario: Usuario }
+/** A senha está certa e falta o código do autenticador (a verificação em duas etapas do gerente e da plataforma). Na
+ *  primeira vez, `cadastrar` traz o QR, a chave e o endereço que abre o autenticador no celular. */
+export type DuasEtapas = {
+  desafio: string
+  cadastrar: boolean
+  qr: string | null
+  segredo: string | null
+  otpauth: string | null
+}
+
+/** O que o BFF devolve no login e na renovação (o login devolve `duas_etapas` no lugar do token quando falta o código). */
+type Sessao = { token: string; expira_em?: string | null; usuario: Usuario; duas_etapas?: DuasEtapas | null }
 
 type Guardado = { token: string; expira_em: string | null; usuario: Usuario }
 
@@ -96,18 +106,37 @@ type Estado = {
   entrando: boolean
   erro: string | null
   entrar: (apelido: string, senha: string) => Promise<boolean>
+  /** O pedido do código, quando o `entrar` parou nele (a tela mostra o segundo passo). */
+  duasEtapas: DuasEtapas | null
+  entrarComCodigo: (codigo: string) => Promise<boolean>
+  cancelarCodigo: () => void
   sair: () => void
   /** Revalida o perfil contra o servidor. Roda no boot, quando há sessão guardada. */
   hidratar: () => Promise<void>
   /** Estende o prazo quando falta pouco. Roda no boot e ao voltar o foco da janela. */
   renovar: () => Promise<void>
   /** Depois de trocar a senha: o servidor devolve o perfil sem a marca `trocar_senha`. */
+  /** A sessão nova deste navegador depois de trocar a senha (as outras acabaram). */
+  trocarToken: (token: string, expiraEm: string | null) => void
   atualizarUsuario: (usuario: Usuario) => void
 }
 
 const inicial = lerGuardado()
 definirToken(inicial?.token ?? null)
 identificarCache(inicial?.usuario.id ?? null)
+
+/** Guarda a sessão que o login devolveu. A ordem importa: o cache passa a ser da conta nova ANTES de qualquer leitura,
+ *  e o que sobrou da conta anterior sai de cena. */
+function entrarCom(data: Sessao, set: (p: Partial<Estado>) => void): boolean {
+  limparCache()
+  esquecerConsultas()
+  identificarCache(data.usuario.id)
+  definirToken(data.token)
+  const expira = data.expira_em ?? null
+  guardar({ token: data.token, expira_em: expira, usuario: data.usuario })
+  set({ token: data.token, expiraEm: expira, usuario: data.usuario, entrando: false, erro: null, duasEtapas: null })
+  return true
+}
 
 /** Falta menos de uma semana para o token vencer? Sem prazo conhecido, sim: renove. */
 function estaPertoDeVencer(expiraEm: string | null): boolean {
@@ -123,6 +152,7 @@ export const useAuth = create<Estado>((set, get) => ({
   usuario: inicial?.usuario ?? null,
   entrando: false,
   erro: null,
+  duasEtapas: null,
 
   async entrar(apelido, senha) {
     set({ entrando: true, erro: null })
@@ -131,35 +161,47 @@ export const useAuth = create<Estado>((set, get) => ({
         apelido: apelido.trim(),
         senha,
       })
-      // A ordem importa: o cache passa a ser da conta nova ANTES de qualquer leitura, e o
-      // que sobrou da conta anterior sai de cena.
-      limparCache()
-      esquecerConsultas()
-      identificarCache(data.usuario.id)
-      definirToken(data.token)
-      const expira = data.expira_em ?? null
-      guardar({ token: data.token, expira_em: expira, usuario: data.usuario })
-      set({
-        token: data.token,
-        expiraEm: expira,
-        usuario: data.usuario,
-        entrando: false,
-        erro: null,
-      })
-      return true
+      if (data.duas_etapas) {
+        set({ entrando: false, duasEtapas: data.duas_etapas })
+        return false
+      }
+      return entrarCom(data, set)
     } catch (erro) {
       set({ entrando: false, erro: mensagemDeErro(erro) })
       return false
     }
   },
 
+  async entrarComCodigo(codigo) {
+    const pedido = get().duasEtapas
+    if (!pedido) return false
+    set({ entrando: true, erro: null })
+    try {
+      const { data } = await api.post<Sessao>('/api/v1/auth/login/codigo', { desafio: pedido.desafio, codigo })
+      return entrarCom(data, set)
+    } catch (erro) {
+      set({ entrando: false, erro: mensagemDeErro(erro) })
+      return false
+    }
+  },
+
+  cancelarCodigo() {
+    set({ duasEtapas: null, erro: null })
+  },
+
   sair() {
+    // a sessão acaba no servidor também; sem esperar: sair nunca trava a tela
+    const atual = get().token
+    if (atual)
+      void api
+        .post('/api/sessao/sair', null, { headers: { Authorization: `Bearer ${atual}` }, validateStatus: () => true })
+        .catch(() => undefined)
     definirToken(null)
     identificarCache(null)
     limparCache()
     esquecerConsultas()
     guardar(null)
-    set({ token: null, expiraEm: null, usuario: null, erro: null })
+    set({ token: null, expiraEm: null, usuario: null, erro: null, duasEtapas: null })
   },
 
   async hidratar() {
@@ -191,6 +233,15 @@ export const useAuth = create<Estado>((set, get) => ({
       // Recusa de renovação vira 401 no interceptor, que já chama `sair`. Qualquer outra
       // falha (rede, servidor fora) não pode derrubar quem está com a sessão válida na mão.
     }
+  },
+
+  trocarToken(token, expiraEm) {
+    // a senha trocada encerrou as outras sessões: este navegador segue com a nova
+    const { usuario } = get()
+    if (!usuario) return
+    definirToken(token)
+    guardar({ token, expira_em: expiraEm, usuario })
+    set({ token, expiraEm })
   },
 
   atualizarUsuario(usuario) {

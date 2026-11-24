@@ -11,6 +11,7 @@ import { EntrarNoProduto } from '@/features/entrada/EntrarNoProduto'
 import { BotDaEmpresa } from '@/features/empresa/Bot'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
+import { ProprietariasDaEmpresa } from '@/features/empresa/Proprietarias'
 import { UsinasDaEmpresa } from '@/features/empresa/Usinas'
 import { UsuariosDaEmpresa } from '@/features/empresa/Usuarios'
 import { Usuarios } from '@/features/usuarios/Usuarios'
@@ -166,6 +167,14 @@ export function App() {
               element={
                 <SoEmpresa>
                   <UsinasDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/proprietarias"
+              element={
+                <SoEmpresa>
+                  <ProprietariasDaEmpresa />
                 </SoEmpresa>
               }
             />

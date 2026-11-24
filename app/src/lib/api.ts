@@ -45,7 +45,7 @@ function resolverBaseURL(): string {
   const doAppJson = (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl
 
   // Aplicativo instalado (APK ou OTA): vale o `app.json`, sem adivinhar.
-  if (!__DEV__) return doAppJson ?? 'https://api-gs.meuplano.solar'
+  if (!__DEV__) return doAppJson ?? 'https://api.gestao.solar'
 
   // Desenvolvimento: o BFF roda na mesma máquina que serve o bundle. O Expo publica esse
   // endereço em `hostUri` (`192.168.0.12:8081`), então basta trocar a porta — ninguém

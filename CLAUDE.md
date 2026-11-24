@@ -524,6 +524,39 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   o bot faz por ela não conta), e o código do mapa fica em `gs_plant_links.tv_codigo`, único dos dois lados.
 - **"Onde fica" no bot** (`mapa_equipamento`): primeiro o mapa do GS; sem o objeto lá, a leitura `localizar` do
   TermoVision (string, mesa, fileira, módulo); nos dois, vale o GS (o dono, 24/11/2026).
+- **A porta dos sistemas** (`api/v1/interno_sistemas.py`, contrato em `docs/CONTRATO_SISTEMAS.md`): os quatro sistemas
+  leem e editam pelo servidor, em nome de quem está com a tela aberta. Uma chave por sistema; a chave sozinha não fala
+  por ninguém (`pessoa`: a sessão do passe em `X-Sessao-GS` ou, na transição, uma entrada pelo GS nos últimos 60
+  dias). Pessoa, usina ou empresa que não serve = 404 com a mesma frase.
+- **O cadastro mestre da usina** (R10, `services/dados_da_usina.py`): nome, endereço, cidade, UF, coordenada e kWp
+  moram em `gs_plant_links`, com histórico por campo (`gs_usinas_historico`: quem, de qual sistema, antes e depois). A
+  usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em
+  oem-gs › Usinas (`gs_usinas_a_confirmar`), que diz se é a mesma, outra ou descarta. A que só existe no TermoVision
+  nasce FORA do aplicativo (`ativo=False`): o mapa dela existe, os dados de geração e manutenção não.
+- **As proprietárias** (R11, `gs_proprietarias`, `services/proprietarias.py`): a dona da usina (a "PROPRIETARIA" do
+  meuPlano, importada de lá). Pessoas da mesma proprietária dividem as usinas dela (`clientes._donos_por_usina`).
+- **Sessões** (R12, `gs_sessoes`, `services/sessoes.py`): todo token leva `iat` e `sid`; a linha nasce no 1º uso e
+  `_sessao_viva` a confere em TODOS os guardas (a conta, a empresa e a sessão saem numa ida só ao banco). Encerrar uma,
+  ou todas (`sessoes_desde`), derruba também o `sessao_gs` dos sistemas, a transição deles (a entrada de antes não fala
+  mais pela pessoa: `interno_sistemas.desde_a_ultima_entrada`) e a ligação do conector do Claude. TODA senha trocada por
+  outra pessoa (adm-gs, oem-gs, bot, senha provisória) ou pelo "esqueci a senha" encerra todas
+  (`sessoes.encerrar_todas_de`). A renovação dos sistemas devolve o `sessao_gs` novo, da mesma sessão. As rotas de
+  `/api/sessao/*` só aceitam sessão de portão (lista fechada `_ESCOPOS_DE_SESSAO`): nem o desafio da duas etapas nem o
+  `sessao_gs` de um sistema.
+- **Verificação em duas etapas** (R12, `services/duas_etapas.py`, TOTP): obrigatória para administrador, atendimento e
+  gerente da O&M, em todas as portas que conferem senha (painel, portal, app, conector, entrada dos sistemas) e na troca
+  de papel para uma conta dessas. A conta que exige e não cadastrou não tem sessão que valha (`pendente`: as de antes de
+  ligar a exigência caem). O código errado tem limite por conta, de qualquer lugar (10 em 15 min, com registro e aviso
+  pelo WhatsApp, sem garantia de chegada). O interruptor `GS_2FA_DESLIGADA=1` a desliga (a suíte a desliga no
+  `conftest`; os testes dela a ligam). Refazer o cadastro do código: oem-gs/adm-gs › Usuários.
+  ⛔ **Ligar (ou religar depois de uma emergência):** a OTA do app com a tela do código tem de ter chegado antes; avisar
+  os terminais dos sistemas (quem exige e não cadastrou perde as sessões lá também); e, ao RELIGAR depois de usar o
+  interruptor, encerrar as sessões de quem exige o código (as abertas na janela só com a senha seguiriam valendo):
+  no contêiner da API, `encerrar_todas` para cada `User` ativo com `perfil in duas_etapas.EXIGIDA_PARA` e commit.
+- **"Esqueci a senha"** (R12, `services/esqueci_a_senha.py`): a pessoa manda "esqueci a senha" ao WhatsApp do GS pelo
+  celular CADASTRADO (o gancho é de `assistente._atender`, antes da IA e antes de conferir se o bot está liberado) e
+  recebe `/nova-senha#t=…` no portal: 30 minutos, uma vez só, só o hash no banco, fora do Log do bot e da cópia do
+  gateway. Pelo e-mail, só com remetente (`GS_SMTP_*`; ainda não há caixa do GS).
 
 ### Nada de "chips" para selecionar opção
 
@@ -986,8 +1019,8 @@ apps com Dockerfile, e **push na `main` publica os quatro sozinho** (webhook do 
 **Domínio próprio `gestao.solar` desde 11/11/2026** (DNS na Hostinger, todos A → 177.153.20.214; CAA só Let's Encrypt;
 SPF `-all` e DMARC `reject`, porque o domínio não manda e-mail). Os endereços `*.meuplano.solar` e os sslip SEGUEM
 valendo em cada app (o Coolify aceita vários): ninguém cai na troca. A API, os fronts (`API_URL`), as origens do CORS
-(`GS_CORS_ORIGENS`) e os `ENDERECO_GS`/`ENDERECO_OEM` do painel já são os novos. Falta: o aplicativo (`app/app.json` →
-`apiUrl`, com OTA) e o callback da Meta (o painel da Meta, não o código).
+(`GS_CORS_ORIGENS`) e os `ENDERECO_GS`/`ENDERECO_OEM` do painel já são os novos; o aplicativo também, pela OTA
+(`app/app.json` → `apiUrl`). Falta o callback da Meta (o painel da Meta, não o código).
 
 Status do deploy: API do Coolify (`/root/bin/coolify-api.sh GET /deployments/<uuid>` na VM
 srvclaude). Variáveis: `/root/bin/coolify-envs.py`. O banco é o Supabase BR (sa-east-1) desde 04/11/2026 (`/root/bin/gestaosolar-migra-banco.sh`; o de us-west-1 ficou só leitura).

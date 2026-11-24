@@ -68,8 +68,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (erro) => {
-    const enviouToken = Boolean(erro?.config?.headers?.Authorization)
-    if (erro?.response?.status === 401 && enviouToken) aoPerder?.()
+    // só o 401 do token ATUAL derruba a sessão: a requisição que saiu com o de antes da troca de senha e volta depois
+    // não pode deslogar quem já tem o token novo
+    const usado = String(erro?.config?.headers?.Authorization ?? '')
+    if (erro?.response?.status === 401 && usado && usado === `Bearer ${tokenAtual}`) aoPerder?.()
     return Promise.reject(erro)
   },
 )

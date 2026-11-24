@@ -23,6 +23,9 @@ import secrets  # noqa: E402
 
 os.environ["GS_JWT_SECRET"] = secrets.token_urlsafe(32)
 os.environ["MEUWATT_API_URL"] = os.environ["MEUPLANO_API_URL"] = "http://127.0.0.1:9"
+# A verificação em duas etapas (R12) fica DESLIGADA na suíte: os testes de login conferem o portão, o token e a
+# asserção; os da própria verificação (`test_sessoes_e_duas_etapas.py`) a ligam de volta.
+os.environ["GS_2FA_DESLIGADA"] = "1"
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -82,7 +85,10 @@ def _id_das_usinas_esquecido():
 
 @pytest.fixture
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # UMA conexão para todas as threads (o TestClient roda a rota em outra): sem o StaticPool, um commit no meio da
+    # requisição (a guarda grava o uso da sessão, R4) devolvia a conexão e a consulta seguinte caía num banco vazio
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     sessao = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
     try:

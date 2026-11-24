@@ -32,7 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1 import mapa
-from app.api.v1.interno_sistemas import UsinaDoGS
+from app.api.v1.interno_sistemas import UsinaDoGS, desde_a_ultima_entrada
 from app.api.v1.interno_sistemas import da_empresa as _da_empresa
 from app.api.v1.interno_sistemas import saida as _saida
 from app.core.config import get_settings
@@ -63,7 +63,8 @@ def _pessoa(db: Session, x_usuario_gs: str | None) -> User:
     """A pessoa, ativa, com o TermoVision liberado, da O&M e que entrou nele pelo GS há pouco."""
     texto = (x_usuario_gs or "").strip()
     u = db.get(User, int(texto)) if texto.isdecimal() else None
-    if u is None or not u.ativo or not u.entra_no_termovision:
+    from app.services import duas_etapas
+    if u is None or not u.ativo or not u.entra_no_termovision or duas_etapas.pendente(u):
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
     if u.perfil not in mapa._O_E_M:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "O mapa se liga pela equipe da O&M da usina.")
@@ -71,7 +72,7 @@ def _pessoa(db: Session, x_usuario_gs: str | None) -> User:
     # (registro sem IP), e não abrem esta janela
     recente = db.scalar(select(AcessoGS.id).where(
         AcessoGS.gs_user_id == u.id, AcessoGS.sistema == "termovision", AcessoGS.acao == "passe", AcessoGS.ok,
-        AcessoGS.ip != "", AcessoGS.em >= datetime.now(UTC) - JANELA_DO_PASSE).limit(1))
+        AcessoGS.ip != "", AcessoGS.em >= desde_a_ultima_entrada(u, JANELA_DO_PASSE)).limit(1))
     if recente is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Esta pessoa não entrou no TermoVision pelo Gestão Solar nas últimas 12 horas: "

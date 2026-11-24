@@ -70,10 +70,14 @@ class MembroOut(BaseModel):
     #: O que está GRAVADO para esta pessoa. Vem vazio para administrador, que abre tudo
     #: por perfil — ver o docstring do módulo.
     areas: list[str] = []
+    #: a verificação em duas etapas: `ativa`, `a_cadastrar` (no próximo login) ou `nao_exigida`
+    duas_etapas: str = "nao_exigida"
 
 
 def _membro_out(db: Session, m: User) -> MembroOut:
+    from app.services import duas_etapas
     return MembroOut(
+        duas_etapas=duas_etapas.situacao(m),
         id=m.id,
         nome=m.nome,
         apelido=m.apelido,
@@ -243,8 +247,7 @@ def redefinir_senha(
     tela de troca de senha para o staff, então uma senha sorteada seria a senha dele para
     sempre. Aqui o administrador combina a senha com a pessoa, como no cadastro.
 
-    Sessões já abertas continuam valendo até expirar — o token do painel não é
-    revogável. Para tirar alguém de dentro agora, desative a conta.
+    As sessões abertas da pessoa acabam junto (R4: a sessão agora se encerra), inclusive as dos sistemas.
     """
     membro = db.get(User, membro_id)
     if membro is None or membro.perfil not in DA_PLATAFORMA:
@@ -252,8 +255,27 @@ def redefinir_senha(
 
     membro.senha_hash = gerar_hash_senha(body.senha)
     db.commit()
+    from app.api.v1.painel_acessos import encerrar_todas_de
     from app.services import acessos
     acessos.senha_redefinida(db, membro, _, "adm-gs, equipe da plataforma")
+    encerrar_todas_de(db, membro, _, "adm-gs (senha redefinida)")
+
+
+@router.post("/contas/{conta_id}/refazer-duas-etapas", status_code=204)
+def refazer_duas_etapas(conta_id: int, db: Session = Depends(get_db),
+                        admin: User = Depends(administrador_atual)) -> None:
+    """Quem perdeu o celular do autenticador (qualquer conta): no próximo login, cadastra de novo, e as sessões
+    abertas acabam."""
+    from app.api.v1.painel_acessos import encerrar_todas_de
+    from app.services import acessos, duas_etapas
+    conta = db.get(User, conta_id)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada")
+    duas_etapas.refazer(conta)
+    db.commit()
+    acessos.registrar(db, None, acao="acesso", user=conta, por=admin,
+                      motivo="verificação em duas etapas refeita no adm-gs (cadastra de novo no próximo login)")
+    encerrar_todas_de(db, conta, admin, "adm-gs")
 
 
 # --------------------------------------------------------------------- pessoas
@@ -448,5 +470,7 @@ def editar_conta(
     db.commit()
     if body.senha:
         acessos.senha_redefinida(db, conta, admin, "adm-gs, usuários")
+        from app.services.sessoes import encerrar_todas_de
+        encerrar_todas_de(db, conta, admin, "adm-gs (senha redefinida)")   # as sessões abertas acabam junto
     acessos.mudou(db, conta, admin, acessos.diferencas(antes, acessos.retrato(conta)), "adm-gs, usuários")
     return next(c for c in todas_as_contas(db=db, admin=admin) if c.id == conta.id)

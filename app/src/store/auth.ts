@@ -32,12 +32,24 @@ export type Usuario = {
 
 type Sessao = { token: string; usuario: Usuario }
 
+/** A senha está certa e falta o código do autenticador (a verificação em duas etapas do gerente e da plataforma). Na
+ *  primeira vez, `cadastrar` traz a chave e o endereço `otpauth://` que abre o autenticador neste celular. */
+export type DuasEtapas = {
+  desafio: string
+  cadastrar: boolean
+  qr: string | null
+  segredo: string | null
+  otpauth: string | null
+}
+
 type EstadoAuth = {
   token: string | null
   usuario: Usuario | null
   hidratado: boolean
   hidratar: () => Promise<void>
-  entrar: (apelido: string, senha: string) => Promise<void>
+  /** Devolve o pedido do código quando a conta usa a verificação em duas etapas; senão, já entrou. */
+  entrar: (apelido: string, senha: string) => Promise<DuasEtapas | null>
+  entrarComCodigo: (desafio: string, codigo: string) => Promise<void>
   entrarEmDemonstracao: () => Promise<void>
   sair: () => Promise<void>
 }
@@ -65,7 +77,16 @@ const USUARIO_DEMO: Usuario = {
   trocar_senha: false,
 }
 
-export const useAuth = create<EstadoAuth>((set) => ({
+/** Guarda a sessão do login. A conta identifica o cache: sem isso, TODA sessão aberta por login gravava como
+ *  `anonimo`, e a proteção "por construção" que o cache promete existiria só para quem entrasse pela hidratação. */
+async function guardarSessao(sessao: Sessao, set: (p: Partial<EstadoAuth>) => void) {
+  await gravar(CHAVE, JSON.stringify(sessao))
+  definirToken(sessao.token)
+  identificarCache(sessao.usuario?.id ?? null)
+  set({ token: sessao.token, usuario: sessao.usuario })
+}
+
+export const useAuth = create<EstadoAuth>((set, get) => ({
   token: null,
   usuario: null,
   hidratado: false,
@@ -87,21 +108,26 @@ export const useAuth = create<EstadoAuth>((set) => ({
   },
 
   entrar: async (apelido, senha) => {
-    const { data } = await api.post<{ token: string; usuario: Usuario }>('/api/v1/auth/login', {
-      apelido: apelido.trim().toLowerCase(),
-      senha,
+    const { data } = await api.post<{ token: string; usuario: Usuario; duas_etapas?: DuasEtapas | null }>(
+      '/api/v1/auth/login',
+      { apelido: apelido.trim().toLowerCase(), senha },
+    )
+    // a conta usa a verificação em duas etapas (o gerente e a plataforma): a senha está certa e falta o código
+    if (data.duas_etapas) return data.duas_etapas
+    await guardarSessao({ token: data.token, usuario: data.usuario }, set)
+    return null
+  },
+
+  entrarComCodigo: async (desafio, codigo) => {
+    const { data } = await api.post<{ token: string; usuario: Usuario }>('/api/v1/auth/login/codigo', {
+      desafio,
+      codigo,
     })
-    const sessao: Sessao = { token: data.token, usuario: data.usuario }
-    await gravar(CHAVE, JSON.stringify(sessao))
-    definirToken(sessao.token)
-    // A conta identifica o cache. Sem esta linha, TODA sessão aberta por login gravava
-    // como `anonimo` — e a proteção "por construção" que o cache promete existiria só
-    // para quem entrasse pela hidratação, que é o caminho menos usado.
-    identificarCache(sessao.usuario?.id ?? null)
-    set({ token: sessao.token, usuario: sessao.usuario })
+    await guardarSessao({ token: data.token, usuario: data.usuario }, set)
   },
 
   entrarEmDemonstracao: async () => {
+
     const sessao: Sessao = { token: 'demo', usuario: USUARIO_DEMO }
     await gravar(CHAVE, JSON.stringify(sessao))
     definirToken(sessao.token)
@@ -110,6 +136,13 @@ export const useAuth = create<EstadoAuth>((set) => ({
   },
 
   sair: async () => {
+    // A sessão acaba no servidor também (R12: some de "Sessões abertas" e o token roubado deixa de valer), sem esperar:
+    // sair nunca trava a tela, e sem rede o aparelho sai do mesmo jeito.
+    const atual = get().token
+    if (atual && atual !== 'demo')
+      void api
+        .post('/api/sessao/sair', null, { headers: { Authorization: `Bearer ${atual}` }, validateStatus: () => true })
+        .catch(() => undefined)
     await apagar(CHAVE)
     // O cache de leitura vai junto, e não é zelo: o CLAUDE.md descreve a mesma pessoa com
     // DUAS contas no mesmo aparelho — `renanmarquezini` gestor e `renan.marquezini` dono.

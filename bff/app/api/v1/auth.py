@@ -12,13 +12,15 @@ Quem autentica é o apelido. O e-mail continua no cadastro porque é ele que enc
 conta da pessoa no meuWatt e no meuPlano, mas não serve para entrar: ver `core/apelido.py`.
 """
 
+import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.v1.painel import CodigoIn, DuasEtapasOut
 from app.api.v1.plants import usinas_do_usuario
 from app.core.config import get_settings
 from app.core.tokens_produto import NOME
@@ -33,6 +35,7 @@ from app.core.security import (
 from app.models.integracao import Produto
 from app.models.user import User, UserPlantAccess, VinculoProduto
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["app · autenticação"])
 
 
@@ -64,9 +67,11 @@ class LoginIn(BaseModel):
 
 
 class LoginOut(BaseModel):
-    token: str
-    expira_em: datetime
-    usuario: UsuarioOut
+    #: vazios quando falta o código da verificação em duas etapas (`duas_etapas`, R12)
+    token: str = ""
+    expira_em: datetime | None = None
+    usuario: UsuarioOut | None = None
+    duas_etapas: DuasEtapasOut | None = None
 
 
 def _perfil(db: Session, usuario: User) -> UsuarioOut:
@@ -105,11 +110,27 @@ def login(body: LoginIn, db: Session = Depends(get_db), request: Request = None)
     # o login ou o e-mail (24/11/2026); a frase única para conta inexistente, senha errada e conta desativada — quem
     # tenta adivinhar não aprende qual das três aconteceu. O motivo vai só ao registro de acessos.
     usuario = acessos.entrar_ou_recusar(db, request, body.apelido, body.senha)
+    from app.services import duas_etapas
+    if duas_etapas.exigida(usuario):                       # R12: o gerente e a plataforma passam pelo código
+        from app.api.v1.painel import pedir_codigo
+        return LoginOut(duas_etapas=pedir_codigo(db, usuario, "cliente"))
+    return _sessao_do_cliente(db, request, usuario, body.apelido, "aplicativo ou portal")
 
+
+@router.post("/login/codigo", response_model=LoginOut)
+def login_com_codigo(body: CodigoIn, db: Session = Depends(get_db), request: Request = None) -> LoginOut:
+    """O segundo passo do login do portal e do aplicativo: o código do autenticador."""
+    from app.api.v1.painel import conta_do_codigo
+    usuario = conta_do_codigo(db, request, body, "cliente")
+    return _sessao_do_cliente(db, request, usuario, usuario.apelido,
+                              "aplicativo ou portal, com a verificação em duas etapas")
+
+
+def _sessao_do_cliente(db: Session, request: Request | None, usuario: User, login: str, motivo: str) -> LoginOut:
+    from app.services import acessos
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
-    acessos.registrar(db, request, acao="entrou", user=usuario, login=body.apelido, motivo="aplicativo ou portal")
-
+    acessos.registrar(db, request, acao="entrou", user=usuario, login=login, motivo=motivo)
     token, expira = criar_token(usuario.id)
     return LoginOut(token=token, expira_em=expira, usuario=_perfil(db, usuario))
 
@@ -148,17 +169,26 @@ class TrocarSenhaIn(BaseModel):
     senha_nova: str
 
 
-@router.post("/trocar-senha", status_code=204)
+class SessaoNovaOut(BaseModel):
+    """A sessão nova DESTE aparelho depois de trocar a senha (as outras foram encerradas)."""
+    token: str
+    expira_em: datetime
+
+
+@router.post("/trocar-senha", response_model=SessaoNovaOut)
 def trocar_senha(
     body: TrocarSenhaIn,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
     request: Request = None,
-) -> None:
+) -> SessaoNovaOut:
     """Fecha o ciclo da senha provisória entregue pelo gestor.
 
     Exige a senha atual mesmo com a sessão já autenticada: um celular desbloqueado e
     esquecido na mesa não deve bastar para trocar a senha e trancar o dono para fora.
+
+    Senha trocada encerra TODAS as sessões (a de quem roubou a senha, as dos sistemas, a ligação do Claude); este
+    aparelho continua com a sessão nova que volta aqui (R12).
     """
     if not conferir_senha(body.senha_atual, usuario.senha_hash):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "A senha atual não confere.")
@@ -173,9 +203,13 @@ def trocar_senha(
 
     usuario.senha_hash = gerar_hash_senha(body.senha_nova)
     usuario.trocar_senha = False
+    from app.services import acessos, sessoes
+    sessoes.encerrar_todas(db, usuario, por=usuario, motivo="trocou a própria senha")
     db.commit()
-    from app.services import acessos
-    acessos.registrar(db, request, acao="senha", user=usuario, motivo="trocou a própria senha")
+    acessos.registrar(db, request, acao="senha", user=usuario,
+                      motivo="trocou a própria senha; as outras sessões foram encerradas")
+    token, expira = criar_token(usuario.id)
+    return SessaoNovaOut(token=token, expira_em=expira)
 
 
 # ─────────────────────── entrar nos produtos com esta conta ───────────────────
@@ -282,6 +316,13 @@ def assercao_para_produto(
     # a empresa desligada não entra, em nenhum sistema (24/11/2026: antes o meuWatt e o meuPlano passavam)
     from app.core.security import _empresa_ativa
     _empresa_ativa(db, usuario)
+    from app.services import duas_etapas
+    if duas_etapas.exigida(usuario):                       # R12: a tela de senha do sistema não pede o código
+        acessos.registrar(db, request, acao="recusado", sistema=produto, user=usuario, ok=False,
+                          motivo="senha certa, mas a conta usa a verificação em duas etapas: pelo botão do GS")
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Esta conta usa a verificação em duas etapas: entre pelo botão “Entrar com o Gestão "
+                            "Solar”. A senha está certa.")
     if produto in login_externo.SO_LOGIN:
         # O meuGuarda e o TermoVision (a tela de entrar deles, servidor a servidor: o TermoVision pediu, 11/11/2026, que
         # o apelido e a senha do GS valham direto lá). A mesma asserção do redirecionamento, com o portão do perfil.
@@ -307,3 +348,89 @@ def assercao_para_produto(
     acessos.registrar(db, request, acao="passe", sistema=produto, user=usuario, login=body.apelido,
                       motivo="login e senha do GS na tela do sistema")
     return AssercaoOut(assertion=assercao, nome=usuario.nome)
+
+
+# ------------------------------------------------- o "esqueci a senha" (Plano Casa GS, R12)
+
+
+class CanaisDeSenhaOut(BaseModel):
+    #: o número do WhatsApp do GS (mande "esqueci a senha" daqui, do celular cadastrado); nulo = não pôde ser lido agora
+    whatsapp: str | None = None
+    #: dá para pedir o link por e-mail (há remetente)
+    email: bool = False
+
+
+@router.get("/senha/canais", response_model=CanaisDeSenhaOut)
+async def canais_de_senha() -> CanaisDeSenhaOut:
+    from app.services import esqueci_a_senha
+    return CanaisDeSenhaOut(whatsapp=await esqueci_a_senha.numero_do_bot(), email=esqueci_a_senha.email_disponivel())
+
+
+class EsqueciIn(BaseModel):
+    email: str
+
+
+def _pedido_por_email(email: str, ip: str) -> None:
+    """O pedido do link por e-mail, DEPOIS da resposta (`BackgroundTasks`): procurar a conta, emitir o link e mandar o
+    e-mail. A resposta é a mesma, no mesmo tempo, exista a conta ou não (não confirma e-mail a quem tenta). A falha do
+    remetente fica no Registro de acessos, nunca na tela."""
+    from app.core.db import SessionLocal
+    from app.services import acessos, esqueci_a_senha
+    db = SessionLocal()
+    try:
+        contas = esqueci_a_senha.contas_do_email(db, email)
+        if len(contas) != 1:                               # duas contas com o mesmo e-mail: só pelo WhatsApp (o número
+            return                                         # diz qual); nenhuma: nada
+        u = contas[0]
+        token = esqueci_a_senha.emitir(db, u, "email")
+        db.commit()
+        try:
+            esqueci_a_senha.mandar_email(u.email, esqueci_a_senha.link(token))
+            acessos.registrar(db, None, acao="senha", user=u, motivo=f"pediu o link de senha nova (e-mail, de {ip})")
+        except Exception:                                  # noqa: BLE001 — o remetente falhou
+            log.warning("esqueci a senha: o e-mail não saiu", exc_info=True)
+            acessos.registrar(db, None, acao="senha", user=u, ok=False,
+                              motivo=f"pediu o link de senha nova (e-mail, de {ip}), e o e-mail não saiu")
+    finally:
+        db.close()
+
+
+@router.post("/senha/esqueci", status_code=202)
+def esqueci_a_senha_por_email(body: EsqueciIn, tarefas: BackgroundTasks, db: Session = Depends(get_db),
+                              request: Request = None) -> dict:
+    """O link por e-mail. A resposta é a mesma, no mesmo tempo, exista a conta ou não: o trabalho que depende da conta
+    vai depois dela. O limite é o das senhas erradas (por e-mail e lugar)."""
+    from app.services import acessos, esqueci_a_senha
+    if not esqueci_a_senha.email_disponivel():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "O link por e-mail ainda não está disponível: mande \"esqueci a senha\" ao WhatsApp do GS.")
+    email = (body.email or "").strip().lower()
+    if (porque := acessos.barrado(request, email, db=db)) is not None:
+        acessos.recusar_barrado(db, request, email, porque=porque)
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, acessos.BARRADO)
+    acessos.contar_erro(request, email)                    # cada pedido conta: e-mail em massa para no limite
+    tarefas.add_task(_pedido_por_email, email, acessos._ip(request) or "sem IP")
+    return {"ok": True}
+
+
+class NovaSenhaIn(BaseModel):
+    token: str
+    senha: str
+
+
+@router.post("/senha/nova", status_code=204)
+def nova_senha(body: NovaSenhaIn, db: Session = Depends(get_db), request: Request = None) -> None:
+    """A senha nova pelo link do "esqueci a senha". As sessões abertas da pessoa acabam (inclusive as dos sistemas)."""
+    from app.services import acessos, esqueci_a_senha, sessoes
+    try:
+        u = esqueci_a_senha.trocar(db, body.token, body.senha)
+    except esqueci_a_senha.LinkInvalido as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    sessoes.encerrar_todas(db, u, por=u, motivo="senha nova pelo esqueci a senha")
+    db.commit()
+    acessos.registrar(db, request, acao="senha", user=u, por=u,
+                      motivo="senha nova pelo link do esqueci a senha; as sessões abertas foram encerradas")

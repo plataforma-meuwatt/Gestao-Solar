@@ -516,6 +516,8 @@ export type UsuarioDaEmpresa = {
   apelido: string
   perfil: string
   ativo: boolean
+  /** É desta empresa de origem (falso: membro vindo de outra O&M, cujo cadastro é cuidado lá). */
+  de_origem?: boolean
 }
 
 export const euNaEmpresa = () => apiEmpresa.get<EuNaEmpresa>('/eu').then((r) => r.data)
@@ -610,6 +612,8 @@ export type Papel = {
   atual: boolean
   /** Trocar para este papel exige a senha dele — vale para as contas da plataforma. */
   exige_senha: boolean
+  /** E o código do autenticador dele: a conta exige a verificação em duas etapas. */
+  exige_codigo: boolean
 }
 
 export type TrocaDePapel = {
@@ -628,8 +632,8 @@ aplicarInterceptores(sessao)
 
 export const meusPapeis = () => sessao.get<Papel[]>('/papeis').then((r) => r.data)
 
-export const trocarDePapel = (apelido: string, senha?: string) =>
-  sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null }).then((r) => r.data)
+export const trocarDePapel = (apelido: string, senha?: string, codigo?: string) =>
+  sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null, codigo: codigo || null }).then((r) => r.data)
 
 /** Os produtos que esta sessão abre pelo Gestão Solar (o gerente liberou): os botões do menu. */
 export type ProdutoDaSessao = { produto: string; nome: string; url: string }
@@ -691,6 +695,8 @@ export type UsuarioDaEmpresaAdmin = {
   outras_empresas: string[]
   /** Está no MEU grupo de papéis — é a que aparece em "Trocar papel". */
   minha: boolean
+  /** A verificação em duas etapas: `desligada`, `ativa`, `a_cadastrar` ou `nao_exigida`. */
+  duas_etapas?: string
 }
 
 export const usuariosDaEmpresaAdmin = (empresaId: number) =>
@@ -853,9 +859,10 @@ export const minhasEmpresas = () => sessao.get<EmpresaDaSessao[]>('/empresas').t
 export const trocarDeEmpresa = (empresaId: number) =>
   sessao.post<TrocaDePapel>('/empresa', { empresa_id: empresaId }).then((r) => r.data)
 
-/** Trocar a PRÓPRIA senha — vale para os três portões, por isso fora do prefixo do painel. */
+/** Trocar a PRÓPRIA senha — vale para os três portões, por isso fora do prefixo do painel. As outras sessões acabam;
+ *  volta a sessão nova DESTE aparelho, do mesmo portão. */
 export const trocarMinhaSenha = (dados: { senha_atual: string; senha_nova: string }) =>
-  sessao.post<void>('/senha', dados).then(() => undefined)
+  sessao.post<{ token: string; expira_em: string }>('/senha', dados).then((r) => r.data)
 
 /* ------------------------------- o gerente opera a empresa dele (com o token) */
 
@@ -870,7 +877,7 @@ export type LinhaDeUsina = {
   cidade: string | null
   uf: string | null
   kwp: number | null
-  origem: 'ambos' | 'meuwatt' | 'meuplano' | 'micro'
+  origem: 'ambos' | 'meuwatt' | 'meuplano' | 'micro' | 'termovision'
   no_app: boolean
   mw_micro_plant_id: number | null
   par_provavel_mw: string | null
@@ -898,7 +905,8 @@ export const salvarUsinaDaEmpresa = (dados: {
   mw_slug?: string | null
   mp_usina_id?: number | null
   mw_micro_plant_id?: number | null
-  nome: string
+  /** Só ao trazer e ao renomear; ausente, o servidor mantém o nome. */
+  nome?: string
   cidade?: string | null
   uf?: string | null
   kwp?: number | null
@@ -963,25 +971,74 @@ export type UsinaAConfirmar = {
     kwp: number | null
   }
   em: string
+  /** Quem pediu no outro sistema (nulo na importação). */
+  pedido_por: string | null
+  decidido_em: string | null
   parecidas: {
     gs: number
     codigo: string
     nome: string
     distancia_km: number | null
     pelo_nome: boolean
+    ativo: boolean
   }[]
 }
 
-export const usinasAConfirmar = () =>
-  apiEmpresa.get<UsinaAConfirmar[]>('/usinas/a-confirmar').then((r) => r.data)
+export const usinasAConfirmar = (descartadas = false) =>
+  apiEmpresa
+    .get<UsinaAConfirmar[]>('/usinas/a-confirmar', { params: descartadas ? { descartadas: true } : {} })
+    .then((r) => r.data)
 
-export const decidirUsinaAConfirmar = (id: number, decisao: 'mesma' | 'outra' | 'descartar', gs?: number) =>
+export const decidirUsinaAConfirmar = (
+  id: number,
+  decisao: 'mesma' | 'outra' | 'descartar' | 'reabrir',
+  gs?: number,
+) =>
   apiEmpresa
     .post<{ decisao: string; usina: { id: number; codigo: string; nome: string } | null }>(
       `/usinas/a-confirmar/${id}`,
       { decisao, gs },
     )
     .then((r) => r.data)
+
+/* As proprietárias, as donas das usinas (Plano Casa GS, R11). A gestão delas continua no
+   meuPlano; aqui é a dona de cada usina e de quem cada dono de usina é. */
+
+export type ItemDaProprietaria = { id: number; nome: string; codigo: string }
+
+export type Proprietaria = {
+  id: number
+  nome: string
+  documento: string | null
+  mp_owner_id: number | null
+  ativa: boolean
+  usinas: ItemDaProprietaria[]
+  pessoas: ItemDaProprietaria[]
+}
+
+export const proprietarias = () => apiEmpresa.get<Proprietaria[]>('/proprietarias').then((r) => r.data)
+
+export const criarProprietaria = (dados: { nome: string; documento?: string | null }) =>
+  apiEmpresa.post<Proprietaria>('/proprietarias', dados).then((r) => r.data)
+
+export const alterarProprietaria = (
+  id: number,
+  dados: { nome?: string; documento?: string | null; ativa?: boolean },
+) => apiEmpresa.patch<Proprietaria>(`/proprietarias/${id}`, dados).then((r) => r.data)
+
+export const usinasDaProprietaria = (id: number, ids: number[]) =>
+  apiEmpresa.put<Proprietaria>(`/proprietarias/${id}/usinas`, { ids }).then((r) => r.data)
+
+export const pessoasDaProprietaria = (id: number, ids: number[]) =>
+  apiEmpresa.put<Proprietaria>(`/proprietarias/${id}/pessoas`, { ids }).then((r) => r.data)
+
+export const darUsinasDaProprietaria = (id: number) =>
+  apiEmpresa
+    .post<{ pessoas: Record<string, number> }>(`/proprietarias/${id}/dar-usinas`)
+    .then((r) => r.data)
+
+export const importarProprietarias = () =>
+  apiEmpresa.post<{ feito: string[] }>('/proprietarias/importar').then((r) => r.data)
 
 export const criarClienteDaEmpresa = (dados: {
   nome: string
@@ -1035,6 +1092,8 @@ export type UsuarioDetalhado = {
   perfil: string
   ativo: boolean
   email: string | null
+  /** A verificação em duas etapas: `desligada`, `ativa`, `a_cadastrar` ou `nao_exigida`. */
+  duas_etapas?: string
   usinas: number
   produtos: Produto[]
   /** Celular, já formatado: `(17) 9 9737-7626`. */
@@ -1246,3 +1305,37 @@ export const acessosDaPlataforma = (filtro: FiltroAcessos = {}) =>
 /** oem-gs: os acessos das pessoas da empresa da sessão. */
 export const acessosDaEmpresa = (filtro: FiltroAcessos = {}) =>
   apiEmpresa.get<RegistroDeAcessos>('/acessos', { params: filtro }).then((r) => r.data)
+
+/** Uma sessão aberta de uma pessoa (R4): onde, de onde, quando foi usada por último. */
+export type SessaoAberta = {
+  id: string
+  onde: string
+  criada_em: string
+  ultimo_uso_em: string
+  expira_em: string | null
+  ip: string
+  aparelho: string
+}
+
+const portaoDosAcessos = (daEmpresa: boolean) => (daEmpresa ? apiEmpresa : api)
+
+export const sessoesAbertas = (daEmpresa: boolean, pessoa: number) =>
+  portaoDosAcessos(daEmpresa)
+    .get<SessaoAberta[]>('/acessos/sessoes', { params: { pessoa } })
+    .then((r) => r.data)
+
+export const encerrarSessao = (daEmpresa: boolean, pessoa: number, sid: string) =>
+  portaoDosAcessos(daEmpresa)
+    .post(`/acessos/sessoes/${encodeURIComponent(sid)}/encerrar`, null, { params: { pessoa } })
+    .then(() => undefined)
+
+export const encerrarTodasAsSessoes = (daEmpresa: boolean, pessoa: number) =>
+  portaoDosAcessos(daEmpresa)
+    .post<{ encerradas: number }>(`/acessos/pessoas/${pessoa}/encerrar-sessoes`)
+    .then((r) => r.data)
+
+/** Refaz a verificação em duas etapas de quem perdeu o celular (cadastra de novo no próximo login). */
+export const refazerDuasEtapas = (daEmpresa: boolean, conta: number) =>
+  daEmpresa
+    ? apiEmpresa.post(`/usuarios/${conta}/refazer-duas-etapas`).then(() => undefined)
+    : api.post(`/contas/${conta}/refazer-duas-etapas`).then(() => undefined)

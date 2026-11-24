@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     #: com teto, 120 erros de estranhos pela tela do meuGuarda trancariam todo mundo de lá. Vira 30 quando os dois sistemas
     #: mandarem a chave (variável TETO_IP_CASA_SEM_CHAVE)
     teto_ip_casa_sem_chave: int = 0
+    #: a saída de emergência da verificação em duas etapas (R12): 1 = ninguém precisa do código (`services/duas_etapas`)
+    gs_2fa_desligada: bool = False
+    #: o remetente do "esqueci a senha" por e-mail (R12); vazio = só pelo WhatsApp (`services/esqueci_a_senha`)
+    gs_smtp_host: str = ""
+    gs_smtp_porta: int = 587
+    gs_smtp_usuario: str = ""
+    gs_smtp_senha: str = ""
+    gs_smtp_remetente: str = ""
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").

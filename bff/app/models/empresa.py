@@ -129,3 +129,35 @@ class MembroDaEmpresa(Base):
     criado_por: Mapped[int | None] = mapped_column(
         ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True
     )
+
+
+class Proprietaria(Base):
+    """A DONA das usinas: a empresa (ou pessoa) cliente da O&M (Plano Casa GS, R11, 24/11/2026: "O GS cadastra as
+    empresas de O&M e as proprietárias, com o tipo. Cada uma fica ligada à empresa dela em cada sistema ... Equipe,
+    papéis, contratos, financeiro e OS continuam no meuPlano").
+
+    O tipo é a tabela: a O&M é `gs_empresas` (o inquilino, com gerente, tokens e bot), a proprietária é esta (a dona
+    da usina, sem portão próprio). Cada usina tem uma proprietária só (`gs_plant_links.proprietaria_id`, como a
+    PROPRIETARIA única por usina do meuPlano) e cada dono de usina é de uma (`gs_users.proprietaria_id`). O que o dono
+    VÊ continua sendo a concessão (`gs_user_plant_access`): a proprietária diz de quem é a usina e deixa as pessoas
+    dela dividirem as mesmas usinas (sem ela, uma usina tem um dono só)."""
+
+    __tablename__ = "gs_proprietarias"
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "nome", name="uq_gs_proprietaria_nome"),
+        Index("uq_gs_proprietaria_mp", "mp_owner_id", unique=True,
+              postgresql_where=text("mp_owner_id IS NOT NULL"), sqlite_where=text("mp_owner_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(255))
+    #: CNPJ ou CPF, quando houver
+    documento: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: a O&M que a atende e a cadastrou: o recorte do gerente
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("gs_empresas.id", ondelete="RESTRICT"), index=True)
+    #: a organização PROPRIETARIA no meuPlano (`owners.id`)
+    mp_owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: a empresa no meuWatt (`enterprises.id`), quando ela tem uma lá
+    mw_enterprise_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ativa: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    criada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -49,6 +49,8 @@ import { useAuth } from '@/store/auth'
 const Entrar = lazyRetry(() => import('@/features/entrar/Pagina'))
 const Conta = lazyRetry(() => import('@/features/conta/Pagina'))
 const EntrarNoProduto = lazyRetry(() => import('@/features/entrar-produto/Pagina'))
+const EsqueciASenha = lazyRetry(() => import('@/features/senha/Pagina').then((m) => ({ default: m.EsqueciASenha })))
+const NovaSenha = lazyRetry(() => import('@/features/senha/Pagina').then((m) => ({ default: m.NovaSenha })))
 const VisaoGeral = lazyRetry(() => import('@/features/visao-geral/Pagina'))
 // Geração de energia. A pasta leva o nome do ASSUNTO, que é o que a rota diz — e não o nome do
 // lugar onde a tela morava, que envelhece na primeira reorganização de menu.
@@ -157,6 +159,9 @@ export function App() {
               path="/entrar/:produto"
               element={<EntrarNoProduto />}
             />
+            {/* o "esqueci a senha" (R12): sem sessão, para qualquer conta */}
+            <Route path="/esqueci-a-senha" element={<EsqueciASenha />} />
+            <Route path="/nova-senha" element={<NovaSenha />} />
 
             <Route
               element={

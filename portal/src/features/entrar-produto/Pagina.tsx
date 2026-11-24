@@ -34,7 +34,8 @@ const NOME: Record<string, string> = {
 }
 const CHAVE = 'gs_entrada'
 
-type Resposta = { url: string; entrada?: string | null }
+type DuasEtapas = { desafio: string; cadastrar: boolean; qr: string | null; segredo: string | null; otpauth: string | null }
+type Resposta = { url: string; entrada?: string | null; duas_etapas?: DuasEtapas | null }
 
 /** Na janelinha, o passe vai à página que a abriu (só à origem da `volta`) e a janela fecha; fora dela, navega. */
 export function seguir(
@@ -90,6 +91,9 @@ export default function EntrarNoProduto() {
   const [apelido, setApelido] = useState('')
   const [senha, setSenha] = useState('')
   const [entrando, setEntrando] = useState(false)
+  // a conta usa a verificação em duas etapas: a senha está certa e falta o código
+  const [pedido, setPedido] = useState<DuasEtapas | null>(null)
+  const [codigo, setCodigo] = useState('')
   const caminho = `/api/sessao/${encodeURIComponent(produto)}`
   // A volta conferida ao abrir: endereço que não é do sistema nem mostra o formulário (a entrega confere de novo)
   const [voltaRuim, setVoltaRuim] = useState('')
@@ -127,7 +131,15 @@ export default function EntrarNoProduto() {
     setErro('')
     setEntrando(true)
     try {
-      const r = await api.post<Resposta>(`${caminho}/com-senha`, { apelido: apelido.trim(), senha, volta })
+      const r = pedido
+        ? await api.post<Resposta>(`${caminho}/com-senha/codigo`, { desafio: pedido.desafio, codigo, volta })
+        : await api.post<Resposta>(`${caminho}/com-senha`, { apelido: apelido.trim(), senha, volta })
+      if (r.data.duas_etapas) {
+        setPedido(r.data.duas_etapas)
+        setCodigo('')
+        setEntrando(false)
+        return
+      }
       gravarEntrada(r.data.entrada)
       seguir(r.data.url, produto, janela)
     } catch (x) {
@@ -179,6 +191,57 @@ export default function EntrarNoProduto() {
               <Aviso tom="parado">{erro}</Aviso>
             </div>
           ) : null}
+          {pedido ? (
+            <>
+              {pedido.cadastrar ? (
+                <div className="grid gap-3 text-sm text-corpo">
+                  <p className="font-semibold text-forte">Verificação em duas etapas</p>
+                  <p>
+                    Esta conta passa a pedir, além da senha, um código do celular. Abra o Google Authenticator ou o
+                    Microsoft Authenticator, toque em + e leia este QR:
+                  </p>
+                  {pedido.qr ? (
+                    <img src={pedido.qr} alt="QR code para cadastrar o Gestão Solar no autenticador"
+                         className="mx-auto h-48 w-48 rounded bg-white p-1" />
+                  ) : null}
+                  <p>
+                    Sem câmera? Digite a chave no autenticador:{' '}
+                    <span className="mono break-all text-forte">{pedido.segredo}</span>
+                  </p>
+                  {pedido.otpauth ? (
+                    <a className="underline" href={pedido.otpauth}>
+                      No celular: abrir direto no autenticador
+                    </a>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-sm text-corpo">Digite o código de 6 números do autenticador do seu celular.</p>
+              )}
+              <div>
+                <label className="rotulo-campo" htmlFor="codigo">
+                  Código do autenticador
+                </label>
+                <input
+                  id="codigo"
+                  className="campo"
+                  value={codigo}
+                  onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="000000"
+                  autoFocus
+                  required
+                />
+              </div>
+              <button type="submit" className="btn-primario" disabled={entrando || codigo.length !== 6}>
+                {entrando ? 'Conferindo…' : `Entrar no ${nome}`}
+              </button>
+              <button type="button" className="btn-fantasma" onClick={() => { setPedido(null); setErro('') }}>
+                Voltar
+              </button>
+            </>
+          ) : (
+          <>
           <div>
             <label className="rotulo-campo" htmlFor="apelido">
               Login ou e-mail
@@ -214,6 +277,8 @@ export default function EntrarNoProduto() {
           <button type="submit" className="btn-primario" disabled={entrando}>
             {entrando ? 'Entrando…' : `Entrar no ${nome}`}
           </button>
+          </>
+          )}
         </form>
       </div>
     </div>

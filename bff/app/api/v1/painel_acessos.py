@@ -4,13 +4,13 @@ tenha a auditoria completa dos logs de acessos de cada pessoa"). O gerente da O&
 oem-gs (`empresa.acessos_da_empresa`). A fonte é uma só: `services/acessos.listar`."""
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import exige_area
+from app.core.security import administrador_atual, exige_area
 from app.models.user import User
 from app.services import acessos, empresas
 
@@ -99,3 +99,75 @@ def acessos_da_plataforma(
     contas = empresas.contas_da_empresa(empresa_id) if empresa_id is not None else None
     return responder(db, contas=contas, usuario_id=usuario_id, sistema=sistema, so_recusas=so_recusas, de=de,
                      ate=ate, busca=busca, limite=limite, todo_periodo=todo_periodo)
+
+
+# ------------------------------------------------------------- as sessões abertas de uma pessoa (R4)
+
+
+class SessaoOut(BaseModel):
+    id: str
+    #: onde: portal ou aplicativo, adm-gs, oem-gs, entrada do gestao.solar, ou o sistema da família
+    onde: str
+    criada_em: datetime
+    ultimo_uso_em: datetime
+    expira_em: datetime | None = None
+    ip: str
+    aparelho: str
+
+
+def onde(escopo: str) -> str:
+    from app.api.v1.interno_sistemas import NOMES
+    from app.services.sessoes import PORTAO
+    if escopo.startswith("sistema:"):
+        return f"{NOMES.get(escopo.split(':', 1)[1], escopo)} (pelo GS)"
+    return PORTAO.get(escopo, escopo)
+
+
+def sessoes_de(db: Session, pessoa: User) -> list[SessaoOut]:
+    from app.services import sessoes
+    return [SessaoOut(id=s.id, onde=onde(s.escopo), criada_em=s.criada_em, ultimo_uso_em=s.ultimo_uso_em,
+                      expira_em=s.expira_em, ip=s.ip, aparelho=acessos.aparelho_curto(s.aparelho))
+            for s in sessoes.abertas(db, pessoa)]
+
+
+def encerrar_uma(db: Session, pessoa: User, sid: str, por: User, onde_: str) -> None:
+    from app.models.sessao import SessaoGS
+    from app.services import sessoes
+    s = db.get(SessaoGS, sid)
+    if s is None or s.gs_user_id != pessoa.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
+    sessoes.encerrar(db, s, por=por, motivo=f"encerrada no {onde_}")
+    db.commit()
+    acessos.registrar(db, None, acao="acesso", user=pessoa, por=por,
+                      motivo=f"sessão encerrada ({onde(s.escopo)}) no {onde_}")
+
+
+from app.services.sessoes import encerrar_todas_de  # noqa: E402,F401 — mora em services (o bot e os clientes usam)
+
+
+@router.get("/sessoes", response_model=list[SessaoOut])
+def sessoes_da_pessoa(pessoa: int, db: Session = Depends(get_db), _: User = Depends(EXIGE_ACESSOS)
+                      ) -> list[SessaoOut]:
+    """As sessões abertas de uma pessoa (a usada por último primeiro)."""
+    conta = db.get(User, pessoa)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    return sessoes_de(db, conta)
+
+
+@router.post("/sessoes/{sid}/encerrar", status_code=204)
+def encerrar_sessao(sid: str, pessoa: int, db: Session = Depends(get_db),
+                    admin: User = Depends(administrador_atual)) -> None:
+    conta = db.get(User, pessoa)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    encerrar_uma(db, conta, sid, admin, "adm-gs")
+
+
+@router.post("/pessoas/{pessoa}/encerrar-sessoes")
+def encerrar_sessoes(pessoa: int, db: Session = Depends(get_db), admin: User = Depends(administrador_atual)) -> dict:
+    """Todas de uma vez, inclusive as que ainda não foram usadas e as dos sistemas (pelo GS)."""
+    conta = db.get(User, pessoa)
+    if conta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    return {"encerradas": encerrar_todas_de(db, conta, admin, "adm-gs")}

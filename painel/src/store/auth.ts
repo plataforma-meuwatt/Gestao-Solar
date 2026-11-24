@@ -16,7 +16,7 @@
 
 import { create } from 'zustand'
 
-import { api, definirToken } from '@/lib/api'
+import { api, baseDaApi, definirToken } from '@/lib/api'
 import { aceita, fraseDaPortaErrada } from '@/lib/portao'
 
 const CHAVE = 'gs_painel_sessao'
@@ -40,10 +40,22 @@ type Sessao = {
   empresa: string | null
 }
 
+/** A senha está certa e falta o código do autenticador (a verificação em duas etapas, R12). Na primeira vez,
+ *  `cadastrar` vem com o QR, a chave e o endereço que abre o autenticador no celular. */
+export type DuasEtapas = {
+  desafio: string
+  cadastrar: boolean
+  qr: string | null
+  segredo: string | null
+  otpauth: string | null
+}
+
 type Estado = Omit<Sessao, 'token' | 'perfil'> & {
   token: string | null
   perfil: Perfil | null
-  entrar: (apelido: string, senha: string) => Promise<void>
+  /** Devolve o pedido do código quando a conta usa a verificação em duas etapas; senão, já entrou. */
+  entrar: (apelido: string, senha: string) => Promise<DuasEtapas | null>
+  entrarComCodigo: (desafio: string, codigo: string) => Promise<void>
   sair: () => void
   atualizar: (dados: { nome: string; perfil: Perfil; areas: string[] }) => void
   /** Assume outro papel da mesma pessoa, com a sessão que o servidor acabou de emitir. */
@@ -55,6 +67,8 @@ type Estado = Omit<Sessao, 'token' | 'perfil'> & {
     escopo: Escopo
     empresa: string | null
   }) => void
+  /** A sessão nova deste aparelho (a senha trocada encerrou as outras): troca só o token guardado. */
+  trocarToken: (token: string) => void
   ehAdministrador: () => boolean
   /** A sessão é do gerente da empresa de O&M — o outro portão, o outro menu. */
   ehEmpresa: () => boolean
@@ -86,6 +100,30 @@ function gravar(s: Sessao) {
   localStorage.setItem(CHAVE, JSON.stringify(s))
 }
 
+/** O que `POST /entrar` (e `/entrar/codigo`) devolve: a sessão, ou o pedido do código. */
+type RespostaDeEntrar = {
+  token: string
+  nome: string
+  apelido: string
+  perfil: Perfil
+  areas: string[]
+  escopo?: Escopo
+  empresa?: string | null
+  duas_etapas?: DuasEtapas | null
+}
+
+function sessaoDe(data: RespostaDeEntrar): Sessao {
+  return {
+    token: data.token,
+    nome: data.nome,
+    apelido: data.apelido,
+    perfil: data.perfil,
+    areas: data.areas ?? [],
+    escopo: data.escopo ?? 'painel',
+    empresa: data.empresa ?? null,
+  }
+}
+
 export const useAuth = create<Estado>((set, get) => ({
   token: inicial?.token ?? null,
   nome: inicial?.nome ?? '',
@@ -98,33 +136,35 @@ export const useAuth = create<Estado>((set, get) => ({
   entrar: async (apelido, senha) => {
     // Uma porta de login para os dois portões: o servidor confere a senha e devolve o
     // token JÁ marcado com o escopo do perfil. O front não escolhe nada aqui.
-    const { data } = await api.post<{
-      token: string
-      nome: string
-      apelido: string
-      perfil: Perfil
-      areas: string[]
-      escopo?: Escopo
-      empresa?: string | null
-    }>('/entrar', { apelido, senha })
+    const { data } = await api.post<RespostaDeEntrar>('/entrar', { apelido, senha })
     // Senha certa na porta errada: a sessão NÃO é guardada aqui — a pessoa é mandada ao
     // endereço do perfil dela (o gerente no oem-gs, o administrador no adm-gs).
     if (!aceita(data.escopo ?? 'painel')) throw new Error(fraseDaPortaErrada(data.escopo ?? 'painel'))
-    const sessao: Sessao = {
-      token: data.token,
-      nome: data.nome,
-      apelido: data.apelido,
-      perfil: data.perfil,
-      areas: data.areas ?? [],
-      escopo: data.escopo ?? 'painel',
-      empresa: data.empresa ?? null,
-    }
+    if (data.duas_etapas) return data.duas_etapas
+    const sessao = sessaoDe(data)
+    gravar(sessao)
+    definirToken(sessao.token)
+    set(sessao)
+    return null
+  },
+
+  entrarComCodigo: async (desafio, codigo) => {
+    const { data } = await api.post<RespostaDeEntrar>('/entrar/codigo', { desafio, codigo })
+    if (!aceita(data.escopo ?? 'painel')) throw new Error(fraseDaPortaErrada(data.escopo ?? 'painel'))
+    const sessao = sessaoDe(data)
     gravar(sessao)
     definirToken(sessao.token)
     set(sessao)
   },
 
+
   sair: () => {
+    // a sessão acaba no servidor também (R4); sem esperar: sair nunca trava a tela
+    const atual = get().token
+    if (atual)
+      fetch(`${baseDaApi()}/api/sessao/sair`, { method: 'POST', headers: { Authorization: `Bearer ${atual}` } }).catch(
+        () => undefined,
+      )
     localStorage.removeItem(CHAVE)
     definirToken(null)
     set({ token: null, nome: '', apelido: '', perfil: null, areas: [], escopo: 'painel', empresa: null })
@@ -146,6 +186,23 @@ export const useAuth = create<Estado>((set, get) => ({
     gravar(sessao)
     definirToken(sessao.token)
     set(sessao)
+  },
+
+  trocarToken: (token) => {
+    const atual = get()
+    if (!atual.token || !atual.perfil) return
+    const sessao: Sessao = {
+      token,
+      nome: atual.nome,
+      apelido: atual.apelido,
+      perfil: atual.perfil,
+      areas: atual.areas,
+      escopo: atual.escopo,
+      empresa: atual.empresa,
+    }
+    gravar(sessao)
+    definirToken(token)
+    set({ token })
   },
 
   atualizar: ({ nome, perfil, areas }) => {

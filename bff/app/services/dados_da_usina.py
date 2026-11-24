@@ -26,7 +26,26 @@ NUMEROS = ("latitude", "longitude", "kwp")
 CAMPOS = (*TEXTOS, *NUMEROS)
 ROTULO = {"nome": "Nome", "endereco": "Endereço", "cidade": "Cidade", "uf": "UF", "latitude": "Latitude",
           "longitude": "Longitude", "kwp": "Potência (kWp)", "mw_plant_slug": "Usina no meuWatt",
-          "mp_usina_id": "Usina no meuPlano", "tv_codigo": "Mapa no TermoVision", "criada": "Criada"}
+          "mp_usina_id": "Usina no meuPlano", "tv_codigo": "Mapa no TermoVision", "criada": "Criada",
+          "ativo": "No aplicativo", "mw_micro_plant_id": "Usina no portal do fabricante", "proprietaria": "Proprietária"}
+
+
+def formatar(campo: str, texto: str | None) -> str | None:
+    """O valor guardado no histórico como a tela mostra: número em pt-BR e sim/não em palavras."""
+    if texto is None:
+        return None
+    if campo == "ativo":
+        return {"True": "ligada", "False": "desligada"}.get(texto, texto)
+    if campo in NUMEROS:
+        try:
+            n = float(texto)
+        except ValueError:
+            return texto
+        casas = 7 if campo in ("latitude", "longitude") else 2
+        bruto = f"{n:,.{casas}f}" if campo == "kwp" else f"{n:.{casas}f}"
+        bruto = bruto.rstrip("0").rstrip(".") if "." in bruto else bruto
+        return bruto.replace(",", "§").replace(".", ",").replace("§", ".")
+    return texto
 PERTO_KM = 1.5
 
 
@@ -97,7 +116,10 @@ def criar(db: Session, *, empresa: int, dados: dict, campo: str, ref, por: User 
           motivo: str = "") -> PlantLink:
     """A usina nova no GS, já ligada ao sistema de onde veio (`campo` = o id de lá), com a linha "criada" no
     histórico. Não confirma."""
-    link = PlantLink(empresa_id=empresa, ativo=True, **{c: dados.get(c) for c in CAMPOS}, **{campo: ref})
+    # a que só existe no TermoVision nasce FORA do aplicativo (a REGRA 0: usina sem monitoramento e sem manutenção
+    # abriria no app com as abas vazias); o gerente a liga quando ela ganhar o meuWatt ou o meuPlano
+    link = PlantLink(empresa_id=empresa, ativo=campo != "tv_codigo", atualizado_em=datetime.now(UTC),
+                     **{c: dados.get(c) for c in CAMPOS}, **{campo: ref})
     db.add(link)
     db.flush()
     historico(db, link, "criada", None, f"{ROTULO.get(campo, campo)}: {ref}", por=por, sistema=sistema, motivo=motivo)
@@ -146,6 +168,8 @@ def parecidas(db: Session, empresa_id: int, nome: str, latitude: float | None = 
 if __name__ == "__main__":                                 # a régua do "parecida", sem banco
     assert _nome("UFV Ouro Fino") == _nome("ouro fino") == "ouro fino"
     assert _nome("Tietê") == "tiete"
+    assert formatar("kwp", "1250.0") == "1.250" and formatar("latitude", "-21.751") == "-21,751"
+    assert formatar("ativo", "False") == "desligada" and formatar("nome", "X") == "X"
     assert round(distancia_km((-21.7, -48.8), (-21.7, -48.8)), 3) == 0
     assert 110 < distancia_km((0, 0), (1, 0)) < 112
     print("ok")

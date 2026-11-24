@@ -19,6 +19,7 @@ import { router } from 'expo-router'
 import { useState } from 'react'
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -29,13 +30,17 @@ import {
 
 import { Botao, Halo } from '@/components/base'
 import { SeloGS } from '@/components/marca'
-import { mensagemDeErro } from '@/lib/api'
-import { useAuth } from '@/store/auth'
+import { api, mensagemDeErro } from '@/lib/api'
+import { useAuth, type DuasEtapas } from '@/store/auth'
 import { cores, espaco, fontes, raio, tomAlpha, tons } from '@/theme/tokens'
 
 export default function Login() {
   const entrar = useAuth((s) => s.entrar)
+  const entrarComCodigo = useAuth((s) => s.entrarComCodigo)
   const entrarEmDemonstracao = useAuth((s) => s.entrarEmDemonstracao)
+  // a conta usa a verificação em duas etapas: a senha está certa e falta o código do autenticador
+  const [pedido, setPedido] = useState<DuasEtapas | null>(null)
+  const [codigo, setCodigo] = useState('')
   const [apelido, setApelido] = useState('')
   const [senha, setSenha] = useState('')
   const [mostrarSenha, setMostrarSenha] = useState(false)
@@ -58,7 +63,16 @@ export default function Login() {
     setErro(null)
     setCarregando(true)
     try {
-      await entrar(apelido.trim(), senha)
+      if (pedido) {
+        await entrarComCodigo(pedido.desafio, codigo)
+      } else {
+        const falta = await entrar(apelido.trim(), senha)
+        if (falta) {
+          setPedido(falta)
+          setCodigo('')
+          return
+        }
+      }
       router.replace('/(tabs)')
     } catch (e) {
       setErro(mensagemDeErro(e))
@@ -66,6 +80,18 @@ export default function Login() {
       // desenvolvimento fica logo abaixo do erro.
     } finally {
       setCarregando(false)
+    }
+  }
+
+  /** O "esqueci a senha" (R12): o WhatsApp do GS com "esqueci a senha" escrito; o número vem da API (rota pública). */
+  async function esqueciASenha() {
+    try {
+      const { data } = await api.get<{ whatsapp: string | null }>('/api/v1/auth/senha/canais')
+      const numero = (data.whatsapp ?? '').replace(/\D/g, '')
+      if (!numero) throw new Error('sem número')
+      await Linking.openURL(`https://wa.me/${numero}?text=${encodeURIComponent('esqueci a senha')}`)
+    } catch {
+      setErro('Não deu para abrir o WhatsApp agora. Mande "esqueci a senha" ao WhatsApp do Gestão Solar pelo celular cadastrado.')
     }
   }
 
@@ -104,6 +130,46 @@ export default function Login() {
           </View>
         ) : null}
 
+        {pedido ? (
+          <View style={[estilos.campos, carregando && estilos.camposTravados]}>
+            {pedido.cadastrar ? (
+              <View style={{ gap: 8 }}>
+                <Text style={estilos.rotuloCampo}>Verificação em duas etapas</Text>
+                <Text style={estilos.apoio}>
+                  Esta conta passa a pedir, além da senha, um código do autenticador (Google Authenticator ou Microsoft
+                  Authenticator). Toque abaixo para cadastrar o Gestão Solar nele, ou digite a chave no aplicativo.
+                </Text>
+                {pedido.otpauth ? (
+                  <Botao titulo="Abrir no autenticador" onPress={() => void Linking.openURL(pedido.otpauth as string)} />
+                ) : null}
+                {pedido.segredo ? (
+                  <Text selectable style={estilos.apoio}>
+                    Chave: {pedido.segredo}
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={estilos.apoio}>Digite o código de 6 números do autenticador deste celular.</Text>
+            )}
+            <View>
+              <Text style={estilos.rotuloCampo}>Código do autenticador</Text>
+              <TextInput
+                style={[estilos.campo, { borderColor: focado ? cores.ambar : cores.borda }]}
+                value={codigo}
+                onChangeText={(t) => setCodigo(t.replace(/\D/g, '').slice(0, 6))}
+                onFocus={() => setFocado('senha')}
+                onBlur={() => setFocado(null)}
+                keyboardType="number-pad"
+                textContentType="oneTimeCode"
+                autoComplete="sms-otp"
+                editable={!carregando}
+                placeholder="000000"
+                placeholderTextColor={cores.textoFraco}
+                onSubmitEditing={() => codigo.length === 6 && void aoEntrar()}
+              />
+            </View>
+          </View>
+        ) : (
         <View style={[estilos.campos, carregando && estilos.camposTravados]}>
           <View>
             <Text style={estilos.rotuloCampo}>Apelido</Text>
@@ -143,6 +209,7 @@ export default function Login() {
             </View>
           </View>
         </View>
+        )}
 
         {carregando ? (
           /* Botão desabilitado com "Entrando…", e não barra de progresso: a barra estava
@@ -151,11 +218,22 @@ export default function Login() {
           <Botao titulo="Entrando…" desabilitado />
         ) : (
           <Botao
-            titulo={__DEV__ && !preenchido ? 'Entrar sem senha' : 'Entrar'}
+            titulo={pedido ? 'Entrar' : __DEV__ && !preenchido ? 'Entrar sem senha' : 'Entrar'}
             onPress={() => void aoEntrar()}
-            desabilitado={!podeEntrar}
+            desabilitado={pedido ? codigo.length !== 6 : !podeEntrar}
           />
         )}
+        {pedido ? (
+          <Pressable
+            onPress={() => {
+              setPedido(null)
+              setErro(null)
+            }}
+            hitSlop={10}
+          >
+            <Text style={estilos.mostrar}>Voltar</Text>
+          </Pressable>
+        ) : null}
 
         <Text style={estilos.apoio}>
           {carregando
@@ -172,9 +250,12 @@ export default function Login() {
             fluxos existirem. A senha, hoje, é reposta pelo gestor no painel — e é isso
             que a linha abaixo diz. */}
         <View style={estilos.espacador} />
-        <Text style={estilos.esqueci}>
-          Esqueceu a senha? Peça uma nova a quem administra a sua conta.
-        </Text>
+        <Pressable onPress={() => void esqueciASenha()} hitSlop={10}>
+          <Text style={estilos.esqueci}>
+            Esqueceu a senha? Toque aqui: o WhatsApp do Gestão Solar abre com a mensagem pronta, e o link para a senha
+            nova chega no celular cadastrado.
+          </Text>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   )

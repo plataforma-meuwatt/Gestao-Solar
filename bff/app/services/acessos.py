@@ -243,6 +243,16 @@ def _uma_vez(chave: str) -> bool:
     return True
 
 
+def erros_recentes(chave: str) -> int:
+    """Quantos erros esta chave (já por conta, sem o lugar) teve na janela de 15 min."""
+    return len(_recentes(_erros, chave))
+
+
+def somar_erro(chave: str) -> int:
+    """Um erro nesta chave (já por conta, sem o lugar); devolve quantos há na janela."""
+    return _somar(_erros, chave)
+
+
 def contar_erro(request: Request | None, login: str | None) -> None:
     """Uma senha errada que não passa por `recusar` (a troca de papel, que registra do jeito dela)."""
     _somar(_erros, _par(request, login))

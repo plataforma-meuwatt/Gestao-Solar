@@ -2,9 +2,12 @@
 TermoVision leem, pelo servidor deles, o que o GS guarda da pessoa e das usinas, em nome de quem está com a tela aberta.
 
 A prova é a chave do sistema (`X-Sistema` + `X-Chave-Interna`, a mesma do repasse do login, `acessos.repasse`) e a
-pessoa vem em `X-Usuario-GS` (o `sub` do passe) e `X-Empresa-GS` (o `empresa_id` do passe; opcional, sem ele vale a
-empresa de origem). A chave sozinha não fala por ninguém: a pessoa tem de estar ativa, com aquele sistema liberado no
-GS e a empresa dela ativa. Quem não serve é 404 com a mesma frase (a porta não confirma quem existe).
+pessoa vem em `X-Usuario-GS` (o `sub` do passe), `X-Empresa-GS` (o `empresa_id` do passe; opcional, sem ele vale a
+empresa de origem) e `X-Sessao-GS` (o `sessao_gs` do passe: a sessão dela NESTE sistema). A chave sozinha não fala por
+ninguém: a pessoa tem de estar ativa, com aquele sistema liberado no GS, a empresa ativa e a sessão do passe valendo
+(encerrar as sessões dela no GS a encerra aqui também). Na transição, sem `X-Sessao-GS`, vale quem entrou pelo GS (no
+GS ou naquele sistema, ela mesma, com o IP dela) nos últimos 60 dias. Quem não serve é 404 com a mesma frase (a porta
+não confirma quem existe). Cada leitura entra no Registro de acessos, uma linha por pessoa, sistema e hora.
 
 - `GET /usinas-da-pessoa`: a RENOVAÇÃO da sessão de cada sistema (o plano: "sessões curtas que se renovam pelo GS, sem
   pedir senha; desligar a pessoa no GS derruba as sessões dela em todos os sistemas"): quem é e as usinas que vê, no
@@ -18,9 +21,11 @@ GS e a empresa dela ativa. Quem não serve é 404 com a mesma frase (a porta nã
   sistema que pede pelo GS, ela mesma (um passe com o IP dela), nas últimas 12 h. A sessão aberta pela senha do próprio
   sistema não conta: o GS não a viu.
 """
+import logging
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -37,30 +42,81 @@ NOMES = {"meuwatt": "meuWatt", "meuplano": "meuPlano", "meuguarda": "meuGuarda",
 _NAO = "Pessoa ou usina não encontrada."
 #: há quanto tempo a pessoa entrou no sistema pelo GS para ele pedir uma credencial por ela
 JANELA_DO_PASSE = timedelta(hours=12)
+#: a transição, enquanto o sistema não manda o `X-Sessao-GS`: quem entrou pelo GS há no máximo isto
+JANELA_SEM_SESSAO = timedelta(days=60)
 _O_E_M = (Perfil.GESTOR_EMPRESA, Perfil.TECNICO)
+BRASILIA = ZoneInfo("America/Sao_Paulo")
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/interno", tags=["interno · sistemas da família"])
 
 
 def sistema(request: Request) -> str:
-    """Quem chama, provado pela chave dele."""
+    """Quem chama, provado pela chave dele. Sem a chave certa, 401 (e nada diz qual chave está configurada)."""
     dono = acessos.repasse(request)
     if dono:
         return dono
     dito = (request.headers.get("x-sistema") or "").strip().lower()
     if dito in NOMES and not acessos.chave_do_sistema(dito):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            f"Porta interna do {NOMES[dito]} não configurada ({dito.upper()}_CHAVE_INTERNA ausente).")
+        log.warning("porta dos sistemas: %s sem chave configurada (%s_CHAVE_INTERNA)", dito, dito.upper())
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Chave inválida.")
 
 
-def pessoa(db: Session, request: Request, do_sistema: str) -> User:
-    """A pessoa de `X-Usuario-GS`, ativa e com aquele sistema liberado no GS."""
+def pessoa(db: Session, request: Request, do_sistema: str, *, o_que: str = "") -> User:
+    """A pessoa de `X-Usuario-GS`, ativa, com aquele sistema liberado no GS e a sessão DELA naquele sistema valendo
+    (`X-Sessao-GS`; na transição, a entrada pelo GS nos últimos 60 dias). `o_que` vai ao Registro de acessos."""
+    from app.core.security import conferir_token_sistema
     texto = (request.headers.get("x-usuario-gs") or "").strip()
     u = db.get(User, int(texto)) if texto.isdecimal() else None
-    if u is None or not u.ativo or do_sistema not in login_externo.liberados(u):
+    from app.services import duas_etapas
+    if u is None or not u.ativo or do_sistema not in login_externo.liberados(u) or duas_etapas.pendente(u):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)  # pendente: exige o código e não cadastrou (sessão velha)
+    sessao = (request.headers.get("x-sessao-gs") or "").strip()
+    if sessao:
+        if not conferir_token_sistema(db, sessao, u, do_sistema, request):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)        # encerrada ou de outra pessoa: a sessão acaba
+    elif db.scalar(select(AcessoGS.id).where(
+            AcessoGS.gs_user_id == u.id, AcessoGS.ok, AcessoGS.acao.in_(("entrou", "passe")), AcessoGS.ip != "",
+            AcessoGS.sistema.in_(("gs", do_sistema)), AcessoGS.em >= desde_a_ultima_entrada(u, JANELA_SEM_SESSAO)
+            ).limit(1)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
+    if o_que:
+        acessos.registrar(db, request, acao="leitura", sistema=do_sistema, user=u, agrupar_s=3600,
+                          motivo=f"{NOMES[do_sistema]} leu pela porta dos sistemas: {o_que}"
+                                 + ("" if sessao else " (sem a sessão do passe)"))
     return u
+
+
+def desde_a_ultima_entrada(u: User, janela: timedelta) -> datetime:
+    """De quando vale a entrada pelo GS sem a sessão do passe: a janela, e nunca antes de um "encerrar todas" (ou de
+    uma senha nova): a entrada de antes dele não fala mais pela pessoa."""
+    desde = datetime.now(UTC) - janela
+    fim = u.sessoes_desde
+    if fim is not None:
+        fim = fim if fim.tzinfo else fim.replace(tzinfo=UTC)
+        desde = max(desde, fim)
+    return desde
+
+
+def _sessao_renovada(db: Session, request: Request, u: User, quem: str) -> str | None:
+    """O `sessao_gs` novo da mesma sessão (o `X-Sessao-GS` já foi conferido em `pessoa`): quem usa o sistema todo dia
+    não sai no 60º dia. A linha da sessão ganha o prazo novo."""
+    from jose import jwt
+
+    from app.core.config import get_settings
+    from app.core.security import ALGORITMO, DIAS_DA_SESSAO_DE_SISTEMA, criar_token_sistema
+    from app.models.sessao import SessaoGS
+    token = (request.headers.get("x-sessao-gs") or "").strip()
+    if not token:
+        return None
+    sid = jwt.decode(token, get_settings().gs_jwt_secret, algorithms=[ALGORITMO]).get("sid")
+    if not isinstance(sid, str) or not sid:
+        return None
+    linha = db.get(SessaoGS, sid[:32])
+    if linha is not None:
+        linha.expira_em = datetime.now(UTC) + timedelta(days=DIAS_DA_SESSAO_DE_SISTEMA)
+        db.commit()
+    return criar_token_sistema(u.id, quem, sid=sid)
 
 
 def empresa_do_pedido(db: Session, u: User, x_empresa_gs: str | None) -> int | None:
@@ -89,12 +145,12 @@ def da_empresa(db: Session, empresa_id: int, so_ativas: bool = True) -> list[Pla
 
 
 def visiveis(db: Session, u: User, empresa_id: int | None) -> list[PlantLink]:
-    """As usinas ligadas que a pessoa vê: a plataforma todas, a O&M as da empresa, o dono as concedidas (a régua do
-    portal)."""
+    """As usinas que a pessoa vê: a plataforma todas, a O&M as da empresa (também as fora do aplicativo, como a que só
+    existe no TermoVision: `ativo` diz), o dono as concedidas e ligadas (a régua do portal)."""
     if u.perfil in pessoas.DA_PLATAFORMA:
-        return list(db.scalars(select(PlantLink).where(PlantLink.ativo).order_by(PlantLink.nome)).all())
+        return list(db.scalars(select(PlantLink).order_by(PlantLink.nome)).all())
     if u.perfil in _O_E_M:
-        return da_empresa(db, empresa_id)
+        return da_empresa(db, empresa_id, so_ativas=False)
     from app.api.v1.plants import usinas_do_usuario
     return usinas_do_usuario(db, u)
 
@@ -109,6 +165,13 @@ class RefMeuPlano(BaseModel):
 
 class RefTermoVision(BaseModel):
     codigo: str
+
+
+class ProprietariaDoGS(BaseModel):
+    id: int
+    nome: str
+    #: a organização PROPRIETARIA no meuPlano, quando ligada
+    meuplano: RefMeuPlano | None = None
 
 
 class UsinaDoGS(BaseModel):
@@ -129,12 +192,23 @@ class UsinaDoGS(BaseModel):
     endereco: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    #: no aplicativo do GS (falso = desligada lá, ou só no TermoVision); o resto da família a vê assim mesmo
+    ativo: bool = True
     #: quando um dado básico mudou por último (`?alteradas_desde=` relê só as que mudaram)
     atualizado_em: datetime | None = None
+    #: a DONA da usina (R11), quando cadastrada
+    proprietaria: ProprietariaDoGS | None = None
 
 
 def codigo(gs: int) -> str:
     return f"GS-{gs:04d}"
+
+
+def proprietaria_de(db: Session, proprietaria_id: int | None) -> ProprietariaDoGS | None:
+    from app.models.empresa import Proprietaria
+    p = db.get(Proprietaria, proprietaria_id) if proprietaria_id else None
+    return ProprietariaDoGS(id=p.id, nome=p.nome, meuplano=RefMeuPlano(id=p.mp_owner_id) if p.mp_owner_id else None
+                            ) if p is not None else None
 
 
 def saida(db: Session, u: PlantLink) -> UsinaDoGS:
@@ -145,33 +219,40 @@ def saida(db: Session, u: PlantLink) -> UsinaDoGS:
         meuplano=RefMeuPlano(id=u.mp_usina_id) if u.mp_usina_id is not None else None,
         termovision=RefTermoVision(codigo=u.tv_codigo) if u.tv_codigo else None,
         cidade=u.cidade, uf=u.uf, kwp=u.kwp, endereco=u.endereco, latitude=u.latitude, longitude=u.longitude,
-        atualizado_em=u.atualizado_em)
+        ativo=bool(u.ativo), atualizado_em=u.atualizado_em, proprietaria=proprietaria_de(db, u.proprietaria_id))
 
 
-def _pedido(db: Session, request: Request) -> tuple[User, list[PlantLink]]:
+def _pedido(db: Session, request: Request, o_que: str = "") -> tuple[User, list[PlantLink]]:
     """A pessoa e as usinas que ela vê. O TermoVision usa a lista para ligar e importar o mapa: a régua de lá."""
     quem = sistema(request)
     if quem == "termovision":
         from app.api.v1 import interno_termovision as tv
         u = tv._pessoa(db, request.headers.get("x-usuario-gs"))
-        return u, da_empresa(db, tv._empresa(db, u, request.headers.get("x-empresa-gs")))
-    u = pessoa(db, request, quem)
+        todas = da_empresa(db, tv._empresa(db, u, request.headers.get("x-empresa-gs")), so_ativas=False)
+        if o_que:
+            acessos.registrar(db, request, acao="leitura", sistema=quem, user=u, agrupar_s=3600,
+                              motivo=f"TermoVision leu pela porta dos sistemas: {o_que}")
+        return u, todas
+    u = pessoa(db, request, quem, o_que=o_que)
     return u, visiveis(db, u, empresa_do_pedido(db, u, request.headers.get("x-empresa-gs")))
 
 
-def _as_do_pedido(db: Session, request: Request) -> list[PlantLink]:
-    return _pedido(db, request)[1]
+def _as_do_pedido(db: Session, request: Request, o_que: str = "") -> list[PlantLink]:
+    return _pedido(db, request, o_que)[1]
 
 
 @router.get("/usinas", response_model=list[UsinaDoGS])
-def usinas(request: Request, ids: str | None = None, alteradas_desde: datetime | None = None,
+def usinas(request: Request, response: Response, ids: str | None = None, alteradas_desde: datetime | None = None,
            db: Session = Depends(get_db)) -> list[UsinaDoGS]:
-    todas = _as_do_pedido(db, request)
+    """`X-GS-Lido-Em` (o relógio do GS): para reler só o que mudou, mande este valor (menos 1 min de folga) no
+    `alteradas_desde` da próxima vez. Sem fuso, `alteradas_desde` é de Brasília."""
+    response.headers["X-GS-Lido-Em"] = datetime.now(UTC).isoformat(timespec="seconds")
+    todas = _as_do_pedido(db, request, "as usinas")
     if ids is not None:
         pedidas = {int(x) for x in ids.split(",") if x.strip().isdecimal()}
         todas = [u for u in todas if u.id in pedidas]
     if alteradas_desde is not None:
-        desde = alteradas_desde if alteradas_desde.tzinfo else alteradas_desde.replace(tzinfo=UTC)
+        desde = alteradas_desde if alteradas_desde.tzinfo else alteradas_desde.replace(tzinfo=BRASILIA)
         todas = [u for u in todas if u.atualizado_em is not None and _com_fuso(u.atualizado_em) >= desde]
     return [saida(db, u) for u in todas]
 
@@ -182,7 +263,7 @@ def _com_fuso(quando: datetime) -> datetime:
 
 @router.get("/usinas/{gs}", response_model=UsinaDoGS)
 def usina(gs: int, request: Request, db: Session = Depends(get_db)) -> UsinaDoGS:
-    link = next((u for u in _as_do_pedido(db, request) if u.id == gs), None)
+    link = next((u for u in _as_do_pedido(db, request, f"a usina {codigo(gs)}") if u.id == gs), None)
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
     return saida(db, link)
@@ -197,21 +278,27 @@ class PessoaOut(BaseModel):
     empresa_id: int | None = None
     #: os sistemas que a pessoa abre pelo GS agora (a mesma régua dos botões)
     sistemas: list[str]
+    #: a proprietária de que o dono de usina é (R11), como no passe
+    proprietaria: ProprietariaDoGS | None = None
     #: como no passe v2: a lista (`gs` + o id no sistema que pergunta), ou todas (a plataforma), ou fora (sem a lista)
     usinas: list[dict] | None = None
     todas_as_usinas: bool = False
     usinas_fora: bool = False
     lido_em: datetime
+    #: a renovação da sessão: veio `X-Sessao-GS` válido, volta um novo, da MESMA sessão, valendo 60 dias a contar de
+    #: agora (guardem este no lugar do outro). Sem o cabeçalho (a transição), nulo.
+    sessao_gs: str | None = None
 
 
 @router.get("/usinas-da-pessoa", response_model=PessoaOut)
 def usinas_da_pessoa(request: Request, db: Session = Depends(get_db)) -> PessoaOut:
     quem = sistema(request)
-    u = pessoa(db, request, quem)
+    u = pessoa(db, request, quem, o_que="a renovação (quem é e as usinas)")
     empresa = empresa_do_pedido(db, u, request.headers.get("x-empresa-gs"))
-    v2 = login_externo.extras_v2(db, u, quem, empresa)
-    return PessoaOut(gs=u.id, apelido=u.apelido, nome=u.nome, email=u.email, perfil=u.perfil.value,
+    v2 = login_externo.extras_v2(db, u, quem, empresa, teto=False)   # não vai numa asserção: a lista inteira
+    return PessoaOut(sessao_gs=_sessao_renovada(db, request, u, quem),gs=u.id, apelido=u.apelido, nome=u.nome, email=u.email, perfil=u.perfil.value,
                      empresa_id=v2.get("empresa_id"), sistemas=login_externo.liberados(u), usinas=v2.get("usinas"),
+                     proprietaria=proprietaria_de(db, u.proprietaria_id),
                      todas_as_usinas=bool(v2.get("todas_as_usinas")), usinas_fora=bool(v2.get("usinas_fora")),
                      lido_em=datetime.now(UTC))
 
@@ -234,7 +321,7 @@ def passe_do_termovision(request: Request, db: Session = Depends(get_db)) -> Pas
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Falta o IP da pessoa (X-Usuario-IP).")
     recente = db.scalar(select(AcessoGS.id).where(
         AcessoGS.gs_user_id == u.id, AcessoGS.sistema == quem, AcessoGS.acao == "passe", AcessoGS.ok,
-        AcessoGS.ip != "", AcessoGS.em >= datetime.now(UTC) - JANELA_DO_PASSE).limit(1))
+        AcessoGS.ip != "", AcessoGS.em >= desde_a_ultima_entrada(u, JANELA_DO_PASSE)).limit(1))
     if recente is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             f"Esta pessoa não entrou no {NOMES[quem]} pelo Gestão Solar nas últimas 12 horas: "
@@ -262,7 +349,7 @@ async def objetos_do_mapa(gs: int, request: Request, db: Session = Depends(get_d
 
     from app.services.vinculos import SemConexao, cliente_meuplano, cliente_meuwatt
 
-    u, todas = _pedido(db, request)
+    u, todas = _pedido(db, request, f"o mapa da usina {codigo(gs)}")
     link = next((x for x in todas if x.id == gs), None)
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
@@ -331,12 +418,12 @@ def _equipe(db: Session, request: Request) -> tuple[str, User, list[PlantLink]]:
     GS há no máximo 30 dias (a chave vazada não fala por quem não usa aquele sistema)."""
     quem = sistema(request)
     u, todas = _pedido(db, request)
-    if u.perfil not in _O_E_M and u.perfil not in pessoas.DA_PLATAFORMA:
+    if u.perfil not in _O_E_M and u.perfil is not Perfil.ADMINISTRADOR:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Os dados da usina são mudados pela equipe da O&M.")
     if quem != "termovision":                              # o TermoVision já confere a entrada dele (12 h)
         recente = db.scalar(select(AcessoGS.id).where(
             AcessoGS.gs_user_id == u.id, AcessoGS.sistema == quem, AcessoGS.acao == "passe", AcessoGS.ok,
-            AcessoGS.ip != "", AcessoGS.em >= datetime.now(UTC) - JANELA_DE_EDITAR).limit(1))
+            AcessoGS.ip != "", AcessoGS.em >= desde_a_ultima_entrada(u, JANELA_DE_EDITAR)).limit(1))
         if recente is None:
             raise HTTPException(status.HTTP_403_FORBIDDEN,
                                 f"Para mudar os dados da usina no GS pelo {NOMES[quem]}, entre nele pelo Gestão Solar.")
@@ -420,6 +507,8 @@ def registrar_usina(body: RegistroIn, request: Request, db: Session = Depends(ge
     from app.models.plant import UsinaAConfirmar
     from app.services import dados_da_usina
 
+    from sqlalchemy.exc import IntegrityError
+
     quem = sistema(request)
     if quem not in REFERENCIA:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Este sistema usa as usinas do GS: não cria usina.")
@@ -440,28 +529,58 @@ def registrar_usina(body: RegistroIn, request: Request, db: Session = Depends(ge
     except dados_da_usina.DadoInvalido as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    ja = db.scalar(select(PlantLink).where(getattr(PlantLink, campo) == ref))
-    if ja is not None:
-        if ja.empresa_id != empresa:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Esta usina já está no GS por outra empresa.")
-        return RegistroOut(situacao="ligada", usina=saida(db, ja))
-    pedido = db.scalar(select(UsinaAConfirmar).where(UsinaAConfirmar.sistema == quem,
-                                                     UsinaAConfirmar.referencia == str(ref)))
-    if pedido is not None:
-        if pedido.decisao == "descartada":
-            return RegistroOut(situacao="descartada")
+    def ja_decidido() -> RegistroOut | JSONResponse | None:
+        """O que já existe para esta usina de lá: ligada a uma usina do GS, a confirmar ou descartada."""
+        ja = db.scalar(select(PlantLink).where(getattr(PlantLink, campo) == ref))
+        if ja is not None:
+            if ja.empresa_id != empresa:
+                raise HTTPException(status.HTTP_409_CONFLICT, OUTRA_EMPRESA)
+            return RegistroOut(situacao="ligada", usina=saida(db, ja))
+        pedidos = list(db.scalars(select(UsinaAConfirmar).where(UsinaAConfirmar.sistema == quem,
+                                                                UsinaAConfirmar.referencia == str(ref))))
+        # o de OUTRA empresa esperando o gerente de lá bloqueia (nada dele vaza); o que ela descartou ("não é nossa"),
+        # não: fica na lista de descartados dela, e esta empresa tem o próprio pedido
+        if any(x.empresa_id != empresa and x.decisao is None for x in pedidos):
+            raise HTTPException(status.HTTP_409_CONFLICT, OUTRA_EMPRESA)
+        pedido = next((x for x in pedidos if x.empresa_id == empresa), None)
+        if pedido is None:
+            return None
         if pedido.decisao is None:
             return JSONResponse(status_code=202, content=RegistroOut(
-                situacao="a_confirmar", parecidas=pedido.parecidas).model_dump(mode="json"))
+                situacao="a_confirmar", parecidas=_parecidas_daqui(db, pedido.parecidas, empresa)).model_dump(mode="json"))
+        if pedido.decisao == "descartada":
+            return RegistroOut(situacao="descartada")
+        db.delete(pedido)                                  # decidido, e o vínculo saiu depois: pede de novo
+        db.flush()
+        return None
+
+    if (r := ja_decidido()) is not None:
+        return r
     parecidas = dados_da_usina.parecidas(db, empresa, limpos["nome"], limpos["latitude"], limpos["longitude"])
-    if parecidas:
-        db.add(UsinaAConfirmar(empresa_id=empresa, sistema=quem, referencia=str(ref), dados=limpos,
-                               parecidas=parecidas, pedido_por_id=u.id))
+    try:
+        if parecidas:
+            db.add(UsinaAConfirmar(empresa_id=empresa, sistema=quem, referencia=str(ref), dados=limpos,
+                                   parecidas=parecidas, pedido_por_id=u.id))
+            db.commit()
+            return JSONResponse(status_code=202, content=RegistroOut(
+                situacao="a_confirmar", parecidas=parecidas).model_dump(mode="json"))
+        link = dados_da_usina.criar(db, empresa=empresa, dados=limpos, campo=campo, ref=ref, por=u, sistema=quem)
         db.commit()
-        return JSONResponse(status_code=202, content=RegistroOut(
-            situacao="a_confirmar", parecidas=parecidas).model_dump(mode="json"))
-    link = dados_da_usina.criar(db, empresa=empresa, dados=limpos, campo=campo, ref=ref, por=u, sistema=quem)
-    db.commit()
+    except IntegrityError:                                 # o mesmo pedido ao mesmo tempo: responde o que ficou
+        db.rollback()
+        if (r := ja_decidido()) is not None:
+            return r
+        raise
     db.refresh(link)
     return JSONResponse(status_code=201, content=RegistroOut(situacao="criada", usina=saida(db, link))
                         .model_dump(mode="json"))
+
+
+#: a usina de lá já está no GS (ou esperando a confirmação) por outra empresa
+OUTRA_EMPRESA = "Esta usina já foi registrada no GS por outra empresa."
+
+
+def _parecidas_daqui(db: Session, parecidas: list[dict], empresa: int) -> list[dict]:
+    """As parecidas gravadas no pedido que ainda são desta empresa (a que saiu dela não se nomeia)."""
+    daqui = set(db.scalars(select(PlantLink.id).where(PlantLink.empresa_id == empresa)))
+    return [p for p in parecidas or [] if p.get("gs") in daqui]

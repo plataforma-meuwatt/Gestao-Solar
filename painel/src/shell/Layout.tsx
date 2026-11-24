@@ -17,6 +17,7 @@
 
 import {
   Bot,
+  Building,
   Building2,
   ExternalLink,
   KeyRound,
@@ -126,6 +127,8 @@ const MENU: ItemMenu[] = [
  */
 const MENU_EMPRESA: ItemMenu[] = [
   { para: '/minha-empresa/usinas', rotulo: 'Usinas', icone: Sun },
+  // As donas das usinas (Plano Casa GS, R11): a empresa ou a pessoa cliente da O&M.
+  { para: '/minha-empresa/proprietarias', rotulo: 'Proprietárias', icone: Building },
   { para: '/minha-empresa/usuarios', rotulo: 'Usuários', icone: UsersRound },
   // O bot do WhatsApp de cada pessoa da empresa: celular, o token DELA e o que o
   // assistente responde (meuWatt, meuPlano, helper — um, dois ou todos).
@@ -181,6 +184,8 @@ function TrocarPapel() {
   const [aberto, setAberto] = React.useState(false)
   const [pedindoSenha, setPedindoSenha] = React.useState<string | null>(null)
   const [senha, setSenha] = React.useState('')
+  // a conta da plataforma usa a verificação em duas etapas: a senha e o código do autenticador dela
+  const [codigo, setCodigo] = React.useState('')
   const [erro, setErro] = React.useState<string | null>(null)
 
   const { data } = useQuery({ queryKey: ['papeis'], queryFn: meusPapeis, retry: false })
@@ -188,10 +193,10 @@ function TrocarPapel() {
 
   if (papeis.length < 2) return null
 
-  async function trocar(apelido: string, comSenha?: string) {
+  async function trocar(apelido: string, comSenha?: string, comCodigo?: string) {
     setErro(null)
     try {
-      const nova = await trocarDePapel(apelido, comSenha)
+      const nova = await trocarDePapel(apelido, comSenha, comCodigo)
       assumir({
         token: nova.token,
         nome: nova.nome,
@@ -253,7 +258,7 @@ function TrocarPapel() {
                     <button
                       className="btn-fantasma shrink-0"
                       onClick={() =>
-                        p.exige_senha ? setPedindoSenha(p.apelido) : void trocar(p.apelido)
+                        p.exige_senha || p.exige_codigo ? setPedindoSenha(p.apelido) : void trocar(p.apelido)
                       }
                     >
                       Entrar
@@ -262,21 +267,36 @@ function TrocarPapel() {
                 </div>
 
                 {pedindoSenha === p.apelido ? (
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      type="password"
-                      className="campo h-9 text-sm"
-                      placeholder="senha desta conta"
-                      value={senha}
-                      onChange={(e) => setSenha(e.target.value)}
-                      autoFocus
-                    />
-                    <button
-                      className="btn-secundario shrink-0"
-                      onClick={() => void trocar(p.apelido, senha)}
-                    >
-                      Entrar
-                    </button>
+                  <div className="mt-2 grid gap-2">
+                    {p.exige_senha ? (
+                      <input
+                        type="password"
+                        className="campo h-9 text-sm"
+                        placeholder="senha desta conta"
+                        value={senha}
+                        onChange={(e) => setSenha(e.target.value)}
+                        autoFocus
+                      />
+                    ) : null}
+                    <div className="flex gap-2">
+                      {p.exige_codigo ? (
+                        <input
+                          className="campo h-9 text-sm"
+                          placeholder="código do autenticador"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          value={codigo}
+                          onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                          autoFocus={!p.exige_senha}
+                        />
+                      ) : null}
+                      <button
+                        className="btn-secundario shrink-0"
+                        onClick={() => void trocar(p.apelido, senha, codigo)}
+                      >
+                        Entrar
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -285,7 +305,7 @@ function TrocarPapel() {
 
           {erro ? <p className="text-xs text-parado px-2.5 py-1">{erro}</p> : null}
           <p className="text-[11px] text-fraco px-2.5 pt-2 border-t border-borda mt-1">
-            Entrar como gestor da plataforma pede a senha daquela conta.
+            Entrar como gestor da plataforma pede a senha e o código do autenticador daquela conta.
           </p>
         </div>
       ) : null}
@@ -364,7 +384,8 @@ function TrocarSenha({ aoFechar }: { aoFechar: () => void }) {
     setErro(null)
     setSalvando(true)
     try {
-      await trocarMinhaSenha({ senha_atual: atual, senha_nova: nova })
+      const { token } = await trocarMinhaSenha({ senha_atual: atual, senha_nova: nova })
+      useAuth.getState().trocarToken(token)               // as outras sessões acabaram; esta segue com a nova
       setPronto(true)
     } catch (e) {
       setErro(mensagemDeErro(e))

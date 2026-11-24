@@ -75,9 +75,12 @@ def cenario(db):
     db.commit()
     db.add(UserPlantAccess(user_id=dono.id, plant_link_id=of.id))
     db.add(VinculoProduto(gs_user_id=gerente.id, produto=Produto.MEUWATT.value, usuario_remoto_id="8"))
+    for u in (gerente, dono, adm, sem_mg, inativo, da_off):   # entraram pelo GS há pouco (a transição sem a sessão)
+        db.add(AcessoGS(gs_user_id=u.id, login=u.apelido, acao="entrou", sistema="gs", ok=True, ip="200.1.1.1",
+                        em=datetime.now(UTC) - timedelta(days=2)))
     db.commit()
-    return dict(a=a, b=b, ib=ib, of=of, de_b=de_b, gerente=gerente, dono=dono, adm=adm, sem_mg=sem_mg,
-                inativo=inativo, da_off=da_off)
+    return dict(a=a, b=b, ib=ib, of=of, de_b=de_b, desligada=desligada, gerente=gerente, dono=dono, adm=adm,
+                sem_mg=sem_mg, inativo=inativo, da_off=da_off)
 
 
 def _h(pessoa, sistema="meuguarda", chave=None, empresa=None, ip=None):
@@ -98,7 +101,7 @@ def test_cada_sistema_com_a_sua_chave(http, cenario, monkeypatch):
     assert http.post("/api/v1/interno/passe/termovision", headers=_h(g, sistema="meuwatt", chave="x")).status_code == 401
     monkeypatch.setattr(get_settings(), "meuguarda_chave_interna", "")
     r = http.get("/api/v1/interno/usinas", headers=_h(g, chave="qualquer"))
-    assert r.status_code == 503 and "MEUGUARDA_CHAVE_INTERNA" in r.json()["detail"]      # porta sem chave: fechada
+    assert r.status_code == 401 and "CHAVE" not in r.json()["detail"]   # porta sem chave: fechada, sem dizer qual
 
 
 def test_a_renovacao_diz_quem_e_e_as_usinas_como_no_passe(http, cenario):
@@ -107,11 +110,13 @@ def test_a_renovacao_diz_quem_e_e_as_usinas_como_no_passe(http, cenario):
     assert r.status_code == 200
     j = r.json()
     assert (j["gs"], j["apelido"], j["perfil"], j["empresa_id"]) == (c["gerente"].id, "gerente.a", "gestor_empresa", c["a"].id)
-    assert j["usinas"] == [{"gs": c["ib"].id, "id": c["ib"].id}, {"gs": c["of"].id, "id": c["of"].id}]   # meuGuarda: o nº do GS
+    # meuGuarda: o nº do GS; a O&M leva também a da empresa fora do aplicativo (a régua da porta, `visiveis`)
+    assert j["usinas"] == [{"gs": n, "id": n} for n in (c["desligada"].id, c["ib"].id, c["of"].id)]
     assert not j["todas_as_usinas"] and not j["usinas_fora"]
     assert set(j["sistemas"]) == {"meuwatt", "meuguarda", "termovision"}
     mw = http.get("/api/v1/interno/usinas-da-pessoa", headers=_h(c["gerente"], sistema="meuwatt")).json()
     assert mw["usinas"] == [{"gs": c["ib"].id, "id": "ibitinga"}, {"gs": c["of"].id, "id": "ouro-fino"}]  # o slug de lá
+    # (a desligada não tem slug no meuWatt: não vai na lista de lá)
     assert http.get("/api/v1/interno/usinas-da-pessoa", headers=_h(c["adm"])).json()["todas_as_usinas"] is True
     assert http.get("/api/v1/interno/usinas-da-pessoa", headers=_h(c["dono"])).json()["usinas"] == [
         {"gs": c["of"].id, "id": c["of"].id}]
@@ -125,12 +130,14 @@ def test_a_renovacao_diz_quem_e_e_as_usinas_como_no_passe(http, cenario):
 def test_as_usinas_de_cada_um_com_o_codigo_do_gs(http, cenario):
     c = cenario
     r = http.get("/api/v1/interno/usinas", headers=_h(c["gerente"]))
-    assert [u["nome"] for u in r.json()] == ["Ibitinga", "Ouro Fino"]                # só as ligadas, da empresa
-    ib = r.json()[0]
+    assert [(u["nome"], u["ativo"]) for u in r.json()] == [("Desligada no GS", False), ("Ibitinga", True),
+                                                          ("Ouro Fino", True)]       # da empresa; `ativo` diz
+    assert r.headers["X-GS-Lido-Em"]
+    ib = r.json()[1]
     assert (ib["codigo"], ib["latitude"], ib["longitude"], ib["kwp"], ib["meuplano"]) == (
         f"GS-{c['ib'].id:04d}", -21.7, -48.8, 1250.0, {"id": 7})
     assert [u["nome"] for u in http.get("/api/v1/interno/usinas", headers=_h(c["adm"])).json()] == [
-        "Ibitinga", "Ouro Fino", "Usina Secreta B"]                                  # a plataforma: todas
+        "Desligada no GS", "Ibitinga", "Ouro Fino", "Usina Secreta B"]               # a plataforma: todas
     assert [u["nome"] for u in http.get("/api/v1/interno/usinas", headers=_h(c["dono"])).json()] == ["Ouro Fino"]
     assert [u["nome"] for u in http.get(f"/api/v1/interno/usinas?ids={c['of'].id},{c['de_b'].id}",
                                         headers=_h(c["gerente"])).json()] == ["Ouro Fino"]
@@ -161,7 +168,7 @@ def test_o_passe_do_termovision_so_para_quem_entrou_pelo_gs_ha_pouco(http, cenar
     dados = jwt.get_unverified_claims(r.json()["assertion"])
     assert (dados["aud"], dados["sub"], dados["termovision"], dados["empresa_id"], dados["portao"]) == (
         "termovision", str(g.id), True, c["a"].id, "empresa")
-    assert dados["usinas"] == [{"gs": c["ib"].id, "id": c["ib"].id}, {"gs": c["of"].id, "id": c["of"].id}]
+    assert dados["usinas"] == [{"gs": n, "id": n} for n in (c["desligada"].id, c["ib"].id, c["of"].id)]
     linha = db.query(AcessoGS).filter(AcessoGS.sistema == "termovision").one()
     assert (linha.acao, linha.motivo, linha.ip, linha.gs_user_id) == ("passe", "mapa embutido no meuWatt", "200.9.9.9", g.id)
     # o meuPlano não abre por esta pessoa (sem a ligação de lá), o dono sem o TermoVision, e o TermoVision não pede a si
@@ -230,3 +237,42 @@ def test_os_objetos_do_mapa_para_o_importar_do_termovision(http, cenario, db, mo
     c["dono"].termovision_liberado = True
     db.commit()
     assert http.get(url, headers=_h(c["dono"], sistema="termovision")).status_code == 403   # o dono não importa
+
+
+def test_a_chave_sozinha_nao_fala_por_ninguem(http, cenario, db):
+    """Sem a sessão do passe (`X-Sessao-GS`), só quem entrou pelo GS nos últimos 60 dias; com ela, só a sessão DELA
+    neste sistema, e encerrar as sessões no GS a encerra aqui também."""
+    from app.core.security import criar_token_sistema
+    from app.models.acesso import AcessoGS as A
+    from app.services import sessoes
+    c, g, adm = cenario, cenario["gerente"], cenario["adm"]
+    db.query(A).filter(A.gs_user_id == adm.id).update({"em": datetime.now(UTC) - timedelta(days=61)})
+    db.commit()
+    assert http.get("/api/v1/interno/usinas", headers=_h(adm)).status_code == 404          # sumido há 61 dias
+    sessao_adm = criar_token_sistema(adm.id, "meuguarda")
+    assert http.get("/api/v1/interno/usinas", headers={**_h(adm), "X-Sessao-GS": sessao_adm}).status_code == 200
+    # a renovação devolve um `sessao_gs` novo, da MESMA sessão, com 60 dias a contar de agora (o meuPlano, 24/11)
+    from jose import jwt as _jwt
+
+    from app.core.config import get_settings as _gs
+    r = http.get("/api/v1/interno/usinas-da-pessoa", headers={**_h(adm), "X-Sessao-GS": sessao_adm})
+    nova = r.json()["sessao_gs"]
+    velho, novo = (_jwt.decode(t, _gs().gs_jwt_secret, algorithms=["HS256"]) for t in (sessao_adm, nova))
+    assert novo["sid"] == velho["sid"] and novo["exp"] >= velho["exp"] and novo["escopo"] == "sistema:meuguarda"
+    assert http.get("/api/v1/interno/usinas", headers={**_h(adm), "X-Sessao-GS": nova}).status_code == 200
+    assert http.get("/api/v1/interno/usinas-da-pessoa", headers=_h(g)).json()["sessao_gs"] is None   # transição: nada
+    for errada in (criar_token_sistema(adm.id, "meuwatt"), criar_token_sistema(g.id, "meuguarda"), "lixo"):
+        assert http.get("/api/v1/interno/usinas", headers={**_h(adm), "X-Sessao-GS": errada}).status_code == 404
+    sessoes.encerrar_todas(db, adm, por=None, motivo="teste")
+    db.commit()
+    for t in (sessao_adm, nova):                                                 # a renovada cai junto
+        assert http.get("/api/v1/interno/usinas", headers={**_h(adm), "X-Sessao-GS": t}).status_code == 404
+    # e a TRANSIÇÃO (sem `X-Sessao-GS`, o caminho de hoje): a entrada de antes do "encerrar todas" não fala mais
+    assert http.get("/api/v1/interno/usinas", headers=_h(g)).status_code == 200
+    import time as _t
+    _t.sleep(1.1)                                          # a marca é em segundos
+    sessoes.encerrar_todas(db, g, por=None, motivo="teste")
+    db.commit()
+    assert http.get("/api/v1/interno/usinas", headers=_h(g)).status_code == 404
+    leituras = [a for a in db.query(A).filter(A.acao == "leitura", A.gs_user_id == adm.id) if "renovação" not in a.motivo]
+    assert len(leituras) == 1 and "as usinas" in leituras[0].motivo                         # uma por hora

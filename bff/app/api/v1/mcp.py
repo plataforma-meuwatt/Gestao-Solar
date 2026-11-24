@@ -220,6 +220,8 @@ def _pagina(pedido: str | None, erro: str | None = None, status: int = 200) -> H
         f'<input type="hidden" name="pedido" value="{html.escape(pedido)}">'
         '<label>Login ou e-mail<input name="apelido" autocomplete="username" autocapitalize="none" required></label>'
         '<label>Senha<input name="senha" type="password" autocomplete="current-password" required></label>'
+        '<label>Código do autenticador <small>(gerente e plataforma)</small>'
+        '<input name="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="8"></label>'
         '<button name="acao" value="autorizar">Autorizar</button>'
         '<button name="acao" value="cancelar" class="nao" formnovalidate>Cancelar</button></form>'
     )
@@ -234,7 +236,7 @@ def _pagina(pedido: str | None, erro: str | None = None, status: int = 200) -> H
         "main{max-width:420px;margin:8vh auto;padding:24px 16px}"
         "section{background:var(--cartao);border:1px solid var(--borda);border-radius:12px;padding:24px}"
         "h1{font-size:20px;margin:0 0 8px}p{color:var(--fraco);margin:0 0 16px}"
-        "label{display:block;margin:0 0 12px;font-weight:600}"
+        "label{display:block;margin:0 0 12px;font-weight:600}small{font-weight:400;color:var(--fraco)}"
         "input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;font:inherit;"
         "color:var(--texto);background:var(--fundo);border:1px solid var(--borda);border-radius:8px}"
         "button{font:inherit;padding:10px 16px;border-radius:8px;border:0;background:var(--cor);color:#fff;"
@@ -291,9 +293,11 @@ def aprovar(
     apelido: str = Form(""),
     senha: str = Form(""),
     acao: str = Form(""),
+    codigo: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """A pessoa decide com a senha do Gestão Solar. O código só vai ao destino conferido na ida."""
+    """A pessoa decide com a senha do Gestão Solar (e o código do autenticador, quando a conta usa a verificação em duas
+    etapas). O código de autorização só vai ao destino conferido na ida."""
     from app.services import acessos
     _limpar_vencidos()
     p = _pedidos.get(pedido)
@@ -318,6 +322,20 @@ def aprovar(
         _falhas[nome] = [*recentes, agora]
         acessos.recusar(db, request, nome, motivo, sistema="claude")
         return _pagina(pedido, acessos.frase(motivo) + ("" if motivo == acessos.AMBIGUO else "."), 401)
+    from app.services import duas_etapas
+    if duas_etapas.exigida(usuario):                       # R12: o gerente e a plataforma também com o código
+        if not duas_etapas.ativa(usuario):
+            return _pagina(pedido, "Esta conta usa a verificação em duas etapas e ainda não cadastrou o autenticador: "
+                                   "entre uma vez no oem-gs (ou no adm-gs) para cadastrar.", 403)
+        if duas_etapas.bloqueada(usuario):                 # o limite da CONTA, de qualquer lugar
+            return _pagina(pedido, acessos.BARRADO, 429)
+        if not duas_etapas.conferir(usuario, codigo):
+            db.rollback()
+            _falhas[nome] = [*recentes, agora]
+            acessos.recusar(db, request, nome, "código da verificação em duas etapas errado", sistema="claude")
+            duas_etapas.errou(db, request, usuario)
+            return _pagina(pedido, "Informe o código do autenticador (6 números): o que estava aí não confere.", 401)
+        db.commit()
     _falhas.pop(nome, None)
     try:
         _empresa_ativa(db, usuario)
@@ -609,6 +627,14 @@ def _quem(db: Session, request: Request) -> User | JSONResponse:
     usuario = _conta_com_empresa(db, linha.user_id)
     if usuario is None or not usuario.ativo:
         return _sem_login(request, "Esta conta do Gestão Solar está desativada.")
+    from app.services import duas_etapas
+    if duas_etapas.pendente(usuario):                      # exige o código e não cadastrou: a ligação é de antes
+        return _sem_login(request, "Esta conta agora usa a verificação em duas etapas: entre no Gestão Solar para "
+                                   "cadastrar o autenticador e conecte de novo no Claude.")
+    if usuario.sessoes_desde is not None and _aware(linha.criado_em) < _aware(usuario.sessoes_desde):
+        # "Encerrar todas", a senha nova (também a do "esqueci a senha") e o "refazer duas etapas" valem aqui também: a
+        # ligação do Claude de quem roubou a senha não sobrevive 90 dias à recuperação da conta (R12)
+        return _sem_login(request, "As sessões desta conta foram encerradas. Conecte o Gestão Solar de novo no Claude.")
     try:
         _empresa_ativa(db, usuario)
     except HTTPException as e:

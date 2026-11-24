@@ -191,10 +191,11 @@ def test_cada_requisicao_le_conta_e_empresa_numa_ida_so(db, cenario):
     idas = []
     event.listen(db.bind, "before_cursor_execute", lambda *a: idas.append(a[2]))
     for guarda, token in tokens:
+        guarda(cred=_cred(token), db=db)                   # o 1º uso grava a sessão (R4; depois, de 5 em 5 min)
         db.expunge_all()                                   # requisição nova: nada carregado
         idas.clear()
         guarda(cred=_cred(token), db=db)
-        assert len(idas) == 1, idas
+        assert len(idas) == 1, idas                        # a conta, a empresa e a sessão: uma ida
 
 
 # ------------------------------------------------- 3. identidade e recorte das pontes

@@ -103,7 +103,7 @@ def test_a_porta_exige_a_chave_do_termovision(http, cenario, monkeypatch):
             r = getattr(http, metodo)(url, headers=h, **({"json": {"termovision": "x"}} if metodo == "post" else {}))
             assert r.status_code == 401, (metodo, h, r.text)
     monkeypatch.setattr(get_settings(), "termovision_chave_interna", "")
-    assert http.get("/api/v1/interno/usinas", headers=_h(g)).status_code == 503       # porta sem chave: fechada
+    assert http.get("/api/v1/interno/usinas", headers=_h(g)).status_code == 401       # porta sem chave: fechada
 
 
 def test_so_a_om_que_entrou_pelo_gs_ha_pouco_e_so_a_empresa_ativa_do_passe(http, cenario):
@@ -115,7 +115,8 @@ def test_so_a_om_que_entrou_pelo_gs_ha_pouco_e_so_a_empresa_ativa_do_passe(http,
     assert ib == {"gs": c["ib"].id, "codigo": f"GS-{c['ib'].id:04d}", "nome": "Ibitinga", "empresa": "Splendor O&M",
                   "empresa_id": c["a"].id,
                   "meuwatt": {"slug": "ibitinga"}, "meuplano": {"id": 7}, "termovision": None, "cidade": "Ibitinga",
-                  "uf": "SP", "kwp": None, "endereco": None, "latitude": None, "longitude": None}
+                  "uf": "SP", "kwp": None, "endereco": None, "latitude": None, "longitude": None, "ativo": True,
+                  "proprietaria": None}
     for quem, esperado in (("dono", 403), ("adm", 403), ("sem_tv", 404), ("sumido", 403), ("so_bot", 403)):
         assert http.get("/api/v1/interno/usinas", headers=_h(c[quem])).status_code == esperado, quem
     assert http.get("/api/v1/interno/usinas", headers=_h(c["gerente"], empresa=c["c"].id)).status_code == 404
@@ -210,7 +211,8 @@ def test_a_usina_desativada_no_gs_solta_o_mapa(http, cenario, db):
     assert http.post(url, headers=_h(c["gerente"]), json={"termovision": "mapa-ib"}).status_code == 200
     c["ib"].ativo = False
     db.commit()
-    assert [u["nome"] for u in http.get("/api/v1/interno/usinas", headers=_h(c["gerente"])).json()] == ["Ouro Fino"]
+    lista = http.get("/api/v1/interno/usinas", headers=_h(c["gerente"])).json()       # a desligada vem, e diz
+    assert [(u["nome"], u["ativo"]) for u in lista] == [("Ibitinga", False), ("Ouro Fino", True)]
     r = http.post(f"/api/v1/interno/usinas/{c['of'].id}/mapa", headers=_h(c["gerente"]),
                   json={"termovision": "mapa-ib"})
     assert r.status_code == 409 and "Ibitinga" in r.json()["detail"]        # da empresa: o nome vai

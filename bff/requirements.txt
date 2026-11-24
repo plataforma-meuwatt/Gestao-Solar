@@ -20,6 +20,10 @@ playwright==1.55.0
 # cada letra e desenha a página para a prova. Sem dependência do sistema (o PDFium vem na roda).
 pypdfium2==4.30.0
 
+# O QR code do cadastro da verificação em duas etapas (`services/duas_etapas`): Python puro, sem dependência, desenha
+# o SVG que o autenticador do celular lê.
+segno==1.6.1
+
 # Testes
 pytest==8.4.2
 pytest-asyncio==1.2.0

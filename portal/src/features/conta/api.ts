@@ -12,6 +12,7 @@
  */
 
 import { api } from '@/lib/api'
+import { useAuth } from '@/store/auth'
 import type { Usuario } from '@/store/auth'
 
 // O contrato de `/plants` é declarado uma vez só, onde ele já era lido. Repetir o tipo aqui
@@ -25,15 +26,16 @@ export async function lerPerfil(): Promise<Usuario> {
 }
 
 /**
- * Troca a senha. O servidor responde 204, sem corpo.
+ * Troca a senha. As outras sessões da conta acabam (R12), e volta a sessão nova DESTE navegador, que fica guardada.
  *
  * As recusas (senha atual errada, nova curta demais, nova igual à atual) chegam como 400 com
  * `detail` em texto — a tela mostra a frase que o servidor escreveu, e não uma tradução
  * própria que pode divergir da regra real.
  */
 export async function trocarSenha(senhaAtual: string, senhaNova: string): Promise<void> {
-  await api.post('/api/v1/auth/trocar-senha', {
+  const { data } = await api.post<{ token: string; expira_em: string | null }>('/api/v1/auth/trocar-senha', {
     senha_atual: senhaAtual,
     senha_nova: senhaNova,
   })
+  if (data?.token) useAuth.getState().trocarToken(data.token, data.expira_em ?? null)
 }

@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Seletor, Vazio } from '@/components/base'
+import { DuasEtapasDaConta } from '@/features/usuarios/DuasEtapas'
 import {
   desagruparConta,
   contasParaAgrupar,
@@ -310,6 +311,7 @@ function LinhaDaEquipe({
                 ? `entrou ${new Date(conta.ultimo_login).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
                 : 'nunca entrou'}
             </span>
+            <DuasEtapasDaConta situacao={conta.duas_etapas} conta={conta.id} daEmpresa={false} />
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

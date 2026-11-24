@@ -18,8 +18,8 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Cpu, Link2, Sun, Wrench } from 'lucide-react'
-import { useState } from 'react'
+import { Cpu, Link2, Map as Mapa, Sun, Wrench } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
 import { DadosDaUsina, UsinasAConfirmar } from '@/features/empresa/DadosDaUsina'
@@ -51,6 +51,13 @@ const GRUPOS: { origem: LinhaDeUsina['origem']; titulo: string; icone: typeof Su
     titulo: 'Só no meuPlano',
     icone: Wrench,
     apoio: 'Manutenção sem monitoramento. É um caso normal, não um erro.',
+  },
+  {
+    origem: 'termovision',
+    titulo: 'Só no TermoVision',
+    icone: Mapa,
+    apoio:
+      'O mapa dela (voo, termografia) mora no TermoVision. Fica fora do aplicativo até ser ligada ao monitoramento ou à manutenção.',
   },
   {
     origem: 'micro',
@@ -179,6 +186,8 @@ function LinhaUsina({
   aoOcultar: () => void
 }) {
   const [nome, setNome] = useState(linha.nome)
+  // o nome pode mudar por outro sistema enquanto a tela está aberta: o campo segue o do servidor
+  useEffect(() => setNome(linha.nome), [linha.nome])
   const [casando, setCasando] = useState(false)
   const [vendoDados, setVendoDados] = useState(false)
   const [alvo, setAlvo] = useState<string>('')
@@ -186,12 +195,14 @@ function LinhaUsina({
   // Casar vale para a usina do meuWatt que ainda não tem par: é dela que sai o `mp_usina_id`.
   const podeCasar = linha.mw_slug !== null && linha.mp_usina_id === null
 
+  // o nome e os identificadores dos produtos só vão ao trazer (e o do meuPlano ao casar): ligar, desligar e renomear
+  // não os mandam, e o servidor fica com os da usina (outro sistema pode tê-la ligado depois que a tela abriu)
   const base = {
     plant_link_id: linha.plant_link_id,
-    mw_slug: linha.mw_slug,
-    mp_usina_id: linha.mp_usina_id,
-    mw_micro_plant_id: linha.mw_micro_plant_id,
-    nome,
+    mw_slug: jaEstaAqui ? undefined : linha.mw_slug,
+    mp_usina_id: jaEstaAqui ? undefined : linha.mp_usina_id,
+    mw_micro_plant_id: jaEstaAqui ? undefined : linha.mw_micro_plant_id,
+    nome: jaEstaAqui ? undefined : linha.nome,
     cidade: linha.cidade,
     uf: linha.uf,
     kwp: linha.kwp,
@@ -206,7 +217,7 @@ function LinhaUsina({
               className="campo h-9 text-sm"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
-              onBlur={() => nome !== linha.nome && aoSalvar({ ...base, no_app: linha.no_app })}
+              onBlur={() => nome.trim() && nome !== linha.nome && aoSalvar({ ...base, nome, no_app: linha.no_app })}
             />
           ) : (
             <p className="text-forte font-semibold">{linha.nome}</p>

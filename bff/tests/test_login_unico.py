@@ -128,6 +128,7 @@ def test_usinas_do_passe_so_da_empresa_da_sessao_e_a_plataforma_ve_todas(db, usi
     monkeypatch.setattr(login_externo, "TETO_USINAS", 10)                         # grande demais: diz que ficou fora
     e = login_externo.extras_v2(db, g, "meuwatt", 1)
     assert e.get("usinas_fora") is True and "usinas" not in e
+    assert login_externo.extras_v2(db, g, "meuwatt", 1, teto=False)["usinas"]      # a renovação: a lista inteira
 
 
 def test_entrada_unica_dos_quatro_e_sem_endereco_morto():

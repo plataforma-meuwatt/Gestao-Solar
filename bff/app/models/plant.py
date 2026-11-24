@@ -10,7 +10,7 @@ app esconde a aba correspondente.
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -18,6 +18,14 @@ from app.core.db import Base
 
 class PlantLink(Base):
     __tablename__ = "gs_plant_links"
+    # a mesma usina de um produto numa usina daqui só: o `salvar_usina` já confere, e o registro pela porta dos
+    # sistemas, com dois pedidos ao mesmo tempo, precisava da trava no banco (o avaliador do R10, 24/11/2026)
+    __table_args__ = (
+        Index("ux_gs_plant_links_mw_slug", "mw_plant_slug", unique=True,
+              postgresql_where=text("mw_plant_slug IS NOT NULL"), sqlite_where=text("mw_plant_slug IS NOT NULL")),
+        Index("ux_gs_plant_links_mp_usina", "mp_usina_id", unique=True,
+              postgresql_where=text("mp_usina_id IS NOT NULL"), sqlite_where=text("mp_usina_id IS NOT NULL")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -49,6 +57,10 @@ class PlantLink(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    #: a DONA da usina (Plano Casa GS, R11): uma só por usina, como a PROPRIETARIA do meuPlano
+    proprietaria_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_proprietarias.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     #: quando um dado básico mudou por último (`services/dados_da_usina.alterar`): os sistemas releem com
@@ -99,7 +111,8 @@ class UsinaAConfirmar(Base):
     `referencia`): pedir de novo devolve a decisão."""
 
     __tablename__ = "gs_usinas_a_confirmar"
-    __table_args__ = (UniqueConstraint("sistema", "referencia", name="ux_gs_usinas_a_confirmar_ref"),)
+    __table_args__ = (UniqueConstraint("empresa_id", "sistema", "referencia",
+                                       name="ux_gs_usinas_a_confirmar_empresa_ref"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     empresa_id: Mapped[int] = mapped_column(ForeignKey("gs_empresas.id", ondelete="CASCADE"), index=True)

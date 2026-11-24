@@ -48,9 +48,22 @@ class EntrarIn(BaseModel):
     senha: str
 
 
+class DuasEtapasOut(BaseModel):
+    """A senha está certa e falta o código (R12). `cadastrar` = a conta ainda não tem o autenticador: a tela mostra o
+    QR (`qr`, um SVG em data URI), a chave para digitar (`segredo`) e o endereço que abre o autenticador no celular
+    (`otpauth`), e o primeiro código certo confirma."""
+    desafio: str
+    cadastrar: bool
+    qr: str | None = None
+    segredo: str | None = None
+    otpauth: str | None = None
+
+
 class EntrarOut(BaseModel):
-    token: str
-    expira_em: datetime
+    #: vazio quando falta o código da verificação em duas etapas (`duas_etapas`)
+    token: str = ""
+    expira_em: datetime | None = None
+    duas_etapas: DuasEtapasOut | None = None
     nome: str
     apelido: str
     perfil: str
@@ -109,10 +122,76 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db), request: Request = Non
                 "Esta empresa está desativada na plataforma. Fale com quem a administra.",
             )
 
+    from app.services import duas_etapas
+    if duas_etapas.exigida(usuario):                       # R12: a senha certa e falta o código
+        return EntrarOut(nome=usuario.nome, apelido=usuario.apelido, perfil=usuario.perfil.value,
+                         escopo=pessoas.escopo_do_perfil(usuario.perfil),
+                         duas_etapas=pedir_codigo(db, usuario, "painel"))
+    return _sessao_do_painel(db, request, usuario, empresa, body.apelido, "")
+
+
+def pedir_codigo(db: Session, usuario: User, para: str) -> "DuasEtapasOut":
+    """O desafio do código e, na primeira vez, o cadastro do autenticador (o segredo fica gravado, cifrado)."""
+    from app.services import duas_etapas
+    cadastro = None if duas_etapas.ativa(usuario) else duas_etapas.comecar_cadastro(usuario)
+    db.commit()
+    return DuasEtapasOut(desafio=duas_etapas.desafio(usuario, para), cadastrar=cadastro is not None,
+                         **(cadastro or {}))
+
+
+class CodigoIn(BaseModel):
+    desafio: str
+    codigo: str
+
+
+def conta_do_codigo(db: Session, request: Request | None, body: CodigoIn, para: str) -> User:
+    """A conta do desafio, com o código certo: o limite e o registro da senha errada valem para o código errado."""
+    from app.services import acessos, duas_etapas
+    uid = duas_etapas.do_desafio(body.desafio, para)
+    usuario = db.get(User, uid) if uid is not None else None
+    if usuario is None or not usuario.ativo:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "O pedido venceu: entre de novo com a senha.")
+    if (porque := acessos.barrado(request, usuario.apelido, db=db)) is not None:
+        acessos.recusar_barrado(db, request, usuario.apelido, porque=porque)
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, acessos.BARRADO)
+    if duas_etapas.bloqueada(usuario):                     # o limite da CONTA, de qualquer lugar
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, acessos.BARRADO)
+    cadastrando = not duas_etapas.ativa(usuario)
+    if not duas_etapas.conferir(usuario, body.codigo):
+        db.rollback()
+        acessos.recusar(db, request, usuario.apelido, "código da verificação em duas etapas errado")
+        duas_etapas.errou(db, request, usuario)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Código errado ou vencido: confira no autenticador.")
+    db.commit()
+    if cadastrando:
+        acessos.registrar(db, request, acao="acesso", user=usuario, por=usuario,
+                          motivo="verificação em duas etapas ativada (o autenticador cadastrado)")
+        duas_etapas.avisar(usuario, "🔐 Gestão Solar: a verificação em duas etapas da sua conta foi ativada agora, com "
+                                    "um autenticador novo. Se não foi você, avise o gerente da sua empresa (ele refaz "
+                                    "o cadastro) e troque a sua senha: mande «esqueci a senha» aqui.")
+    return usuario
+
+
+@router.post("/entrar/codigo", response_model=EntrarOut)
+def entrar_com_codigo(body: CodigoIn, db: Session = Depends(get_db), request: Request = None) -> EntrarOut:
+    """O segundo passo do login do painel: o código do autenticador."""
+    usuario = conta_do_codigo(db, request, body, "painel")
+    empresa = None
+    if usuario.abre_empresa or usuario.abre_tecnico:
+        empresa = empresas.por_id(db, empresas.empresa_exigida(usuario))
+        if not empresa.ativa:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Esta empresa está desativada na plataforma. Fale com quem a administra.")
+    return _sessao_do_painel(db, request, usuario, empresa, usuario.apelido, ", com a verificação em duas etapas")
+
+
+def _sessao_do_painel(db: Session, request: Request | None, usuario: User, empresa, login: str,
+                      com: str) -> EntrarOut:
+    from app.services import acessos
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
-    acessos.registrar(db, request, acao="entrou", user=usuario, login=body.apelido,
-                      motivo=f"pelo {acessos.PORTAO[pessoas.escopo_do_perfil(usuario.perfil)]}")
+    acessos.registrar(db, request, acao="entrou", user=usuario, login=login,
+                      motivo=f"pelo {acessos.PORTAO[pessoas.escopo_do_perfil(usuario.perfil)]}{com}")
 
     if empresa is not None:
         # Gerente → `escopo=empresa`; técnico → `escopo=tecnico`. Quem escolhe é

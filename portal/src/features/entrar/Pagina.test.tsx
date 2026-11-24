@@ -67,7 +67,7 @@ function preencher(apelido: string, senha: string) {
 describe('tela de entrada do portal', () => {
   beforeEach(() => {
     localStorage.clear()
-    useAuth.setState({ token: null, expiraEm: null, usuario: null, erro: null, entrando: false })
+    useAuth.setState({ token: null, expiraEm: null, usuario: null, erro: null, entrando: false, duasEtapas: null })
   })
 
   afterEach(() => {
@@ -155,7 +155,29 @@ describe('tela de entrada do portal', () => {
     const { container } = montar()
 
     expect(screen.getByText(/senha provisória ao seu gestor de conta/i)).toBeTruthy()
-    // Nenhum link: a recuperação é por telefone com o gestor, não por uma porta do outro site.
-    expect(container.querySelectorAll('a').length).toBe(0)
+    // Um link só, e daqui: o "esqueci a senha" pelo WhatsApp do GS (R12); nenhuma porta do painel do gestor.
+    const links = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    expect(links).toEqual(['/esqueci-a-senha'])
+  })
+
+  it('a conta com a verificação em duas etapas para no código e entra com ele (o cadastro mostra o QR)', async () => {
+    const pedido = { desafio: 'd1', cadastrar: true, qr: 'data:image/svg+xml;base64,AAA', segredo: 'ABCD EFGH',
+                     otpauth: 'otpauth://totp/x' }
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValueOnce({ data: { token: '', duas_etapas: pedido } })
+      .mockResolvedValueOnce({ data: { token: 'tok', usuario } })
+    montar('/usinas/3')
+    preencher('gerente', 'senha-certa')
+    fireEvent.click(screen.getByRole('button', { name: 'Entrar' }))
+    await screen.findByLabelText('Código do autenticador')
+    expect(screen.getByAltText(/QR code/)).toBeTruthy()
+    expect(screen.getByText('ABCD EFGH')).toBeTruthy()
+    expect(useAuth.getState().token).toBeNull()                  // a senha sozinha não entra
+    fireEvent.change(screen.getByLabelText('Código do autenticador'), { target: { value: '12a3456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Entrar' }))
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toBe('/usinas/3'))
+    expect(post).toHaveBeenLastCalledWith('/api/v1/auth/login/codigo', { desafio: 'd1', codigo: '123456' })
+    expect(useAuth.getState().token).toBe('tok')
   })
 })

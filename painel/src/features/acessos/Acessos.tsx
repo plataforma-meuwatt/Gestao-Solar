@@ -9,7 +9,7 @@
  * Usuários abre aqui com `?usuario=`); os textos vêm prontos do servidor.
  */
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -21,6 +21,9 @@ import {
   listarEmpresas,
   type Acesso,
   type FiltroAcessos,
+  encerrarSessao,
+  encerrarTodasAsSessoes,
+  sessoesAbertas,
 } from '@/features/api'
 import { quando } from '@/features/rotulos'
 import { mensagemDeErro } from '@/lib/api'
@@ -117,6 +120,7 @@ export function Acessos({ daEmpresa }: { daEmpresa: boolean }) {
           </button>
         </div>
       ) : null}
+      {usuario ? <SessoesAbertas daEmpresa={daEmpresa} pessoa={Number(usuario)} /> : null}
       <div className={`grid gap-3 mb-3 ${daEmpresa ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         {!daEmpresa ? (
           <select
@@ -242,6 +246,83 @@ function LinhaDoAcesso({ acesso: a, primeiro, daEmpresa }: { acesso: Acesso; pri
             {a.aparelho_completo || 'não informado'}
           </p>
         </div>
+      ) : null}
+    </div>
+  )
+}
+
+
+/** As sessões abertas da pessoa escolhida (R4): onde e de onde, e o encerrar (uma, ou todas de uma vez). Encerrar
+ *  vale na próxima requisição dela; "todas" derruba também as que nunca foram usadas e as dos sistemas (pelo GS). */
+function SessoesAbertas({ daEmpresa, pessoa }: { daEmpresa: boolean; pessoa: number }) {
+  const qc = useQueryClient()
+  const chave = ['sessoes-abertas', daEmpresa ? 'empresa' : 'plataforma', pessoa]
+  const { data, isLoading, error } = useQuery({ queryKey: chave, queryFn: () => sessoesAbertas(daEmpresa, pessoa) })
+  const [confirmando, setConfirmando] = useState(false)
+  const [feito, setFeito] = useState<string | null>(null)
+  const depois = () => {
+    void qc.invalidateQueries({ queryKey: chave })
+    void qc.invalidateQueries({ queryKey: ['acessos'] })
+  }
+  const uma = useMutation({ mutationFn: (sid: string) => encerrarSessao(daEmpresa, pessoa, sid), onSuccess: depois })
+  const todas = useMutation({
+    mutationFn: () => encerrarTodasAsSessoes(daEmpresa, pessoa),
+    onSuccess: (r) => {
+      setConfirmando(false)
+      setFeito(`${r.encerradas} sessão(ões) aberta(s) encerrada(s); as que nunca foram usadas também deixam de valer.`)
+      depois()
+    },
+  })
+  const em = (iso: string) =>
+    new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' })
+  return (
+    <div className="cartao px-4 py-3 mb-3 grid gap-2">
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        <p className="text-sm text-forte font-semibold">Sessões abertas</p>
+        {confirmando ? (
+          <span className="flex flex-wrap items-center gap-2 text-sm text-corpo">
+            Encerrar todas? A pessoa entra de novo com a senha.
+            <button className="btn-fantasma" disabled={todas.isPending} onClick={() => todas.mutate()}>
+              Encerrar todas
+            </button>
+            <button className="btn-fantasma" onClick={() => setConfirmando(false)}>
+              Não
+            </button>
+          </span>
+        ) : (
+          <button className="btn-fantasma" onClick={() => setConfirmando(true)}>
+            Encerrar todas
+          </button>
+        )}
+      </div>
+      {feito ? <p className="text-sm text-rotulo">{feito}</p> : null}
+      {isLoading ? (
+        <p className="text-sm text-fraco">Carregando…</p>
+      ) : error ? (
+        <p className="text-sm text-parado">{mensagemDeErro(error)}</p>
+      ) : !data?.length ? (
+        <p className="text-sm text-fraco">
+          Nenhuma sessão aberta registrada. As sessões passaram a ser registradas em 24/11/2026, no primeiro uso de cada
+          uma; a de antes vale até vencer (ou até "Encerrar todas").
+        </p>
+      ) : (
+        <ul className="grid gap-1.5">
+          {data.map((s) => (
+            <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span className="text-forte">{s.onde}</span>
+              <span className="text-corpo">usada por último em {em(s.ultimo_uso_em)}</span>
+              <span className="text-fraco">
+                {[s.ip || null, s.aparelho || null, `desde ${em(s.criada_em)}`].filter(Boolean).join(' · ')}
+              </span>
+              <button className="btn-fantasma" disabled={uma.isPending} onClick={() => uma.mutate(s.id)}>
+                Encerrar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {uma.error || todas.error ? (
+        <p className="text-sm text-parado">{mensagemDeErro(uma.error ?? todas.error)}</p>
       ) : null}
     </div>
   )

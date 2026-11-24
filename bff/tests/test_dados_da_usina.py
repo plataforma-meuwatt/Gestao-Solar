@@ -68,8 +68,16 @@ def c(db):
                         em=datetime.now(UTC) - timedelta(days=2)))
     db.add(AcessoGS(gs_user_id=gerente.id, login="gerente.a", acao="passe", sistema="termovision", ok=True,
                     ip="200.1.1.1", em=datetime.now(UTC)))
+    gerente_b = User(apelido="gerente.b", nome="Gerente B", perfil=Perfil.GESTOR_EMPRESA, empresa_id=b.id)
+    atendimento = User(apelido="atend", nome="Atendimento", perfil=Perfil.ATENDIMENTO)
+    db.add_all([gerente_b, atendimento])
     db.commit()
-    return dict(a=a, b=b, ib=ib, de_b=de_b, gerente=gerente, dono=dono)
+    for u in (gerente_b, atendimento):
+        db.add(VinculoProduto(gs_user_id=u.id, produto="meuplano", usuario_remoto_id=str(200 + u.id)))
+        db.add(AcessoGS(gs_user_id=u.id, login=u.apelido, acao="passe", sistema="meuplano", ok=True, ip="200.1.1.1",
+                        em=datetime.now(UTC) - timedelta(days=1)))
+    db.commit()
+    return dict(a=a, b=b, ib=ib, de_b=de_b, gerente=gerente, dono=dono, gerente_b=gerente_b, atendimento=atendimento)
 
 
 def _h(pessoa, sistema="meuplano", empresa=None):
@@ -127,7 +135,7 @@ def test_usina_nova_de_outro_sistema_nasce_ou_espera_o_gerente(http, c, db):
                   "latitude": -22.5, "longitude": -47.1, "cidade": "Bady Bassitt", "uf": "sp"})
     assert r.status_code == 201, r.text
     bady = db.get(PlantLink, r.json()["usina"]["gs"])
-    assert (bady.tv_codigo, bady.empresa_id, bady.uf, bady.ativo) == ("dv96wz32", c["a"].id, "SP", True)
+    assert (bady.tv_codigo, bady.empresa_id, bady.uf, bady.ativo) == ("dv96wz32", c["a"].id, "SP", False)
     assert _hist(db, bady) == [("criada", None, "Mapa no TermoVision: dv96wz32", "termovision")]
     r = http.post(url, headers=_h(c["gerente"], sistema="termovision"), json={"nome": "Bady 1", "referencia": "dv96wz32"})
     assert r.status_code == 200 and r.json()["situacao"] == "ligada"                 # pedir de novo é idempotente
@@ -142,7 +150,7 @@ def test_usina_nova_de_outro_sistema_nasce_ou_espera_o_gerente(http, c, db):
                                                        "latitude": -21.752, "longitude": -48.830})
     assert r.status_code == 202 and r.json()["parecidas"][0]["distancia_km"] < 1.5
     # o gerente decide no oem-gs
-    pend = rotas_empresa.usinas_a_confirmar(db, c["gerente"])
+    pend = rotas_empresa.usinas_a_confirmar(False, db, c["gerente"])
     assert [(p["sistema"], p["referencia"]) for p in pend] == [("TermoVision", "zy6x0nhp"), ("meuPlano", "777")]
     assert pend[0]["parecidas"][0]["codigo"] == f"GS-{c['ib'].id:04d}"
     feito = rotas_empresa.decidir_usina_a_confirmar(pend[0]["id"], rotas_empresa.DecisaoIn(decisao="mesma", gs=c["ib"].id),
@@ -159,7 +167,7 @@ def test_usina_nova_de_outro_sistema_nasce_ou_espera_o_gerente(http, c, db):
         "situacao"] == "descartada"
     assert http.post(url, headers=_h(c["gerente"]), json={"nome": "Da Outra", "referencia": "99"}).status_code == 409
     assert http.post(url, headers=_h(c["gerente"], sistema="meuguarda"), json={"nome": "X", "referencia": "1"}
-                     ).status_code in (403, 404)                                     # o meuGuarda usa as do GS
+                     ).status_code == 403                                            # o meuGuarda usa as do GS
     assert http.post(url, headers=_h(c["gerente"]), json={"nome": "Y", "referencia": "abc"}).status_code == 400
 
 
@@ -203,3 +211,115 @@ def test_o_numero_no_nome_separa_usinas(db, c):
     assert acha("Bady 1") == []
     assert acha("Porto Feliz") == []                                     # uma palavra igual sem número não basta
     assert acha("ibitinga") == ["UFV Ibitinga"]
+
+
+def test_o_pedido_nao_vaza_nem_se_perde_entre_empresas(http, c, db):
+    url = "/api/v1/interno/usinas"
+    r = http.post(url, headers=_h(c["gerente"]), json={"nome": "Ibitinga Sul", "referencia": "555"})
+    assert r.status_code == 202 and r.json()["parecidas"][0]["nome"] == "UFV Ibitinga"
+    r = http.post(url, headers=_h(c["gerente_b"]), json={"nome": "Outra", "referencia": "555"})
+    assert r.status_code == 409 and "Ibitinga" not in r.text                         # nada do pedido da outra empresa
+    # descartado pela empresa A ("não é nossa"), o pedido dela não bloqueia a B (antes: 409 "já está no GS")
+    pid = rotas_empresa.usinas_a_confirmar(False, db, c["gerente"])[0]["id"]
+    rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="descartar"), db, c["gerente"])
+    r = http.post(url, headers=_h(c["gerente_b"]), json={"nome": "Outra", "referencia": "555"})
+    assert r.status_code in (201, 202) and "Ibitinga" not in r.text, r.text
+    # e o descartado da A continua na lista dela (pode voltar a confirmar), sem nada da B
+    assert [p["id"] for p in rotas_empresa.usinas_a_confirmar(True, db, c["gerente"])] == [pid]
+    assert http.patch(f"/api/v1/interno/usinas/{c['ib'].id}", headers=_h(c["atendimento"]),
+                      json={"cidade": "X"}).status_code == 403                       # o atendimento não muda usina
+
+
+def test_corrida_e_pedido_decidido_que_perdeu_o_vinculo(http, c, db, monkeypatch):
+    from app.api.v1 import interno_sistemas
+    url = "/api/v1/interno/usinas"
+    # a corrida: o mesmo registro entra pelo outro pedido no meio do caminho -> responde o que ficou, sem 500
+    original = dados_da_usina.criar
+
+    def criar_em_corrida(db_, **k):                                       # o outro pedido gravou antes deste
+        db_.add(PlantLink(nome="Corrida", empresa_id=c["a"].id, mp_usina_id=4242))
+        db_.commit()
+        return original(db_, **k)
+    monkeypatch.setattr(dados_da_usina, "criar", criar_em_corrida)
+    r = http.post(url, headers=_h(c["gerente"]), json={"nome": "Nova 4242", "referencia": "4242"})
+    monkeypatch.setattr(dados_da_usina, "criar", original)
+    assert r.status_code == 200 and r.json()["situacao"] == "ligada", r.text      # responde o que ficou, sem 500
+    assert db.query(PlantLink).filter_by(mp_usina_id=4242).count() == 1
+    # decidido "é a mesma", depois desligado do outro lado: registrar de novo reabre, sem 500
+    r = http.post(url, headers=_h(c["gerente"], sistema="termovision"), json={"nome": "Ibitinga", "referencia": "OF1"})
+    pid = rotas_empresa.usinas_a_confirmar(False, db, c["gerente"])[0]["id"]
+    rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="mesma", gs=c["ib"].id), db, c["gerente"])
+    assert http.delete(f"/api/v1/interno/usinas/{c['ib'].id}/mapa?termovision=OF1",
+                       headers=_h(c["gerente"], sistema="termovision")).status_code == 200
+    r = http.post(url, headers=_h(c["gerente"], sistema="termovision"), json={"nome": "Ibitinga", "referencia": "OF1"})
+    assert r.status_code == 202 and r.json()["situacao"] == "a_confirmar"
+    # dois cliques na decisão: o segundo é 409, e não cria outra usina
+    pid = rotas_empresa.usinas_a_confirmar(False, db, c["gerente"])[0]["id"]
+    rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="outra"), db, c["gerente"])
+    with pytest.raises(HTTPException) as e:
+        rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="outra"), db, c["gerente"])
+    assert e.value.status_code == 409
+    assert db.query(PlantLink).filter_by(tv_codigo="OF1").count() == 1
+
+
+def test_descartar_sempre_e_voltar_atras(http, c, db):
+    url = "/api/v1/interno/usinas"
+    http.post(url, headers=_h(c["gerente"]), json={"nome": "Ibitinga B", "referencia": "777"})
+    pid = rotas_empresa.usinas_a_confirmar(False, db, c["gerente"])[0]["id"]
+    # trazida pelo catálogo enquanto esperava: o pedido sai sozinho da lista
+    db.add(PlantLink(nome="Trazida", empresa_id=c["a"].id, mp_usina_id=777))
+    db.commit()
+    assert rotas_empresa.usinas_a_confirmar(False, db, c["gerente"]) == []
+    db.query(UsinaAConfirmar).filter_by(id=pid).update({"decisao": None})
+    db.commit()
+    rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="descartar"), db, c["gerente"])
+    with pytest.raises(HTTPException) as e:                                          # decidido não se decide de novo
+        rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="descartar"), db, c["gerente"])
+    assert e.value.status_code == 409
+    assert [p["id"] for p in rotas_empresa.usinas_a_confirmar(True, db, c["gerente"])] == [pid]
+    rotas_empresa.decidir_usina_a_confirmar(pid, rotas_empresa.DecisaoIn(decisao="reabrir"), db, c["gerente"])
+    assert db.get(UsinaAConfirmar, pid).decisao is None
+
+
+def test_o_catalogo_marca_a_releitura_e_nao_desfaz_o_nome(db, c, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(rotas_empresa, "_o_seu_token_enxerga", lambda *a, **k: asyncio.sleep(0))
+    ib = c["ib"]
+    ib.atualizado_em = datetime.now(UTC) - timedelta(days=1)
+    db.commit()
+    antes = ib.atualizado_em
+    # outro sistema renomeou; a tela velha só desliga (sem o nome): o nome fica
+    ib.nome = "Ibitinga (Deva)"
+    db.commit()
+    asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=ib.id, mp_usina_id=37, no_app=False),
+                                           db, c["gerente"]))
+    db.refresh(ib)
+    assert (ib.nome, ib.ativo) == ("Ibitinga (Deva)", False)
+    assert ib.atualizado_em > antes                                              # a releitura vê a mudança
+    out = rotas_empresa.dados_da_usina_da_empresa(ib.id, db, c["gerente"])
+    assert ("No aplicativo", "ligada", "desligada") in [(h.rotulo, h.antes, h.depois) for h in out.historico]
+    # a usina só do TermoVision não entra no aplicativo
+    so_tv = PlantLink(nome="Só mapa", empresa_id=c["a"].id, tv_codigo="tv1", ativo=False)
+    db.add(so_tv)
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=so_tv.id, no_app=True), db,
+                                               c["gerente"]))
+    assert e.value.status_code == 400 and "TermoVision" in e.value.detail
+    asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=so_tv.id, nome="Só o mapa", no_app=False),
+                                           db, c["gerente"]))
+    db.refresh(so_tv)
+    assert so_tv.nome == "Só o mapa" and rotas_empresa._origem(so_tv) == "termovision"
+    # outro sistema ligou a usina ao meuPlano depois que a tela abriu; a tela velha liga no app SEM os identificadores:
+    # a ligação fica (antes: gravava o que a tela tinha, nada, e desfazia a ligação)
+    so_tv.mp_usina_id = 999
+    db.commit()
+    asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=so_tv.id, no_app=True), db,
+                                           c["gerente"]))
+    db.refresh(so_tv)
+    assert (so_tv.mp_usina_id, so_tv.tv_codigo, so_tv.ativo) == (999, "tv1", True)
+    # e o que VEM no pedido muda (desfazer o casamento é mandar o campo vazio)
+    asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=so_tv.id, mp_usina_id=None,
+                                                                 no_app=False), db, c["gerente"]))
+    db.refresh(so_tv)
+    assert so_tv.mp_usina_id is None

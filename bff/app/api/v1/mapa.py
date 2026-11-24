@@ -189,7 +189,8 @@ async def mapa_da_usina(usina_id: int, db: Session = Depends(get_db), user: User
     link = _usina(db, user, usina_id)
     por_que = _edita(user)
     mon = _edita(user, Produto.MEUWATT)
-    base = {"usina": {"id": link.id, "nome": link.nome}, "pode_editar": por_que is None, "por_que_nao_edita": por_que,
+    base = {"usina": {"id": link.id, "nome": link.nome, "tv_codigo": link.tv_codigo},   # o mapa no TermoVision (R6)
+            "pode_editar": por_que is None, "por_que_nao_edita": por_que,
             # cada camada com a permissão do produto dela (None = edita); o monitoramento só com o mapa LIDO (abaixo)
             "edicao": {"monitoramento": mon or "O mapa desta usina não foi lido agora: desenhar fica para depois.",
                        "manutencao": por_que},

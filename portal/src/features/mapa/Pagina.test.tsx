@@ -13,7 +13,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -291,5 +291,71 @@ describe('mapa único', () => {
     await screen.findByText(/está cadastrado, mas a imagem dele não pôde ser/)
     expect(screen.getByText(/voo de 26\/08\/2026 \(sem a imagem agora\)/)).toBeTruthy()
     expect(r.container.querySelector('[data-voo="sem-imagem"]')).not.toBeNull()
+  })
+
+  it('o mapa do TermoVision calado: a tela diz e oferece tentar de novo (nunca um quadro em branco)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const tv = 'https://termovision.gestao.solar'
+      vi.spyOn(api, 'get').mockImplementation((url: string) =>
+        Promise.resolve({
+          data: String(url).includes('/api/sessao/produtos')
+            ? [{ produto: 'termovision', nome: 'TermoVision', url: `${tv}/entrar.html` }]
+            : resposta({ usina: { id: 7, nome: 'UFV Pereiras', tv_codigo: 'abc123' } }),
+        }) as never,
+      )
+      vi.spyOn(api, 'post').mockResolvedValue({ data: { url: `${tv}/embutir/7#assercao=PASSE1` } })
+      montar()
+      const quadro = (await screen.findByTitle('Mapa de UFV Pereiras no TermoVision')) as HTMLIFrameElement
+      fireEvent.load(quadro)
+      await act(async () => {
+        vi.advanceTimersByTime(21_000)
+      })
+      expect(await screen.findByText(/não respondeu em 20 segundos/)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+      expect(screen.queryByText(/não respondeu em 20 segundos/)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('com o mapa no TermoVision e o acesso liberado: a tela de lá embutida, com o passe e o estado do GS', async () => {
+    const tv = 'https://termovision.gestao.solar'
+    vi.spyOn(api, 'get').mockImplementation((url: string) =>
+      Promise.resolve({
+        data: String(url).includes('/api/sessao/produtos')
+          ? [{ produto: 'termovision', nome: 'TermoVision', url: `${tv}/entrar.html` }]
+          : resposta({ usina: { id: 7, nome: 'UFV Pereiras', tv_codigo: 'abc123' } }),
+      }) as never,
+    )
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { url: `${tv}/embutir/7#assercao=PASSE1` } })
+    montar()
+    const quadro = (await screen.findByTitle('Mapa de UFV Pereiras no TermoVision')) as HTMLIFrameElement
+    expect(quadro.getAttribute('src')).toBe(`${tv}/embutir/7?camada=orto,termica,mesas,strings`)
+    const mandou = vi.spyOn(quadro.contentWindow as Window, 'postMessage')
+    fireEvent.load(quadro)
+    await waitFor(() => expect(mandou).toHaveBeenCalledWith({ tipo: 'gs-passe', produto: 'termovision', assercao: 'PASSE1' }, tv))
+    expect(post).toHaveBeenCalledWith('/api/sessao/termovision', { volta: `${tv}/embutir/7` })
+    // o TermoVision diz que está pronto: vai o estado que o GS calculou (a string 2 com problema)
+    window.dispatchEvent(new MessageEvent('message', { origin: tv, source: quadro.contentWindow, data: { tipo: 'tv-pronto' } }))
+    await waitFor(() => expect(mandou).toHaveBeenCalledWith(
+      expect.objectContaining({ tipo: 'tv-estado',
+                                itens: [{ ref: { meuwatt: 2 }, estado: 'problema' }, { ref: { meuwatt: 3 }, estado: 'ok' }] }),
+      tv))
+    const enviado = mandou.mock.calls.find((c) => (c[0] as { tipo?: string }).tipo === 'tv-estado')![0] as Record<string, unknown>
+    expect('lido_em' in enviado).toBe(true)                            // as cores vão com a hora da leitura
+    // passada a folga de 10 s: o pedido de passe de outra origem não conta; o do TermoVision, sim
+    const agora = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(agora + 60_000)
+    const antes = post.mock.calls.length
+    window.dispatchEvent(new MessageEvent('message', { origin: 'https://outro.site', source: quadro.contentWindow,
+                                                       data: { tipo: 'tv-precisa-passe' } }))
+    expect(post.mock.calls.length).toBe(antes)
+    window.dispatchEvent(new MessageEvent('message', { origin: tv, source: quadro.contentWindow,
+                                                       data: { tipo: 'tv-precisa-passe' } }))
+    await waitFor(() => expect(post.mock.calls.length).toBe(antes + 1))
+    // "Equipamentos" volta ao editor do GS
+    fireEvent.click(screen.getByRole('button', { name: 'Equipamentos' }))
+    expect(screen.queryByTitle('Mapa de UFV Pereiras no TermoVision')).toBeNull()
   })
 })

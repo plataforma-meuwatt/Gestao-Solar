@@ -105,7 +105,9 @@ def regenerar_senha(db: Session, cliente: User, gerada_por: User) -> str:
     db.add(SenhaProvisoria(gs_user_id=cliente.id, gerada_por=gerada_por.id))
     db.commit()
     from app.services import acessos
+    from app.services.sessoes import encerrar_todas_de
     acessos.senha_redefinida(db, cliente, gerada_por, "senha provisória nova")
+    encerrar_todas_de(db, cliente, gerada_por, "senha provisória nova")   # as sessões abertas acabam junto
     return senha
 
 
@@ -183,7 +185,7 @@ async def usinas_sugeridas(db: Session, cliente: User) -> list[UsinaSugerida]:
             select(UserPlantAccess).where(UserPlantAccess.user_id == cliente.id)
         ).all()
     }
-    donos = _donos_por_usina(db, exceto=cliente.id)
+    donos = _donos_por_usina(db, exceto=cliente.id, proprietaria=cliente.proprietaria_id)
 
     saida: list[UsinaSugerida] = []
     for link in db.scalars(select(PlantLink).where(PlantLink.ativo)).all():
@@ -219,7 +221,7 @@ def definir_usinas(
     Com `empresa_id`, substitui só a parte DESTA empresa (e as usinas sem dono): o dono que
     também é de outra empresa recebe usina de lá, e essa não é do gerente daqui — nem para
     tirar no "salvar" de uma tela que nem a mostra."""
-    donos = _donos_por_usina(db, exceto=cliente.id)
+    donos = _donos_por_usina(db, exceto=cliente.id, proprietaria=cliente.proprietaria_id)
     conflitos = [
         f"“{db.get(PlantLink, pid).nome}” já é de {donos[pid]}"
         for pid in plant_link_ids
@@ -227,7 +229,7 @@ def definir_usinas(
     ]
     if conflitos:
         raise RegraDeNegocio(
-            "Cada usina pertence a um dono só. " + "; ".join(conflitos) + "."
+            "Cada usina pertence a um dono só (ou às pessoas da proprietária dela). " + "; ".join(conflitos) + "."
         )
 
     consulta = select(UserPlantAccess).where(UserPlantAccess.user_id == cliente.id)
@@ -253,14 +255,17 @@ def definir_usinas(
     db.commit()
 
 
-def _donos_por_usina(db: Session, exceto: int) -> dict[int, str]:
-    """Mapa usina → nome do cliente dono, ignorando o cliente em edição."""
+def _donos_por_usina(db: Session, exceto: int, proprietaria: int | None = None) -> dict[int, str]:
+    """Mapa usina → nome do cliente dono, ignorando o cliente em edição. As pessoas da MESMA proprietária dividem as
+    usinas dela (Plano Casa GS, R11): o dono da usina da proprietária X não é conflito para outra pessoa de X."""
     linhas = db.execute(
-        select(UserPlantAccess.plant_link_id, User.nome)
+        select(UserPlantAccess.plant_link_id, User.nome, User.proprietaria_id, PlantLink.proprietaria_id)
         .join(User, User.id == UserPlantAccess.user_id)
+        .join(PlantLink, PlantLink.id == UserPlantAccess.plant_link_id)
         .where(UserPlantAccess.user_id != exceto, User.perfil == Perfil.CLIENTE)
     ).all()
-    return {pid: nome for pid, nome in linhas}
+    return {pid: nome for pid, nome, dele, da_usina in linhas
+            if not (proprietaria is not None and da_usina == proprietaria and dele == proprietaria)}
 
 
 def contar_usinas(db: Session) -> dict[int, int]:

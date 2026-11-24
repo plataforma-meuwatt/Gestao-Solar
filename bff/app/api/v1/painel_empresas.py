@@ -174,6 +174,8 @@ class UsuarioDaEmpresaOut(BaseModel):
     outras_empresas: list[str] = []
     #: Se esta conta está no MEU grupo de papéis — é a que aparece em "Trocar papel".
     minha: bool = False
+    #: a verificação em duas etapas (R12): `ativa`, `a_cadastrar` (no próximo login) ou `nao_exigida`
+    duas_etapas: str = "nao_exigida"
 
 
 def resumo_das_contas(
@@ -216,6 +218,7 @@ def resumo_das_contas(
                 v.usuario_remoto_nome or v.usuario_remoto_email or f"id {v.usuario_remoto_id}"
             )
 
+    from app.services import duas_etapas
     saida = []
     for c in contas:
         todas = ([c.empresa_id] if c.empresa_id else []) + membro.get(c.id, [])
@@ -246,6 +249,7 @@ def resumo_das_contas(
                 ),
                 outras_empresas=[nomes[e] for e in todas if e != empresa_id and e in nomes],
                 minha=gestor.pessoa_id is not None and c.pessoa_id == gestor.pessoa_id,
+                duas_etapas=duas_etapas.situacao(c),
             )
         )
     return saida
@@ -349,6 +353,8 @@ def editar_usuario_da_empresa(
     db.commit()
     if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
         acessos.senha_redefinida(db, alvo, gestor, "adm-gs, empresas")
+        from app.services.sessoes import encerrar_todas_de
+        encerrar_todas_de(db, alvo, gestor, "adm-gs (senha redefinida)")   # as sessões abertas acabam junto
     acessos.mudou(db, alvo, gestor, acessos.diferencas(antes, acessos.retrato(alvo)), "adm-gs, empresas")
     return resumo_das_contas(db, [alvo], gestor, empresa_id)[0]
 

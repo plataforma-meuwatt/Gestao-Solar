@@ -164,7 +164,7 @@ def assinar(usuario: User, produto: Produto, db: Session | None = None, empresa_
 TETO_USINAS = 4000
 
 
-def extras_v2(db: Session, usuario: User, audiencia: str, empresa_id: int | None = None) -> dict:
+def extras_v2(db: Session, usuario: User, audiencia: str, empresa_id: int | None = None, *, teto: bool = True) -> dict:
     """O passe v2 (24/11/2026, "Plano Casa GS": o GS diz quem entra e QUAIS USINAS vê). Vai em toda asserção, ao lado do
     que cada produto já lia: `v`, o login, o perfil, a empresa e as usinas.
 
@@ -172,7 +172,8 @@ def extras_v2(db: Session, usuario: User, audiencia: str, empresa_id: int | None
       TermoVision o número do GS), as da EMPRESA da sessão para a O&M (quem está em duas empresas leva só as da que está
       operando) e as concedidas para o dono. Lista vazia = nenhuma.
     - a plataforma (administrador, atendimento) vê todas: `todas_as_usinas: true`, sem a lista.
-    - sem conseguir ler, ou grande demais para o teto: sem a lista e com `usinas_fora: true` (nunca "nenhuma").
+    - sem conseguir ler, ou grande demais para o teto: sem a lista e com `usinas_fora: true` (nunca "nenhuma"). A
+      renovação (`GET /usinas-da-pessoa`, `teto=False`) não vai numa asserção: leva a lista inteira.
     Quem ainda não usa as usinas daqui segue com as dele; o produto que passar a usar lê isto, nunca uma cópia."""
     import json
 
@@ -181,22 +182,33 @@ def extras_v2(db: Session, usuario: User, audiencia: str, empresa_id: int | None
 
     empresa = empresa_id if empresa_id is not None else (getattr(usuario, "empresa_da_sessao", None)
                                                           or usuario.empresa_id)
-    extra: dict = {"v": 2, "apelido": usuario.apelido, "perfil": usuario.perfil.value, "empresa_id": empresa}
+    from app.core.security import criar_token_sistema  # noqa: PLC0415 — circular no topo
+    extra: dict = {"v": 2, "apelido": usuario.apelido, "perfil": usuario.perfil.value, "empresa_id": empresa,
+                   # a sessão da pessoa NESTE sistema: ele a devolve em `X-Sessao-GS` quando lê pela porta dos sistemas
+                   "sessao_gs": criar_token_sistema(usuario.id, audiencia)}
+    if getattr(usuario, "proprietaria_id", None):          # R11: de qual dona de usina a pessoa é
+        from app.models.empresa import Proprietaria  # noqa: PLC0415
+        p = db.get(Proprietaria, usuario.proprietaria_id)
+        if p is not None:                                  # o formato da porta (`interno_sistemas.proprietaria_de`)
+            extra["proprietaria"] = {"id": p.id, "nome": p.nome,
+                                     "meuplano": {"id": p.mp_owner_id} if p.mp_owner_id else None}
     if usuario.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO):
         extra["todas_as_usinas"] = True
         return extra
     campo = {"meuwatt": "mw_plant_slug", "meuplano": "mp_usina_id"}.get(audiencia)
     try:
-        links = usinas_do_mapa(db, usuario)
+        # a régua da porta dos sistemas (`interno_sistemas.visiveis`): a O&M leva TODAS as usinas da empresa da sessão,
+        # também as fora do aplicativo (a que só existe no TermoVision nasce assim); o dono, as concedidas e ligadas
+        from app.api.v1.interno_sistemas import visiveis  # noqa: PLC0415 — circular no topo
+        links = (visiveis(db, usuario, empresa) if usuario.perfil in (Perfil.GESTOR_EMPRESA, Perfil.TECNICO)
+                 else usinas_do_mapa(db, usuario))
     except Exception:                                      # noqa: BLE001 — sem a lista, o passe segue dizendo isso
         logger.warning("passe: não leu as usinas de %s", usuario.apelido, exc_info=True)
         extra["usinas_fora"] = True
         return extra
-    if usuario.perfil in (Perfil.GESTOR_EMPRESA, Perfil.TECNICO) and empresa is not None:
-        links = [u for u in links if u.empresa_id == empresa]   # só a empresa da sessão
     lista = [{"gs": u.id, "id": getattr(u, campo) if campo else u.id} for u in links
              if (getattr(u, campo) if campo else u.id) is not None]
-    if len(json.dumps(lista)) > TETO_USINAS:
+    if teto and len(json.dumps(lista)) > TETO_USINAS:
         extra["usinas_fora"] = True
     else:
         extra["usinas"] = lista

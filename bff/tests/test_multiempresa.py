@@ -544,23 +544,32 @@ def test_cada_portao_troca_a_propria_senha(db, carteiras, administrador):
     saída era outro administrador ou o banco. Pior na conta que nasce com senha
     provisória: ela fica com a senha que alguém digitou e viu.
     """
+    from fastapi.security import HTTPAuthorizationCredentials
+
     from app.api.v1.sessao import SenhaIn, trocar_a_propria_senha
-    from app.core.security import conferir_senha
+    from app.core.security import conferir_senha, criar_token_empresa, criar_token_painel, gestor_empresa_atual
 
     _a, _b, gerente = carteiras
 
-    trocar_a_propria_senha(
-        SenhaIn(senha_atual="senha-1234", senha_nova="senha-nova-999"), db=db, usuario=gerente
-    )
+    def cred(token):
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    antiga = criar_token_empresa(gerente.id)[0]
+    import time
+    time.sleep(1.1)                                        # o `iat` é em segundos
+    nova = trocar_a_propria_senha(SenhaIn(senha_atual="senha-1234", senha_nova="senha-nova-999"),
+                                  cred=cred(antiga), db=db)
     db.refresh(gerente)
     assert conferir_senha("senha-nova-999", gerente.senha_hash)
+    # as outras sessões caem (a de quem roubou a senha); este aparelho segue com a nova, do mesmo portão
+    with pytest.raises(HTTPException):
+        gestor_empresa_atual(cred=cred(antiga), db=db)
+    assert gestor_empresa_atual(cred=cred(nova.token), db=db).id == gerente.id
+    adm = criar_token_painel(administrador.id)[0]
 
     # A senha atual é exigida mesmo com a sessão autenticada: um computador destravado e
     # esquecido não pode bastar para trancar o dono para fora.
     with pytest.raises(HTTPException) as erro:
-        trocar_a_propria_senha(
-            SenhaIn(senha_atual="chute", senha_nova="outra-senha-1"), db=db, usuario=administrador
-        )
+        trocar_a_propria_senha(SenhaIn(senha_atual="chute", senha_nova="outra-senha-1"), cred=cred(adm), db=db)
     assert erro.value.status_code == 400
     assert "não confere" in erro.value.detail
 
@@ -570,7 +579,7 @@ def test_cada_portao_troca_a_propria_senha(db, carteiras, administrador):
         ("admin-1234", "admin-1234", "diferente"),
     ):
         with pytest.raises(HTTPException) as erro:
-            trocar_a_propria_senha(SenhaIn(senha_atual=atual, senha_nova=nova), db=db, usuario=administrador)
+            trocar_a_propria_senha(SenhaIn(senha_atual=atual, senha_nova=nova), cred=cred(adm), db=db)
         assert trecho in erro.value.detail
 
 

@@ -23,7 +23,7 @@ recusa esta sessão em qualquer rota de painel.
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import EmailStr, Field
@@ -45,7 +45,7 @@ from app.models.integracao import Produto
 from app.models.plant import PlantLink
 from app.models.usina_oculta import UsinaOculta
 from app.models.user import Perfil, User, UserPlantAccess, VinculoProduto
-from app.services import clientes, conciliacao, pessoas, vinculos
+from app.services import clientes, conciliacao, duas_etapas, pessoas, vinculos
 from app.services import empresas as svc
 from app.services import integracoes
 
@@ -190,6 +190,9 @@ class UsuarioOut(BaseModel):
     apelido: str
     perfil: str
     ativo: bool
+    #: a conta é DESTA empresa de origem (falso: é membro, vinda de outra O&M; o cadastro dela, como a proprietária,
+    #: é cuidado lá)
+    de_origem: bool = True
 
 
 @router.get("/usuarios", response_model=list[UsuarioOut])
@@ -202,14 +205,16 @@ def listar_usuarios(
     que este texto dizia e estava errado: `PUT /api/painel/empresas/{id}/carteira` grava
     empresa em qualquer conta, e um administrador com empresa gravada aparecia aqui.
     """
+    empresa_id = svc.empresa_exigida(gerente)
     usuarios = db.scalars(
         select(User)
-        .where(svc.contas_da_empresa(svc.empresa_exigida(gerente)), User.perfil.not_in(pessoas.DA_PLATAFORMA))
+        .where(svc.contas_da_empresa(empresa_id), User.perfil.not_in(pessoas.DA_PLATAFORMA))
         .order_by(User.nome)
     ).all()
     return [
         UsuarioOut(
-            id=u.id, nome=u.nome, apelido=u.apelido, perfil=u.perfil.value, ativo=u.ativo
+            id=u.id, nome=u.nome, apelido=u.apelido, perfil=u.perfil.value, ativo=u.ativo,
+            de_origem=u.empresa_id == empresa_id,
         )
         for u in usuarios
     ]
@@ -747,6 +752,8 @@ def _origem(link: PlantLink) -> str:
         return "meuwatt"
     if link.mp_usina_id:
         return "meuplano"
+    if link.mw_micro_plant_id is None and getattr(link, "tv_codigo", None):
+        return "termovision"                               # só o mapa: fora do aplicativo até ganhar um produto
     return "micro"
 
 
@@ -758,7 +765,9 @@ class UsinaIn(BaseModel):
     #: cliente cujo único monitoramento é o portal do fabricante, e exigir par no meuWatt
     #: o deixaria de fora. Junto de um `mw_slug`, é a mesma usina vista nos dois lugares.
     mw_micro_plant_id: int | None = None
-    nome: str = Field(min_length=1)
+    #: só ao trazer ou ao renomear: ausente, o nome fica como está (outro sistema pode tê-lo mudado depois que a
+    #: tela abriu)
+    nome: str | None = Field(default=None, min_length=1)
     cidade: str | None = None
     uf: str | None = None
     kwp: float | None = None
@@ -842,13 +851,32 @@ async def salvar_usina(
     outros.
     """
     empresa_id = svc.empresa_exigida(gerente)
+    # Os identificadores dos produtos só mudam quando VÊM no pedido (trazer, casar): ligar, desligar e renomear não os
+    # mandam, e uma tela aberta antes de outro sistema ligar a usina (o "Enviar ao GS", o registro do R10) desfazia a
+    # ligação ao gravar o que ela tinha (avaliação de 24/11/2026). Ausentes, valem os da usina.
+    enviados = set(body.model_fields_set)                  # cópia: o `setattr` abaixo aumentaria o original
+    existente = db.get(PlantLink, body.plant_link_id) if body.plant_link_id is not None else None
+    if existente is not None and existente.empresa_id == empresa_id:
+        for campo, coluna in (("mw_slug", "mw_plant_slug"), ("mp_usina_id", "mp_usina_id"),
+                              ("mw_micro_plant_id", "mw_micro_plant_id")):
+            if campo not in enviados:
+                setattr(body, campo, getattr(existente, coluna))
+    so_tv = None
     if body.mw_slug is None and body.mp_usina_id is None and body.mw_micro_plant_id is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "A usina precisa existir em pelo menos um dos produtos.",
-        )
+        so_tv = existente
+        if so_tv is None or so_tv.empresa_id != empresa_id or not so_tv.tv_codigo:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "A usina precisa existir em pelo menos um dos produtos.",
+            )
+        if body.no_app:                                    # a REGRA 0: sem produto, o app abriria vazio
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Esta usina está só no TermoVision: ligue-a ao monitoramento ou à manutenção antes de "
+                                "pô-la no aplicativo.")
 
-    await _o_seu_token_enxerga(db, empresa_id, body)
+    # o que ENTRA é conferido contra o seu token; o que a usina já tinha, não (um produto fora do ar não trava o gerente)
+    await _o_seu_token_enxerga(db, empresa_id, body.model_copy(update={
+        c: (getattr(body, c) if c in enviados else None) for c in ("mw_slug", "mp_usina_id", "mw_micro_plant_id")}))
 
     link = None
     if body.plant_link_id is not None:
@@ -899,6 +927,8 @@ async def salvar_usina(
 
     nova = link is None
     if link is None:
+        if not body.nome:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Diga o nome da usina.")
         link = PlantLink(nome=body.nome, empresa_id=empresa_id)
         db.add(link)
     else:
@@ -906,14 +936,15 @@ async def salvar_usina(
         link.empresa_id = empresa_id
     antes = {c: getattr(link, c) for c in _NO_HISTORICO}
 
-    link.mw_plant_slug = body.mw_slug
+    link.mw_plant_slug = body.mw_slug                      # ausentes no pedido, já são os da usina (acima)
     link.mp_usina_id = body.mp_usina_id
     # Só mexe na micro se o chamador a mandou: um painel publicado antes deste campo não
     # o manda, e cada "Ligar/Desligar" dele apagaria o par em silêncio. Mesma guarda do
     # gêmeo em `painel.py`, que só ela tinha.
     if "mw_micro_plant_id" in body.model_fields_set:
         link.mw_micro_plant_id = body.mw_micro_plant_id
-    link.nome = body.nome
+    if body.nome:
+        link.nome = body.nome
     # cidade, UF e potência vêm do catálogo só ao nascer ou quando o GS ainda não tem: depois, os dados básicos
     # moram aqui (Plano Casa GS, R10), e uma troca de nome nesta tela não pode desfazer o que foi editado em Dados
     for campo in ("cidade", "uf", "kwp"):
@@ -925,9 +956,13 @@ async def salvar_usina(
         dados_da_usina.historico(db, link, "criada", None, link.nome, por=gerente, sistema="gs",
                                  motivo="trazida para a empresa no oem-gs")
     else:
+        mudou = False
         for campo, valor in antes.items():
             if getattr(link, campo) != valor:
                 dados_da_usina.historico(db, link, campo, valor, getattr(link, campo), por=gerente, sistema="gs")
+                mudou = True
+        if mudou:                                          # os sistemas releem pelo `alteradas_desde`
+            link.atualizado_em = datetime.now(UTC)
     db.commit()
     db.refresh(link)
 
@@ -1233,9 +1268,13 @@ def casar_micro_usina(
             "Esta micro usina já está em uma usina de outra empresa da plataforma.",
         )
 
+    from app.services import dados_da_usina
+
     if body.plant_link_id is None:
         if ja_casada is not None:
+            dados_da_usina.historico(db, ja_casada, "mw_micro_plant_id", micro_id, None, por=gerente, sistema="gs")
             ja_casada.mw_micro_plant_id = None
+            ja_casada.atualizado_em = datetime.now(UTC)
             db.commit()
         return MicroUsinaOut(id=micro_id, nome="")
 
@@ -1254,6 +1293,10 @@ def casar_micro_usina(
             f"“{usina.nome}” já tem outra micro usina. Desfaça aquele par antes.",
         )
 
+    if usina.mw_micro_plant_id != micro_id:
+        dados_da_usina.historico(db, usina, "mw_micro_plant_id", usina.mw_micro_plant_id, micro_id, por=gerente,
+                                 sistema="gs")
+        usina.atualizado_em = datetime.now(UTC)
     usina.mw_micro_plant_id = micro_id
     db.commit()
     return MicroUsinaOut(
@@ -1392,7 +1435,7 @@ def _da_empresa_ou_404(db: Session, gerente: User, usina_id: int) -> PlantLink:
 def _dados_out(db: Session, link: PlantLink) -> DadosDaUsinaOut:
     from app.api.v1.interno_sistemas import NOMES, codigo
     from app.models.plant import HistoricoDaUsina
-    from app.services.dados_da_usina import ROTULO
+    from app.services.dados_da_usina import ROTULO, formatar
 
     linhas = db.execute(select(HistoricoDaUsina, User.nome).outerjoin(User, User.id == HistoricoDaUsina.por_id)
                         .where(HistoricoDaUsina.plant_link_id == link.id)
@@ -1401,40 +1444,57 @@ def _dados_out(db: Session, link: PlantLink) -> DadosDaUsinaOut:
         id=link.id, codigo=codigo(link.id), nome=link.nome, endereco=link.endereco, cidade=link.cidade, uf=link.uf,
         latitude=link.latitude, longitude=link.longitude, kwp=link.kwp, atualizado_em=link.atualizado_em,
         mw_slug=link.mw_plant_slug, mp_usina_id=link.mp_usina_id, tv_codigo=link.tv_codigo,
-        historico=[HistoricoOut(em=h.em, campo=h.campo, rotulo=ROTULO.get(h.campo, h.campo), antes=h.antes,
-                                depois=h.depois, por=nome, sistema=NOMES.get(h.sistema, "Gestão Solar"),
-                                motivo=h.motivo) for h, nome in linhas])
+        historico=[HistoricoOut(em=h.em, campo=h.campo, rotulo=ROTULO.get(h.campo, h.campo),
+                                antes=formatar(h.campo, h.antes), depois=formatar(h.campo, h.depois), por=nome,
+                                sistema=NOMES.get(h.sistema, "Gestão Solar"), motivo=h.motivo) for h, nome in linhas])
 
 
 @router.get("/usinas/a-confirmar")
-def usinas_a_confirmar(db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)) -> list[dict]:
+def usinas_a_confirmar(descartadas: bool = False, db: Session = Depends(get_db),
+                       gerente: User = Depends(gestor_empresa_atual)) -> list[dict]:
     """As usinas criadas em outro sistema que parecem uma que já existe aqui: o gerente diz se é a mesma, se é outra ou
-    descarta (Plano Casa GS, R10)."""
-    from app.api.v1.interno_sistemas import NOMES, codigo
+    descarta (Plano Casa GS, R10). Com `descartadas`, as descartadas (para voltar atrás). O pedido cuja usina de lá já
+    foi ligada a uma usina daqui por outro caminho (o catálogo) sai sozinho da lista."""
+    from app.api.v1.interno_sistemas import NOMES, REFERENCIA, codigo
     from app.models.plant import UsinaAConfirmar
 
     empresa_id = svc.empresa_exigida(gerente)
-    pedidos = db.scalars(select(UsinaAConfirmar).where(UsinaAConfirmar.empresa_id == empresa_id,
-                                                       UsinaAConfirmar.decisao.is_(None))
-                         .order_by(UsinaAConfirmar.em)).all()
-    nomes = {u.id: u for u in db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id))}
-    return [{"id": p.id, "sistema": NOMES.get(p.sistema, p.sistema), "referencia": p.referencia, "dados": p.dados,
-             "em": p.em, "parecidas": [{**x, "codigo": codigo(x["gs"]), "nome": nomes[x["gs"]].nome}
-                                       for x in p.parecidas if x.get("gs") in nomes]} for p in pedidos]
+    pedidos = db.scalars(select(UsinaAConfirmar).where(
+        UsinaAConfirmar.empresa_id == empresa_id,
+        UsinaAConfirmar.decisao == "descartada" if descartadas else UsinaAConfirmar.decisao.is_(None))
+        .order_by(UsinaAConfirmar.em)).all()
+    usinas = {u.id: u for u in db.scalars(select(PlantLink).where(PlantLink.empresa_id == empresa_id))}
+    saida = []
+    for p in pedidos:
+        campo = REFERENCIA.get(p.sistema)
+        ref = int(p.referencia) if campo == "mp_usina_id" and p.referencia.isdigit() else p.referencia
+        ligada = next((u for u in usinas.values() if campo and getattr(u, campo) == ref), None)
+        if ligada is not None and not descartadas:         # ligada por outro caminho: o pedido se resolve
+            p.decisao, p.usina_id, p.decidido_em = "mesma", ligada.id, datetime.now(UTC)
+            continue
+        quem = db.get(User, p.pedido_por_id) if p.pedido_por_id else None
+        saida.append({
+            "id": p.id, "sistema": NOMES.get(p.sistema, p.sistema), "referencia": p.referencia, "dados": p.dados,
+            "em": p.em, "pedido_por": quem.nome if quem else None, "decidido_em": p.decidido_em,
+            "parecidas": [{**x, "codigo": codigo(x["gs"]), "nome": usinas[x["gs"]].nome,
+                           "ativo": bool(usinas[x["gs"]].ativo)} for x in p.parecidas or [] if x.get("gs") in usinas]})
+    db.commit()
+    return saida
 
 
 class DecisaoIn(BaseModel):
-    #: mesma (liga à usina `gs`), outra (nasce nova no GS) ou descartar
-    decisao: str = Field(pattern="^(mesma|outra|descartar)$")
+    #: mesma (liga à usina `gs`), outra (nasce nova no GS), descartar, ou reabrir (a descartada volta a confirmar)
+    decisao: str = Field(pattern="^(mesma|outra|descartar|reabrir)$")
     gs: int | None = None
 
 
 @router.post("/usinas/a-confirmar/{pedido_id}")
 def decidir_usina_a_confirmar(pedido_id: int, body: DecisaoIn, db: Session = Depends(get_db),
                               gerente: User = Depends(gestor_empresa_atual)) -> dict:
-    from datetime import UTC
+    from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
 
-    from app.api.v1.interno_sistemas import REFERENCIA, codigo
+    from app.api.v1.interno_sistemas import NOMES, REFERENCIA, codigo
     from app.models.plant import UsinaAConfirmar
     from app.services import dados_da_usina
 
@@ -1442,33 +1502,54 @@ def decidir_usina_a_confirmar(pedido_id: int, body: DecisaoIn, db: Session = Dep
     pedido = db.get(UsinaAConfirmar, pedido_id)
     if pedido is None or pedido.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pedido não encontrado nesta empresa")
-    if pedido.decisao is not None:
+    agora = datetime.now(UTC)
+    if body.decisao == "reabrir":
+        if db.execute(update(UsinaAConfirmar).where(UsinaAConfirmar.id == pedido.id,
+                                                    UsinaAConfirmar.decisao == "descartada")
+                      .values(decisao=None, decidido_por_id=None, decidido_em=None)).rowcount != 1:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Só um pedido descartado volta a confirmar.")
+        db.commit()
+        return {"decisao": None, "usina": None}
+    # quem decide primeiro ganha: dois cliques (duas abas) não criam duas usinas
+    final = {"mesma": "mesma", "outra": "outra", "descartar": "descartada"}[body.decisao]
+    if db.execute(update(UsinaAConfirmar).where(UsinaAConfirmar.id == pedido.id, UsinaAConfirmar.decisao.is_(None))
+                  .values(decisao=final, decidido_por_id=gerente.id, decidido_em=agora)).rowcount != 1:
+        db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Este pedido já foi decidido.")
-    campo = REFERENCIA[pedido.sistema]
-    ref = int(pedido.referencia) if campo == "mp_usina_id" else pedido.referencia
-    if db.scalar(select(PlantLink.id).where(getattr(PlantLink, campo) == ref)) is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Esta usina do outro sistema já está ligada a uma usina do GS.")
-    if body.decisao == "mesma":
-        link = _da_empresa_ou_404(db, gerente, body.gs) if body.gs is not None else None
-        if link is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Diga qual usina do GS é a mesma.")
-        if getattr(link, campo) is not None:
+    link = None
+    if body.decisao != "descartar":                        # descartar sempre pode (o que veio de lá não muda nada aqui)
+        campo = REFERENCIA[pedido.sistema]
+        ref = int(pedido.referencia) if campo == "mp_usina_id" else pedido.referencia
+        if db.scalar(select(PlantLink.id).where(getattr(PlantLink, campo) == ref)) is not None:
+            db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT,
-                                f"{link.nome} já está ligada a outra usina desse sistema: desligue antes.")
-        setattr(link, campo, ref)
-        dados_da_usina.historico(db, link, campo, None, ref, por=gerente, sistema="gs",
-                                 motivo="o gerente confirmou que é a mesma (a confirmar)")
-        link.atualizado_em = datetime.now(UTC)
-    elif body.decisao == "outra":
-        link = dados_da_usina.criar(db, empresa=empresa_id, dados=pedido.dados, campo=campo, ref=ref, por=gerente,
-                                    sistema=pedido.sistema, motivo="o gerente confirmou que é outra (a confirmar)")
-    else:
-        link = None
-    pedido.decisao = {"mesma": "mesma", "outra": "outra", "descartar": "descartada"}[body.decisao]
-    pedido.usina_id = link.id if link is not None else None
-    pedido.decidido_por_id, pedido.decidido_em = gerente.id, datetime.now(UTC)
-    db.commit()
-    return {"decisao": pedido.decisao, "usina": {"id": link.id, "codigo": codigo(link.id), "nome": link.nome}
+                                "Esta usina do outro sistema já está ligada a uma usina do GS: descarte o pedido.")
+        quem = db.get(User, pedido.pedido_por_id) if pedido.pedido_por_id else None
+        motivo = f"pedido do {NOMES.get(pedido.sistema, pedido.sistema)}" + (f" por {quem.nome}" if quem else "")
+        if body.decisao == "mesma":
+            link = _da_empresa_ou_404(db, gerente, body.gs) if body.gs is not None else None
+            if link is None:
+                db.rollback()
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Diga qual usina do GS é a mesma.")
+            if getattr(link, campo) is not None:
+                db.rollback()
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    f"{link.nome} já está ligada a outra usina desse sistema: desligue antes.")
+            setattr(link, campo, ref)
+            dados_da_usina.historico(db, link, campo, None, ref, por=gerente, sistema="gs",
+                                     motivo=f"o gerente confirmou que é a mesma ({motivo})")
+            link.atualizado_em = agora
+        else:
+            link = dados_da_usina.criar(db, empresa=empresa_id, dados=pedido.dados, campo=campo, ref=ref, por=gerente,
+                                        sistema="gs", motivo=f"o gerente confirmou que é outra usina ({motivo})")
+        pedido.usina_id = link.id
+    try:
+        db.commit()
+    except IntegrityError:                                 # a mesma usina de lá entrou por outro caminho agora
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Esta usina do outro sistema acabou de ser ligada a uma usina do GS: descarte o pedido.") from None
+    return {"decisao": final, "usina": {"id": link.id, "codigo": codigo(link.id), "nome": link.nome}
             if link is not None else None}
 
 
@@ -1492,6 +1573,161 @@ def alterar_dados_da_usina(usina_id: int, body: DadosIn, db: Session = Depends(g
     db.commit()
     db.refresh(link)
     return _dados_out(db, link)
+
+
+# ------------------------------------------------- proprietárias: as donas das usinas (Plano Casa GS, R11)
+
+
+class ItemDaProprietariaOut(BaseModel):
+    id: int
+    nome: str
+    #: o código do GS da usina (GS-0006), ou o login da pessoa
+    codigo: str
+
+
+class ProprietariaOut(BaseModel):
+    id: int
+    nome: str
+    documento: str | None = None
+    #: a organização PROPRIETARIA no meuPlano, quando ligada
+    mp_owner_id: int | None = None
+    ativa: bool
+    usinas: list[ItemDaProprietariaOut]
+    pessoas: list[ItemDaProprietariaOut]
+
+
+def _proprietaria_out(db: Session, p) -> ProprietariaOut:
+    usinas = db.scalars(select(PlantLink).where(PlantLink.proprietaria_id == p.id).order_by(PlantLink.nome)).all()
+    pessoas = db.scalars(select(User).where(User.proprietaria_id == p.id).order_by(User.nome)).all()
+    return ProprietariaOut(id=p.id, nome=p.nome, documento=p.documento, mp_owner_id=p.mp_owner_id, ativa=p.ativa,
+                           usinas=[ItemDaProprietariaOut(id=u.id, nome=u.nome, codigo=codigo_do_gs(u.id)) for u in usinas],
+                           pessoas=[ItemDaProprietariaOut(id=u.id, nome=u.nome, codigo=u.apelido) for u in pessoas])
+
+
+def _a_proprietaria(db: Session, gerente: User, pid: int):
+    from app.services import proprietarias
+    p = proprietarias.da_empresa_ou_none(db, svc.empresa_exigida(gerente), pid)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Proprietária não encontrada nesta empresa")
+    return p
+
+
+@router.get("/proprietarias", response_model=list[ProprietariaOut])
+def listar_proprietarias(db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa_atual)
+                         ) -> list[ProprietariaOut]:
+    """As donas das usinas desta O&M, com as usinas e as pessoas de cada uma."""
+    from app.services import proprietarias
+    return [_proprietaria_out(db, p) for p in proprietarias.da_empresa(db, svc.empresa_exigida(gerente))]
+
+
+class ProprietariaIn(BaseModel):
+    nome: str | None = None
+    #: CPF ou CNPJ; vazio apaga
+    documento: str | None = None
+    ativa: bool | None = None
+
+
+@router.post("/proprietarias", response_model=ProprietariaOut, status_code=201)
+def criar_proprietaria(body: ProprietariaIn, db: Session = Depends(get_db),
+                       gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+    from app.services import proprietarias
+    try:
+        p = proprietarias.salvar(db, svc.empresa_exigida(gerente), nome=body.nome, documento=body.documento)
+    except proprietarias.RegraDaProprietaria as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()
+    return _proprietaria_out(db, p)
+
+
+@router.patch("/proprietarias/{pid}", response_model=ProprietariaOut)
+def alterar_proprietaria(pid: int, body: ProprietariaIn, db: Session = Depends(get_db),
+                         gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+    from app.services import proprietarias
+    p = _a_proprietaria(db, gerente, pid)
+    try:
+        proprietarias.salvar(db, p.empresa_id, nome=body.nome, documento=body.documento, ativa=body.ativa,
+                             proprietaria=p)
+    except proprietarias.RegraDaProprietaria as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()
+    return _proprietaria_out(db, p)
+
+
+class IdsIn(BaseModel):
+    ids: list[int]
+
+
+@router.put("/proprietarias/{pid}/usinas", response_model=ProprietariaOut)
+def usinas_da_proprietaria(pid: int, body: IdsIn, db: Session = Depends(get_db),
+                           gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+    """A lista INTEIRA das usinas desta dona (a usina que entra sai da dona de antes; a que sai fica sem dona)."""
+    from app.services import proprietarias
+    p = _a_proprietaria(db, gerente, pid)
+    try:
+        proprietarias.definir_usinas(db, p, body.ids, por=gerente)
+    except proprietarias.RegraDaProprietaria as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()
+    return _proprietaria_out(db, p)
+
+
+@router.put("/proprietarias/{pid}/pessoas", response_model=ProprietariaOut)
+def pessoas_da_proprietaria(pid: int, body: IdsIn, db: Session = Depends(get_db),
+                            gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+    """A lista INTEIRA dos donos de usina desta proprietária (só contas de cliente desta empresa)."""
+    from app.services import acessos, proprietarias
+    p = _a_proprietaria(db, gerente, pid)
+    # só quem é DE ORIGEM desta empresa: o cadastro (a proprietária) da pessoa que é também de outra O&M é cuidado lá
+    contas = set(db.scalars(select(User.id).where(User.empresa_id == p.empresa_id)))
+    antes = {u.id: u.proprietaria_id for u in db.scalars(select(User).where(User.id.in_(body.ids or [-1])))}
+    saindo = [u for u in db.scalars(select(User).where(User.proprietaria_id == p.id)) if u.id not in body.ids]
+    try:
+        proprietarias.definir_pessoas(db, p, body.ids, empresa_contas=contas)
+    except proprietarias.RegraDaProprietaria as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()
+    for uid in body.ids:                                    # quem entrou na proprietária, no registro de acessos
+        if antes.get(uid) != p.id:
+            acessos.mudou(db, db.get(User, uid), gerente, [f"proprietária: {p.nome}"], "oem-gs (Proprietárias)",
+                          empresa_id=p.empresa_id)
+    for u in saindo:                                        # e quem saiu (com as usinas dela)
+        acessos.mudou(db, u, gerente, [f"saiu da proprietária {p.nome} e das usinas dela"], "oem-gs (Proprietárias)",
+                      empresa_id=p.empresa_id)
+    return _proprietaria_out(db, p)
+
+
+@router.post("/proprietarias/{pid}/dar-usinas")
+def dar_usinas_da_proprietaria(pid: int, db: Session = Depends(get_db),
+                               gerente: User = Depends(gestor_empresa_atual)) -> dict:
+    """Cada pessoa da proprietária passa a receber todas as usinas dela (soma; nada sai)."""
+    from app.services import acessos, proprietarias
+    p = _a_proprietaria(db, gerente, pid)
+    try:
+        feitas = proprietarias.dar_usinas(db, p)
+    except clientes.RegraDeNegocio as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    for pessoa, n in feitas:
+        if n:
+            acessos.mudou(db, pessoa, gerente, [f"{n} usina(s) da proprietária {p.nome}"],
+                          "oem-gs (Proprietárias)", empresa_id=p.empresa_id)
+    return {"pessoas": {pessoa.nome: n for pessoa, n in feitas}}
+
+
+@router.post("/proprietarias/importar")
+async def importar_proprietarias(db: Session = Depends(get_db),
+                                 gerente: User = Depends(gestor_empresa_atual)) -> dict:
+    """Traz do meuPlano (com a conta da empresa) as organizações proprietárias, a dona de cada usina e de quem cada
+    dono de usina é. Só preenche o que está vazio aqui."""
+    from app.services import proprietarias
+    try:
+        feito = await proprietarias.importar_do_meuplano(db, svc.empresa_exigida(gerente), por=gerente)
+    except (RuntimeError, proprietarias.RegraDaProprietaria) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except Exception as exc:                                # noqa: BLE001 — o meuPlano fora: a frase, sem gravar
+        db.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "O meuPlano não respondeu agora: nada foi importado.") from exc
+    db.commit()
+    return {"feito": feito}
 
 
 @router.get("/usinas/ocultas", response_model=list[UsinaOcultaOut])
@@ -1571,6 +1807,8 @@ class UsuarioDetalhado(BaseModel):
     #: livre com o MESMO e-mail: o "ligar" sugerido (puxa nome, e-mail e celular de lá).
     sugestao_meuplano: str | None = None
     sugestao_meuplano_id: int | None = None
+    #: a verificação em duas etapas (R12): `ativa`, `a_cadastrar` (no próximo login) ou `nao_exigida`
+    duas_etapas: str = "nao_exigida"
 
 
 def _contas_detalhadas(db: Session, empresa_id: int):
@@ -1650,6 +1888,7 @@ async def usuarios_detalhados(
 
     return [
         UsuarioDetalhado(
+            duas_etapas=duas_etapas.situacao(c),
             id=c.id,
             nome=c.nome,
             apelido=c.apelido,
@@ -1829,6 +2068,8 @@ async def editar_conta_da_empresa(
     db.commit()
     if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
         acessos.senha_redefinida(db, conta, gerente, "oem-gs, usuários", empresa_id=empresa_id)
+        from app.api.v1.painel_acessos import encerrar_todas_de
+        encerrar_todas_de(db, conta, gerente, "oem-gs (senha redefinida)")   # as sessões abertas acabam junto
     acessos.mudou(db, conta, gerente, acessos.diferencas(antes, acessos.retrato(conta)), "oem-gs, usuários",
                   empresa_id=empresa_id)
     if tirar_do_meuguarda:
@@ -1839,6 +2080,7 @@ async def editar_conta_da_empresa(
                                                  empresa_id=empresa_id)
 
     return UsuarioDetalhado(
+        duas_etapas=duas_etapas.situacao(conta),
         id=conta.id,
         nome=conta.nome,
         apelido=conta.apelido,
@@ -2094,6 +2336,43 @@ async def bot_ouvindo(
                 "cadastro de vocês. A administração do Gestão Solar vê o mesmo aviso."),
         **helper,
     )
+
+
+@router.get("/acessos/sessoes")
+def sessoes_da_pessoa_da_empresa(pessoa: int, db: Session = Depends(get_db),
+                                 gerente: User = Depends(gestor_empresa_atual)) -> list:
+    """As sessões abertas de uma pessoa da empresa (a usada por último primeiro)."""
+    from app.api.v1.painel_acessos import sessoes_de
+    return sessoes_de(db, _conta_da_empresa(db, pessoa, svc.empresa_exigida(gerente)))
+
+
+@router.post("/acessos/sessoes/{sid}/encerrar", status_code=204)
+def encerrar_sessao_da_empresa(sid: str, pessoa: int, db: Session = Depends(get_db),
+                               gerente: User = Depends(gestor_empresa_atual)) -> None:
+    from app.api.v1.painel_acessos import encerrar_uma
+    encerrar_uma(db, _conta_da_empresa(db, pessoa, svc.empresa_exigida(gerente)), sid, gerente, "oem-gs")
+
+
+@router.post("/acessos/pessoas/{pessoa}/encerrar-sessoes")
+def encerrar_sessoes_da_empresa(pessoa: int, db: Session = Depends(get_db),
+                                gerente: User = Depends(gestor_empresa_atual)) -> dict:
+    from app.api.v1.painel_acessos import encerrar_todas_de
+    conta = _conta_da_empresa(db, pessoa, svc.empresa_exigida(gerente))
+    return {"encerradas": encerrar_todas_de(db, conta, gerente, "oem-gs")}
+
+
+@router.post("/usuarios/{usuario_id}/refazer-duas-etapas", status_code=204)
+def refazer_duas_etapas_da_empresa(usuario_id: int, db: Session = Depends(get_db),
+                                   gerente: User = Depends(gestor_empresa_atual)) -> None:
+    """Quem perdeu o celular do autenticador: no próximo login, cadastra de novo (e as sessões abertas acabam)."""
+    from app.api.v1.painel_acessos import encerrar_todas_de
+    from app.services import acessos, duas_etapas
+    conta = _conta_da_empresa(db, usuario_id, svc.empresa_exigida(gerente))
+    duas_etapas.refazer(conta)
+    db.commit()
+    acessos.registrar(db, None, acao="acesso", user=conta, por=gerente,
+                      motivo="verificação em duas etapas refeita no oem-gs (cadastra de novo no próximo login)")
+    encerrar_todas_de(db, conta, gerente, "oem-gs")
 
 
 @router.get("/acessos", response_model=AcessosOut)

@@ -67,7 +67,10 @@ export function aplicarInterceptores(cliente: typeof api) {
   cliente.interceptors.response.use(
     (r) => r,
     (erro) => {
-      if (erro?.response?.status === 401) aoPerder?.()
+      // só o 401 do token ATUAL derruba a sessão: a requisição que saiu com o de antes de uma troca de senha (ou de
+      // papel) e volta depois não pode deslogar quem já tem o token novo
+      const usado = String(erro?.config?.headers?.Authorization ?? '')
+      if (erro?.response?.status === 401 && (!usado || usado === `Bearer ${token}`)) aoPerder?.()
       return Promise.reject(erro)
     },
   )

@@ -6,7 +6,7 @@ import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -68,19 +68,96 @@ def conferir_senha(senha: str, guardado: str | None) -> bool:
         return False
 
 
+def _marcas(com_sid: bool = True) -> dict:
+    """O que toda sessão leva para poder ser listada e encerrada (R4): quando nasceu (`iat`, que o "encerrar todas"
+    confere) e o número dela (`sid`, a linha em `gs_sessoes`). A de minutos (a foto do mapa do bot) não leva `sid`:
+    não é sessão de ninguém, e o "encerrar todas" a derruba pelo `iat`."""
+    import uuid
+    marcas: dict = {"iat": int(datetime.now(UTC).timestamp())}
+    if com_sid:
+        marcas["sid"] = uuid.uuid4().hex
+    return marcas
+
+
 def criar_token(user_id: int, *, minutos: int | None = None) -> tuple[str, datetime]:
     """A sessão do app e do portal. `minutos` encurta o prazo (a foto do mapa que o bot tira dura 5 min)."""
     s = get_settings()
     expira = datetime.now(UTC) + (timedelta(minutes=minutos) if minutos is not None else timedelta(hours=s.gs_jwt_expira_horas))
     token = jwt.encode(
-        {"sub": str(user_id), "exp": expira}, s.gs_jwt_secret, algorithm=ALGORITMO
+        {"sub": str(user_id), "exp": expira, **_marcas(minutos is None)}, s.gs_jwt_secret, algorithm=ALGORITMO
     )
     return token, expira
+
+
+#: de quanto em quanto o último uso da sessão é gravado (no resto do tempo, a guarda só lê)
+_GRAVAR_USO_S = 300
+ENCERRADA = "Sessão encerrada: entre de novo."
+
+
+def _com_fuso(quando: datetime) -> datetime:
+    return quando if quando.tzinfo else quando.replace(tzinfo=UTC)
+
+
+def _sessao_viva(db: Session, dados: dict, usuario: User, request: Request | None = None) -> None:
+    """A sessão ainda vale: não veio de antes de um "encerrar todas" (`sessoes_desde`) nem foi encerrada. Na primeira
+    vez que é usada, nasce a linha dela (é quando se sabe de onde ela fala); depois, o último uso de 5 em 5 min."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.sessao import SessaoGS
+    from app.services import duas_etapas
+    if duas_etapas.pendente(usuario):
+        # a conta exige o código e não cadastrou o autenticador: a sessão é de antes da exigência (ou do interruptor
+        # desligado). Nenhuma vale, nem renovada: a pessoa entra de novo com a senha e cadastra (avaliação de 24/11).
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "Esta conta agora usa a verificação em duas etapas: entre de novo com a senha para cadastrar "
+                            "o autenticador.")
+    iat = dados.get("iat")
+    if usuario.sessoes_desde is not None and (
+            not isinstance(iat, (int, float)) or iat < _com_fuso(usuario.sessoes_desde).timestamp()):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, ENCERRADA)
+    sid = dados.get("sid")
+    if not isinstance(sid, str) or not sid:
+        return                                             # de antes das sessões (vale até vencer ou "encerrar todas")
+    agora = datetime.now(UTC)
+    lida = getattr(usuario, "sessao_lida", None)           # já veio na consulta da conta (`_conta_com_empresa`)
+    sessao = lida[1] if lida is not None and lida[0] == sid[:32] else db.get(SessaoGS, sid[:32])
+    if sessao is not None and sessao.gs_user_id != usuario.id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
+    if sessao is not None and sessao.encerrada_em is not None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, ENCERRADA)
+    if sessao is not None and (agora - _com_fuso(sessao.ultimo_uso_em)).total_seconds() < _GRAVAR_USO_S:
+        return
+    from app.services.acessos import _ip
+    ip = _ip(request)[:64] if request is not None else ""
+    aparelho = ((request.headers.get("user-agent") if request is not None else "") or "")[:300]
+    if sessao is None:
+        # a limpeza é da própria pessoa, ao abrir uma sessão: a encerrada ou vencida há mais de 90 dias sai (o registro
+        # de acessos fica; a tabela das sessões não cresce sem fim)
+        from sqlalchemy import delete, func
+        db.execute(delete(SessaoGS).where(
+            SessaoGS.gs_user_id == usuario.id,
+            func.coalesce(SessaoGS.encerrada_em, SessaoGS.expira_em) < agora - timedelta(days=90)))
+        exp = dados.get("exp")
+        db.add(SessaoGS(id=sid[:32], gs_user_id=usuario.id, escopo=str(dados.get("escopo") or "cliente")[:20],
+                        criada_em=datetime.fromtimestamp(iat, UTC) if isinstance(iat, (int, float)) else agora,
+                        expira_em=datetime.fromtimestamp(exp, UTC) if isinstance(exp, (int, float)) else None,
+                        ultimo_uso_em=agora, ip=ip, aparelho=aparelho))
+    else:
+        sessao.ultimo_uso_em = agora
+        if ip:
+            sessao.ip = ip
+        if aparelho:
+            sessao.aparelho = aparelho
+    try:
+        db.commit()
+    except IntegrityError:                                 # dois primeiros usos ao mesmo tempo: o outro já gravou
+        db.rollback()
 
 
 def usuario_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """Guarda do cliente (app e portal). Só aceita a sessão emitida por `criar_token`.
 
@@ -110,24 +187,31 @@ def usuario_atual(
             status.HTTP_401_UNAUTHORIZED, "Esta sessão é do painel do gestor"
         )
 
-    usuario = _conta_com_empresa(db, user_id)
+    usuario = _conta_com_empresa(db, user_id, dados.get("sid") if isinstance(dados.get("sid"), str) else None)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida")
     _empresa_ativa(db, usuario)
+    _sessao_viva(db, dados, usuario, request)
     return usuario
 
 
-def _conta_com_empresa(db: Session, user_id: int) -> User | None:
-    """A conta e a empresa de origem dela numa ida só ao banco — eram duas, ~200 ms cada (o
+def _conta_com_empresa(db: Session, user_id: int, sid: str | None = None) -> User | None:
+    """A conta, a empresa de origem dela e a SESSÃO do token numa ida só ao banco — eram duas, ~200 ms cada (o
     banco está nos EUA), em TODA requisição autenticada. A empresa fica presa à conta, e o
-    `db.get` de `_empresa_ativa` a acha no mapa de identidade em vez de voltar ao banco."""
-    linha = db.execute(
-        select(User, Empresa).outerjoin(Empresa, Empresa.id == User.empresa_id).where(User.id == user_id)
-    ).first()
+    `db.get` de `_empresa_ativa` a acha no mapa de identidade em vez de voltar ao banco; a sessão (R4) vai em
+    `sessao_lida`, para `_sessao_viva` não voltar ao banco."""
+    from app.models.sessao import SessaoGS
+    colunas = [User, Empresa] + ([SessaoGS] if sid else [])
+    consulta = select(*colunas).outerjoin(Empresa, Empresa.id == User.empresa_id)
+    if sid:
+        consulta = consulta.outerjoin(SessaoGS, SessaoGS.id == sid[:32])   # de quem é a sessão, `_sessao_viva` confere
+    linha = db.execute(consulta.where(User.id == user_id)).first()
     if linha is None:
         return None
     usuario = linha[0]
     usuario.empresa_lida = linha[1]
+    if sid:
+        usuario.sessao_lida = (sid[:32], linha[2])
     return usuario
 
 
@@ -160,17 +244,21 @@ def criar_token_painel(user_id: int) -> tuple[str, datetime]:
     s = get_settings()
     expira = datetime.now(UTC) + timedelta(hours=s.gs_painel_sessao_horas)
     token = jwt.encode(
-        {"sub": str(user_id), "escopo": "painel", "exp": expira},
+        {"sub": str(user_id), "escopo": "painel", "exp": expira, **_marcas()},
         s.gs_jwt_secret,
         algorithm=ALGORITMO,
     )
     return token, expira
 
 
-def _token_de_escopo(user_id: int, escopo: str, empresa_id: int | None = None) -> tuple[str, datetime]:
+def _token_de_escopo(user_id: int, escopo: str, empresa_id: int | None = None, *,
+                     minutos: int | None = None) -> tuple[str, datetime]:
+    """`minutos`: o token de servidor a servidor (o bot falando com o meuGuarda pela pessoa), curto e sem `sid`: não é
+    uma sessão aberta da pessoa e não entra na lista dela (o "encerrar todas" o derruba pelo `iat`)."""
     s = get_settings()
-    expira = datetime.now(UTC) + timedelta(hours=s.gs_painel_sessao_horas)
-    dados = {"sub": str(user_id), "escopo": escopo, "exp": expira}
+    expira = datetime.now(UTC) + (timedelta(minutes=minutos) if minutos is not None
+                                  else timedelta(hours=s.gs_painel_sessao_horas))
+    dados = {"sub": str(user_id), "escopo": escopo, "exp": expira, **_marcas(minutos is None)}
     if empresa_id is not None:
         # A conta é de mais de uma empresa e está operando OUTRA que não a de origem. A
         # guarda confere a cada requisição que ela ainda é de lá.
@@ -178,14 +266,15 @@ def _token_de_escopo(user_id: int, escopo: str, empresa_id: int | None = None) -
     return jwt.encode(dados, s.gs_jwt_secret, algorithm=ALGORITMO), expira
 
 
-def criar_token_empresa(user_id: int, empresa_id: int | None = None) -> tuple[str, datetime]:
+def criar_token_empresa(user_id: int, empresa_id: int | None = None, *, minutos: int | None = None
+                        ) -> tuple[str, datetime]:
     """Sessão do gerente da empresa de O&M, marcada com `escopo=empresa`.
 
     Um portão novo, e não um perfil a mais dentro do painel: o prefixo da rota passa a
     dizer de quem ela é, e o token de um portão é recusado nos outros — `usuario_atual`
     já recusa qualquer claim `escopo`, e `gestor_atual` exige o valor `painel`.
     """
-    return _token_de_escopo(user_id, "empresa", empresa_id)
+    return _token_de_escopo(user_id, "empresa", empresa_id, minutos=minutos)
 
 
 #: A sessão de ENTRADA dos produtos (meuGuarda, TermoVision): o GS como autenticador ("não quero fazer login, já estou
@@ -195,14 +284,55 @@ def criar_token_empresa(user_id: int, empresa_id: int | None = None) -> tuple[st
 DIAS_DA_ENTRADA = 30
 
 
-def criar_token_entrada(user_id: int) -> tuple[str, datetime]:
+def criar_token_entrada(user_id: int, *, sid: str | None = None) -> tuple[str, datetime]:
+    """Com `sid`, a renovação a cada uso: a MESMA sessão (uma linha na lista da pessoa, não uma por uso)."""
     s = get_settings()
     expira = datetime.now(UTC) + timedelta(days=DIAS_DA_ENTRADA)
-    return jwt.encode({"sub": str(user_id), "escopo": "entrada", "exp": expira}, s.gs_jwt_secret,
+    marcas = _marcas()
+    if sid:
+        marcas["sid"] = sid
+    return jwt.encode({"sub": str(user_id), "escopo": "entrada", "exp": expira, **marcas}, s.gs_jwt_secret,
                       algorithm=ALGORITMO), expira
 
 
-def criar_token_tecnico(user_id: int, empresa_id: int | None = None) -> tuple[str, datetime]:
+#: A sessão de uma pessoa NUM SISTEMA da família (a porta dos sistemas, `interno_sistemas.py`): vai no passe
+#: (`sessao_gs`) e o sistema a devolve em `X-Sessao-GS` quando fala pela pessoa. Assim a chave do sistema sozinha não
+#: fala por ninguém: só por quem entrou nele pelo GS. Escopo `sistema:<nome>`, que nenhuma guarda de portão aceita;
+#: lista-se e encerra-se como as outras (`_sessao_viva`, a linha nasce no primeiro uso).
+DIAS_DA_SESSAO_DE_SISTEMA = 60
+
+
+def criar_token_sistema(user_id: int, sistema: str, *, sid: str | None = None) -> str:
+    """A sessão da pessoa NAQUELE sistema (o `sessao_gs` do passe). Com `sid`, a renovação: a MESMA sessão (encerrá-la
+    no GS continua derrubando-a), com 60 dias a contar de agora."""
+    s = get_settings()
+    expira = datetime.now(UTC) + timedelta(days=DIAS_DA_SESSAO_DE_SISTEMA)
+    marcas = _marcas()
+    if sid:
+        marcas["sid"] = sid
+    return jwt.encode({"sub": str(user_id), "escopo": f"sistema:{sistema}", "exp": expira, **marcas},
+                      s.gs_jwt_secret, algorithm=ALGORITMO)
+
+
+def conferir_token_sistema(db: Session, token: str, usuario: User, sistema: str, request: Request | None = None
+                           ) -> bool:
+    """O `X-Sessao-GS` é desta pessoa, deste sistema, e ainda vale (não encerrado, não de antes de um "encerrar
+    todas")."""
+    try:
+        dados = jwt.decode(token, get_settings().gs_jwt_secret, algorithms=[ALGORITMO])
+    except JWTError:
+        return False
+    if dados.get("escopo") != f"sistema:{sistema}" or str(dados.get("sub")) != str(usuario.id):
+        return False
+    try:
+        _sessao_viva(db, dados, usuario, request)
+    except HTTPException:
+        return False
+    return True
+
+
+def criar_token_tecnico(user_id: int, empresa_id: int | None = None, *, minutos: int | None = None
+                        ) -> tuple[str, datetime]:
     """Sessão do técnico, marcada com `escopo=tecnico`.
 
     Portão próprio, e não a sessão de empresa com menos menu: com `escopo=empresa`, a única
@@ -211,12 +341,13 @@ def criar_token_tecnico(user_id: int, empresa_id: int | None = None) -> tuple[st
     cliente. Com escopo próprio, os três portões existentes o recusam pela claim, antes
     de olhar perfil nenhum.
     """
-    return _token_de_escopo(user_id, "tecnico", empresa_id)
+    return _token_de_escopo(user_id, "tecnico", empresa_id, minutos=minutos)
 
 
 def gestor_empresa_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """Guarda de `/api/empresa/*`.
 
@@ -225,7 +356,7 @@ def gestor_empresa_atual(
     sem `empresa_id` não entra: se entrasse, todo filtro montado a partir dela viraria
     "sem filtro", que é o vazamento silencioso que este desenho existe para não ter.
     """
-    usuario = _conta_do_escopo(cred, db, "empresa", "Esta sessão não abre a área da empresa")
+    usuario = _conta_do_escopo(cred, db, "empresa", "Esta sessão não abre a área da empresa", request)
     if not usuario.abre_empresa:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à empresa")
     _da_empresa(db, usuario)
@@ -235,11 +366,12 @@ def gestor_empresa_atual(
 def tecnico_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """Guarda de `/api/tecnico/*`. As mesmas quatro exigências do gerente, com o escopo e
     o perfil do técnico — inclusive a empresa vinculada e ativa: o número dele é da
     operação de UMA empresa, e técnico sem empresa não tem de quem ser a conversa."""
-    usuario = _conta_do_escopo(cred, db, "tecnico", "Esta sessão não abre a área do técnico")
+    usuario = _conta_do_escopo(cred, db, "tecnico", "Esta sessão não abre a área do técnico", request)
     if not usuario.abre_tecnico:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito ao técnico")
     _da_empresa(db, usuario)
@@ -247,7 +379,7 @@ def tecnico_atual(
 
 
 def _conta_do_escopo(
-    cred: HTTPAuthorizationCredentials | None, db: Session, escopo: str, recusa: str
+    cred: HTTPAuthorizationCredentials | None, db: Session, escopo: str, recusa: str, request: Request | None = None
 ) -> User:
     """Token válido, do escopo pedido, de conta que existe e está ativa."""
     if cred is None:
@@ -262,7 +394,7 @@ def _conta_do_escopo(
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida") from exc
 
-    usuario = _conta_com_empresa(db, user_id)
+    usuario = _conta_com_empresa(db, user_id, dados.get("sid") if isinstance(dados.get("sid"), str) else None)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à empresa")
     if dados.get("empresa") is not None:
@@ -274,6 +406,7 @@ def _conta_do_escopo(
         if empresa not in empresas_da_conta(db, usuario):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conta não é mais desta empresa.")
         usuario.empresa_da_sessao = empresa
+    _sessao_viva(db, dados, usuario, request)
     return usuario
 
 
@@ -294,6 +427,7 @@ def _da_empresa(db: Session, usuario: User) -> None:
 def gestor_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """Guarda do painel. Exige as três coisas: token válido, escopo de painel, e a conta
     ainda abrir o painel — quem perdeu o cargo perde o acesso na requisição seguinte, sem
@@ -313,6 +447,7 @@ def gestor_atual(
     usuario = db.get(User, user_id)
     if usuario is None or not usuario.ativo or not usuario.abre_painel:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso restrito à administração")
+    _sessao_viva(db, dados, usuario, request)
     return usuario
 
 

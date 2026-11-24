@@ -20,10 +20,11 @@ import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import { Crosshair, MapPinned, Maximize2, Minimize2, PenLine } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
 
 import { Aviso, Botao, Cartao, Combobox, ComboboxMulti, Modal, Pagina, Segmentado, Tela4Estados, type Opcao } from '@/components/base'
-import { mensagemDeErro } from '@/lib/api'
+import { api, mensagemDeErro } from '@/lib/api'
 import { numero } from '@/lib/format'
 import { useLeitura } from '@/lib/leitura'
 
@@ -41,6 +42,7 @@ import {
   type ObjetoDoMapa,
   type LigacoesDoMapa,
 } from './api'
+import { MapaDoTermoVision } from './TermoVision'
 
 /** A cor e o nome de cada tipo — os MESMOS do mapa do meuPlano (site e app). */
 const COR: Record<string, string> = {
@@ -168,6 +170,17 @@ export default function Mapa() {
   const usinaId = Number(id)
   const leitura = useLeitura<MapaOut>(caminhoDoMapa(usinaId))
   const destaque = Number(busca.get('destaque')) || null
+  // R6: a usina com mapa no TermoVision, para quem tem o TermoVision liberado, abre a tela de lá (embutida); a aba
+  // "Equipamentos" é o editor daqui (a O&M desenha e liga; a tela embutida é só para ver nesta etapa)
+  const { data: produtos } = useQuery({
+    queryKey: ['sessao', 'produtos'],
+    queryFn: () => api.get<{ produto: string; url: string }[]>('/api/sessao/produtos').then((r) => r.data),
+    staleTime: 300_000,
+  })
+  const tv = Array.isArray(produtos) ? produtos.find((p) => p.produto === 'termovision') : undefined
+  const origemTv = tv ? new URL(tv.url).origin : null
+  const temTv = Boolean(origemTv && leitura.dados?.usina.tv_codigo) && !destaque
+  const [vista, setVista] = useState<'termovision' | 'equipamentos'>('termovision')
   if (busca.get('print') === '1') {
     // só o mapa: a foto que o bot manda (sem menu, filtro nem botões)
     return <Tela4Estados leitura={leitura}>{(d) => <Conteudo d={d} usinaId={usinaId} recarregar={leitura.recarregar} destaque={destaque} soMapa />}</Tela4Estados>
@@ -178,7 +191,24 @@ export default function Mapa() {
       titulo={leitura.dados ? `Mapa · ${leitura.dados.usina.nome}` : 'Mapa da usina'}
       subtitulo="O voo e cada equipamento marcado, com o estado de cada um; toque num objeto para ver qual é."
     >
-      <Tela4Estados leitura={leitura}>{(d) => <Conteudo d={d} usinaId={usinaId} recarregar={leitura.recarregar} destaque={destaque} />}</Tela4Estados>
+      {temTv ? (
+        <div className="mb-3">
+          <Segmentado
+            opcoes={[{ valor: 'termovision', rotulo: 'Mapa do TermoVision' }, { valor: 'equipamentos', rotulo: 'Equipamentos' }]}
+            valor={vista}
+            onEscolher={setVista}
+          />
+        </div>
+      ) : null}
+      <Tela4Estados leitura={leitura}>
+        {(d) =>
+          temTv && vista === 'termovision' && origemTv ? (
+            <MapaDoTermoVision d={d} origem={origemTv} />
+          ) : (
+            <Conteudo d={d} usinaId={usinaId} recarregar={leitura.recarregar} destaque={destaque} />
+          )
+        }
+      </Tela4Estados>
     </Pagina>
   )
 }

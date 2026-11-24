@@ -24,6 +24,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
+import { DuasEtapasDaConta } from '@/features/usuarios/DuasEtapas'
 import {
   catalogoDeUsinas,
   conectarContaDoCliente,
@@ -221,6 +222,11 @@ function Linha({
                 ? ` · ${usuario.usinas} ${usuario.usinas === 1 ? 'usina' : 'usinas'} no app`
                 : ''}
             </p>
+            {!usuario.cuidada_por ? (
+              <p className="text-sm text-rotulo mt-0.5">
+                <DuasEtapasDaConta situacao={usuario.duas_etapas} conta={usuario.id} daEmpresa />
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-1.5">
               {resumoDosAcessos(usuario, meuGuarda, noMeuGuarda).map((t) => (
                 <Marca key={t.rotulo} tom={t.tom}>

@@ -15,6 +15,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -105,6 +106,21 @@ class User(Base):
     #: O nome da empresa como texto, de antes de `gs_empresas` existir. Mantido só
     #: enquanto a migração é conferida; a fonte é `empresa_id`.
     empresa: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    #: "Encerrar todas as sessões" (R4): todo token emitido ANTES disto vale nada, inclusive o que nunca foi usado.
+    sessoes_desde: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: A verificação em duas etapas (R12, obrigatória para gerente e plataforma): o segredo do autenticador, cifrado;
+    #: `totp_ativo_em` nulo = cadastro começado e não confirmado; `totp_ultimo_passo` = o último código aceito (o mesmo
+    #: código não vale duas vezes).
+    totp_segredo_cifrado: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    totp_ativo_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    totp_ultimo_passo: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    #: A PROPRIETÁRIA de que o dono de usina é (Plano Casa GS, R11): as pessoas da mesma proprietária dividem as usinas
+    #: dela. Nula para a equipe e para quem ainda não foi posto numa.
+    proprietaria_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gs_proprietarias.id", ondelete="SET NULL"), index=True, nullable=True
+    )
 
     #: Em E.164 (`+5516999998888`), normalizado em `core/telefone.py` — um número, um
     #: formato. É para onde as notificações vão; sem ele não há destino.
