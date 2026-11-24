@@ -271,8 +271,11 @@ async def test_parada_e_o_que_a_matriz_do_meuwatt_diz():
     tiete = [_linha(i, f"TR-0{1 + i % 3}", 29039, "19:41", "19:52") for i in range(10)]
     info, mw, u = {}, _Matriz({29039: R9}), {"slug": "tiete", "nome": "Tietê"}
     assert await diagnostico.diagnosticar(mw, u, tiete, agora=datetime(2026, 11, 23, 20, tzinfo=UTC), info=info) == []
-    assert info["nao_paradas"] == [{"skids": ["TR-01", "TR-02", "TR-03"], "inversores": 10, "desde": "16:41",
-                                    "ate": "16:52", "veredito": "Não é parada: nuvem ou fim de tarde (linha R9 do mapa)"}]
+    np, = info["nao_paradas"]                            # a hora sai com o dia quando o teste roda em outro dia
+    assert np["desde"].endswith("16:41") and np["ate"].endswith("16:52")
+    assert {k: np[k] for k in ("skids", "inversores", "veredito")} == {
+        "skids": ["TR-01", "TR-02", "TR-03"], "inversores": 10,
+        "veredito": "Não é parada: nuvem ou fim de tarde (linha R9 do mapa)"}
     await diagnostico.diagnosticar(mw, u, tiete, agora=datetime(2026, 11, 23, 20, 10, tzinfo=UTC))
     assert mw.pedidos == [29039]                         # encerrada: a volta seguinte não pergunta de novo
 
@@ -305,3 +308,92 @@ async def test_parada_e_o_que_a_matriz_do_meuwatt_diz():
     c, = await diagnostico.diagnosticar(_Matriz({300: {"row": "R4", "result": "Parada", "tipo": "parada"}}, gerando), u,
                                         real, agora=datetime(2026, 11, 23, 17, tzinfo=UTC))
     assert "Verificação do meuWatt indisponível agora" in c.texto()
+
+
+R6 = {"row": "R6", "result": "Parada para avaliar: zerou tudo, sem queda abrupta e sem o relé para confirmar",
+      "kind": "avaliar"}
+R3 = {"row": "R3", "result": "Falha de comunicação: avaliar", "kind": "comunicacao"}
+R5 = {"row": "R5", "result": "Parada: zerou tudo, e o relé confirma", "kind": "parada"}
+
+
+def _manha(i, inv, skid, frota, ini, fim, causa="never_woke_up", grupo=None):
+    """Uma linha do detector de Pereiras em 24/11/2026 (horas em UTC: 05:31 BRT = 08:31Z), com a frota do skid."""
+    return {"id": i, "plant_id": 9373, "group_id": grupo, "transformer_name": skid, "slot_label": inv,
+            "stopped_at": f"2026-11-24T{ini}:00Z", "resolved_at": fim and f"2026-11-24T{fim}:00Z", "cause": causa,
+            "materiality": "material", "shadow_loss_kwh": 5.0, "inversores_no_skid": frota}
+
+
+async def test_livro_1_dois_dj_bt_nao_desligam_juntos():
+    """O livro do bot (`docs/LIVRO_DO_BOT.md`), lição 1, o dono em 24/11/2026: "Dois DJ BT diferentes desligados juntos
+    logo de manhã. Isso é praticamente impossível. Se não ver trip, mas também não tiver comunicação, é bem provável que
+    seja trip". Pereiras 24/11 07:07: "sem trip … disjuntor de BT aberto" no TR-01 e no TR-02, com os relés do TR-01
+    mudos desde 23/11 14:42 e oito dos doze inversores gerando desde 05:20."""
+    diagnostico._VEREDITOS.clear()
+    agora, u = datetime(2026, 11, 24, 10, 7, tzinfo=UTC), {"slug": "pereiras", "nome": "Pereiras"}
+    mudos = [_lido("UFV Pereiras - UFV 01 - 1000kVA", "TR-01", 11, comm="no_comm", ultima="2026-11-23T17:42:00Z"),
+             _lido("UFV Pereiras - Geral - 1500kVA", "TR-01", 12, comm="no_comm")]
+    ufv02 = _lido("UFV Pereiras - UFV 02 - 500kVA", "TR-02", 9, pot=6.0)
+    manha = [_manha(1, "INV15", "TR-01", 8, "08:31", "09:50"),
+             _manha(2, "INV16", "TR-01", 8, "09:02", "09:50", "zero_active_power"),
+             _manha(3, "INV21", "TR-02", 4, "08:31", "09:40")]
+    manha += [_manha(10 + n, f"INV{n}", "TR-01" if n < 20 else "TR-02", 8 if n < 20 else 4, "09:33", "09:51",
+                     "communication_failure", 29122) for n in (12, 13, 14, 17, 18, 22, 23, 24)]
+
+    # A matriz do meuWatt (R6, R3, R1): nada disso é parada. Só o relé mudo avisa.
+    real = await diagnostico.diagnosticar(_Matriz({1: R6, 2: R3, 3: R6, 29122: R1}, [*mudos, ufv02]), u, manha,
+                                          agora=agora)
+    assert [a.codigo for a in real] == ["RELE_SEM_COMUNICACAO"]
+
+    # Sem a matriz: um aviso para os dois skids, que diz o que se sabe (havia tensão) e nunca "sem trip" nem DJ BT.
+    diagnostico._VEREDITOS.clear()                       # o veredito das encerradas ficou guardado acima
+    a = next(x for x in await diagnostico.diagnosticar(_Matriz({}, [*mudos, ufv02], falha=True), u, manha, agora=agora)
+             if x.codigo == "NAO_LIGOU")
+    t = a.texto()
+    assert a.skids == ["TR-01", "TR-02"] and a.chave == "diag:pereiras:NAO_LIGOU:TR-01+TR-02:2026-11-24T08:31"
+    assert "havia tensão: não é trip nem DJ BT (lição 1 do livro do bot)" in a.causa and "isolação baixa" in a.causa
+    assert "sem trip" not in t.lower() and "disjuntor de BT" not in t and "INV12" not in t   # leitura não é parada
+    assert "TR-01: 2 de 8 inversor(es) (INV15, INV16) parado(s) desde " in t and "TR-02: 1 de 4 inversor(es) (INV21)" in t
+    assert "Relé UFV Pereiras - UFV 01 - 1000kVA sem comunicação desde 23/11 14:42: o trip não aparece." in t
+    assert "Relé UFV Pereiras - Geral - 1500kVA sem comunicação nas últimas 48 h: o trip não aparece." in t
+
+    # A usina inteira sem ligar de manhã, com relé mudo: dois DJ BT juntos não, o provável é trip. Um aviso só.
+    tudo = ([_manha(100 + n, f"INV{n}", "TR-01", 8, "08:31", None) for n in range(11, 19)]
+            + [_manha(200 + n, f"INV{n}", "TR-02", 4, "08:31", None) for n in range(21, 25)])
+    parada = {p["id"]: R5 for p in tudo}
+    b, = [x for x in await diagnostico.diagnosticar(_Matriz(parada, [*mudos, ufv02]), u, tudo, agora=agora)
+          if x.codigo == "NAO_LIGOU"]
+    assert b.skids == ["TR-01", "TR-02"] and b.causa.startswith("2 skids inteiros pararam juntos, e dois DJ BT não "
+                                                                "desligam juntos (lição 1 do livro do bot)")
+    assert "o provável é trip" in b.causa and "disjuntor de BT" not in b.texto()
+    # Os relés lendo, sem trip: a causa é comum (a rede ou a proteção geral), ainda não o DJ BT de cada um.
+    lendo = [_lido("UFV 01", "TR-01", 11, pot=0.0), _lido("UFV 02", "TR-02", 9, pot=0.0)]
+    c, = await diagnostico.diagnosticar(_Matriz(parada, lendo), u, tudo, agora=agora)
+    assert "a causa é comum aos skids (a rede ou a proteção geral)" in c.causa and "disjuntor de BT" not in c.texto()
+
+    # Um skid inteiro: com o relé mudo, provável trip; lendo e sem trip, aí sim o DJ BT.
+    so_01 = [p for p in tudo if p["transformer_name"] == "TR-01"]
+    d, = [x for x in await diagnostico.diagnosticar(_Matriz(parada, [*mudos, ufv02]), u, so_01, agora=agora)
+          if x.codigo == "NAO_LIGOU"]
+    assert d.causa == "o skid inteiro parou e não há como ver trip: o provável é trip (lição 1 do livro do bot)"
+    e, = await diagnostico.diagnosticar(_Matriz(parada, lendo), u, so_01, agora=agora)
+    assert "sem trip no relé dele, que está lendo: falta de tensão no AC do inversor (disjuntor de BT aberto)" in e.causa
+
+    # O histórico de trips que não veio também não é "sem trip"; nem o skid sem relé no meuWatt.
+    class SemHistorico(_Matriz):
+        async def eventos_de_trip(self, slug, rele, n):
+            raise RuntimeError("500 Internal Server Error")
+
+    f, = await diagnostico.diagnosticar(SemHistorico(parada, lendo), u, so_01, agora=agora)
+    assert "o provável é trip" in f.causa and "O histórico de trips do relé UFV 01 não veio: o trip não aparece." in f.texto()
+    g, = await diagnostico.diagnosticar(_Matriz(parada, [ufv02]), u, so_01, agora=agora)
+    assert "o provável é trip" in g.causa and "O skid não tem relé de proteção no meuWatt: o trip não aparece." in g.texto()
+
+
+def test_livro_do_bot_tem_as_licoes_que_o_diagnostico_cita():
+    """A lição citada no aviso existe no livro (o número no código e o texto do dono no livro não se perdem)."""
+    import re
+    from pathlib import Path
+
+    livro = (Path(__file__).resolve().parents[2] / "docs" / "LIVRO_DO_BOT.md").read_text()
+    citadas = set(re.findall(r"lição (\d+) do livro do bot", Path(diagnostico.__file__).read_text()))
+    assert citadas and all(re.search(rf"^## Lição {n} · ", livro, re.M) for n in citadas)

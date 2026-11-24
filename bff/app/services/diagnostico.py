@@ -17,8 +17,14 @@ As regras, em ordem:
 1. Parada (ou inversor sem ligar) num skid + trip no relé DAQUELE skid até 12 h antes = a função do trip é a causa (a
    última antes da parada; as de antes entram como contexto: a 47 que precede a 27). Vários relés com a mesma função no
    mesmo minuto = a REDE, não a usina.
-2. Parada sem trip no relé do skid = "não ligou" ou a causa do detector, com os alarmes do inversor. Falha de
-   comunicação sem trip não é parada (faltou o dado, não a energia) e não vira achado.
+2. Parada sem trip à vista = "não ligou" ou a causa do detector, com os alarmes do inversor. Falha de comunicação sem
+   trip não é parada (faltou o dado, não a energia) e não vira achado. A causa segue o livro do bot
+   (`docs/LIVRO_DO_BOT.md`, lição 1, o dono em 24/11/2026: "Dois DJ BT diferentes desligados juntos logo de manhã …
+   é praticamente impossível. Se não ver trip, mas também não tiver comunicação, é bem provável que seja trip"): relé
+   mudo, histórico de trips que não veio ou skid sem relé = "o trip não aparece", nunca "sem trip"; o skid inteiro
+   parado sem como ver trip = provável trip; dois ou mais skids inteiros juntos = uma causa comum e um aviso só, nunca
+   o DJ BT de cada um; os outros inversores do skid gerando = havia tensão, não é trip nem DJ BT (Pereiras 24/11: oito
+   inversores ligaram às 05:20, quatro entre 06:35 e 06:50, e o aviso culpou o DJ BT dos dois skids).
 3. Trip que disparou e não limpou = skid DESARMADO agora (antes de qualquer parada: de madrugada já se sabe que o skid
    não vai ligar). Com o PRÓPRIO relé medindo energia passando (leitura válida acima de `FLUXO_KW`), o disjuntor está
    fechado: a bandeira não desarmou nada e não vira achado (Pereiras 23/11 14:48: 27 "disparado" até 16:01 com os
@@ -50,6 +56,8 @@ logger = logging.getLogger(__name__)
 JANELA_TRIP = timedelta(hours=12)
 #: Trips da mesma função em relés diferentes dentro disto = o mesmo evento da rede.
 MESMO_EVENTO = timedelta(minutes=5)
+#: Paradas sem trip em skids diferentes que começam dentro disto = o mesmo evento, um aviso (lição 1 do livro do bot).
+JUNTOS = timedelta(minutes=15)
 _ORDEM = {"critica": 0, "alta": 1, "media": 2, "info": 3}
 #: O relé do skid medindo mais que isto (leitura válida da tela Leituras) = o disjuntor está fechado.
 FLUXO_KW = 1.0
@@ -249,6 +257,84 @@ def _da_rede(funcao_item: matriz.Item, quando: datetime, todos: dict[str, list[d
                          for e in evs))
 
 
+def _nome_rele(r: dict) -> str:
+    nome = str(r.get("name") or "")
+    return nome if nome.lower().startswith("rel") else f"relé {nome}"
+
+
+def _cegueira(r: dict, hist: list | None) -> str | None:
+    """Por que este relé não deixa dizer "sem trip" (`None` = ele lê agora e o histórico de trips veio)."""
+    comm = next((x for x in r.get("readings") or [] if x.get("key") == "comm"), {})
+    if comm.get("status") == "ok":
+        return None if hist is not None else f"o histórico de trips do {_nome_rele(r)} não veio"
+    if comm.get("status") != "no_comm":
+        return f"{_nome_rele(r)} com a comunicação não conferida agora"
+    ultima = _quando(comm.get("last_valid_at") or r.get("last_read_at"))
+    return f"{_nome_rele(r)} sem comunicação " + (f"desde {_h(ultima)}" if ultima else "nas últimas 48 h")
+
+
+def _inicio(ps: list[dict]) -> datetime:
+    return min(t for p in ps if (t := _quando(p.get("stopped_at"))))
+
+
+def _juntos(sem_trip: list[tuple[str, list[dict]]]) -> list[list[tuple[str, list[dict]]]]:
+    """Os skids sem trip à vista que começaram a parar até JUNTOS um do outro: o mesmo evento."""
+    grupos: list[list[tuple[str, list[dict]]]] = []
+    for par in sorted(sem_trip, key=lambda par: _inicio(par[1])):
+        if grupos and _inicio(par[1]) - _inicio(grupos[-1][0][1]) <= JUNTOS:
+            grupos[-1].append(par)
+        else:
+            grupos.append([par])
+    return grupos
+
+
+def _sem_trip(usina: str, juntos: list[tuple[str, list[dict]]], cegos: dict[str, list[str]],
+              vereditos: dict[tuple, dict | None]) -> Achado:
+    """A regra 2 pelo livro do bot (lição 1): o que parou sem trip à vista, num skid ou em vários juntos."""
+    item, mudo = matriz.MATRIZ["NAO_LIGOU"], matriz.MATRIZ["RELE_SEM_COMUNICACAO"]
+    ps = [p for _, rs in juntos for p in rs]
+    resolvidas = [_quando(p.get("resolved_at")) for p in ps]
+    nao_ligou = any(p.get("cause") == "never_woke_up" for p in ps)
+    provas, inteiros, parciais = [], [], []
+    for skid, rs in juntos:
+        ini, fins = _inicio(rs), [_quando(p.get("resolved_at")) for p in rs]
+        nomes = sorted({str(p.get("slot_label")) for p in rs}, key=lambda n: (len(n), n))
+        frota = next((p["inversores_no_skid"] for p in rs if p.get("inversores_no_skid")), None)
+        de_uma_vez = {str(p.get("slot_label")) for p in rs if (_quando(p.get("stopped_at")) or ini) - ini <= JUNTOS}
+        if frota:
+            (inteiros if len(de_uma_vez) >= frota else parciais).append(skid)
+        perda = sum(p.get("shadow_loss_kwh") or 0 for p in rs)
+        provas.append(f"{skid}: {len(nomes)}{f' de {frota}' if frota else ''} inversor(es) ({', '.join(nomes)}) "
+                      f"parado(s) desde {_h(ini)}" + (f" até {_h(max(fins))}" if all(fins) else "")
+                      + (f", {perda:.0f} kWh perdidos" if perda else "") + ".")
+    skids = [s for s, _ in juntos]
+    provas += [f"{c[0].upper()}{c[1:]}: o trip não aparece." for s in skids for c in cegos.get(s, [])]
+    cego, livro = any(s in cegos for s in skids), "lição 1 do livro do bot"
+    alarmes, minusc = "Conferir os alarmes dos inversores e o teste de comunicação.", lambda t: t[:1].lower() + t[1:]
+    if len(inteiros) >= 2:
+        causa = (f"{len(inteiros)} skids inteiros pararam juntos, e dois DJ BT não desligam juntos ({livro}): "
+                 + ("sem trip à vista e sem comunicação, o provável é trip que o relé mudo não mostra" if cego else
+                    "a causa é comum aos skids (a rede ou a proteção geral), e os relés deles leem sem trip"))
+        fazer = [mudo.fazer[0], item.fazer[0]] if cego else [item.fazer[1]]
+    elif inteiros and cego:
+        causa = f"o skid inteiro parou e não há como ver trip: o provável é trip ({livro})"
+        fazer = [mudo.fazer[0], item.fazer[0]]
+    elif inteiros:
+        causa = "o skid inteiro parou sem trip no relé dele, que está lendo: " + minusc(item.causas[1])
+        fazer = list(item.fazer)
+    elif parciais and len(parciais) == len(skids):
+        outros = "dos skids" if len(skids) > 1 else "do skid"
+        causa = (f"os outros inversores {outros} geravam, então havia tensão: não é trip nem DJ BT ({livro}). "
+                 + (f"O mais comum: {minusc(item.causas[2])}" if nao_ligou else "É o inversor."))
+        fazer = [alarmes] + ([item.fazer[2]] if nao_ligou else [])
+    else:                                                  # sem a frota do skid: não separa o skid do inversor
+        causa = "não há como ver trip (o porquê vem abaixo)" if cego else "sem trip no relé do skid"
+        fazer = list(item.fazer) if nao_ligou else [alarmes]
+    return Achado("NAO_LIGOU" if nao_ligou else f"PARADA:{ps[0].get('cause')}",
+                  "inversores não ligaram" if nao_ligou else "inversores parados", "alta", usina, skids, _inicio(ps),
+                  max(resolvidas) if all(resolvidas) else None, causa, provas + [_verificacao(ps, vereditos)], fazer)
+
+
 async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | None = None,
                        info: dict | None = None) -> list[Achado]:
     """Os achados da usina AGORA. `usina`: {slug, nome}; `paradas`: as linhas do detector de hoje
@@ -276,9 +362,15 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
         try:
             return _eventos(await mw.eventos_de_trip(usina["slug"], int(r["relay_id"]), 50))
         except Exception:                                  # noqa: BLE001 — sem o histórico, as outras regras seguem
-            return []
+            return None                                    # não lido não é "sem trip" (lição 1 do livro do bot)
 
     historicos = await asyncio.gather(*(evs(r) for r in protecao))
+    # O relé que não deixa dizer "sem trip" no skid dele: mudo, não conferido ou com o histórico que não veio.
+    cegos: dict[str, list[str]] = {}
+    for r, h in zip(protecao, historicos):
+        if r.get("transformer_name") and (motivo := _cegueira(r, h)):
+            cegos.setdefault(r["transformer_name"], []).append(motivo)
+    historicos = [h or [] for h in historicos]
     por_rele = {r.get("name") or str(r.get("relay_id")): h for r, h in zip(protecao, historicos)}
     # Os trips de TODOS os relés do skid (o geral pode ter o mesmo transformador: um não apaga o outro).
     do_skid: dict[str, list[dict]] = {}
@@ -300,23 +392,26 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
         grupos.setdefault(p.get("transformer_name") or "?", []).append(p)
     if info is not None and nao:                           # o bot diz o veredito em vez de calar
         info["nao_paradas"] = [{
-            "skids": sorted({p.get("transformer_name") or "?" for p in ps}), "inversores": len(ps),
+            "skids": sorted({p.get("transformer_name") or "?" for p in ps}),
+            "inversores": len({p.get("slot_label") for p in ps}),
             "desde": _h(min(_quando(p.get("stopped_at")) for p in ps)),
             "ate": _h(max(_quando(p.get("resolved_at")) for p in ps)) if all(p.get("resolved_at") for p in ps) else None,
             "veredito": f"{vereditos[u]['result']} (linha {vereditos[u]['row']} do mapa)"} for u, ps in nao.items()]
 
     # ── regra 1 e 2: o que parou hoje, por skid ────────────────────────────────────────────────────────────────
     causas: dict[tuple, Achado] = {}
+    sem_trip: list[tuple[str, list[dict]]] = []
     for skid, ps in grupos.items():
         inicio = min(_quando(p.get("stopped_at")) for p in ps if _quando(p.get("stopped_at")))
         resolvidas = [_quando(p.get("resolved_at")) for p in ps]
         fim = max(resolvidas) if all(resolvidas) else None
         perda = sum(p.get("shadow_loss_kwh") or 0 for p in ps)
-        nomes = ", ".join(sorted({str(p.get("slot_label")) for p in ps}, key=lambda n: (len(n), n)))
+        distintos = sorted({str(p.get("slot_label")) for p in ps}, key=lambda n: (len(n), n))
+        nomes = ", ".join(distintos)
         hist = sorted(do_skid.get(skid, []), key=lambda e: e["quando"])
         antes = [e for e in hist if e["disparou"] and e["item"] and inicio - JANELA_TRIP <= e["quando"] <= inicio
                  + timedelta(minutes=30)]
-        parada_txt = (f"{len(ps)} inversor(es) ({nomes}) parados desde {_h(inicio)}"
+        parada_txt = (f"{len(distintos)} inversor(es) ({nomes}) parados desde {_h(inicio)}"
                       + (f" até {_h(fim)}" if fim else "") + (f", {perda:.0f} kWh perdidos" if perda else "") + ".")
         prova = _verificacao(ps, vereditos)
         if antes:
@@ -340,19 +435,16 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
                        fim, causa, [parada_txt, prova], list(item.fazer), item.religar_remoto)
             causas[chave] = a
             achados.append(a)
-        elif all(p.get("cause") == "communication_failure" for p in ps):
-            # Faltou o DADO do inversor, não a energia (Pereiras, 13/11: buracos de 9 min com o relé medindo corrente).
-            # Sem trip não é parada: quem avisa é o "usina sem comunicação" e a verificação do meuWatt.
-            continue
-        else:
-            item = matriz.MATRIZ["NAO_LIGOU"]
-            nao_ligou = any(p.get("cause") == "never_woke_up" for p in ps)
-            achados.append(Achado(
-                "NAO_LIGOU" if nao_ligou else f"PARADA:{ps[0].get('cause')}",
-                "inversores não ligaram" if nao_ligou else "inversores parados", "alta", usina["nome"], [skid], inicio,
-                fim, "sem trip no relé do skid" + (": " + item.causas[1][0].lower() + item.causas[1][1:] if nao_ligou
-                                                   else ""), [parada_txt, prova],
-                list(item.fazer) if nao_ligou else ["Conferir os alarmes dos inversores e o teste de comunicação."]))
+        elif reais := [p for p in ps if p.get("cause") != "communication_failure"]:
+            sem_trip.append((skid, reais))
+        # Só falha de leitura e sem trip: faltou o DADO do inversor, não a energia (Pereiras, 13/11: buracos de 9 min
+        # com o relé medindo corrente). Não é parada: quem avisa é o "usina sem comunicação" e a verificação do meuWatt.
+    com_rele = {r.get("transformer_name") for r in protecao}
+    for juntos in _juntos(sem_trip):
+        for s, _ in juntos:
+            if s not in com_rele:
+                cegos.setdefault(s, ["o skid não tem relé de proteção no meuWatt"])
+        achados.append(_sem_trip(usina["nome"], juntos, cegos, vereditos))
 
     # ── regra 3, 4 e 5: o estado dos relés agora ────────────────────────────────────────────────────────────────
     ja = {s for a in achados for s in a.skids if a.resolvido_em is None}
@@ -378,8 +470,7 @@ async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | N
             # A última leitura VÁLIDA (48 h; nula = nenhuma nesse tempo): a da linha da comunicação, que o meuWatt
             # tira da consulta de 48 h quando o monitoramento não conferiu.
             ultima = _quando(comm.get("last_valid_at") or r.get("last_read_at"))
-            nome = str(r.get("name") or "")
-            nome = nome if nome.lower().startswith("rel") else f"relé {nome}"
+            nome = _nome_rele(r)
             mudo = next((a for a in achados if a.codigo == i.codigo and a.skids == [skid]), None)
             if mudo:
                 mudo.titulo = mudo.titulo.replace(" sem comunicação", f" e {nome} sem comunicação")

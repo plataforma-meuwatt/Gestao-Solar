@@ -925,6 +925,10 @@ a quem tem "Usina parada", por push e, para quem falou com o bot nas últimas 24
 (fora da janela a Meta pede template aprovado, que o diagnóstico não tem: só push); a trava é a chave do achado em
 `gs_avisos_enviados` (estado sem começo, como o relé mudo, avisa uma vez por dia) e o WhatsApp entra em
 `gs_notificacoes_enviadas` (tipo `diagnostico`). O bot tem `diagnostico_usina` (a mesma régua; com `codigo`, a matriz).
+**Livro do bot** (`docs/LIVRO_DO_BOT.md`, pedido do dono em 24/11/2026: "precisamos de um livro de aprendizado para
+esse bot"): cada lição com as palavras dele, o caso, a regra que a aplica e o teste; lição nova entra lá JUNTO com a
+regra e o teste (`test_livro_do_bot_tem_as_licoes_que_o_diagnostico_cita` reprova a citação sem lição). A 1ª: dois
+DJ BT não desligam juntos de manhã; sem trip à vista e sem comunicação, o provável é trip.
 
 ---
 

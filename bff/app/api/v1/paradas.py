@@ -270,6 +270,7 @@ async def ler_do_detector(cliente, plant_id: int, saida: ParadasOut) -> list[dic
         )
         pares = [(p, linha) for linha in resposta["rows"] if (p := _de_linha(linha))]
         run = resposta.get("run") or {}
+        frota = resposta.get("fleet_by_transformer") or {}
         desde, ate = _instante(run.get("window_start")), _instante(run.get("window_end"))
     except Exception as exc:  # noqa: BLE001
         saida.aviso = f"Falha ao ler o detector de paradas do monitoramento: {_motivo(exc)}."
@@ -297,4 +298,5 @@ async def ler_do_detector(cliente, plant_id: int, saida: ParadasOut) -> list[dic
     dentro = [(p, linha) for p, linha in pares if _no_periodo(p, inicio, fim)]
     _consolidar(saida, [p for p, _ in dentro], "detector")
     saida.aviso = " ".join(avisos) or None
-    return [linha for _, linha in dentro]
+    # Quantos inversores tem o skid (o detector conta): o diagnóstico separa "o skid inteiro parou" de "parte dele".
+    return [{**linha, "inversores_no_skid": frota.get(linha.get("transformer_name"))} for _, linha in dentro]
