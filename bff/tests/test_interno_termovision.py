@@ -111,6 +111,7 @@ def test_so_a_om_que_entrou_pelo_gs_ha_pouco_e_so_a_empresa_ativa_do_passe(http,
     r = http.get("/api/v1/interno/usinas", headers=_h(c["gerente"]))
     assert r.status_code == 200 and [u["nome"] for u in r.json()] == ["Ibitinga", "Ouro Fino"]
     ib = next(u for u in r.json() if u["nome"] == "Ibitinga")
+    assert ib.pop("atualizado_em")                                            # quando um dado básico mudou
     assert ib == {"gs": c["ib"].id, "codigo": f"GS-{c['ib'].id:04d}", "nome": "Ibitinga", "empresa": "Splendor O&M",
                   "meuwatt": {"slug": "ibitinga"}, "meuplano": {"id": 7}, "termovision": None, "cidade": "Ibitinga",
                   "uf": "SP", "kwp": None, "endereco": None, "latitude": None, "longitude": None}

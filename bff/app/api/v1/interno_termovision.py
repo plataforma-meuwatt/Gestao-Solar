@@ -143,7 +143,19 @@ def ligar_mapa(
     outra = db.scalar(select(PlantLink).where(PlantLink.tv_codigo == body.termovision))
     if outra is not None:
         raise _ocupado(outra, visiveis)
-    return _saida(db, _ligar(db, link, body.termovision, visiveis))
+    link = _ligar(db, link, body.termovision, visiveis)
+    _no_historico(db, link, None, body.termovision, x_usuario_gs, "Enviar ao GS, pelo TermoVision")
+    return _saida(db, link)
+
+
+def _no_historico(db: Session, link: PlantLink, antes: str | None, depois: str | None, x_usuario_gs: str | None,
+                  motivo: str) -> None:
+    from app.services import dados_da_usina
+    texto = (x_usuario_gs or "").strip()
+    dados_da_usina.historico(db, link, "tv_codigo", antes, depois, por=db.get(User, int(texto)) if texto.isdecimal()
+                             else None, sistema="termovision", motivo=motivo)
+    link.atualizado_em = datetime.now(UTC)
+    db.commit()
 
 
 @router.delete("/usinas/{gs}/mapa", response_model=UsinaDoGS, dependencies=[Depends(_porta)])
@@ -163,4 +175,5 @@ def desligar_mapa(
                .values(tv_codigo=None))
     db.commit()
     db.refresh(link)
+    _no_historico(db, link, termovision, None, x_usuario_gs, "Desligar do GS, pelo TermoVision")
     return _saida(db, link)

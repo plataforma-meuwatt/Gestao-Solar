@@ -127,6 +127,8 @@ class UsinaDoGS(BaseModel):
     endereco: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    #: quando um dado básico mudou por último (`?alteradas_desde=` relê só as que mudaram)
+    atualizado_em: datetime | None = None
 
 
 def codigo(gs: int) -> str:
@@ -140,7 +142,8 @@ def saida(db: Session, u: PlantLink) -> UsinaDoGS:
         meuwatt=RefMeuWatt(slug=u.mw_plant_slug) if u.mw_plant_slug else None,
         meuplano=RefMeuPlano(id=u.mp_usina_id) if u.mp_usina_id is not None else None,
         termovision=RefTermoVision(codigo=u.tv_codigo) if u.tv_codigo else None,
-        cidade=u.cidade, uf=u.uf, kwp=u.kwp, endereco=u.endereco, latitude=u.latitude, longitude=u.longitude)
+        cidade=u.cidade, uf=u.uf, kwp=u.kwp, endereco=u.endereco, latitude=u.latitude, longitude=u.longitude,
+        atualizado_em=u.atualizado_em)
 
 
 def _pedido(db: Session, request: Request) -> tuple[User, list[PlantLink]]:
@@ -159,12 +162,20 @@ def _as_do_pedido(db: Session, request: Request) -> list[PlantLink]:
 
 
 @router.get("/usinas", response_model=list[UsinaDoGS])
-def usinas(request: Request, ids: str | None = None, db: Session = Depends(get_db)) -> list[UsinaDoGS]:
+def usinas(request: Request, ids: str | None = None, alteradas_desde: datetime | None = None,
+           db: Session = Depends(get_db)) -> list[UsinaDoGS]:
     todas = _as_do_pedido(db, request)
-    if ids is None:
-        return [saida(db, u) for u in todas]
-    pedidas = {int(x) for x in ids.split(",") if x.strip().isdecimal()}
-    return [saida(db, u) for u in todas if u.id in pedidas]
+    if ids is not None:
+        pedidas = {int(x) for x in ids.split(",") if x.strip().isdecimal()}
+        todas = [u for u in todas if u.id in pedidas]
+    if alteradas_desde is not None:
+        desde = alteradas_desde if alteradas_desde.tzinfo else alteradas_desde.replace(tzinfo=UTC)
+        todas = [u for u in todas if u.atualizado_em is not None and _com_fuso(u.atualizado_em) >= desde]
+    return [saida(db, u) for u in todas]
+
+
+def _com_fuso(quando: datetime) -> datetime:
+    return quando if quando.tzinfo else quando.replace(tzinfo=UTC)
 
 
 @router.get("/usinas/{gs}", response_model=UsinaDoGS)
@@ -305,3 +316,150 @@ async def objetos_do_mapa(gs: int, request: Request, db: Session = Depends(get_d
                      "meuplano": {"node": nos[o["id"]]} if o["id"] in nos else None},
             "atualizado_em": o.get("atualizado_em")})
     return saida_
+
+
+#: o campo da usina do GS que guarda o id dela em cada sistema que cria usina (o meuGuarda usa o número do GS)
+REFERENCIA = {"meuwatt": "mw_plant_slug", "meuplano": "mp_usina_id", "termovision": "tv_codigo"}
+#: para mudar um dado básico pelo sistema, a pessoa entrou nele pelo GS, ela mesma, há no máximo 30 dias
+JANELA_DE_EDITAR = timedelta(days=30)
+
+
+def _equipe(db: Session, request: Request) -> tuple[str, User, list[PlantLink]]:
+    """Quem muda dados da usina: a equipe da O&M (gerente e técnico) e a plataforma, que entrou no sistema que pede pelo
+    GS há no máximo 30 dias (a chave vazada não fala por quem não usa aquele sistema)."""
+    quem = sistema(request)
+    u, todas = _pedido(db, request)
+    if u.perfil not in _O_E_M and u.perfil not in pessoas.DA_PLATAFORMA:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Os dados da usina são mudados pela equipe da O&M.")
+    if quem != "termovision":                              # o TermoVision já confere a entrada dele (12 h)
+        recente = db.scalar(select(AcessoGS.id).where(
+            AcessoGS.gs_user_id == u.id, AcessoGS.sistema == quem, AcessoGS.acao == "passe", AcessoGS.ok,
+            AcessoGS.ip != "", AcessoGS.em >= datetime.now(UTC) - JANELA_DE_EDITAR).limit(1))
+        if recente is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                f"Para mudar os dados da usina no GS pelo {NOMES[quem]}, entre nele pelo Gestão Solar.")
+    return quem, u, todas
+
+
+class DadosIn(BaseModel):
+    """Só o que veio muda; a coordenada vai em par."""
+    model_config = {"extra": "forbid"}
+    nome: str | None = None
+    endereco: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    kwp: float | None = None
+
+
+class AlteradaOut(BaseModel):
+    usina: UsinaDoGS
+    #: os campos que mudaram (vazio = já estava assim)
+    alterados: list[str]
+
+
+@router.patch("/usinas/{gs}", response_model=AlteradaOut)
+def alterar_usina(gs: int, body: DadosIn, request: Request, db: Session = Depends(get_db)) -> AlteradaOut:
+    from app.services import dados_da_usina
+    quem, u, todas = _equipe(db, request)
+    link = next((x for x in todas if x.id == gs), None)
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
+    try:
+        feitos = dados_da_usina.alterar(db, link, body.model_dump(exclude_unset=True), por=u, sistema=quem)
+    except dados_da_usina.DadoInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    db.commit()
+    db.refresh(link)
+    return AlteradaOut(usina=saida(db, link), alterados=feitos)
+
+
+class RegistroIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    nome: str
+    #: o id da usina no sistema que registra: o slug no meuWatt, o número no meuPlano, o código no TermoVision
+    referencia: str
+    cidade: str | None = None
+    uf: str | None = None
+    endereco: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    kwp: float | None = None
+
+
+class RegistroOut(BaseModel):
+    #: criada (nasceu no GS), ligada (o id de lá já é de uma usina do GS), a_confirmar (o gerente decide),
+    #: descartada (o gerente descartou este registro)
+    situacao: str
+    usina: UsinaDoGS | None = None
+    parecidas: list[dict] = []
+
+
+def _referencia(quem: str, texto: str):
+    texto = (texto or "").strip()
+    if quem == "meuplano":
+        if not texto.isdecimal():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A referência do meuPlano é o número da usina.")
+        return int(texto)
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", texto) or (quem == "termovision" and len(texto) > 40):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A referência tem letras, números, - e _.")
+    return texto
+
+
+@router.post("/usinas", response_model=RegistroOut)
+def registrar_usina(body: RegistroIn, request: Request, db: Session = Depends(get_db)) -> RegistroOut:
+    """A usina criada no sistema que pede entra no GS (o plano: "se parecer uma que já existe (nome e distância), fica
+    'a confirmar' e o gerente da O&M decide; se não parecer nenhuma, nasce nova"). Pedir de novo é idempotente e é como
+    o sistema sabe o que o gerente decidiu. 201 criada, 202 a confirmar, 200 ligada ou descartada."""
+    from fastapi.responses import JSONResponse
+
+    from app.models.plant import UsinaAConfirmar
+    from app.services import dados_da_usina
+
+    quem = sistema(request)
+    if quem not in REFERENCIA:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este sistema usa as usinas do GS: não cria usina.")
+    _, u, _ = _equipe(db, request)
+    empresa = empresa_do_pedido(db, u, request.headers.get("x-empresa-gs"))
+    if quem == "termovision" or empresa is None:           # a régua do TV não passa pela de cima; a plataforma diz qual
+        texto = (request.headers.get("x-empresa-gs") or "").strip()
+        empresa = int(texto) if texto.isdecimal() else empresa
+        if empresa is None or db.get(Empresa, empresa) is None or not db.get(Empresa, empresa).ativa:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Diga de qual empresa de O&M é a usina (X-Empresa-GS).")
+    campo = REFERENCIA[quem]
+    ref = _referencia(quem, body.referencia)
+    dados = body.model_dump(exclude={"referencia"})
+    try:
+        limpos = {c: dados_da_usina._limpo(c, v) for c, v in dados.items()}
+        if (limpos["latitude"] is None) != (limpos["longitude"] is None):
+            raise dados_da_usina.DadoInvalido("A coordenada vai inteira: latitude e longitude juntas.")
+    except dados_da_usina.DadoInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    ja = db.scalar(select(PlantLink).where(getattr(PlantLink, campo) == ref))
+    if ja is not None:
+        if ja.empresa_id != empresa:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Esta usina já está no GS por outra empresa.")
+        return RegistroOut(situacao="ligada", usina=saida(db, ja))
+    pedido = db.scalar(select(UsinaAConfirmar).where(UsinaAConfirmar.sistema == quem,
+                                                     UsinaAConfirmar.referencia == str(ref)))
+    if pedido is not None:
+        if pedido.decisao == "descartada":
+            return RegistroOut(situacao="descartada")
+        if pedido.decisao is None:
+            return JSONResponse(status_code=202, content=RegistroOut(
+                situacao="a_confirmar", parecidas=pedido.parecidas).model_dump(mode="json"))
+    parecidas = dados_da_usina.parecidas(db, empresa, limpos["nome"], limpos["latitude"], limpos["longitude"])
+    if parecidas:
+        db.add(UsinaAConfirmar(empresa_id=empresa, sistema=quem, referencia=str(ref), dados=limpos,
+                               parecidas=parecidas, pedido_por_id=u.id))
+        db.commit()
+        return JSONResponse(status_code=202, content=RegistroOut(
+            situacao="a_confirmar", parecidas=parecidas).model_dump(mode="json"))
+    link = dados_da_usina.criar(db, empresa=empresa, dados=limpos, campo=campo, ref=ref, por=u, sistema=quem)
+    db.commit()
+    db.refresh(link)
+    return JSONResponse(status_code=201, content=RegistroOut(situacao="criada", usina=saida(db, link))
+                        .model_dump(mode="json"))

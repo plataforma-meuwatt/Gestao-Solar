@@ -22,6 +22,7 @@ import { Cpu, Link2, Sun, Wrench } from 'lucide-react'
 import { useState } from 'react'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
+import { DadosDaUsina, UsinasAConfirmar } from '@/features/empresa/DadosDaUsina'
 import {
   catalogoDeUsinas,
   mostrarTodasAsUsinas,
@@ -96,6 +97,7 @@ export function UsinasDaEmpresa() {
         <Erro>{mensagemDeErro(error)}</Erro>
       ) : (
         <div className="grid gap-5">
+          <UsinasAConfirmar />
           {(data?.avisos ?? []).map((a) => (
             <Erro key={a}>{a}</Erro>
           ))}
@@ -178,6 +180,7 @@ function LinhaUsina({
 }) {
   const [nome, setNome] = useState(linha.nome)
   const [casando, setCasando] = useState(false)
+  const [vendoDados, setVendoDados] = useState(false)
   const [alvo, setAlvo] = useState<string>('')
   const jaEstaAqui = linha.plant_link_id !== null
   // Casar vale para a usina do meuWatt que ainda não tem par: é dela que sai o `mp_usina_id`.
@@ -209,6 +212,7 @@ function LinhaUsina({
             <p className="text-forte font-semibold">{linha.nome}</p>
           )}
           <p className="text-sm text-rotulo mt-1">
+            {linha.codigo ? <span className="text-forte">{linha.codigo} · </span> : null}
             {[linha.cidade, linha.uf].filter(Boolean).join(' · ') || 'sem cidade'}
             {linha.kwp ? ` · ${linha.kwp.toLocaleString('pt-BR')} kWp` : ''}
           </p>
@@ -261,8 +265,15 @@ function LinhaUsina({
               Casar com o meuPlano
             </button>
           ) : null}
+          {jaEstaAqui ? (
+            <button className="btn-fantasma" onClick={() => setVendoDados((v) => !v)}>
+              {vendoDados ? 'Fechar os dados' : 'Endereço e coordenada'}
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {vendoDados && linha.plant_link_id !== null ? <DadosDaUsina usinaId={linha.plant_link_id} /> : null}
 
       {/* Casar é dizer "esta usina do meuWatt é aquela do meuPlano". A sugestão ordena e
           diz POR QUE ("mesmo nome", "a 300 m"); quem decide é quem lê — um par errado

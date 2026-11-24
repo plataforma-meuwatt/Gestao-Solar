@@ -10,7 +10,7 @@ app esconde a aba correspondente.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -51,6 +51,9 @@ class PlantLink(Base):
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #: quando um dado básico mudou por último (`services/dados_da_usina.alterar`): os sistemas releem com
+    #: `GET /api/v1/interno/usinas?alteradas_desde=`
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     @property
     def tem_meuwatt(self) -> bool:
@@ -70,3 +73,48 @@ class PlantLink(Base):
         mostra a potência de agora, que foi o que aconteceu em 30/09/2026.
         """
         return self.mw_micro_plant_id is not None and self.mw_plant_slug is None
+
+
+class HistoricoDaUsina(Base):
+    """Cada mudança de um dado básico da usina (Plano Casa GS, 24/11/2026: "com histórico: quem mudou, de qual sistema,
+    o antes e o depois"). Uma linha por campo."""
+
+    __tablename__ = "gs_usinas_historico"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plant_link_id: Mapped[int] = mapped_column(ForeignKey("gs_plant_links.id", ondelete="CASCADE"), index=True)
+    campo: Mapped[str] = mapped_column(String(40))
+    antes: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    depois: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    por_id: Mapped[int | None] = mapped_column(ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True)
+    #: de onde veio: gs (as telas daqui), meuwatt, meuplano, meuguarda, termovision
+    sistema: Mapped[str] = mapped_column(String(20))
+    motivo: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class UsinaAConfirmar(Base):
+    """Usina criada em outro sistema que parece uma que já existe no GS (nome ou distância): fica aqui até o gerente da
+    O&M dizer se é a mesma, se é outra ou se descarta (Plano Casa GS). Uma linha por usina de lá (`sistema` +
+    `referencia`): pedir de novo devolve a decisão."""
+
+    __tablename__ = "gs_usinas_a_confirmar"
+    __table_args__ = (UniqueConstraint("sistema", "referencia", name="ux_gs_usinas_a_confirmar_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("gs_empresas.id", ondelete="CASCADE"), index=True)
+    sistema: Mapped[str] = mapped_column(String(20))
+    #: o id da usina lá (o slug no meuWatt, o número no meuPlano, o código no TermoVision)
+    referencia: Mapped[str] = mapped_column(String(120))
+    #: o que o sistema mandou: nome, cidade, uf, endereco, latitude, longitude, kwp
+    dados: Mapped[dict] = mapped_column(JSON)
+    #: as do GS que parecem ser ela, no momento do pedido
+    parecidas: Mapped[list] = mapped_column(JSON)
+    pedido_por_id: Mapped[int | None] = mapped_column(ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True)
+    em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #: nula enquanto espera; mesma, outra ou descartada
+    decisao: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: a usina do GS que ficou: a mesma escolhida, ou a criada
+    usina_id: Mapped[int | None] = mapped_column(ForeignKey("gs_plant_links.id", ondelete="SET NULL"), nullable=True)
+    decidido_por_id: Mapped[int | None] = mapped_column(ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True)
+    decidido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

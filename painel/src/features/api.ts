@@ -877,6 +877,8 @@ export type LinhaDeUsina = {
   par_provavel_nome: string | null
   /** As candidatas do meuPlano, da mais provável para a menos. */
   candidatos: CandidataDeUsina[]
+  /** O código do GS (GS-0006), o mesmo em todos os sistemas; nulo enquanto a usina não está aqui. */
+  codigo: string | null
 }
 
 export type CatalogoDeUsinas = {
@@ -902,6 +904,84 @@ export const salvarUsinaDaEmpresa = (dados: {
   kwp?: number | null
   no_app?: boolean
 }) => apiEmpresa.put<LinhaDeUsina>('/usinas', dados).then((r) => r.data)
+
+/* Os dados básicos da usina moram no GS (Plano Casa GS, R10): o gerente edita aqui, os
+   sistemas da família editam pela porta deles, e cada mudança fica no histórico. */
+
+export type HistoricoDaUsina = {
+  em: string
+  campo: string
+  rotulo: string
+  antes: string | null
+  depois: string | null
+  /** Quem mudou (nulo quando foi o próprio sistema, como a importação). */
+  por: string | null
+  /** De onde veio: Gestão Solar ou o nome do sistema. */
+  sistema: string
+  motivo: string
+}
+
+export type DadosDaUsina = {
+  id: number
+  codigo: string
+  nome: string
+  endereco: string | null
+  cidade: string | null
+  uf: string | null
+  latitude: number | null
+  longitude: number | null
+  kwp: number | null
+  atualizado_em: string | null
+  mw_slug: string | null
+  mp_usina_id: number | null
+  tv_codigo: string | null
+  historico: HistoricoDaUsina[]
+}
+
+export type MudancaDeDados = Partial<
+  Pick<DadosDaUsina, 'nome' | 'endereco' | 'cidade' | 'uf' | 'latitude' | 'longitude' | 'kwp'>
+>
+
+export const dadosDaUsina = (id: number) =>
+  apiEmpresa.get<DadosDaUsina>(`/usinas/${id}/dados`).then((r) => r.data)
+
+export const salvarDadosDaUsina = (id: number, dados: MudancaDeDados) =>
+  apiEmpresa.patch<DadosDaUsina>(`/usinas/${id}/dados`, dados).then((r) => r.data)
+
+export type UsinaAConfirmar = {
+  id: number
+  /** O sistema onde ela foi criada (TermoVision, meuPlano, meuWatt). */
+  sistema: string
+  referencia: string
+  dados: {
+    nome: string
+    cidade: string | null
+    uf: string | null
+    endereco: string | null
+    latitude: number | null
+    longitude: number | null
+    kwp: number | null
+  }
+  em: string
+  parecidas: {
+    gs: number
+    codigo: string
+    nome: string
+    distancia_km: number | null
+    pelo_nome: boolean
+  }[]
+}
+
+export const usinasAConfirmar = () =>
+  apiEmpresa.get<UsinaAConfirmar[]>('/usinas/a-confirmar').then((r) => r.data)
+
+export const decidirUsinaAConfirmar = (id: number, decisao: 'mesma' | 'outra' | 'descartar', gs?: number) =>
+  apiEmpresa
+    .post<{ decisao: string; usina: { id: number; codigo: string; nome: string } | null }>(
+      `/usinas/a-confirmar/${id}`,
+      { decisao, gs },
+    )
+    .then((r) => r.data)
 
 export const criarClienteDaEmpresa = (dados: {
   nome: string
