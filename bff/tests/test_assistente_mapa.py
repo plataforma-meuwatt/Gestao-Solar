@@ -346,11 +346,11 @@ async def test_sem_estado_a_ia_ouve_por_que(fontes):
 
 async def test_mapa_que_nao_foi_lido_nunca_vira_vazio(fontes):
     fontes.mapa = {"slug": "of", "vinculado": True, "objetos": [], "aviso": "O meuWatt recusou o token."}
-    assert (await _pedir(fontes))["erro"] == "O mapa de Ouro Fino não pôde ser lido agora: O meuWatt recusou o token."
+    assert (await _pedir(fontes))["erro"] == "O mapa de Ouro Fino do GS não pôde ser lido agora: O meuWatt recusou o token."
     fontes.mapa = {"vinculado": False, "objetos": []}
     assert "não está ligado ao monitoramento" in (await _pedir(fontes))["erro"]
     fontes.mapa = None
-    assert (await _pedir(fontes))["erro"] == "O mapa de Ouro Fino não pôde ser lido agora."
+    assert (await _pedir(fontes))["erro"] == "O mapa de Ouro Fino do GS não pôde ser lido agora."
     assert fontes.fotos == []
 
 
@@ -405,3 +405,70 @@ async def test_ambiguo_ou_ausente_pergunta_com_os_nomes(fontes):
                                                                            "geometria": FAIXA}]}
     out = await _pedir(fontes)
     assert "é ambíguo" in out["erro"] and out["opcoes"] == ["U1-3S22"] and fontes.fotos == []
+
+
+# ── R13 do Plano Casa GS (24/11/2026): "Primeiro o bot consulta no GS, senão tiver, consulta no termovision, se tiver em
+#    ambos, o GS é quem vale"
+@pytest.fixture
+def tv_fake(fontes, monkeypatch):
+    from app.services import assistente_termovision as tv
+    fontes.ctx.user.termovision_liberado = True
+    fontes.ctx.db.commit()
+    chamadas, resposta = [], {"valor": None}
+
+    async def localizar(db, user, usina, alvo):
+        chamadas.append((usina, alvo))
+        return resposta["valor"]
+    monkeypatch.setattr(tv, "localizar", localizar)
+    return SimpleNamespace(chamadas=chamadas, resposta=resposta)
+
+
+ACHADO = {"tipo": "mesa", "rotulo": "Mesa 12", "centro": {"lat": -22.27, "lng": -46.36}, "raio_m": 8, "fileira": "F3",
+          "link": "https://app.termovision.tech/app.html?usina=of2&foco=-22.27,-46.36&r=8&rotulo=Mesa%2012&tipo=mesa"}
+
+
+async def test_no_gs_vale_o_gs_e_o_termovision_nem_e_chamado(fontes, tv_fake):
+    out = await _pedir(fontes)                                   # a U1-3S22 está no mapa do GS
+    assert out["equipamento"] == "U1-3S22" and tv_fake.chamadas == []
+
+
+async def test_sem_no_gs_acha_no_termovision_com_o_link_que_abre_nele(fontes, tv_fake):
+    tv_fake.resposta["valor"] = {"nome": "UFV Ouro Fino 2", "achados": [ACHADO], "total": 1, "sugestoes": []}
+    out = await _pedir(fontes, "mesa 12")
+    assert tv_fake.chamadas == [("Ouro Fino", "mesa 12")]           # sem o vínculo do mapa, pelo nome da usina
+    assert out["equipamento"] == "Mesa 12" and out["usina"] == "UFV Ouro Fino 2" and out["fileira"] == "F3"
+    assert "TermoVision" in out["de_onde"] and fontes.fotos == []   # sem foto: a foto é do mapa do GS
+    pe = fontes.ctx.rodape[-1]
+    assert ACHADO["link"] in pe and "maps.google" in pe.lower() or "google.com/maps" in pe
+    assert "waze" in pe.lower()
+
+
+async def test_nem_no_gs_nem_no_termovision_pergunta_com_os_parecidos_dos_dois(fontes, tv_fake):
+    tv_fake.resposta["valor"] = {"nome": "UFV Ouro Fino 2", "achados": [], "total": 0, "sugestoes": ["Mesa 21"]}
+    out = await _pedir(fontes, "câmera 9")
+    assert "também não está no mapa do TermoVision" in out["erro"] and out["opcoes"] == ["Câmera 01", "Mesa 21"]
+    tv_fake.resposta["valor"] = {"nome": "UFV Ouro Fino 2", "total": 2, "sugestoes": [],
+                                 "achados": [ACHADO, {**ACHADO, "rotulo": "Mesa 12B"}]}
+    out = await _pedir(fontes, "mesa 12")
+    assert "ambíguo no mapa do TermoVision" in out["erro"] and out["opcoes"] == ["Mesa 12", "Mesa 12B"]
+    tv_fake.resposta["valor"] = {"erro": "o TermoVision não respondeu agora"}
+    out = await _pedir(fontes, "mesa 12")
+    assert "E no TermoVision: o TermoVision não respondeu agora" in out["erro"]
+
+
+async def test_usina_que_so_existe_no_termovision_e_mapa_do_gs_fora(fontes, tv_fake):
+    tv_fake.resposta["valor"] = {"nome": "Arealva", "achados": [{**ACHADO, "rotulo": "U2-1S05", "tipo": "string"}],
+                                 "total": 1}
+    out = await mapa.mapa_equipamento(fontes.ctx, {"usina": "Arealva", "equipamento": "U2-1S05"})
+    assert tv_fake.chamadas[-1] == ("Arealva", "U2-1S05") and out["usina"] == "Arealva"
+    assert "não está no GS" in out["de_onde"]
+    fontes.mapa = None                                          # o mapa do GS não responde: vai ao TermoVision, e diz
+    out = await _pedir(fontes, "mesa 12")
+    assert "não pôde ser lido" in out["de_onde"]
+
+
+async def test_quem_nao_tem_o_termovision_fica_so_com_o_gs(fontes, tv_fake):
+    fontes.ctx.user.termovision_liberado = False
+    fontes.ctx.db.commit()
+    out = await _pedir(fontes, "mesa 12")
+    assert tv_fake.chamadas == [] and "não está no mapa de Ouro Fino do GS" in out["erro"]

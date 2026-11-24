@@ -333,6 +333,23 @@ async def _lista(c: ClienteMcp) -> list[dict]:
     return [t for t in ((r.get("result") or {}).get("tools") or []) if isinstance(t, dict) and t.get("name")]
 
 
+async def localizar(db, user, usina: str, alvo: str) -> dict:
+    """O "onde fica" no mapa do TermoVision (a leitura `localizar` de lá, 24/11/2026): string, mesa, fileira ou módulo,
+    no recorte da pessoa. Devolve o `structuredContent` (nome, achados, total, sugestoes…) ou `{"erro"}`."""
+    try:
+        r = await ClienteMcp(db, user).mcp({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                            "params": {"name": "localizar", "arguments": {"usina": usina, "alvo": alvo}}})
+    except httpx.HTTPError:
+        return {"erro": "o TermoVision não respondeu agora"}
+    if r.get("error"):
+        e = r["error"]
+        return {"erro": str(e.get("message") if isinstance(e, dict) else e)}
+    res = r.get("result") or {}
+    if res.get("isError") or not isinstance(res.get("structuredContent"), dict):
+        return {"erro": _texto_do_resultado(res) or "o TermoVision não respondeu a busca"}
+    return res["structuredContent"]
+
+
 def _texto_do_resultado(res: dict) -> str:
     return "\n".join(x.get("text") or "" for x in res.get("content") or [] if x.get("type") == "text")[:3000]
 

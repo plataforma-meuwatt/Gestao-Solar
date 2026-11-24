@@ -59,8 +59,9 @@ FERRAMENTA = {"type": "function", "function": {
     "name": "mapa_equipamento",
     "description": ("A FOTO do mapa da usina com UM equipamento em destaque (uma string, um inversor, um trafo, uma "
                     "câmera, uma mesa), com o nome e a cor do estado; o sistema manda a imagem e, ao pé da sua "
-                    "resposta, os links do Google Maps e do Waze de onde ele fica (não escreva os links). Use quando "
-                    "perguntarem ONDE FICA um equipamento ou pedirem para mostrá-lo no mapa. NÃO é para documento: "
+                    "resposta, os links do Google Maps e do Waze de onde ele fica (não escreva os links). Sem ele no "
+                    "mapa do GS, o sistema procura no mapa do TermoVision (strings, mesas, fileiras, módulos). Use "
+                    "quando perguntarem ONDE FICA um equipamento ou pedirem para mostrá-lo no mapa. NÃO é para documento: "
                     "planta (a planta de strings), projeto, diagrama, unifilar ou PDF vão à `manutencao`."),
     "parameters": {"type": "object", "properties": {
         "usina": {"type": "string", "description": "nome da usina"},
@@ -260,21 +261,68 @@ def situacao(e: dict | None, sem_estado: str | None, agora: datetime) -> str:
         f" (dado de {hora})" if hora else "")
 
 
+async def _no_termovision(ctx, termo: str, usina: str, sem_no_gs: str, de_onde: str,
+                         opcoes_gs: list[str] | None = None) -> dict:
+    """O dono, 24/11/2026: "Primeiro o bot consulta no GS, senão tiver, consulta no termovision, se tiver em ambos, o GS é
+    quem vale". Só chega aqui sem o objeto no mapa do GS; achado no TermoVision, vai a posição (Google Maps, Waze e o
+    link do mapa de lá, que abre nele) ao pé da resposta, sem a foto (a foto é do mapa do GS)."""
+    if not ctx.user.entra_no_termovision:
+        return {"erro": sem_no_gs, **({"opcoes": opcoes_gs[:12]} if opcoes_gs else {})}
+    from app.services import assistente_termovision as tv
+    ctx.db.commit()                                       # solta a conexão enquanto o TermoVision responde
+    r = await tv.localizar(ctx.db, ctx.user, usina, termo)
+    if r.get("erro"):
+        return {"erro": f"{sem_no_gs} E no TermoVision: {r['erro']}.", **({"opcoes": opcoes_gs[:12]} if opcoes_gs else {})}
+    achados = [x for x in r.get("achados") or [] if isinstance(x, dict) and x.get("rotulo")]
+    onde = r.get("nome") or usina
+    if not achados:
+        parecidos = list(dict.fromkeys([*(opcoes_gs or []), *(r.get("sugestoes") or [])]))[:12]
+        return {"erro": f"{sem_no_gs} E também não está no mapa do TermoVision ({onde}): pergunte qual é"
+                        + (", com os nomes parecidos de `opcoes`" if parecidos else "") + ".",
+                **({"opcoes": parecidos} if parecidos else {})}
+    if len(achados) > 1:
+        total = r.get("total") or len(achados)
+        return {"erro": f"'{termo}' é ambíguo no mapa do TermoVision ({onde}): pergunte qual é, com os nomes de `opcoes`"
+                        + (f" (são {total}; aqui vão 12)" if total > 12 else "") + ".",
+                "opcoes": [x["rotulo"] for x in achados][:12]}
+    x = achados[0]
+    resposta = {"equipamento": x["rotulo"], "usina": onde, "tipo": x.get("tipo"), "de_onde": de_onde,
+                **{k: x[k] for k in ("mesa", "mesas", "fileira", "fileiras", "inversor", "entrada", "modulo", "fiada",
+                                     "meuwatt") if x.get(k) not in (None, "", [])}}
+    c = x.get("centro") if isinstance(x.get("centro"), dict) else {}
+    linhas = [f"📍 *{x['rotulo']}* ({onde}, no mapa do TermoVision)"]
+    if c.get("lat") is not None and c.get("lng") is not None:
+        linhas += [f"Google Maps: {_mapa(c['lat'], c['lng'])}", f"Waze: {_waze(c['lat'], c['lng'])}"]
+    if x.get("link"):
+        linhas.append(f"No mapa do TermoVision: {x['link']}")
+    ctx.rodape.append("\n".join(linhas))
+    resposta["posicao"] = ("o sistema manda os links (Google Maps, Waze e o mapa do TermoVision, que abre nele) ao pé da "
+                           "sua resposta: não os escreva. Sem foto: ele está só no mapa do TermoVision.")
+    return resposta
+
+
 async def mapa_equipamento(ctx, a: dict) -> dict:
     from app.api.v1.mapa import usinas_do_mapa
     from app.services.vinculos import SemConexao, cliente_meuplano
 
+    termo = (a.get("equipamento") or "").strip()
     usinas = [{"nome": u.nome, "link": u} for u in usinas_do_mapa(ctx.db, ctx.user)]
     if len(usinas) == 1 and not (a.get("usina") or "").strip():
         escolhida = usinas[0]                               # a única que a pessoa vê
     else:
         escolhida, opcoes = escolher(usinas, a.get("usina") or "")
         if escolhida is None:
+            if not opcoes and (a.get("usina") or "").strip():   # não é usina do GS: pode estar só no TermoVision
+                return await _no_termovision(ctx, termo, a["usina"].strip(),
+                                             f"A usina '{a['usina'].strip()}' não está entre as do GS desta pessoa.",
+                                             "o mapa do TermoVision (a usina não está no GS)")
             return {"erro": "Falta a usina, ou ela é ambígua: pergunte qual.",
                     "opcoes": [u["nome"] for u in opcoes or usinas]}
     link = escolhida["link"]
+    no_tv = getattr(link, "tv_codigo", None) or link.nome  # o código do mapa de lá, quando a usina está ligada a ele
     if link.mp_usina_id is None:
-        return {"erro": f"A usina {link.nome} ainda não tem o mapa (não está ligada à manutenção)."}
+        return await _no_termovision(ctx, termo, no_tv, f"A usina {link.nome} ainda não tem o mapa no GS.",
+                                     "o mapa do TermoVision (a usina ainda não tem o mapa no GS)")
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
     except SemConexao as e:
@@ -283,16 +331,21 @@ async def mapa_equipamento(ctx, a: dict) -> dict:
     try:
         mapa = await mp.mapa_da_usina(link.mp_usina_id)
     except httpx.HTTPError:
-        return {"erro": f"O mapa de {link.nome} não pôde ser lido agora."}
+        return await _no_termovision(ctx, termo, no_tv, f"O mapa de {link.nome} do GS não pôde ser lido agora.",
+                                     "o mapa do TermoVision (o do GS não pôde ser lido agora)")
     objetos = [o for o in mapa.get("objetos") or [] if isinstance(o, dict) and o.get("id") is not None]
     if not objetos:                                       # "vazio" só quando o mapa foi LIDO e está vazio
         if mapa.get("aviso"):
-            return {"erro": f"O mapa de {link.nome} não pôde ser lido agora: {mapa['aviso']}"}
+            return await _no_termovision(ctx, termo, no_tv,
+                                         f"O mapa de {link.nome} do GS não pôde ser lido agora: {mapa['aviso']}",
+                                         "o mapa do TermoVision (o do GS não pôde ser lido agora)")
         if mapa.get("vinculado") is False:
-            return {"erro": f"O mapa de {link.nome} ainda não está ligado ao monitoramento: não há voo nem marcação."}
-        return {"erro": f"O mapa de {link.nome} ainda não tem nada marcado."}
+            return await _no_termovision(ctx, termo, no_tv, f"O mapa de {link.nome} do GS ainda não está ligado ao "
+                                         "monitoramento: não há voo nem marcação.",
+                                         "o mapa do TermoVision (o do GS ainda não tem voo nem marcação)")
+        return await _no_termovision(ctx, termo, no_tv, f"O mapa de {link.nome} do GS ainda não tem nada marcado.",
+                                     "o mapa do TermoVision (o do GS ainda não tem nada marcado)")
     estado, sem_estado = await _estado(ctx, mapa.get("slug"))
-    termo = a.get("equipamento") or ""
     achados, do_tipo = achar(objetos, estado, termo)
     if not achados:                                       # o meuPlano conhece os apelidos ("o switch da cabine")
         try:
@@ -302,6 +355,9 @@ async def mapa_equipamento(ctx, a: dict) -> dict:
         except httpx.HTTPError:
             pass
     ctx.db.commit()
+    if not achados:                                       # nem no mapa do GS, nem pelos apelidos: o TermoVision
+        return await _no_termovision(ctx, termo, no_tv, f"'{termo}' não está no mapa de {link.nome} do GS.",
+                                     "o mapa do TermoVision (o do GS não o tem)", opcoes_gs=do_tipo)
     if len(achados) != 1:
         nomes = sorted({_nome(o) or f"objeto {o['id']}" for o in achados}) or do_tipo
         mais = f" (e mais {len(nomes) - 12})" if len(nomes) > 12 else ""
