@@ -133,9 +133,15 @@ def editar(
         empresa.nome = body.nome.strip() or empresa.nome
     if body.documento is not None:
         empresa.documento = body.documento.strip() or None
+    mudou_ativa = body.ativa is not None and body.ativa != empresa.ativa
     if body.ativa is not None:
         empresa.ativa = body.ativa
     db.commit()
+    if mudou_ativa:                                        # corta (ou devolve) a entrada de todos da empresa: vai
+        from app.services import acessos                    # para o registro de cada um
+        for conta in db.scalars(select(User).where(svc.contas_da_empresa(empresa.id))):
+            acessos.mudou(db, conta, _gestor, [f"empresa {empresa.nome} {'reativada' if empresa.ativa else 'desativada'}"],
+                          "adm-gs, empresas", empresa_id=empresa.id)
     return _saida(db, empresa)
 
 

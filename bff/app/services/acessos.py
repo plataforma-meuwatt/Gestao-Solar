@@ -426,10 +426,13 @@ PORTAO = {"painel": "adm-gs", "empresa": "oem-gs", "tecnico": "oem-gs, técnico"
 
 # --------------------------------------------------------------------------- a tela Acessos (oem-gs e adm-gs)
 #: o que a tela escreve (o vocabulário é traduzido aqui, uma vez: a tela não monta texto a partir do código)
-ACAO = {"entrou": "Entrou no GS", "passe": "Entrou no sistema pelo GS", "recusado": "Recusado",
+#: "passe" é o que o GS SABE: ele autenticou a pessoa e entregou o passe ao sistema. Se o sistema aceitou, quem diz é o
+#: registro de lá (no passe da janelinha o GS não fica sabendo; no do bot, `ok` é a resposta do sistema). "Entrou no
+#: sistema" seria afirmar o que o GS não viu: a conta não ligada ao meuWatt ganhava passe e o meuWatt a recusava.
+ACAO = {"entrou": "Entrou no GS", "passe": "Passe entregue ao sistema", "recusado": "Recusado",
         "bloqueado": "Bloqueado", "senha": "Senha trocada", "acesso": "Acesso mudado"}
 #: a mesma ação quando não deu certo (o rótulo segue o resultado, não só a ação)
-ACAO_FALHOU = {"entrou": "Não entrou no GS", "passe": "Não entrou no sistema", "senha": "Senha não trocada",
+ACAO_FALHOU = {"entrou": "Não entrou no GS", "passe": "O sistema recusou o passe", "senha": "Senha não trocada",
                "acesso": "Mudança de acesso falhou"}
 SISTEMA = {"gs": "Gestão Solar", "claude": "Conector do Claude", "meuwatt": "meuWatt", "meuplano": "meuPlano",
            "meuguarda": "meuGuarda", "termovision": "TermoVision"}

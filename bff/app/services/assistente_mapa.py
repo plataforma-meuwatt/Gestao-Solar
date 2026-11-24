@@ -325,8 +325,9 @@ async def mapa_equipamento(ctx, a: dict) -> dict:
                                      "o mapa do TermoVision (a usina ainda não tem o mapa no GS)")
     try:
         mp = cliente_meuplano(ctx.db, ctx.user.id, so_proprio=True)
-    except SemConexao as e:
-        return {"erro": f"Manutenção indisponível: {e}"}
+    except SemConexao as e:                               # sem o mapa do GS para esta pessoa: o TermoVision
+        return await _no_termovision(ctx, termo, no_tv, f"O mapa de {link.nome} do GS não abriu: manutenção "
+                                     f"indisponível ({e}).", "o mapa do TermoVision (o do GS não abriu para esta conta)")
     ctx.db.commit()                                       # solta a conexão enquanto os produtos respondem
     try:
         mapa = await mp.mapa_da_usina(link.mp_usina_id)

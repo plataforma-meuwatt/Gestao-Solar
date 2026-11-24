@@ -472,3 +472,14 @@ async def test_quem_nao_tem_o_termovision_fica_so_com_o_gs(fontes, tv_fake):
     fontes.ctx.db.commit()
     out = await _pedir(fontes, "mesa 12")
     assert tv_fake.chamadas == [] and "não está no mapa de Ouro Fino do GS" in out["erro"]
+
+
+
+async def test_sem_o_token_da_manutencao_vai_ao_termovision(fontes, tv_fake, monkeypatch):
+    def sem(db, uid, so_proprio=False):
+        raise vinculos.SemConexao("o token desta pessoa sumiu")
+    monkeypatch.setattr(vinculos, "cliente_meuplano", sem)
+    tv_fake.resposta["valor"] = {"nome": "UFV Ouro Fino 2", "achados": [ACHADO], "total": 1}
+    out = await _pedir(fontes, "mesa 12")
+    assert tv_fake.chamadas == [("Ouro Fino", "mesa 12")] and out["equipamento"] == "Mesa 12"
+    assert "não abriu para esta conta" in out["de_onde"]

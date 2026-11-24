@@ -77,8 +77,8 @@ def test_o_gerente_ve_a_empresa_dele_com_os_membros_e_a_plataforma_ve_tudo(db):
 def test_o_rotulo_segue_o_resultado_e_o_quem_vem_pronto(db):
     a, b, gerente, dono_a, dono_b, membro, adm = _cenario(db)
     linhas = {(x.acao, x.ok, x.quem): x for x in _plataforma(db, adm).acessos}
-    assert linhas[("passe", True, "Dono A (dono.a)")].acao_rotulo == "Entrou no sistema pelo GS"
-    assert linhas[("passe", False, "Dono A (dono.a)")].acao_rotulo == "Não entrou no sistema"
+    assert linhas[("passe", True, "Dono A (dono.a)")].acao_rotulo == "Passe entregue ao sistema"
+    assert linhas[("passe", False, "Dono A (dono.a)")].acao_rotulo == "O sistema recusou o passe"
     assert linhas[("bloqueado", False, "Vários logins, do mesmo lugar")].acao_rotulo == "Bloqueado"
     assert ("recusado", False, "Login que não é conta") in linhas
     assert ("entrou", True, "Conta apagada (velho.apagado)") in linhas
@@ -95,10 +95,10 @@ def test_filtros_no_servidor(db):
     a, b, gerente, dono_a, dono_b, membro, adm = _cenario(db)
     recusas = _empresa(db, gerente, so_recusas=True).acessos
     assert {(x.acao_rotulo, x.aparelho) for x in recusas} == {("Recusado", "servidor de outro sistema"),
-                                                             ("Não entrou no sistema", "registrado pelo próprio GS")}
+                                                             ("O sistema recusou o passe", "registrado pelo próprio GS")}
     tv = _empresa(db, gerente, sistema="termovision").acessos
-    assert [(x.acao_rotulo, x.aparelho) for x in tv] == [("Não entrou no sistema", "registrado pelo próprio GS"),
-                                                         ("Entrou no sistema pelo GS", "Chrome no Android")]
+    assert [(x.acao_rotulo, x.aparelho) for x in tv] == [("O sistema recusou o passe", "registrado pelo próprio GS"),
+                                                         ("Passe entregue ao sistema", "Chrome no Android")]
     assert [x.quem for x in _empresa(db, gerente, busca="7.7.7").acessos] == ["Técnico B (tec.b)"]   # IP
     assert {x.quem for x in _empresa(db, gerente, busca="dono a").acessos} == {"Dono A (dono.a)"}     # nome
     assert _empresa(db, gerente, busca="100%_").acessos == []                                         # curinga literal
@@ -232,3 +232,28 @@ def test_quem_e_das_duas_empresas_e_a_plataforma_na_outra_empresa_nao_vazam(db):
                        ("mudança de acesso feita na outra empresa da pessoa", "a outra empresa da pessoa")]
     assert _empresa(db, gerente, busca="concorrente").acessos == []
     assert _empresa(db, gerente, busca="gerente ab").acessos == []
+
+
+async def test_token_conectado_e_tirado_e_empresa_desligada_ficam_no_registro(db, monkeypatch):
+    """A revisão final de 24/11: o token decide com que conta a pessoa entra no produto, e desligar a empresa corta a
+    entrada de todos dela — os dois são mudança de acesso."""
+    from app.api.v1 import painel_empresas as rotas_e
+    from app.models.integracao import Produto
+    from app.models.user import VinculoProduto
+    from app.services import vinculos
+    a, b, gerente, dono_a, dono_b, membro, adm = _cenario(db)
+
+    async def conectar(db_, conta, produto, token, por):
+        db_.add(VinculoProduto(gs_user_id=conta.id, produto=produto.value, usuario_remoto_id="9", token_cifrado="x"))
+        db_.commit()
+        return vinculos.ResultadoConexao(ok=True, detalhe="ok")
+    monkeypatch.setattr(vinculos, "conectar", conectar)
+    await rotas.conectar_conta_do_cliente(dono_a.id, Produto.MEUWATT, rotas.ConectarClienteIn(token="mw_pat_x"), db, gerente)
+    rotas.desconectar_conta_do_cliente(dono_a.id, Produto.MEUWATT, db, gerente)
+    motivos = [x["motivo"] for x in _linhas(db, dono_a.id)]
+    assert "token do meuWatt conectado (oem-gs, usuários)" in motivos
+    assert "token do meuWatt tirado (oem-gs, usuários)" in motivos
+    rotas_e.editar(a.id, rotas_e.EmpresaPatch(ativa=False), db, adm)
+    for conta in (gerente, dono_a, membro):                               # os da empresa e o membro vindo de outra
+        assert "empresa Splendor O&M desativada (adm-gs, empresas)" in [x["motivo"] for x in _linhas(db, conta.id)]
+    assert not [x for x in _linhas(db, dono_b.id) if "desativada" in x["motivo"]]

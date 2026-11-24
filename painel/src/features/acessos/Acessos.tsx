@@ -87,7 +87,8 @@ export function Acessos({ daEmpresa }: { daEmpresa: boolean }) {
   })
 
   const linhas = data?.acessos ?? []
-  const entradas = linhas.filter((a) => a.ok && (a.acao === 'entrou' || a.acao === 'passe')).length
+  const entradas = linhas.filter((a) => a.ok && a.acao === 'entrou').length
+  const passes = linhas.filter((a) => a.ok && a.acao === 'passe').length
   const recusas = linhas.filter((a) => !a.ok).length
   // o período aplicado é o que o servidor diz (o padrão dele quando a tela não pediu um)
   const de = dePedido ?? data?.de ?? ''
@@ -98,8 +99,8 @@ export function Acessos({ daEmpresa }: { daEmpresa: boolean }) {
       titulo="Registro de acessos"
       apoio={
         daEmpresa
-          ? 'Quem da empresa entrou no Gestão Solar e em cada sistema pelo GS, de onde e com que aparelho, as senhas erradas e os bloqueios, as trocas de senha e as mudanças de acesso, com quem fez.'
-          : 'Todos os acessos: quem entrou no Gestão Solar e em cada sistema pelo GS, de onde e com que aparelho, as senhas erradas (inclusive de login que não é conta) e os bloqueios, as trocas de senha e as mudanças de acesso, com quem fez.'
+          ? 'Quem da empresa entrou no Gestão Solar e a que sistema o GS entregou o passe, de onde e com que aparelho, as senhas erradas e os bloqueios, as trocas de senha e as mudanças de acesso, com quem fez. Se o sistema aceitou o passe, e o login direto na tela de cada sistema, ficam no registro dele.'
+          : 'Tudo o que passa pelo GS: quem entrou no Gestão Solar e a que sistema o GS entregou o passe, de onde e com que aparelho, as senhas erradas (inclusive de login que não é conta) e os bloqueios, as trocas de senha e as mudanças de acesso, com quem fez. Se o sistema aceitou o passe, e o login direto na tela de cada sistema, ficam no registro dele.'
       }
     >
       {usuario ? (
@@ -164,8 +165,8 @@ export function Acessos({ daEmpresa }: { daEmpresa: boolean }) {
         {data ? (
           <p className="text-xs text-fraco pb-2 sm:ml-auto">
             {isFetching ? 'atualizando… · ' : ''}
-            {linhas.length.toLocaleString('pt-BR')} registro(s) · {entradas.toLocaleString('pt-BR')} entrada(s) ·{' '}
-            {recusas.toLocaleString('pt-BR')} recusa(s)
+            {linhas.length.toLocaleString('pt-BR')} registro(s) · {entradas.toLocaleString('pt-BR')} entrada(s) no GS ·{' '}
+            {passes.toLocaleString('pt-BR')} passe(s) · {recusas.toLocaleString('pt-BR')} recusa(s)
             {linhas.length >= data.limite
               ? ` · são os ${data.limite.toLocaleString('pt-BR')} mais recentes: encurte o período para ver os anteriores`
               : ''}

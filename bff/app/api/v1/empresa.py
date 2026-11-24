@@ -1542,6 +1542,10 @@ async def conectar_conta_do_cliente(
     conta = _conta_da_empresa(db, usuario_id, empresa_id)
 
     r = await vinculos.conectar(db, conta, produto, body.token, por=gerente)
+    if r.ok:                                               # o token decide com que conta ela entra lá
+        from app.services import acessos
+        acessos.mudou(db, conta, gerente, [f"token do {NOME[produto]} conectado"], "oem-gs, usuários",
+                      empresa_id=empresa_id)
     return ConexaoDoClienteOut(ok=r.ok, detalhe=r.detalhe)
 
 
@@ -1560,6 +1564,8 @@ def desconectar_conta_do_cliente(
     vinculo = vinculos.obter(db, conta.id, produto)
     if vinculo is None:
         return
+    from app.services import acessos
+    tinha_token = bool(vinculo.token_cifrado)
     if produto is Produto.MEUPLANO:
         # A MESMA linha guarda a ligação do cadastro com a pessoa do meuPlano (base única):
         # tirar o token não desfaz a ligação — para isso há "Desligar", no Cadastro.
@@ -1569,6 +1575,9 @@ def desconectar_conta_do_cliente(
     else:
         db.delete(vinculo)
     db.commit()
+    if tinha_token:
+        acessos.mudou(db, conta, gerente, [f"token do {NOME[produto]} tirado"], "oem-gs, usuários",
+                      empresa_id=empresa_id)
 
 
 class ContaPatch(BaseModel):
@@ -1819,6 +1828,9 @@ async def ligar_ao_meuplano(
     empresa_id = svc.empresa_exigida(gerente)
     conta = _conta_da_empresa(db, usuario_id, empresa_id)
     avisos = await cadastro.ligar(db, conta, empresa_id, body.mp_user_id)
+    from app.services import acessos
+    acessos.mudou(db, conta, gerente, [f"cadastro ligado à pessoa {body.mp_user_id} do {NOME[Produto.MEUPLANO]}"],
+                  "oem-gs, usuários", empresa_id=empresa_id)
     return LigarOut(usuario=await editar_conta_da_empresa(usuario_id, ContaPatch(), db, gerente), avisos=avisos)
 
 
@@ -1828,8 +1840,12 @@ async def desligar_do_meuplano(
 ) -> UsuarioDetalhado:
     """Desfaz a ligação do cadastro (o cadastro daqui fica como está)."""
     from app.services import cadastro
-    conta = _conta_da_empresa(db, usuario_id, svc.empresa_exigida(gerente))
+    empresa_id = svc.empresa_exigida(gerente)
+    conta = _conta_da_empresa(db, usuario_id, empresa_id)
     cadastro.desligar(db, conta)
+    from app.services import acessos
+    acessos.mudou(db, conta, gerente, [f"cadastro desligado do {NOME[Produto.MEUPLANO]}"], "oem-gs, usuários",
+                  empresa_id=empresa_id)
     return await editar_conta_da_empresa(usuario_id, ContaPatch(), db, gerente)
 
 
