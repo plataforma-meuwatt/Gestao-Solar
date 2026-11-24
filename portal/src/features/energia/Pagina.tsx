@@ -142,6 +142,8 @@ import {
   type RecortePainel,
   type UsinaDetalhe,
 } from './api'
+import { MiniaturaDoMapa } from '@/features/mapa/Miniatura'
+
 import { AbaAno } from './Ano'
 import { AbaDia } from './Dia'
 import { AbaMes } from './Mes'
@@ -403,7 +405,13 @@ export default function PainelDeEnergia() {
             : ''}
         </>
       }
-      acoes={usina.dados ? <Selo tom={usina.dados.tom}>{usina.dados.situacao}</Selo> : null}
+      acoes={
+        <>
+          {usina.dados ? <Selo tom={usina.dados.tom}>{usina.dados.situacao}</Selo> : null}
+          {/* o mapa logo no início (o dono, 24/11/2026: "um thumbnail, e aí abre e vê o mapa") */}
+          <MiniaturaDoMapa key={idUsina} usinaId={idUsina} />
+        </>
+      }
     >
       <Tela4Estados leitura={usina}>
         {(u: UsinaDetalhe) => (

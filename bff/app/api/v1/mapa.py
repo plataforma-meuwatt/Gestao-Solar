@@ -158,6 +158,30 @@ def listar(db: Session = Depends(get_db), user: User = Depends(quem_abre)) -> li
             for u in usinas_do_mapa(db, user)]
 
 
+@router.get("/usinas/{usina_id}/posicao")
+async def posicao_da_usina(usina_id: int, db: Session = Depends(get_db), user: User = Depends(quem_abre)) -> dict:
+    """Só o pino e o contorno da usina, para a miniatura do Painel (24/11/2026, o dono: "um thumbnail, e aí abre e vê o
+    mapa"): uma leitura leve, sem os objetos, o voo e o estado. Sem posição, `aviso` diz por quê."""
+    link = _usina(db, user, usina_id)
+    base = {"latitude": None, "longitude": None, "area_poligono": None, "aviso": None}
+    if link.mp_usina_id is None:
+        return {**base, "aviso": f"Esta usina ainda não está ligada ao {MANUTENCAO}: o mapa dela ainda não existe."}
+    from app.services.vinculos import SemConexao, cliente_meuplano
+    try:
+        cliente = cliente_meuplano(db, user.id)
+    except SemConexao as exc:
+        return {**base, "aviso": str(exc) if user.perfil in _O_E_M else "O mapa desta usina não pôde ser lido agora."}
+    db.commit()                                            # solta a conexão enquanto o meuPlano responde
+    try:
+        u = await cliente.usina(link.mp_usina_id)
+    except httpx.HTTPError as exc:
+        return {**base, "aviso": _do_upstream(exc, MANUTENCAO).detail}
+    contorno = [p for p in (u.get("area_poligono") or []) if isinstance(p, list) and len(p) >= 2]
+    if u.get("latitude") is None and not contorno:
+        return {**base, "aviso": "Sem a posição da usina no cadastro: marque no mapa."}
+    return {**base, "latitude": u.get("latitude"), "longitude": u.get("longitude"), "area_poligono": contorno or None}
+
+
 @router.get("/usinas/{usina_id}")
 async def mapa_da_usina(usina_id: int, db: Session = Depends(get_db), user: User = Depends(quem_abre)) -> dict:
     """O mapa: o pino e o contorno da usina, o voo, cada equipamento marcado (com o nó do meuPlano que ele é) e se esta

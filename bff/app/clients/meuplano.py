@@ -817,6 +817,10 @@ class MeuPlanoClient:
         tipo e local — lá não se adivinha qual é."""
         return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/equipamentos/pelo-nome", nome=nome)
 
+    async def usina(self, usina_id: int) -> dict[str, Any]:
+        """Uma usina: o cadastro, com o pino (`latitude`, `longitude`) e o contorno (`area_poligono`, [[lat, lng], ...])."""
+        return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}")
+
     async def mapa_da_usina(self, usina_id: int) -> dict[str, Any]:
         """O mapa da usina como o meuPlano o mostra: o pino e o contorno, o voo e os objetos do mapa do meuWatt, cada um
         ligado ao nó da árvore (`node_id`) — com o `aviso` quando o meuWatt recusou ou caiu."""

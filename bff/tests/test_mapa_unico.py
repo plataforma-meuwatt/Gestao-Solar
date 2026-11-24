@@ -373,3 +373,38 @@ async def test_desenhar_so_com_o_mapa_lido_e_o_monitoramento_da_mesma_usina(db, 
     c["clientes"][(c["gerente"].id, False)].mapa_da_usina = com_aviso
     r = await rotas.mapa_da_usina(c["pereiras"].id, db, c["gerente"])
     assert "não foi lido" in r["edicao"]["monitoramento"]
+
+
+async def test_a_posicao_da_miniatura_e_leve_e_diz_por_que_falta(db, cenario, monkeypatch):
+    """A miniatura do Painel (24/11/2026) lê só o pino e o contorno; sem eles, o porquê — nunca uma caixa vazia muda."""
+    c = cenario
+    lido = {}
+
+    async def usina(self, usina_id):
+        lido["usina"] = usina_id
+        return {"id": usina_id, "latitude": -21.7, "longitude": -48.8,
+                "area_poligono": [[-21.7, -48.8], [-21.71, -48.81], ["lixo"], [-21.72, -48.8]]}
+    monkeypatch.setattr(_MeuPlano, "usina", usina, raising=False)
+    r = await rotas.posicao_da_usina(c["pereiras"].id, db, c["dono"])
+    assert lido["usina"] == 4 and (r["latitude"], r["longitude"], r["aviso"]) == (-21.7, -48.8, None)
+    assert r["area_poligono"] == [[-21.7, -48.8], [-21.71, -48.81], [-21.72, -48.8]]
+    with pytest.raises(HTTPException) as e:                              # a de outra empresa: 404, como o mapa
+        await rotas.posicao_da_usina(c["vizinha"].id, db, c["dono"])
+    assert e.value.status_code == 404
+
+    async def sem_posicao(self, usina_id):
+        return {"id": usina_id, "latitude": None, "longitude": None, "area_poligono": []}
+    monkeypatch.setattr(_MeuPlano, "usina", sem_posicao, raising=False)
+    r = await rotas.posicao_da_usina(c["pereiras"].id, db, c["gerente"])
+    assert r["latitude"] is None and r["aviso"] == "Sem a posição da usina no cadastro: marque no mapa."
+
+    async def fora(self, usina_id):
+        raise httpx.ConnectError("fora")
+    monkeypatch.setattr(_MeuPlano, "usina", fora, raising=False)
+    r = await rotas.posicao_da_usina(c["pereiras"].id, db, c["gerente"])
+    assert r["latitude"] is None and r["aviso"]                         # o serviço fora vira o porquê, não "sem posição"
+    assert "posição" not in r["aviso"]
+    c["pereiras"].mp_usina_id = None
+    db.commit()
+    r = await rotas.posicao_da_usina(c["pereiras"].id, db, c["gerente"])
+    assert "ainda não está ligada" in r["aviso"]
