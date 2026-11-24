@@ -9,6 +9,12 @@
  *   gera as asserções dos produtos (nenhuma tela do GS a aceita), dura 30 dias e se renova a cada uso. Assim a pessoa
  *   não digita a senha de novo ("não quero fazer login, já estou autenticado via Gestão", o dono, 12/11/2026).
  * Nos dois, a asserção vai no fragmento, e a `volta` só pode ser do produto: quem confere é o BFF.
+ *
+ * Desde 24/11/2026 ("Plano Casa GS": GS é o pai) a entrada é dos QUATRO sistemas (meuWatt, meuPlano, meuGuarda e
+ * TermoVision), entra-se pelo login OU pelo e-mail, e há a JANELINHA: o sistema abre esta página com `&janela=1`
+ * (`window.open`) e, em vez de navegar, ela entrega o passe à página que a abriu (`postMessage` só para a origem da
+ * `volta`, que o BFF já conferiu) e fecha. Sem a página que abriu (janela bloqueada, link aberto direto), segue como
+ * sempre: navega para a `volta`. O contrato está em `docs/CONTRATO_PASSE.md`.
  */
 
 import { useEffect, useState, type FormEvent } from 'react'
@@ -19,10 +25,38 @@ import { LockupGS } from '@/components/marca'
 import { api, mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
-const NOME: Record<string, string> = { meuguarda: 'meuGuarda', termovision: 'TermoVision' }
+const NOME: Record<string, string> = {
+  meuwatt: 'meuWatt',
+  meuplano: 'meuPlano',
+  meuguarda: 'meuGuarda',
+  termovision: 'TermoVision',
+}
 const CHAVE = 'gs_entrada'
 
 type Resposta = { url: string; entrada?: string | null }
+
+/** Na janelinha, o passe vai à página que a abriu (só à origem da `volta`) e a janela fecha; fora dela, navega. */
+export function seguir(
+  url: string,
+  produto: string,
+  janela: boolean,
+  ir: (u: string) => void = (u) => window.location.replace(u),
+) {
+  if (janela && window.opener) {
+    try {
+      const destino = new URL(url)
+      const assercao = new URLSearchParams(destino.hash.slice(1)).get('assercao')
+      if (assercao) {
+        window.opener.postMessage({ tipo: 'gs-passe', produto, assercao }, destino.origin)
+        window.close()
+        return
+      }
+    } catch {
+      /* endereço estranho: segue pela navegação, que o BFF já conferiu */
+    }
+  }
+  ir(url)
+}
 
 function lerEntrada(): string | null {
   try {
@@ -47,7 +81,9 @@ export default function EntrarNoProduto() {
   const token = useAuth((s) => s.token)
   // a sessão do portal (dono de usina) ou, sem ela, a de ENTRADA guardada aqui
   const [entrada, setEntrada] = useState(lerEntrada)
-  const volta = new URLSearchParams(local.search).get('volta') ?? ''
+  const busca = new URLSearchParams(local.search)
+  const volta = busca.get('volta') ?? ''
+  const janela = busca.get('janela') === '1'
   const nome = NOME[produto]
   const [erro, setErro] = useState('')
   const [apelido, setApelido] = useState('')
@@ -61,7 +97,7 @@ export default function EntrarNoProduto() {
       .post<Resposta>(caminho, { volta }, token ? undefined : { headers: { Authorization: `Bearer ${entrada}` } })
       .then((r) => {
         if (r.data.entrada) gravarEntrada(r.data.entrada)
-        window.location.replace(r.data.url)
+        seguir(r.data.url, produto, janela)
       })
       .catch((e) => {
         if (!token && (e as { response?: { status?: number } })?.response?.status === 401) {
@@ -71,7 +107,7 @@ export default function EntrarNoProduto() {
         }
         setErro(mensagemDeErro(e))
       })
-  }, [caminho, nome, token, entrada, volta])
+  }, [caminho, nome, token, entrada, volta, produto, janela])
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
@@ -80,7 +116,7 @@ export default function EntrarNoProduto() {
     try {
       const r = await api.post<Resposta>(`${caminho}/com-senha`, { apelido: apelido.trim(), senha, volta })
       gravarEntrada(r.data.entrada)
-      window.location.replace(r.data.url)
+      seguir(r.data.url, produto, janela)
     } catch (x) {
       setErro(mensagemDeErro(x))
       setEntrando(false)
@@ -123,7 +159,7 @@ export default function EntrarNoProduto() {
           ) : null}
           <div>
             <label className="rotulo-campo" htmlFor="apelido">
-              Apelido
+              Login ou e-mail
             </label>
             <input
               id="apelido"
@@ -134,7 +170,7 @@ export default function EntrarNoProduto() {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="seu.apelido"
+              placeholder="seu.login ou voce@empresa.com"
               autoFocus
               required
             />

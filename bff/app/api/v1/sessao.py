@@ -13,7 +13,7 @@ serve dado**; o que ela faz é dizer quem está falando.
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -117,7 +117,7 @@ class TrocaOut(BaseModel):
 
 @router.post("/trocar", response_model=TrocaOut)
 def trocar(
-    body: TrocaIn, db: Session = Depends(get_db), usuario: User = Depends(sessao_atual)
+    body: TrocaIn, db: Session = Depends(get_db), usuario: User = Depends(sessao_atual), request: Request = None
 ) -> TrocaOut:
     """Emite a sessão do outro papel da MESMA pessoa.
 
@@ -125,7 +125,24 @@ def trocar(
     dela. Derrubá-la seria impedir o caso que motivou tudo isto — o painel da plataforma
     aberto numa aba e o da empresa em outra.
     """
-    destino = pessoas.trocar(db, usuario, body.apelido, body.senha)
+    from app.services import acessos
+    alvo = (body.apelido or "").strip().lower()
+    chave = f"papel:{usuario.id}"                          # por conta (e lugar), não por alvo: sondar nomes não cria chaves
+    if acessos.barrado(request, chave, por_ip=False):      # a senha de subir para a plataforma também tem limite
+        if acessos._uma_vez(f"{chave}|barrado"):
+            acessos.registrar(db, request, acao="recusado", user=usuario, ok=False,
+                              motivo=f"troca de papel para {alvo}: bloqueada, 10 senhas erradas em 15 min")
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, acessos.BARRADO)
+    try:
+        destino = pessoas.trocar(db, usuario, body.apelido, body.senha)
+    except HTTPException as e:
+        acessos.contar_erro(request, chave)                # 404 (conta que não é dela) também conta, sem linha
+        if e.status_code == status.HTTP_401_UNAUTHORIZED:  # só a senha errada entra no registro
+            acessos.registrar(db, request, acao="recusado", user=usuario, ok=False,
+                              motivo=f"troca de papel para {alvo}: senha errada")
+        raise
+    acessos.registrar(db, request, acao="entrou", user=destino,
+                      motivo=f"trocou de papel, vindo de {usuario.apelido} ({pessoas.escopo_do_perfil(destino.perfil)})")
     token, expira = pessoas.emitir(destino)
     return TrocaOut(
         token=token,
@@ -145,7 +162,7 @@ class SenhaIn(BaseModel):
 
 @router.post("/senha", status_code=204)
 def trocar_a_propria_senha(
-    body: SenhaIn, db: Session = Depends(get_db), usuario: User = Depends(sessao_atual)
+    body: SenhaIn, db: Session = Depends(get_db), usuario: User = Depends(sessao_atual), request: Request = None
 ) -> None:
     """Trocar a PRÓPRIA senha, venha a sessão do portão que vier.
 
@@ -178,6 +195,8 @@ def trocar_a_propria_senha(
     # tela do painel continuaria sendo empurrada para a troca no aplicativo.
     usuario.trocar_senha = False
     db.commit()
+    from app.services import acessos
+    acessos.registrar(db, request, acao="senha", user=usuario, motivo="trocou a própria senha")
 
 
 # ── um usuário em mais de uma empresa ───────────────────────────────────────
@@ -251,18 +270,9 @@ def trocar_de_empresa(
 # asserção no FRAGMENTO (`#assercao=`), como o `entrar_no_produto` do meuWatt e do meuPlano. Mora aqui porque é a rota
 # que atravessa os portões e não devolve dado: só diz QUEM está falando — e de qual portão.
 
-#: Para onde a asserção de cada produto pode ir. Lista FIXA: um `volta` livre seria redirecionamento aberto, e a
-#: asserção (dois minutos, uso único) iria parar no site de quem montou o link.
-VOLTAS = {
-    "meuguarda": ("meuGuarda", frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
-    # O meuGuarda também recebe a do TermoVision (12/11/2026, pedido do meuGuarda pela queixa do dono: "já estamos no
-    # Gestão Solar justamente para centralizar e tu me pede senha"): o botão "Importar do TermoVision" do mapa leva a
-    # pessoa por aqui, e o servidor do meuGuarda usa a asserção UMA vez para copiar o orto e sai. É a exceção consciente
-    # à regra de um produto não reapresentar a asserção no outro (`login_externo.AUDIENCIA`): os dois são da família e a
-    # pessoa clicou. Só nesta direção, só para os endereços do meuGuarda.
-    "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech",
-                                              "meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
-}
+#: Para onde o passe de cada sistema pode ir, e o nome que a tela mostra: a lista mora em `login_externo.SISTEMAS`
+#: (fixa: um `volta` livre seria redirecionamento aberto, e o passe iria parar no site de quem montou o link).
+from app.services.login_externo import SISTEMAS as VOLTAS  # noqa: E402
 
 
 def _volta(produto: str, volta: str) -> str:
@@ -302,10 +312,21 @@ def _conta_do_portao(cred: HTTPAuthorizationCredentials | None, db: Session) -> 
 
 
 def _entradas() -> dict[str, str]:
-    """Onde cada produto recebe a asserção (o botão dos portões manda para cá, já logado)."""
-    s = get_settings()
-    return {"meuguarda": f"{s.meuguarda_web_url.rstrip('/')}/",
-            "termovision": f"{s.termovision_web_url.rstrip('/')}/entrar.html"}
+    """Onde cada sistema recebe o passe (os botões dos portões mandam para cá, já logado)."""
+    from app.services.login_externo import entradas
+    return entradas()
+
+
+def _passe(db: Session, usuario: User, produto: str, portao: str, empresa: int | None) -> str:
+    """O passe daquele sistema: o meuWatt e o meuPlano pela asserção de sempre (`assinar`), o meuGuarda e o
+    TermoVision pela do login (`assinar_login`); os quatro com o passe v2 (login, perfil, empresa e usinas)."""
+    from app.models.integracao import Produto
+    from app.services import login_externo
+
+    if produto in login_externo.SO_LOGIN:
+        meuplano_id = login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None
+        return login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id, db=db)
+    return login_externo.assinar(usuario, Produto(produto), db=db, empresa_id=empresa)
 
 
 class ProdutoOut(BaseModel):
@@ -322,9 +343,8 @@ def produtos_da_sessao(
     """Os produtos que esta pessoa abre pelo Gestão Solar (o gerente liberou): os botões dos três portões."""
     usuario, _ = _conta_do_portao(cred, db)
     entradas = _entradas()
-    return [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p])
-            for p, liberado in (("meuguarda", usuario.entra_no_meuguarda), ("termovision", usuario.entra_no_termovision))
-            if liberado]
+    from app.services.login_externo import liberados
+    return [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p]) for p in liberados(usuario)]
 
 
 class EntrarIn(BaseModel):
@@ -346,29 +366,28 @@ class EntrarComSenhaIn(BaseModel):
 
 
 @router.post("/{produto}/com-senha", response_model=EntrarOut)
-def entrar_no_produto_com_senha(produto: str, body: EntrarComSenhaIn, db: Session = Depends(get_db)) -> EntrarOut:
+def entrar_no_produto_com_senha(produto: str, body: EntrarComSenhaIn, db: Session = Depends(get_db),
+                                request: Request = None) -> EntrarOut:
     """A entrada ÚNICA do produto, para QUALQUER conta (equipe da O&M, dono de usina, plataforma), em
     `gestao.solar/entrar/<produto>` sem sessão: o apelido e a senha do GS, e a asserção já na `volta`. Pedido do dono
     (pelo TermoVision, 11/11/2026): "no final é tudo o mesmo login: a tela principal deve aceitar todos". O portão vem
     do perfil, como na tela de entrar do próprio produto (`auth.assercao_para_produto`)."""
     from app.core.security import _empresa_ativa
-    from app.services import login_externo, pessoas
+    from app.services import acessos, login_externo, pessoas
 
     if produto not in VOLTAS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     volta = _volta(produto, body.volta)
-    usuario = db.scalar(select(User).where(User.apelido == (body.apelido or "").strip().lower()))
-    if usuario is None or not usuario.ativo or not conferir_senha(body.senha, usuario.senha_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+    usuario = acessos.entrar_ou_recusar(db, request, body.apelido, body.senha, sistema=produto)  # login ou e-mail
     _empresa_ativa(db, usuario)
     try:
-        assercao = login_externo.assinar_login(
-            usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id,
-            login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None)
+        assercao = _passe(db, usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id)
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
+    acessos.registrar(db, request, acao="passe", sistema=produto, user=usuario, login=body.apelido,
+                      motivo="entrada do GS com login e senha")
     entrada, expira = criar_token_entrada(usuario.id)
     return EntrarOut(url=f"{volta}#assercao={assercao}", entrada=entrada, entrada_expira_em=expira)
 
@@ -379,21 +398,23 @@ def entrar_no_produto(
     body: EntrarIn,
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> EntrarOut:
     """A asserção do produto (meuGuarda, TermoVision) para quem está logado aqui, no endereço de volta dele. Declarada
     por ÚLTIMO neste arquivo: as rotas fixas de cima (`/trocar`, `/senha`…) vêm antes dela."""
-    from app.services import login_externo
+    from app.services import acessos, login_externo
 
     if produto not in VOLTAS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     volta = _volta(produto, body.volta)
     usuario, portao = _conta_do_portao(cred, db)
     empresa = getattr(usuario, "empresa_da_sessao", None) or usuario.empresa_id
-    meuplano_id = login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None
     try:
-        assercao = login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id)
+        assercao = _passe(db, usuario, produto, portao, empresa)
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    acessos.registrar(db, request, acao="passe", sistema=produto, user=usuario,
+                      motivo=f"já dentro do GS ({'entrada do gestao.solar' if _escopo(cred) == 'entrada' else portao})")
     if _escopo(cred) == "entrada":                          # renova: 30 dias a partir do último uso
         entrada, expira = criar_token_entrada(usuario.id)
         return EntrarOut(url=f"{volta}#assercao={assercao}", entrada=entrada, entrada_expira_em=expira)

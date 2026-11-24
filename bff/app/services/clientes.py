@@ -104,6 +104,8 @@ def regenerar_senha(db: Session, cliente: User, gerada_por: User) -> str:
     cliente.trocar_senha = True
     db.add(SenhaProvisoria(gs_user_id=cliente.id, gerada_por=gerada_por.id))
     db.commit()
+    from app.services import acessos
+    acessos.senha_redefinida(db, cliente, gerada_por, "senha provisória nova")
     return senha
 
 

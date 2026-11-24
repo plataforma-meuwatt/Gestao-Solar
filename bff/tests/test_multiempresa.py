@@ -186,7 +186,7 @@ def test_uma_porta_de_login_entrega_o_token_do_portao_certo(db, carteiras, admin
         with pytest.raises(HTTPException) as erro:
             entrar(EntrarIn(apelido=apelido, senha=senha), db=db)
         assert erro.value.status_code == 401
-        assert erro.value.detail == "Apelido ou senha inválidos"
+        assert erro.value.detail == "Login ou senha inválidos"
 
 
 # ------------------------------------------------------------------- o cadastro
@@ -1162,7 +1162,7 @@ def test_cliente_no_painel_ouve_ONDE_entrar_e_nao_senha_invalida(db, carteiras, 
     with pytest.raises(HTTPException) as erro:
         entrar(EntrarIn(apelido="dona.usina", senha="chute"), db=db)
     assert erro.value.status_code == 401
-    assert erro.value.detail == "Apelido ou senha inválidos"
+    assert erro.value.detail == "Login ou senha inválidos"
 
 
 async def test_o_gerente_ve_a_carteira_inteira_sem_concessao(db, carteiras, duas_empresas):

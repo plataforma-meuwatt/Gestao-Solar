@@ -16,22 +16,49 @@ import { entrarNoProduto } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
-const NOME: Record<string, string> = { meuguarda: 'meuGuarda', termovision: 'TermoVision' }
+const NOME: Record<string, string> = {
+  meuwatt: 'meuWatt',
+  meuplano: 'meuPlano',
+  meuguarda: 'meuGuarda',
+  termovision: 'TermoVision',
+}
+
+/** A janelinha (24/11/2026, "Plano Casa GS"): aberta pelo sistema com `&janela=1`, entrega o passe à página que a abriu
+ *  (só à origem da `volta`, que o BFF conferiu) e fecha. Sem quem abriu, navega como sempre. Contrato:
+ *  `docs/CONTRATO_PASSE.md`. */
+function seguir(url: string, produto: string, janela: boolean) {
+  if (janela && window.opener) {
+    try {
+      const destino = new URL(url)
+      const assercao = new URLSearchParams(destino.hash.slice(1)).get('assercao')
+      if (assercao) {
+        window.opener.postMessage({ tipo: 'gs-passe', produto, assercao }, destino.origin)
+        window.close()
+        return
+      }
+    } catch {
+      /* endereço estranho: segue pela navegação */
+    }
+  }
+  window.location.replace(url)
+}
 
 export function EntrarNoProduto() {
   const token = useAuth((s) => s.token)
   const local = useLocation()
   const { produto = '' } = useParams()
-  const volta = new URLSearchParams(local.search).get('volta') ?? ''
+  const busca = new URLSearchParams(local.search)
+  const volta = busca.get('volta') ?? ''
+  const janela = busca.get('janela') === '1'
   const [erro, setErro] = useState('')
   const nome = NOME[produto]
 
   useEffect(() => {
     if (!token || !nome) return
     entrarNoProduto(produto, volta)
-      .then((r) => window.location.replace(r.url))
+      .then((r) => seguir(r.url, produto, janela))
       .catch((e) => setErro(mensagemDeErro(e)))
-  }, [token, produto, nome, volta])
+  }, [token, produto, nome, volta, janela])
 
   if (!token) return <Navigate to="/entrar" replace state={{ de: local.pathname + local.search }} />
   return (

@@ -51,7 +51,7 @@ export function Entrada() {
           {erro ? <Erro>{erro}</Erro> : null}
 
           <Campo
-            rotulo="Apelido"
+            rotulo="Login ou e-mail"
             autoComplete="username"
             // O apelido é sempre minúsculo. Corrigir a caixa aqui, e não só no envio,
             // evita a cena de digitar "Renan", ver "Renan" na tela e receber erro sem
@@ -60,7 +60,7 @@ export function Entrada() {
             onChange={(e) => setApelido(e.target.value.toLowerCase())}
             autoCapitalize="none"
             spellCheck={false}
-            placeholder="seu.apelido"
+            placeholder="seu.login ou voce@empresa.com"
             autoFocus
             required
           />

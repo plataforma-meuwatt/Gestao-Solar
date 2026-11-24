@@ -242,6 +242,8 @@ def redefinir_senha(
 
     membro.senha_hash = gerar_hash_senha(body.senha)
     db.commit()
+    from app.services import acessos
+    acessos.senha_redefinida(db, membro, _, "adm-gs, equipe da plataforma")
 
 
 # --------------------------------------------------------------------- pessoas
@@ -432,4 +434,7 @@ def editar_conta(
     if body.senha:
         conta.senha_hash = gerar_hash_senha(body.senha)
     db.commit()
+    if body.senha:
+        from app.services import acessos
+        acessos.senha_redefinida(db, conta, admin, "adm-gs, usuários")
     return next(c for c in todas_as_contas(db=db, admin=admin) if c.id == conta.id)

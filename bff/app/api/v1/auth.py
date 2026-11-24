@@ -14,7 +14,7 @@ conta da pessoa no meuWatt e no meuPlano, mas não serve para entrar: ver `core/
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -99,22 +99,16 @@ def _perfil(db: Session, usuario: User) -> UsuarioOut:
 
 
 @router.post("/login", response_model=LoginOut)
-def login(body: LoginIn, db: Session = Depends(get_db)) -> LoginOut:
-    usuario = db.scalar(
-        select(User).where(User.apelido == (body.apelido or "").strip().lower())
-    )
+def login(body: LoginIn, db: Session = Depends(get_db), request: Request = None) -> LoginOut:
+    from app.services import acessos
 
-    # Mensagem única para conta inexistente, senha errada e conta desativada — quem tenta
-    # adivinhar não aprende qual das três aconteceu.
-    if (
-        usuario is None
-        or not usuario.ativo
-        or not conferir_senha(body.senha, usuario.senha_hash)
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+    # o login ou o e-mail (24/11/2026); a frase única para conta inexistente, senha errada e conta desativada — quem
+    # tenta adivinhar não aprende qual das três aconteceu. O motivo vai só ao registro de acessos.
+    usuario = acessos.entrar_ou_recusar(db, request, body.apelido, body.senha)
 
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
+    acessos.registrar(db, request, acao="entrou", user=usuario, login=body.apelido, motivo="aplicativo ou portal")
 
     token, expira = criar_token(usuario.id)
     return LoginOut(token=token, expira_em=expira, usuario=_perfil(db, usuario))
@@ -159,6 +153,7 @@ def trocar_senha(
     body: TrocarSenhaIn,
     db: Session = Depends(get_db),
     usuario: User = Depends(usuario_atual),
+    request: Request = None,
 ) -> None:
     """Fecha o ciclo da senha provisória entregue pelo gestor.
 
@@ -179,6 +174,8 @@ def trocar_senha(
     usuario.senha_hash = gerar_hash_senha(body.senha_nova)
     usuario.trocar_senha = False
     db.commit()
+    from app.services import acessos
+    acessos.registrar(db, request, acao="senha", user=usuario, motivo="trocou a própria senha")
 
 
 # ─────────────────────── entrar nos produtos com esta conta ───────────────────
@@ -227,7 +224,7 @@ class DestinoOut(BaseModel):
 
 @router.post("/produtos/{produto}/entrar", response_model=DestinoOut)
 def entrar_no_produto(
-    produto: Produto, db: Session = Depends(get_db), usuario: User = Depends(usuario_atual)
+    produto: Produto, db: Session = Depends(get_db), usuario: User = Depends(usuario_atual), request: Request = None
 ) -> DestinoOut:
     """O cliente já está logado AQUI e quer abrir o produto sem digitar nada de novo.
 
@@ -247,17 +244,19 @@ def entrar_no_produto(
     from app.services import login_externo
 
     try:
-        assercao = login_externo.assinar(usuario, produto)
+        assercao = login_externo.assinar(usuario, produto, db=db)
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    from app.services import acessos
+    acessos.registrar(db, request, acao="passe", sistema=produto.value, user=usuario, motivo="botão do portal")
     destino = _enderecos_web().get(produto) or ""
     return DestinoOut(url=f"{destino.rstrip('/')}/#assercao={assercao}", nome=NOME[produto])
 
 
 @router.post("/produtos/{produto}/assercao", response_model=AssercaoOut)
 def assercao_para_produto(
-    produto: str, body: AssercaoIn, db: Session = Depends(get_db)
+    produto: str, body: AssercaoIn, db: Session = Depends(get_db), request: Request = None
 ) -> AssercaoOut:
     """Confere a senha do Gestão Solar e assina quem é esta conta, para aquele produto.
 
@@ -273,35 +272,31 @@ def assercao_para_produto(
 
     if produto not in login_externo.SO_LOGIN and produto not in {p.value for p in Produto}:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
-    usuario = db.scalar(
-        select(User).where(User.apelido == (body.apelido or "").strip().lower())
-    )
-    # Mesma mensagem única do /login: quem tenta adivinhar não aprende qual dos três
-    # motivos aconteceu.
-    if (
-        usuario is None
-        or not usuario.ativo
-        or not conferir_senha(body.senha, usuario.senha_hash)
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+    from app.services import acessos
 
+    # Mesma régua e mesma frase do /login (o login ou o e-mail). O IP é o do servidor do produto, que chama por trás.
+    # o servidor do outro sistema chama esta rota: da casa, ele fica fora do limite por IP (`acessos._da_casa`); quem
+    # chama de fora tem os dois limites
+    usuario = acessos.entrar_ou_recusar(db, request, body.apelido, body.senha, sistema=produto)
+
+    # a empresa desligada não entra, em nenhum sistema (24/11/2026: antes o meuWatt e o meuPlano passavam)
+    from app.core.security import _empresa_ativa
+    _empresa_ativa(db, usuario)
     if produto in login_externo.SO_LOGIN:
         # O meuGuarda e o TermoVision (a tela de entrar deles, servidor a servidor: o TermoVision pediu, 11/11/2026, que
-        # o apelido e a senha do GS valham direto lá). A mesma asserção do redirecionamento, com o portão do perfil; a
-        # empresa desligada não entra, como nos portões.
-        from app.core.security import _empresa_ativa
+        # o apelido e a senha do GS valham direto lá). A mesma asserção do redirecionamento, com o portão do perfil.
         from app.services import pessoas
 
-        _empresa_ativa(db, usuario)
         try:
             assercao = login_externo.assinar_login(
                 usuario, produto, pessoas.escopo_do_perfil(usuario.perfil), usuario.empresa_id,
-                login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None)
+                login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None,
+                db=db)
         except login_externo.SemChave as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     else:
         try:
-            assercao = login_externo.assinar(usuario, Produto(produto))
+            assercao = login_externo.assinar(usuario, Produto(produto), db=db)
         except login_externo.SemChave as exc:
             # 503 e não 500: não é defeito, é uma instalação sem a chave configurada, e a
             # frase diz qual variável falta.
@@ -309,4 +304,6 @@ def assercao_para_produto(
 
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
+    acessos.registrar(db, request, acao="passe", sistema=produto, user=usuario, login=body.apelido,
+                      motivo="login e senha do GS na tela do sistema")
     return AssercaoOut(assertion=assercao, nome=usuario.nome)

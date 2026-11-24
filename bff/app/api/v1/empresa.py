@@ -1634,14 +1634,21 @@ async def editar_conta_da_empresa(
     tirar_do_meuguarda = body.meuguarda_liberado is False and conta.meuguarda_liberado
     if body.meuguarda_liberado is not None:             # antes da atuação: ligar os dois juntos vale
         cadastro.liberar_meuguarda(conta, body.meuguarda_liberado)
+    mudou_tv = body.termovision_liberado is not None and body.termovision_liberado != conta.termovision_liberado
     if body.termovision_liberado is not None:
         conta.termovision_liberado = body.termovision_liberado
     for campo in ("bot_meuplano", "bot_meuwatt", "bot_helper", "bot_meuguarda"):
         if getattr(body, campo) is not None:
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
+    if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
+        from app.services import acessos
+        acessos.senha_redefinida(db, conta, gerente, "oem-gs, usuários")
     if tirar_do_meuguarda:
         await _tirar_do_meuguarda(gerente, conta.apelido)
+    if mudou_tv:                       # a conta lá nasce, liga ou bloqueia junto (o TermoVision cria pelo GS)
+        from app.services import assistente_termovision
+        await assistente_termovision.provisionar(db, conta, conta.termovision_liberado)
 
     return UsuarioDetalhado(
         id=conta.id,

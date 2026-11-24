@@ -17,7 +17,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Conta from '@/features/conta/Pagina'
@@ -75,7 +75,10 @@ function montar() {
   return render(
     <QueryClientProvider client={cliente}>
       <MemoryRouter initialEntries={['/conta']}>
-        <Conta />
+        <Routes>
+          <Route path="/conta" element={<Conta />} />
+          <Route path="/" element={<p>Tela inicial</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -173,7 +176,9 @@ describe('tela Minha conta', () => {
     expect(screen.queryByText('Usinas que você enxerga')).toBeNull()
   })
 
-  it('204 troca a senha, libera o portal e confirma na tela', async () => {
+  it('204 troca a senha provisória, libera o portal e leva ao início', async () => {
+    // 22/11/2026: ficar em Minha conta mostrava outro cartão "Trocar senha" logo abaixo, e o Neimar entendeu que o
+    // portal pedia a senha nova de novo. Trocada a provisória, a pessoa vai para a tela inicial.
     useAuth.setState({ usuario: { ...USUARIO, trocar_senha: true } })
     responder([{ ...USUARIO, trocar_senha: true }, { ...USUARIO, trocar_senha: false }])
     const post = vi.spyOn(api, 'post').mockResolvedValue({ status: 204, data: '' })
@@ -182,14 +187,12 @@ describe('tela Minha conta', () => {
     preencher('provisoria', 'senha-nova-boa', 'senha-nova-boa')
     fireEvent.click(botaoTrocar())
 
-    expect(await screen.findByText('Senha trocada. Use a senha nova no próximo acesso.')).toBeTruthy()
+    expect(await screen.findByText('Tela inicial')).toBeTruthy()
     expect(post).toHaveBeenCalledWith('/api/v1/auth/trocar-senha', {
       senha_atual: 'provisoria',
       senha_nova: 'senha-nova-boa',
     })
     expect(useAuth.getState().usuario?.trocar_senha).toBe(false)
-    // Liberado: os cartões normais voltam à tela.
-    expect(screen.getByText('Usinas que você enxerga')).toBeTruthy()
   })
 
   it('se o perfil não puder ser relido depois do 204, a marca cai mesmo assim', async () => {
