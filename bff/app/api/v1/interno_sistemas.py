@@ -117,6 +117,8 @@ class UsinaDoGS(BaseModel):
     codigo: str
     nome: str
     empresa: str | None = None
+    #: o número da empresa de O&M dona da usina no GS (o `empresa_id` do passe)
+    empresa_id: int | None = None
     #: a MESMA usina em cada sistema (nulo = não está lá)
     meuwatt: RefMeuWatt | None = None
     meuplano: RefMeuPlano | None = None
@@ -138,7 +140,7 @@ def codigo(gs: int) -> str:
 def saida(db: Session, u: PlantLink) -> UsinaDoGS:
     e = db.get(Empresa, u.empresa_id) if u.empresa_id else None
     return UsinaDoGS(
-        gs=u.id, codigo=codigo(u.id), nome=u.nome, empresa=e.nome if e else None,
+        gs=u.id, codigo=codigo(u.id), nome=u.nome, empresa=e.nome if e else None, empresa_id=u.empresa_id,
         meuwatt=RefMeuWatt(slug=u.mw_plant_slug) if u.mw_plant_slug else None,
         meuplano=RefMeuPlano(id=u.mp_usina_id) if u.mp_usina_id is not None else None,
         termovision=RefTermoVision(codigo=u.tv_codigo) if u.tv_codigo else None,

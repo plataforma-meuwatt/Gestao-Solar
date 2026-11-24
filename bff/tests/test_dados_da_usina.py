@@ -197,4 +197,9 @@ def test_o_numero_no_nome_separa_usinas(db, c):
     assert acha("UFV Stuqui") == ["Stuqui - UFV 1 - Loja"]               # sem número de um lado: o gerente decide
     assert acha("Stuqui - UFV 4 - Elias") == []
     assert acha("Mairinque 205") == ["Mairinque"]
+    db.add_all([PlantLink(nome="Bady Bassit 2", empresa_id=c["a"].id), PlantLink(nome="Porto Ferreira", empresa_id=c["a"].id)])
+    db.commit()
+    assert acha("Bady 2 (Solarorto)") == ["Bady Bassit 2"]              # a mesma palavra e o mesmo número
+    assert acha("Bady 1") == []
+    assert acha("Porto Feliz") == []                                     # uma palavra igual sem número não basta
     assert acha("ibitinga") == ["UFV Ibitinga"]

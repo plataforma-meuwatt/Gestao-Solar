@@ -127,9 +127,13 @@ def parecidas(db: Session, empresa_id: int, nome: str, latitude: float | None = 
         # dois lados e diferente, o nome não as aproxima (a distância ainda pode)
         numeros = (set(re.findall(r"\d+", alvo)), set(re.findall(r"\d+", outro)))
         outro_numero = all(numeros) and numeros[0] != numeros[1]
+        # a mesma palavra marcante e o mesmo número ("Bady 2 (Solarorto)" e "Bady Bassit 2")
+        mesma_e_numero = (all(numeros) and numeros[0] == numeros[1]
+                          and bool({p for p in alvo.split() if len(p) >= 4 and not p.isdigit()}
+                                   & {p for p in outro.split() if len(p) >= 4 and not p.isdigit()}))
         por_nome = bool(alvo and outro) and not outro_numero and (
             alvo == outro or (min(len(alvo), len(outro)) >= 4 and (alvo in outro or outro in alvo))
-            or difflib.SequenceMatcher(None, alvo, outro).ratio() >= 0.85)
+            or mesma_e_numero or difflib.SequenceMatcher(None, alvo, outro).ratio() >= 0.85)
         km = (distancia_km((latitude, longitude), (u.latitude, u.longitude))
               if None not in (latitude, longitude, u.latitude, u.longitude) else None)
         if por_nome or (km is not None and km <= PERTO_KM):
