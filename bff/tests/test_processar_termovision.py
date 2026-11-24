@@ -152,3 +152,21 @@ def test_processar_leva_as_strings_do_meuwatt_inteiras(monkeypatch):
          [-46.1, -22]]]}, "slot_id": 45, "inversor": "Inv 13", "entrada": 22}]
     assert "1 novas" in texto
     helper.PENDENTES.clear()
+
+
+@respx.mock
+def test_usina_pronta_manda_o_link_e_so_refaz_quando_pedem(monkeypatch):
+    ctx = _ctx(monkeypatch)
+    respx.post(f"{B}/api/conta/gs").respond(200)
+    respx.get(f"{B}/api/processar/opcoes").respond(200, json={
+        **OPC, "usina": {"nome": "Ibitinga", "codigo": "zy"}, "usinas_com_o_nome": 1, "no_envio": {"arquivos": 0},
+        "ultimo": {"estado": "concluido", "link_final": "/v/tvv_1", "status_url": f"{B}/p/tvp_1"}})
+    r = asyncio.run(tv.processar_usina(ctx, {"usina": "ibitinga"}))
+    assert r["link"] == f"{B}/v/tvv_1" and ctx.proposta is None
+    pedido = respx.post(f"{B}/api/processar").respond(201, json={"token": "t", "status_url": "u", "usina": {}})
+    asyncio.run(tv.processar_usina(ctx, {"usina": "ibitinga", "refazer": True}))
+    assert ctx.proposta.resumo.startswith("REFAZER Ibitinga")
+    asyncio.run(ctx.proposta.executar(ctx.db, ctx.user, "1"))
+    import json
+    assert json.loads(pedido.calls[0].request.content)["refazer"] is True
+    helper.PENDENTES.clear()

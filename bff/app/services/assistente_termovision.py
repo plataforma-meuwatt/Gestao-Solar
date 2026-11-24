@@ -115,13 +115,21 @@ async def processar_usina(ctx, a: dict) -> dict:
     if not usina and not envio.get("arquivos"):
         return {"erro": f"Não achei a usina nem a pasta '{pasta}' no drive de envio do TermoVision. As fotos vão numa "
                         f"pasta com o nome da usina, no drive de envio da empresa; depois é só pedir de novo."}
+    ultimo, refazer = o.get("ultimo") or {}, bool(a.get("refazer"))
+    if usina and not envio.get("arquivos") and ultimo.get("estado") == "concluido" and not refazer:
+        # 24/11/2026: o "Processar" de uma usina já pronta reabria tudo (horas de PC). Pronta, manda o link;
+        # refazer só quando a pessoa pede.
+        link = f"{_base()}{ultimo['link_final']}" if ultimo.get("link_final") else ultimo.get("status_url") or ""
+        return {"ja_pronta": True, "usina": usina["nome"], "link": link,
+                "instrucao": "Diga que já está pronta e mande o link. Só refaça (refazer=true) se a pessoa pedir."}
     dona = None
     if not usina:
         dona, erro = _dona(o, a.get("dona"))
         if erro:
             return {"erro": erro, "empresas": [e["nome"] for e in o.get("empresas") or []]}
     nome = (usina or {}).get("nome") or pasta
-    resumo = f"Processar {nome} no TermoVision" + ("" if usina else f" (usina NOVA, de {dona['nome']})")
+    resumo = (f"REFAZER {nome} inteira no TermoVision (leva horas nos PCs)" if refazer else
+              f"Processar {nome} no TermoVision" + ("" if usina else f" (usina NOVA, de {dona['nome']})"))
     detalhes = [f"{envio.get('arquivos')} arquivo(s) novos no drive de envio" if envio.get("arquivos") else "Nenhuma foto nova no drive de envio",
                 "Organiza as fotos, roda os ortomosaicos e o mapa de temperatura nos PCs (pode levar horas)",
                 "Mando o link do andamento agora e aviso a cada etapa"]
@@ -129,7 +137,7 @@ async def processar_usina(ctx, a: dict) -> dict:
     detalhes.append(f"Leva as {len(strings)} strings do mapa do meuWatt (a lista inteira: as que vieram de lá e "
                     "sumiram saem)" if strings else f"Sem as strings do meuWatt: {sem}")
     corpo = {"pasta": pasta, "avisar_url": get_settings().gs_api_publica.rstrip("/") + AVISO,
-             **({"dona": dona["id"]} if dona else {})}
+             **({"dona": dona["id"]} if dona else {}), **({"refazer": True} if refazer else {})}
 
     async def executar(db, user, telefone: str) -> str:
         async with httpx.AsyncClient(timeout=60) as c:
@@ -222,7 +230,9 @@ FERRAMENTA = {"type": "function", "function": {
                     "a ferramenta pede a dona; pergunte e chame de novo com `dona`."),
     "parameters": {"type": "object", "properties": {
         "usina": {"type": "string", "description": "o nome como a pessoa disse (a pasta no drive de envio)"},
-        "dona": {"type": "string", "description": "a empresa dona da usina NOVA, só quando a ferramenta pedir"}},
+        "dona": {"type": "string", "description": "a empresa dona da usina NOVA, só quando a ferramenta pedir"},
+        "refazer": {"type": "boolean", "description": "true SÓ quando a pessoa pede para refazer/reprocessar uma usina "
+                                                     "que já está pronta"}},
         "required": ["usina"]}}}
 
 async def strings_ao_termovision(ctx, a: dict) -> dict:
