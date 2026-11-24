@@ -97,3 +97,36 @@ TermoVision aceitam; acima de 4.000 caracteres de lista o GS manda `usinas_fora`
   O app do celular (meuPlano) e o app do PC (TermoVision) também.
 - **meuWatt:** guarda o login próprio e ganha o botão.
 - **meuGuarda:** já é só o GS; ganha a janelinha.
+
+## A volta conferida ao abrir
+
+A página `gestao.solar/entrar/<sistema>` chama `GET /api/sessao/<sistema>/volta?volta=<endereço>` ao abrir: com um
+endereço que não é do sistema (204 = é; 400 = não é), ela mostra só o erro, sem o formulário. Só o 400 barra: a
+rede que falhou não tranca ninguém. O painel (oem-gs, adm-gs) faz o mesmo antes de mandar ao login. A conferência que vale
+continua sendo a da entrega do passe (as rotas que emitem o passe recusam a volta estranha antes de olhar a senha).
+
+## O mapa do TermoVision e as usinas do GS ("Enviar ao GS", servidor a servidor)
+
+O mapa mora no TermoVision; o GS guarda só o vínculo (`gs_plant_links.tv_codigo`, um código por usina e uma usina por
+código). Ainda nenhuma tela do GS lê o mapa do TermoVision: isso vem com o `/embutir` (fase 3 do plano).
+
+Quem chama é o servidor do TermoVision, com `X-Sistema: termovision` e `X-Chave-Interna` (a mesma chave do repasse do
+login; sem ela configurada no GS, 503), em nome de quem está com a tela aberta: `X-Usuario-GS` (o `sub` do passe dela)
+e `X-Empresa-GS` (o `empresa_id` do passe; sem ele, vale a empresa de origem da pessoa). A chave sozinha não basta:
+- a pessoa tem de ter entrado no TermoVision pelo GS nas últimas 12 h, ela mesma (pela janelinha, pelo botão ou pela
+  tela de vocês): a entrada que o bot e o conector do GS fazem por ela não conta. Sem isso, 403 "entre de novo pelo GS";
+- só a equipe da O&M (gerente e técnico) usa estas rotas, inclusive o GET; o dono e a plataforma recebem 403;
+- `X-Empresa-GS` tem de ser uma empresa ativa da pessoa (o GS confere contra as empresas dela, não contra o passe).
+
+Pessoa (inexistente, desativada, sem o TermoVision), empresa ou usina que não serve: 404 com a mesma frase. A lista e o
+ligar valem para as usinas ativas; o desligar vale também para a usina desativada no GS (o mapa não fica preso).
+
+- `GET /api/v1/interno/usinas[?ids=12,15]` → `[{gs, nome, empresa, meuwatt: {slug} | null, meuplano: {id} | null,
+  termovision: {codigo} | null, cidade, uf, endereco, latitude, longitude}]`. `ids` sem nenhum número válido = `[]`.
+- `POST /api/v1/interno/usinas/<gs>/mapa {termovision: <código>}` → a usina, como no GET. O código tem de 1 a 40
+  letras, números, `-` ou `_`. Idempotente pelo valor (o mesmo código de novo responde o mesmo; `X-Pedido` não é
+  necessário). O mesmo mapa já ligado a outra usina, ou outro mapa já ligado a esta, é 409 (o nome da outra usina só
+  quando é da mesma empresa). Dois pedidos ao mesmo tempo: um grava, o outro recebe 409. Campos a mais no corpo
+  (`voo`, `camadas`) são ignorados: o GS não os guarda.
+- `DELETE /api/v1/interno/usinas/<gs>/mapa?termovision=<código>` → desliga (o "Desligar do GS"). Já desligada,
+  responde a usina (repetir não é erro); ligada a OUTRO código, 409.

@@ -635,6 +635,10 @@ export const trocarDePapel = (apelido: string, senha?: string) =>
 export type ProdutoDaSessao = { produto: string; nome: string; url: string }
 export const produtosDaSessao = () => sessao.get<ProdutoDaSessao[]>('/produtos').then((r) => r.data)
 
+/** A volta é deste sistema? 204 = é; 400 = não é (a página nem manda ao login). */
+export const conferirVolta = (produto: string, volta: string) =>
+  sessao.get(`/${encodeURIComponent(produto)}/volta`, { params: { volta } })
+
 /** A asserção do produto (meuGuarda, TermoVision) para a sessão deste portão, já no endereço de volta (`#assercao=`). */
 export const entrarNoProduto = (produto: string, volta: string) =>
   sessao.post<{ url: string }>(`/${encodeURIComponent(produto)}`, { volta }).then((r) => r.data)

@@ -46,3 +46,49 @@ describe('seguir', () => {
     expect(ir).toHaveBeenCalledWith(URL_COM_PASSE)
   })
 })
+
+// ── a volta conferida ao abrir (24/11/2026): só o 400 do servidor esconde o formulário ──────────────────────────────
+import { render, screen, waitFor } from '@testing-library/react'
+import { AxiosError, type AxiosResponse } from 'axios'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+
+import EntrarNoProduto from './Pagina'
+
+const leitura = vi.hoisted(() => ({ get: vi.fn() }))
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  api: { get: leitura.get, post: vi.fn() },
+}))
+
+function abrir(volta: string) {
+  render(
+    <MemoryRouter initialEntries={[`/entrar/meuplano?janela=1&volta=${encodeURIComponent(volta)}`]}>
+      <Routes>
+        <Route path="/entrar/:produto" element={<EntrarNoProduto />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+describe('a volta conferida ao abrir', () => {
+  afterEach(() => leitura.get.mockReset())
+
+  it('volta de outro endereço: só o erro, sem o formulário de senha', async () => {
+    leitura.get.mockRejectedValueOnce(
+      new AxiosError('x', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status: 400,
+        data: { detail: 'Esse endereço de volta não é do meuPlano.' },
+      } as AxiosResponse),
+    )
+    abrir('https://evil.example.com/x')
+    expect(await screen.findByText('Esse endereço de volta não é do meuPlano.')).toBeTruthy()
+    expect(document.getElementById('senha')).toBeNull()
+  })
+
+  it('a rede que falhou não tranca ninguém: o formulário fica', async () => {
+    leitura.get.mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'))
+    abrir('https://app.meuplano.solar/login')
+    await waitFor(() => expect(leitura.get).toHaveBeenCalledWith('/api/sessao/meuplano/volta', expect.anything()))
+    expect(document.getElementById('senha')).not.toBeNull()
+  })
+})

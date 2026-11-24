@@ -41,6 +41,13 @@ class PlantLink(Base):
     cidade: Mapped[str | None] = mapped_column(String(120), nullable=True)
     uf: Mapped[str | None] = mapped_column(String(2), nullable=True)
     kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Plano Casa GS (24/11/2026): os dados básicos da usina moram no GS (nome, endereço, coordenada) e o mapa mora no
+    #: TermoVision. `tv_codigo` é o código da usina lá, gravado pelo "Enviar ao GS" do TermoVision
+    #: (`api/v1/interno_termovision.py`); um código só por usina, e uma usina só por código.
+    tv_codigo: Mapped[str | None] = mapped_column(String(40), nullable=True, unique=True)
+    endereco: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

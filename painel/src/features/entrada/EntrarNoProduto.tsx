@@ -8,11 +8,12 @@
  * confere é o BFF (`api/v1/sessao.py`).
  */
 
+import axios from 'axios'
 import { useEffect, useState } from 'react'
 import { Navigate, useLocation, useParams } from 'react-router-dom'
 
 import { Erro } from '@/components/base'
-import { entrarNoProduto } from '@/features/api'
+import { conferirVolta, entrarNoProduto } from '@/features/api'
 import { mensagemDeErro } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 
@@ -51,21 +52,38 @@ export function EntrarNoProduto() {
   const volta = busca.get('volta') ?? ''
   const janela = busca.get('janela') === '1'
   const [erro, setErro] = useState('')
+  // a volta conferida ao abrir (24/11/2026): endereço que não é do sistema nem manda ao login; só o 400 do servidor
+  // barra (a rede que falhou não tranca ninguém, e a entrega do passe confere de novo)
+  const [voltaRuim, setVoltaRuim] = useState('')
+  const [voltaConferida, setVoltaConferida] = useState(false)
   const nome = NOME[produto]
 
   useEffect(() => {
-    if (!token || !nome) return
+    if (!nome) return
+    conferirVolta(produto, volta)
+      .catch((e) => {
+        if (axios.isAxiosError(e) && e.response?.status === 400) setVoltaRuim(mensagemDeErro(e))
+      })
+      .finally(() => setVoltaConferida(true))
+  }, [produto, nome, volta])
+
+  useEffect(() => {
+    if (!token || !nome || voltaRuim) return
     entrarNoProduto(produto, volta)
       .then((r) => seguir(r.url, produto, janela))
       .catch((e) => setErro(mensagemDeErro(e)))
-  }, [token, produto, nome, volta, janela])
+  }, [token, produto, nome, volta, janela, voltaRuim])
 
-  if (!token) return <Navigate to="/entrar" replace state={{ de: local.pathname + local.search }} />
+  if (!token && !voltaRuim && voltaConferida && nome) {
+    return <Navigate to="/entrar" replace state={{ de: local.pathname + local.search }} />
+  }
   return (
     <div className="h-full grid place-items-center px-4">
       <div className="cartao p-6 w-full max-w-sm text-center">
         {!nome ? (
           <Erro>Este endereço de entrada não existe.</Erro>
+        ) : voltaRuim ? (
+          <Erro>{voltaRuim}</Erro>
         ) : erro ? (
           <Erro>{erro}</Erro>
         ) : (

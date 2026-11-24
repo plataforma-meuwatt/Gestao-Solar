@@ -17,6 +17,7 @@
  * sempre: navega para a `volta`. O contrato está em `docs/CONTRATO_PASSE.md`.
  */
 
+import axios from 'axios'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 
@@ -90,9 +91,21 @@ export default function EntrarNoProduto() {
   const [senha, setSenha] = useState('')
   const [entrando, setEntrando] = useState(false)
   const caminho = `/api/sessao/${encodeURIComponent(produto)}`
+  // A volta conferida ao abrir: endereço que não é do sistema nem mostra o formulário (a entrega confere de novo)
+  const [voltaRuim, setVoltaRuim] = useState('')
+  useEffect(() => {
+    if (!nome) return
+    api
+      .get(`${caminho}/volta`, { params: { volta } })
+      // só o "não é deste sistema" (400) esconde o formulário: a rede que falhou não tranca ninguém, e a entrega do
+      // passe confere a volta de novo
+      .catch((e) => {
+        if (axios.isAxiosError(e) && e.response?.status === 400) setVoltaRuim(mensagemDeErro(e))
+      })
+  }, [caminho, nome, volta])
 
   useEffect(() => {
-    if (!nome || (!token && !entrada)) return
+    if (!nome || voltaRuim || (!token && !entrada)) return
     api
       .post<Resposta>(caminho, { volta }, token ? undefined : { headers: { Authorization: `Bearer ${entrada}` } })
       .then((r) => {
@@ -107,7 +120,7 @@ export default function EntrarNoProduto() {
         }
         setErro(mensagemDeErro(e))
       })
-  }, [caminho, nome, token, entrada, volta, produto, janela])
+  }, [caminho, nome, token, entrada, volta, produto, janela, voltaRuim])
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
@@ -123,6 +136,15 @@ export default function EntrarNoProduto() {
     }
   }
 
+  if (voltaRuim) {
+    return (
+      <div className="grid min-h-screen place-items-center px-4">
+        <div className="w-full max-w-sm">
+          <Erro mensagem={voltaRuim} />
+        </div>
+      </div>
+    )
+  }
   if (!nome) {
     return (
       <div className="grid min-h-screen place-items-center px-4">

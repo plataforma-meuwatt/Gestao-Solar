@@ -364,6 +364,15 @@ class EntrarComSenhaIn(BaseModel):
     volta: str
 
 
+@router.get("/{produto}/volta", status_code=204)
+def conferir_volta(produto: str, volta: str) -> None:
+    """A página de entrar confere o endereço de volta AO ABRIR (24/11/2026, achado do meuPlano): com um endereço que não
+    é do sistema, ela nem mostra o formulário. A conferência que vale continua sendo a da entrega do passe."""
+    if produto not in VOLTAS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _volta(produto, volta)
+
+
 @router.post("/{produto}/com-senha", response_model=EntrarOut)
 def entrar_no_produto_com_senha(produto: str, body: EntrarComSenhaIn, db: Session = Depends(get_db),
                                 request: Request = None) -> EntrarOut:
