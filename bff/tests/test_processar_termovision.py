@@ -170,3 +170,46 @@ def test_usina_pronta_manda_o_link_e_so_refaz_quando_pedem(monkeypatch):
     import json
     assert json.loads(pedido.calls[0].request.content)["refazer"] is True
     helper.PENDENTES.clear()
+
+
+TV_TOOLS = [{"name": "usina_estado", "annotations": {"readOnlyHint": True}},
+            {"name": "mesas_motor", "annotations": {"readOnlyHint": False}, "_meta": {"confirmar": True, "pesado": True},
+             "description": "motor"},
+            {"name": "usina_link_publico", "annotations": {"readOnlyHint": False}, "_meta": {"confirmar": False}}]
+
+
+def _mcp_falso(monkeypatch, chamadas):
+    async def mcp(self, payload):
+        chamadas.append(payload)
+        if payload["method"] == "tools/list":
+            return {"result": {"tools": TV_TOOLS}}
+        return {"result": {"content": [{"type": "text", "text": "ok " + payload["params"]["name"]}]}}
+    monkeypatch.setattr(tv.ClienteMcp, "mcp", mcp)
+
+
+def test_comando_com_confirmar_espera_o_sim_e_sem_confirmar_roda(monkeypatch):
+    ctx, chamadas = _ctx(monkeypatch), []
+    _mcp_falso(monkeypatch, chamadas)
+    r = asyncio.run(tv.comando_termovision(ctx, {"nome": "mesas_motor", "argumentos": {"usina": "Ibitinga",
+                                                                                      "profundidade": 1}}))
+    assert "erro" not in r and "roda horas" in ctx.proposta.resumo and len(chamadas) == 1  # só a lista
+    assert asyncio.run(ctx.proposta.executar(ctx.db, ctx.user, "1")) == "✅ ok mesas_motor"
+    helper.PENDENTES.clear()
+    ctx.proposta = None
+    r = asyncio.run(tv.comando_termovision(ctx, {"nome": "usina_link_publico", "argumentos": {"usina": "x"}}))
+    assert r == {"resultado": "ok usina_link_publico"} and ctx.proposta is None
+    lista = asyncio.run(tv.comando_termovision(ctx, {}))["comandos"]
+    assert [c["nome"] for c in lista] == ["mesas_motor", "usina_link_publico"]      # a leitura não é comando
+
+
+def test_o_conector_so_le_o_termovision(monkeypatch):
+    from app.api.v1 import mcp
+    chamadas = []
+    _mcp_falso(monkeypatch, chamadas)
+    monkeypatch.setattr(mcp, "servicos", lambda u: ["termovision"])
+    nomes = [t["name"] for t in asyncio.run(mcp._ferramentas(None, SimpleNamespace(id=1)))]
+    assert nomes == ["termovision_usina_estado"]
+    r = asyncio.run(mcp._chamar(None, SimpleNamespace(id=1), "termovision_mesas_motor", {}))
+    assert r["isError"] and not any(c["method"] == "tools/call" for c in chamadas)
+    r = asyncio.run(mcp._chamar(None, SimpleNamespace(id=1), "termovision_usina_estado", {"usina": "x"}))
+    assert r["content"][0]["text"] == "ok usina_estado"

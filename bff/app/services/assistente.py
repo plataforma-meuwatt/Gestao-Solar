@@ -1000,7 +1000,8 @@ def _sistema(ctx: ger.Contexto) -> str:
     if mg.permitidas(ctx.user):                       # consultar vem com o acesso; atuar é a caixa do GS
         areas.append("as câmeras de segurança das usinas (meuGuarda)")
     if tv.permitidas(ctx.user):
-        areas.append("processar voos de drone no TermoVision ('Processar <usina>' → `processar_usina`)")
+        areas.append("o TermoVision (voos de drone): 'Processar <usina>' → `processar_usina`; comandos que mudam algo "
+                     "(zonas, motor de mesas 1V/2V, apagar, link público) → `comando_termovision`")
     return f"""Você é o assistente do Gestão Solar no WhatsApp. Hoje é {ger.hoje().isoformat()} e agora são {agora():%H:%M} (America/Sao_Paulo,
 o relógio do servidor: é a ÚNICA hora que vale; nunca a deduza das mensagens nem do relógio de câmera, inversor ou
 outro sistema).

@@ -274,8 +274,103 @@ FERRAMENTA_STRINGS = {"type": "function", "function": {
                     "com o Sim."),
     "parameters": {"type": "object", "properties": {"usina": {"type": "string"}}, "required": ["usina"]}}}
 
+# --------------------------------------------------------------------------- o catálogo do TermoVision (/mcp)
+# 24/11/2026, o dono: "o TermoVision publica o /mcp e o GS lê sozinho, como o meuWatt". As LEITURAS entram no
+# conector (`api/v1/mcp.py`, serviço termovision) e, por ele, no catálogo do bot; os comandos que mudam algo passam por
+# `comando_termovision`, com o Sim onde o TermoVision pede (`_meta.confirmar`, destrutivo ou pesado).
+class ClienteMcp:
+    """O /mcp do TermoVision como a pessoa: cada chamada abre a sessão dela (asserção de 2 min, uso único)."""
+
+    def __init__(self, db, user):
+        self.db, self.user = db, user
+
+    async def mcp(self, payload: dict) -> dict:
+        async with httpx.AsyncClient(timeout=120) as c:
+            erro = await _entrar(c, self.db, self.user)
+            if erro:                                       # a recusa de entrar chega como erro do JSON-RPC
+                return {"jsonrpc": "2.0", "id": payload.get("id"), "error": {"code": -32001, "message": erro}}
+            r = await c.post(f"{_base()}/mcp", json=payload)
+            r.raise_for_status()
+            return r.json()
+
+
+def so_le(t: dict) -> bool:
+    return bool((t.get("annotations") or {}).get("readOnlyHint"))
+
+
+#: o Processar tem caminho próprio (as strings do meuWatt e o aviso de cada etapa): não vai pelo comando genérico
+_PROPRIOS = {"processar"}
+
+
+async def _lista(c: ClienteMcp) -> list[dict]:
+    r = await c.mcp({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    if r.get("error"):
+        raise RuntimeError(r["error"].get("message") or "o TermoVision recusou")
+    return [t for t in ((r.get("result") or {}).get("tools") or []) if isinstance(t, dict) and t.get("name")]
+
+
+def _texto_do_resultado(res: dict) -> str:
+    return "\n".join(x.get("text") or "" for x in res.get("content") or [] if x.get("type") == "text")[:3000]
+
+
+async def comando_termovision(ctx, a: dict) -> dict:
+    cli = ClienteMcp(ctx.db, ctx.user)
+    try:
+        comandos = [t for t in await _lista(cli) if not so_le(t) and t["name"] not in _PROPRIOS]
+    except RuntimeError as e:
+        return {"erro": f"{e} Nada foi feito."}
+    except httpx.HTTPError:
+        return {"erro": "O TermoVision não respondeu agora. Nada foi feito."}
+    nome, args = (a.get("nome") or "").strip(), a.get("argumentos") if isinstance(a.get("argumentos"), dict) else {}
+    t = next((x for x in comandos if x["name"] == nome), None)
+    if t is None:
+        return {"comandos": [{"nome": x["name"], "descricao": x.get("description"),
+                              "parametros": (x.get("inputSchema") or {}).get("properties")} for x in comandos],
+                "instrucao": "Escolha o comando certo e chame de novo com nome e argumentos (o 'processar' é "
+                             "processar_usina)."}
+    meta, anot = t.get("_meta") or {}, t.get("annotations") or {}
+
+    async def rodar(db, user) -> dict:
+        r = await ClienteMcp(db, user).mcp({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                            "params": {"name": nome, "arguments": args}})
+        return r.get("result") or {"isError": True, "content": [{"type": "text", "text": str(r.get("error"))}]}
+
+    if not (meta.get("confirmar") or anot.get("destructiveHint") or meta.get("pesado")):
+        try:
+            res = await rodar(ctx.db, ctx.user)
+        except httpx.HTTPError:
+            return {"erro": "O TermoVision não respondeu agora."}
+        return {"erro" if res.get("isError") else "resultado": _texto_do_resultado(res)}
+    alvo = ", ".join(f"{k} {v}" for k, v in args.items())
+    resumo = (f"{'APAGAR no' if anot.get('destructiveHint') else 'Rodar no'} TermoVision: {nome}"
+              + (f" ({alvo})" if alvo else "") + (" — roda horas num PC" if meta.get("pesado") else ""))
+
+    async def executar(db, user, telefone: str) -> str:
+        try:
+            res = await rodar(db, user)
+        except httpx.TimeoutException:
+            return "⚠️ O TermoVision não respondeu a tempo: PODE ter rodado. Confira no TermoVision."
+        except httpx.HTTPError:
+            return "❌ O TermoVision não respondeu. Nada foi feito."
+        return ("❌ " if res.get("isError") else "✅ ") + _texto_do_resultado(res)
+
+    return helper.propor(ctx, resumo, PRAZO_S, executar, [t.get("description") or ""], parte=None, confirmacao="sim")
+
+
+FERRAMENTA_COMANDO = {"type": "function", "function": {
+    "name": "comando_termovision",
+    "description": ("COMANDOS do TermoVision que MUDAM algo: gerar zonas, o motor de mesas (ex.: 'processar mesas 1V e "
+                    "criar zona' = mesas_motor com profundidade 1), apagar zonas automáticas ou propostas, link "
+                    "público, cancelar um processamento, contar mesas. Sem `nome`, devolve a lista de comandos com os "
+                    "parâmetros. O que pede confirmação vira ação com o Sim. Consultas (estado, andamento) estão no "
+                    "catálogo (procurar_consulta); 'Processar <usina>' é processar_usina."),
+    "parameters": {"type": "object", "properties": {
+        "nome": {"type": "string", "description": "o comando, como a lista devolve"},
+        "argumentos": {"type": "object", "description": "os parâmetros do comando (ex.: usina, profundidade)"}}}}}
+
 FERRAMENTAS = {"processar_usina": (processar_usina, FERRAMENTA),
-               "strings_ao_termovision": (strings_ao_termovision, FERRAMENTA_STRINGS)}
+               "strings_ao_termovision": (strings_ao_termovision, FERRAMENTA_STRINGS),
+               "comando_termovision": (comando_termovision, FERRAMENTA_COMANDO)}
 
 
 def permitidas(user) -> list[str]:
