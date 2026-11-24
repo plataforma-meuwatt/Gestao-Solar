@@ -44,11 +44,13 @@ def cliente(user) -> MeuGuarda:
     from app.core.security import criar_token, criar_token_empresa, criar_token_tecnico
 
     portao = _PORTAO[user.perfil]
+    # curto e sem `sid`: é o bot falando pela pessoa nesta consulta, não uma sessão aberta dela (antes, cada consulta
+    # de câmera deixava uma sessão de 30 dias na lista dela)
     if portao == "cliente":
-        token = criar_token(user.id)[0]
+        token = criar_token(user.id, minutos=10)[0]
     else:                                                # a empresa em que a sessão dela está operando, se trocou
         emitir = criar_token_empresa if portao == "empresa" else criar_token_tecnico
-        token = emitir(user.id, getattr(user, "empresa_da_sessao", None))[0]
+        token = emitir(user.id, getattr(user, "empresa_da_sessao", None), minutos=10)[0]
     return MeuGuarda(get_settings().meuguarda_api_url, token, portao)
 
 

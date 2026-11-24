@@ -478,9 +478,11 @@ async def test_o_gerente_ve_o_login_e_redefine_a_senha_de_entrar_com_o_sim(db, c
                               "texto": "Troca a do Michel pra ufvtieteazul"})
     assert "Trocar a senha de entrar no GS de Michel (entra como «michel»)" in cenario.bot.enviados[-1]
     assert not conferir_senha("ufvtieteazul", michel.senha_hash)
-    assert (await _sim(cenario)) == "✅ Feito: a senha de entrar no GS de Michel foi trocada (entra como «michel»)."
+    assert (await _sim(cenario)) == ("✅ Feito: a senha de entrar no GS de Michel foi trocada (entra como «michel»), e "
+                                     "as sessões que estavam abertas foram encerradas.")
     db.refresh(michel)
     assert conferir_senha("ufvtieteazul", michel.senha_hash)
+    assert michel.sessoes_desde is not None                            # a sessão de quem roubou a senha acabou
     registros = " ".join(f"{r.pergunta} {r.resposta}" for r in db.query(RegistroBot))
     # (só letras e sem a palavra "senha": a máscara pelo formato não a pega, só a do VALOR)
     assert "Trocar a senha de entrar no GS de Michel (entra como «michel»)" in registros   # o log legível

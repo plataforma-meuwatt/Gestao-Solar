@@ -41,6 +41,7 @@ from app.services import assistente_geracao as ger
 from app.services import assistente_cadastro as cad
 from app.services import assistente_fotos as fotos
 from app.services import assistente_pdf as pdf
+from app.services import esqueci_a_senha
 from app.services import assistente_conta as conta
 from app.services import assistente_local as local
 from app.services import assistente_relatorio as relatorio
@@ -1846,6 +1847,35 @@ async def _atender(evento: dict) -> None:
         if fora is not None:
             await _texto(telefone, fora)
             _registrar(db, telefone, user, "nao_liberado", pergunta=pergunta, resposta=fora, em=enviada, erro=fora)
+            return
+        if evento.get("tipo") == "text" and esqueci_a_senha.pediu(texto):
+            # o "esqueci a senha" (Plano Casa GS, R12): o celular CADASTRADO prova quem é (como no bot), para qualquer
+            # conta, com o bot liberado ou não. O link vale 30 min e uma vez só, e não fica no log nem no gateway.
+            esperando = helper.PENDENTES.get(user.id)
+            derrubada = (helper.desarmar(user.id, seguro or texto)
+                         if esperando is not None and esperando.confirmacao == "senha" else None)
+            if derrubada is not None:
+                # com uma ação de EQUIPAMENTO esperando a senha de atuação, é dela que a pessoa fala: o link de entrar
+                # no GS não a resolve (quem a define é o gerente). A ação cai, como com qualquer outra mensagem.
+                aviso = ("Esta ação pedia a senha de atuação, que o gerente da sua empresa define no oem-gs: peça a ele "
+                         f"uma nova. {helper.cancelada(derrubada)}\n\nSe você falava da senha de entrar no Gestão "
+                         "Solar, mande «esqueci a senha» de novo.")
+                await _texto(telefone, aviso)
+                _registrar(db, telefone, user, "respondeu", pergunta=pergunta, resposta=aviso,
+                           ferramentas=["esqueci_a_senha"], inicio=inicio, em=enviada)
+                return
+            token = esqueci_a_senha.emitir(db, user, "whatsapp")
+            db.commit()
+            aviso = (f"🔑 Para criar a senha nova do Gestão Solar (a do login *{user.apelido}*), abra este link. Ele "
+                     f"vale 30 minutos, uma vez só:\n{esqueci_a_senha.link(token)}\n\nSe não foi você quem pediu, "
+                     "não abra o link: a sua senha não muda.")
+            saiu = await _texto(telefone, aviso, valores=[token])
+            _registrar(db, telefone, user, "respondeu" if saiu else "erro", pergunta=pergunta,
+                       resposta="🔑 [o link de senha nova foi enviado]", ferramentas=["esqueci_a_senha"], inicio=inicio,
+                       em=enviada, erro=None if saiu else "O link de senha nova não saiu pelo gateway.")
+            from app.services import acessos
+            acessos.registrar(db, None, acao="senha", user=user, ok=saiu,
+                              motivo="pediu o link de senha nova pelo WhatsApp" + ("" if saiu else " (não saiu)"))
             return
         if not user.bot_liberado:
             await _texto(telefone, NAO_LIBERADO)

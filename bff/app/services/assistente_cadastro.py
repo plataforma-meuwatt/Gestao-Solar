@@ -642,8 +642,11 @@ async def conta_do_gs(ctx, a: dict) -> dict:
         c.senha_hash = await asyncio.to_thread(gerar_hash_senha, senha)
         db.commit()
         from app.services import acessos
+        from app.services.sessoes import encerrar_todas_de
         acessos.senha_redefinida(db, c, quem, "pelo bot do WhatsApp")
-        return f"✅ Feito: a senha de entrar no GS de {nome} foi trocada (entra como «{login}»)."
+        encerrar_todas_de(db, c, quem, "bot do WhatsApp (senha redefinida)")   # as sessões abertas acabam junto
+        return (f"✅ Feito: a senha de entrar no GS de {nome} foi trocada (entra como «{login}»), e as sessões que "
+                "estavam abertas foram encerradas.")
 
     return helper.propor(ctx, f"Trocar a senha de entrar no GS de {nome} (entra como «{login}»)", PRAZO_S, executar,
                          avisos=["A senha antiga deixa de valer."], parte=None, confirmacao="sim")
