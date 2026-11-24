@@ -12,7 +12,8 @@ O contrato é o que o TermoVision propôs (o "Enviar ao GS" de lá), com a pesso
 - só a equipe da O&M (gerente e técnico, `mapa._O_E_M`) usa estas rotas, e só as usinas de uma empresa ATIVA da
   pessoa (a de `X-Empresa-GS`, ou a de origem sem o cabeçalho). O dono e a plataforma recebem 403.
 
-- `GET /usinas[?ids=12,15]`: as usinas, com as referências da mesma usina em cada sistema e os dados básicos.
+- `GET /usinas[?ids=12,15]`: as usinas, com as referências da mesma usina em cada sistema e os dados básicos. Mora na
+  porta dos sistemas (`interno_sistemas.py`), que aplica a régua daqui quando quem pede é o TermoVision.
 - `POST /usinas/{gs}/mapa {termovision}`: liga o mapa. Idempotente pelo valor; o mesmo mapa em outra usina, ou outro
   mapa já ligado, é 409 (o nome da outra usina só quando é da mesma empresa). O GS guarda só o vínculo.
 - `DELETE /usinas/{gs}/mapa?termovision=`: desliga (o "Desligar do GS"); já desligada, responde a usina (idempotente).
@@ -31,6 +32,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1 import mapa
+from app.api.v1.interno_sistemas import UsinaDoGS
+from app.api.v1.interno_sistemas import da_empresa as _da_empresa
+from app.api.v1.interno_sistemas import saida as _saida
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.acesso import AcessoGS
@@ -86,13 +90,6 @@ def _empresa(db: Session, pessoa: User, x_empresa_gs: str | None) -> int:
     return pedida
 
 
-def _da_empresa(db: Session, empresa_id: int, so_ativas: bool = True) -> list[PlantLink]:
-    """As usinas da empresa: as ativas para listar e ligar; todas para desligar e para dizer o nome no conflito (a usina
-    desligada no GS não pode prender o mapa dos dois lados)."""
-    q = select(PlantLink).where(PlantLink.empresa_id == empresa_id)
-    return list(db.scalars((q.where(PlantLink.ativo) if so_ativas else q).order_by(PlantLink.nome)).all())
-
-
 def _da_pessoa(db: Session, x_usuario_gs: str | None, x_empresa_gs: str | None, gs: int, so_ativas: bool = True
                ) -> tuple[PlantLink, list[PlantLink]]:
     """A usina pedida e TODAS as da empresa (para o nome no conflito)."""
@@ -101,43 +98,6 @@ def _da_pessoa(db: Session, x_usuario_gs: str | None, x_empresa_gs: str | None, 
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
     return link, todas
-
-
-class RefMeuWatt(BaseModel):
-    slug: str
-
-
-class RefMeuPlano(BaseModel):
-    id: int
-
-
-class RefTermoVision(BaseModel):
-    codigo: str
-
-
-class UsinaDoGS(BaseModel):
-    gs: int
-    nome: str
-    empresa: str | None = None
-    #: a MESMA usina em cada sistema (nulo = não está lá)
-    meuwatt: RefMeuWatt | None = None
-    meuplano: RefMeuPlano | None = None
-    termovision: RefTermoVision | None = None
-    cidade: str | None = None
-    uf: str | None = None
-    endereco: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-
-
-def _saida(db: Session, u: PlantLink) -> UsinaDoGS:
-    empresa = db.get(Empresa, u.empresa_id) if u.empresa_id else None
-    return UsinaDoGS(
-        gs=u.id, nome=u.nome, empresa=empresa.nome if empresa else None,
-        meuwatt=RefMeuWatt(slug=u.mw_plant_slug) if u.mw_plant_slug else None,
-        meuplano=RefMeuPlano(id=u.mp_usina_id) if u.mp_usina_id is not None else None,
-        termovision=RefTermoVision(codigo=u.tv_codigo) if u.tv_codigo else None,
-        cidade=u.cidade, uf=u.uf, endereco=u.endereco, latitude=u.latitude, longitude=u.longitude)
 
 
 def _ocupado(outra: PlantLink | None, visiveis: list[PlantLink]) -> HTTPException:
@@ -160,20 +120,6 @@ def _ligar(db: Session, link: PlantLink, codigo: str, visiveis: list[PlantLink])
         raise HTTPException(status.HTTP_409_CONFLICT, f"Esta usina do GS já está ligada ao mapa {link.tv_codigo} "
                                                       "do TermoVision: desligue esse antes.")
     return link
-
-
-@router.get("/usinas", response_model=list[UsinaDoGS], dependencies=[Depends(_porta)])
-def usinas_da_pessoa(
-    ids: str | None = None,
-    x_usuario_gs: str | None = Header(default=None, alias="X-Usuario-GS"),
-    x_empresa_gs: str | None = Header(default=None, alias="X-Empresa-GS"),
-    db: Session = Depends(get_db),
-) -> list[UsinaDoGS]:
-    visiveis = _da_empresa(db, _empresa(db, _pessoa(db, x_usuario_gs), x_empresa_gs))
-    if ids is None:
-        return [_saida(db, u) for u in visiveis]
-    pedidas = {int(x) for x in ids.split(",") if x.strip().isdecimal()}
-    return [_saida(db, u) for u in visiveis if u.id in pedidas]
 
 
 class LigarMapaIn(BaseModel):

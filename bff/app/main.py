@@ -30,6 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.v1 import (
     meuwatt_webhook,
     interno_termovision,
+    interno_sistemas,
     termovision_aviso,
     auth,
     billing,
@@ -285,6 +286,7 @@ app.include_router(avisos.router)
 app.include_router(meuwatt_webhook.router)
 app.include_router(termovision_aviso.router)
 app.include_router(interno_termovision.router)
+app.include_router(interno_sistemas.router)
 app.include_router(documents.router)
 app.include_router(energia.router)
 app.include_router(exportacao.router)

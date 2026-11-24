@@ -127,7 +127,11 @@ SISTEMAS: dict[str, tuple[str, frozenset[str]]] = {
     # pessoa por aqui, e o servidor do meuGuarda usa a asserção UMA vez para copiar o orto e sai. É a exceção consciente
     # à regra de um produto não reapresentar a asserção no outro (`AUDIENCIA`): os dois são da família e a pessoa
     # clicou. Só nesta direção, só para os endereços do meuGuarda.
+    # o mapa embutido (Plano Casa GS, R6): o cookie de lá é SameSite=Lax, então o iframe mora no MESMO site da página de
+    # cima (termovision.meuwatt.com.br no meuWatt, termovision.meuplano.solar no meuPlano); a janelinha aberta de dentro
+    # dele volta para esses endereços
     "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech",
+                                              "termovision.meuwatt.com.br", "termovision.meuplano.solar",
                                               "meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
 }
 

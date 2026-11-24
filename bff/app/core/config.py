@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     #: a chave do servidor do TermoVision quando ele repassa o login de uma pessoa (`X-Chave-Interna` com
     #: `X-Sistema: termovision`); a do meuGuarda é a `meuguarda_chave_interna`
     termovision_chave_interna: str = ""
+    #: as do meuWatt e do meuPlano (`X-Sistema: meuwatt|meuplano`), para a porta dos sistemas (`interno_sistemas.py`):
+    #: as usinas e a renovação da pessoa e o passe do TermoVision para o mapa embutido
+    meuwatt_chave_interna: str = ""
+    meuplano_chave_interna: str = ""
 
     # ── o helper (mw-modbus-helper) pelo assistente ─────────────────────────
     #: A porta do bot do helper (contrato `docs/bot.md` do helper): pelo túnel SSH reverso,
@@ -175,6 +179,11 @@ class Settings(BaseSettings):
         # cada porta interna com a SUA chave: quem guarda a do WhatsApp (o gateway) não pode ler as câmeras
         if self.meuguarda_chave_interna and self.meuguarda_chave_interna == self.whatsapp_chave_interna:
             raise RuntimeError("MEUGUARDA_CHAVE_INTERNA não pode ser igual à WHATSAPP_CHAVE_INTERNA.")
+        # e cada sistema com a sua: a chave de um não fala pelo outro
+        chaves = [c for c in (self.whatsapp_chave_interna, self.meuguarda_chave_interna, self.termovision_chave_interna,
+                              self.meuwatt_chave_interna, self.meuplano_chave_interna) if c]
+        if len(chaves) != len(set(chaves)):
+            raise RuntimeError("Duas portas internas com a mesma chave: cada sistema tem a sua (*_CHAVE_INTERNA).")
 
         # Sem origem liberada, a API sobe saudável e o painel abre numa tela em branco com
         # um erro de CORS no console — a falha mais cara de diagnosticar do conjunto,

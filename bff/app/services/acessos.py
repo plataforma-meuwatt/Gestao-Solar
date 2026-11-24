@@ -114,14 +114,21 @@ def _da_casa(ip: str) -> bool:
     return any(endereco in rede for rede in _REDES_DA_CASA)
 
 
-def repasse(request: Request | None) -> str | None:
-    """O sistema da família que repassa o login pelo servidor, provado pela chave dele, ou None."""
+def chave_do_sistema(sistema: str) -> str:
+    """A chave interna de cada sistema da família ("" = não configurada)."""
     from app.core.config import get_settings
+    s = get_settings()
+    return {"meuguarda": s.meuguarda_chave_interna, "termovision": s.termovision_chave_interna,
+            "meuwatt": s.meuwatt_chave_interna, "meuplano": s.meuplano_chave_interna}.get(sistema, "")
+
+
+def repasse(request: Request | None) -> str | None:
+    """O sistema da família que fala pelo servidor (o login repassado, a porta dos sistemas), provado pela chave dele,
+    ou None."""
     if request is None:
         return None
-    s = get_settings()
     sistema = (request.headers.get("x-sistema") or "").strip().lower()
-    esperada = {"meuguarda": s.meuguarda_chave_interna, "termovision": s.termovision_chave_interna}.get(sistema)
+    esperada = chave_do_sistema(sistema)
     dada = (request.headers.get("x-chave-interna") or "").encode()      # bytes: acento na chave não derruba nada
     return sistema if esperada and hmac.compare_digest(dada, esperada.encode()) else None
 
