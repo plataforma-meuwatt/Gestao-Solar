@@ -2685,5 +2685,61 @@
       "paradas"
     ],
     "origem": "log #573"
+  },
+  {
+    "frase": "tem alguém em porto ferreira que atende a gente?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #614"
+  },
+  {
+    "frase": "temos contato de ouro fino que nos atenda?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #617"
+  },
+  {
+    "frase": "Quais contatos temos de porto ferreira",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #636"
+  },
+  {
+    "frase": "Quais contatos temos de ouro fino",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #637"
+  },
+  {
+    "frase": "Confere para mim se não temos contatos duplicados em Ouro FIno",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #624"
+  },
+  {
+    "frase": "Com quantos km foram trocados os pneus da strada placa sdm5h52?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #640"
+  },
+  {
+    "frase": "foi cadastrado manunteção no giro zero hoje?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #641"
+  },
+  {
+    "frase": "Processe ibitinga",
+    "espera": [
+      "processar_usina"
+    ],
+    "origem": "log #642"
   }
 ]
