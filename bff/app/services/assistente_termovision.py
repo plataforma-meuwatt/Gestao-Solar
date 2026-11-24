@@ -122,9 +122,12 @@ async def processar_usina(ctx, a: dict) -> dict:
             return {"erro": erro, "empresas": [e["nome"] for e in o.get("empresas") or []]}
     nome = (usina or {}).get("nome") or pasta
     resumo = f"Processar {nome} no TermoVision" + ("" if usina else f" (usina NOVA, de {dona['nome']})")
-    detalhes = [f"{envio.get('arquivos') or 0} arquivo(s) novos no drive de envio",
+    detalhes = [f"{envio.get('arquivos')} arquivo(s) novos no drive de envio" if envio.get("arquivos") else "Nenhuma foto nova no drive de envio",
                 "Organiza as fotos, roda os ortomosaicos e o mapa de temperatura nos PCs (pode levar horas)",
                 "Mando o link do andamento agora e aviso a cada etapa"]
+    slug, strings, sem = await _strings_do_meuwatt(ctx, nome)
+    detalhes.append(f"Leva as {len(strings)} strings do mapa do meuWatt (a lista inteira: as que vieram de lá e "
+                    "sumiram saem)" if strings else f"Sem as strings do meuWatt: {sem}")
     corpo = {"pasta": pasta, "avisar_url": get_settings().gs_api_publica.rstrip("/") + AVISO,
              **({"dona": dona["id"]} if dona else {})}
 
@@ -139,18 +142,76 @@ async def processar_usina(ctx, a: dict) -> dict:
                 return "⚠️ O TermoVision não respondeu a tempo: o pedido PODE ter entrado. Peça de novo em alguns minutos."
             except httpx.HTTPError:
                 return "❌ O TermoVision não respondeu. Nada foi feito."
-        if r.status_code == 409:
-            return f"⏳ {_detalhe(r)}"
-        if r.status_code >= 300:
-            return f"❌ {_detalhe(r)}. Nada foi feito."
-        d = r.json()
-        db.add(ProcessamentoTV(token=d["token"], gs_user_id=user.id, telefone=telefone,
-                               usina=(d.get("usina") or {}).get("nome") or nome))
-        db.commit()
+            if r.status_code == 409:
+                return f"⏳ {_detalhe(r)}"
+            if r.status_code >= 300:
+                return f"❌ {_detalhe(r)}. Nada foi feito."
+            d = r.json()
+            db.add(ProcessamentoTV(token=d["token"], gs_user_id=user.id, telefone=telefone,
+                                   usina=(d.get("usina") or {}).get("nome") or nome))
+            db.commit()
+            codigo = (d.get("usina") or {}).get("codigo")
+            extra = await _mandar_strings(c, codigo, slug, strings) if strings and codigo else ""
         return (f"✅ {(d.get('usina') or {}).get('nome') or nome} entrou para processar. "
-                f"Andamento: {d['status_url']}\nAviso aqui a cada etapa.")
+                f"Andamento: {d['status_url']}\nAviso aqui a cada etapa." + (f"\n{extra}" if extra else ""))
 
     return helper.propor(ctx, resumo, PRAZO_S, executar, detalhes, parte=None, confirmacao="sim")
+
+
+# --------------------------------------------------------------------------- as strings do meuWatt (24/11/2026)
+# "Pegar o projeto de strings do meuWatt e alocar no TermoVision" (o dono): quando a usina existe no meuWatt, a string
+# oficial é a do mapa de lá. Vai a lista INTEIRA (a que falta é tirada lá), lida com o token do meuWatt DA PESSOA.
+async def _strings_do_meuwatt(ctx, nome: str) -> tuple[str | None, list[dict] | None, str | None]:
+    """(slug, strings, motivo de não ter). Sem par no meuWatt, sem strings."""
+    from app.services import assistente_geracao as ger
+
+    if ctx.mw is None or not ctx.usinas:
+        return None, None, "o meuWatt desta pessoa não está ligado ao bot"
+    alvo = ger._norm(nome)
+    pares = [u for u in ctx.usinas.values() if alvo and (alvo == ger._norm(u["nome"]) or alvo in ger._norm(u["nome"])
+                                                         or ger._norm(u["nome"]) in alvo)]
+    if len(pares) != 1:
+        return None, None, ("a usina não está no meuWatt desta pessoa" if not pares
+                            else "mais de uma usina do meuWatt casa com o nome")
+    slug = pares[0]["slug"]
+    try:
+        objetos = (await ctx.mw.mapa(slug)).get("objetos") or []
+    except Exception:                                      # noqa: BLE001
+        return slug, None, "o mapa do meuWatt não respondeu"
+    nomes: dict[int, str] = {}
+    try:
+        def _vagas(x):
+            if isinstance(x, dict):
+                if x.get("slot_id") is not None and x.get("label"):
+                    nomes[x["slot_id"]] = x["label"]
+                for v in x.values():
+                    _vagas(v)
+            elif isinstance(x, list):
+                for v in x:
+                    _vagas(v)
+        _vagas(await ctx.mw.strings_por_vaga(slug))
+    except Exception:                                      # noqa: BLE001 — sem o nome da vaga, vai o número
+        pass
+    strings = [{"id_meuwatt": o["id"], "nome": o.get("nome") or "", "geometria": o["geometria"],
+                "slot_id": o.get("slot_id"), "inversor": nomes.get(o.get("slot_id")), "entrada": o.get("string_number")}
+               for o in objetos if o.get("tipo") == "string" and o.get("geometria")]
+    return slug, strings, None if strings else "o mapa do meuWatt não tem string desenhada"
+
+
+async def _mandar_strings(c: httpx.AsyncClient, codigo: str, slug: str, strings: list[dict]) -> str:
+    try:
+        r = await c.post(f"{_base()}/api/usinas/{codigo}/strings/meuwatt", json={"slug": slug, "strings": strings})
+    except httpx.HTTPError:
+        return "⚠️ As strings do meuWatt não foram: o TermoVision não respondeu. Peça 'mande as strings' depois."
+    if r.status_code == 409:
+        return ("ℹ️ As strings do meuWatt vão quando as fotos estiverem organizadas: peça 'mande as strings de "
+                "<usina> ao TermoVision' depois da primeira etapa.")
+    if r.status_code >= 300:
+        return f"⚠️ As strings do meuWatt não foram: {_detalhe(r)}."
+    d = r.json()
+    aviso = f" Avisos: {'; '.join(d['avisos'][:3])}." if d.get("avisos") else ""
+    return (f"🧵 Strings do meuWatt no TermoVision: {d.get('criadas', 0)} novas, {d.get('atualizadas', 0)} atualizadas, "
+            f"{d.get('removidas', 0)} tiradas.{aviso}")
 
 
 FERRAMENTA = {"type": "function", "function": {
@@ -164,7 +225,47 @@ FERRAMENTA = {"type": "function", "function": {
         "dona": {"type": "string", "description": "a empresa dona da usina NOVA, só quando a ferramenta pedir"}},
         "required": ["usina"]}}}
 
-FERRAMENTAS = {"processar_usina": (processar_usina, FERRAMENTA)}
+async def strings_ao_termovision(ctx, a: dict) -> dict:
+    pasta = (a.get("usina") or "").strip()
+    if not pasta:
+        return {"erro": "Falta a usina. Pergunte."}
+    async with httpx.AsyncClient(timeout=30) as c:
+        erro = await _entrar(c, ctx.db, ctx.user)
+        if erro:
+            return {"erro": erro}
+        try:
+            r = await c.get(f"{_base()}/api/processar/opcoes", params={"pasta": pasta})
+        except httpx.HTTPError:
+            return {"erro": "O TermoVision não respondeu agora. Nada foi feito."}
+    usina = r.json().get("usina") if r.status_code < 300 else None
+    if not usina:
+        return {"erro": f"Não achei a usina '{pasta}' no TermoVision desta pessoa. Nada foi feito."}
+    slug, strings, sem = await _strings_do_meuwatt(ctx, usina["nome"])
+    if not strings:
+        return {"erro": f"Sem strings para mandar: {sem}."}
+    resumo = f"Mandar as {len(strings)} strings do mapa do meuWatt para {usina['nome']} no TermoVision"
+    detalhes = ["A lista inteira: a string que veio do meuWatt e sumiu de lá sai do TermoVision",
+                "As desenhadas no próprio TermoVision ficam"]
+
+    async def executar(db, user, telefone: str) -> str:
+        async with httpx.AsyncClient(timeout=60) as c:
+            erro = await _entrar(c, db, user)
+            if erro:
+                return f"❌ {erro}"
+            return await _mandar_strings(c, usina["codigo"], slug, strings)
+
+    return helper.propor(ctx, resumo, PRAZO_S, executar, detalhes, parte=None, confirmacao="sim")
+
+
+FERRAMENTA_STRINGS = {"type": "function", "function": {
+    "name": "strings_ao_termovision",
+    "description": ("MANDA as strings do mapa do meuWatt de uma usina para o TermoVision ('mande as strings de Ouro "
+                    "Fino ao TermoVision'). O 'Processar' já as leva; use quando a pessoa pedir só as strings. AÇÃO, "
+                    "com o Sim."),
+    "parameters": {"type": "object", "properties": {"usina": {"type": "string"}}, "required": ["usina"]}}}
+
+FERRAMENTAS = {"processar_usina": (processar_usina, FERRAMENTA),
+               "strings_ao_termovision": (strings_ao_termovision, FERRAMENTA_STRINGS)}
 
 
 def permitidas(user) -> list[str]:

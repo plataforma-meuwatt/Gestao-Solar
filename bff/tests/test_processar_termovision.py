@@ -27,7 +27,7 @@ def _ctx(monkeypatch):
     monkeypatch.setattr(tv, "assercao", lambda db, user, liberado=None: "jwt")
     user = SimpleNamespace(id=24, perfil=Perfil.GESTOR_EMPRESA, termovision_liberado=True, senha_atuacao_hash=None,
                            apelido="x", bot_ativo=set())
-    return SimpleNamespace(db=_Db(), user=user, proposta=None, pedido="Processar ibitinga")
+    return SimpleNamespace(db=_Db(), user=user, proposta=None, pedido="Processar ibitinga", mw=None, usinas={})
 
 
 @respx.mock
@@ -118,3 +118,37 @@ def test_ja_processando_manda_o_link_que_esta_rodando(monkeypatch):
         **OPC, "usina": {"nome": "Ibitinga"}, "usinas_com_o_nome": 1, "processando": True, "status_url": f"{B}/p/tvp_x"})
     r = asyncio.run(tv.processar_usina(ctx, {"usina": "ibitinga"}))
     assert f"{B}/p/tvp_x" in r["erro"] and ctx.proposta is None
+
+
+class _Mw:
+    async def mapa(self, slug):
+        return {"objetos": [
+            {"id": 7, "tipo": "string", "nome": "U1-3S22", "slot_id": 45, "string_number": 22,
+             "geometria": {"type": "Polygon", "coordinates": [[[-46, -22], [-46, -22.1], [-46.1, -22]]]}},
+            {"id": 8, "tipo": "mesa", "geometria": {"type": "Point", "coordinates": [-46, -22]}}]}
+
+    async def strings_por_vaga(self, slug):
+        return {"inverters": [{"slot_id": 45, "label": "Inv 13"}]}
+
+
+@respx.mock
+def test_processar_leva_as_strings_do_meuwatt_inteiras(monkeypatch):
+    ctx = _ctx(monkeypatch)
+    ctx.mw, ctx.usinas = _Mw(), {"ufv-ouro-fino": {"nome": "Ouro Fino", "slug": "ufv-ouro-fino"}}
+    respx.post(f"{B}/api/conta/gs").respond(200)
+    respx.get(f"{B}/api/processar/opcoes").respond(200, json={**OPC, "usina": {"nome": "Ouro Fino", "codigo": "of1"},
+                                                              "usinas_com_o_nome": 1})
+    respx.post(f"{B}/api/processar").respond(201, json={
+        "token": "tvp_of", "status_url": f"{B}/p/tvp_of", "usina": {"nome": "Ouro Fino", "codigo": "of1"}})
+    rota = respx.post(f"{B}/api/usinas/of1/strings/meuwatt").respond(200, json={"criadas": 1, "atualizadas": 0,
+                                                                                "removidas": 0, "avisos": []})
+    asyncio.run(tv.processar_usina(ctx, {"usina": "ouro fino"}))
+    assert any("Leva as 1 strings" in d for d in ctx.proposta.detalhes)
+    texto = asyncio.run(ctx.proposta.executar(ctx.db, ctx.user, "1"))
+    import json
+    enviado = json.loads(rota.calls[0].request.content)
+    assert enviado["slug"] == "ufv-ouro-fino" and enviado["strings"] == [
+        {"id_meuwatt": 7, "nome": "U1-3S22", "geometria": {"type": "Polygon", "coordinates": [[[-46, -22], [-46, -22.1],
+         [-46.1, -22]]]}, "slot_id": 45, "inversor": "Inv 13", "entrada": 22}]
+    assert "1 novas" in texto
+    helper.PENDENTES.clear()
