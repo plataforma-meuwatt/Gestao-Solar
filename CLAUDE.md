@@ -516,6 +516,11 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   depois do commit, com a empresa do contexto: a pessoa que é de duas empresas não leva a uma o que a outra mudou.
 - **O bot e o conector reusam a sessão da pessoa no TermoVision** por 30 min (`assistente_termovision._entrar` com
   `reusar`); antes, cada consulta abria uma sessão de 30 dias lá (853 por dia numa conta).
+- **O TermoVision liga o mapa dele à usina do GS** ("Enviar ao GS") pelas rotas `/api/v1/interno/usinas` (contrato em
+  `docs/CONTRATO_PASSE.md`): só a O&M, só quem entrou no TermoVision pelo GS ela mesma nas últimas 12 h (a entrada que
+  o bot faz por ela não conta), e o código do mapa fica em `gs_plant_links.tv_codigo`, único dos dois lados.
+- **"Onde fica" no bot** (`mapa_equipamento`): primeiro o mapa do GS; sem o objeto lá, a leitura `localizar` do
+  TermoVision (string, mesa, fileira, módulo); nos dois, vale o GS (o dono, 24/11/2026).
 
 ### Nada de "chips" para selecionar opção
 
