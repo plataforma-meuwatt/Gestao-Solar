@@ -15,7 +15,7 @@ passa em todas por perfil; atendimento, só no que o administrador marcou em Usu
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,17 +71,13 @@ class EntrarOut(BaseModel):
 
 
 @router.post("/entrar", response_model=EntrarOut)
-def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
-    # Um apelido malformado é só um apelido que não existe: normaliza o que dá e deixa a
-    # busca falhar. Responder "formato inválido" aqui contaria a quem tenta adivinhar que
-    # o formato importa, e o `.strip().lower()` é o que faz "Renan " entrar como `renan`.
-    procurado = (body.apelido or "").strip().lower()
-    usuario = db.scalar(select(User).where(User.apelido == procurado))
+def entrar(body: EntrarIn, db: Session = Depends(get_db), request: Request = None) -> EntrarOut:
+    from app.services import acessos
 
-    # Mensagem única para conta inexistente, senha errada e conta desativada: quem tenta
-    # adivinhar não aprende qual das três aconteceu.
-    if usuario is None or not usuario.ativo or not conferir_senha(body.senha, usuario.senha_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Apelido ou senha inválidos")
+    # O login ou o e-mail (24/11/2026), pela régua única de `acessos.autenticar`. Mensagem única para conta inexistente,
+    # senha errada e conta desativada: quem tenta adivinhar não aprende qual das três aconteceu; o motivo vai só ao
+    # registro de acessos.
+    usuario = acessos.entrar_ou_recusar(db, request, body.apelido, body.senha)
 
     # Senha CERTA e conta que não abre esta tela: aqui a frase muda, e de propósito.
     #
@@ -91,6 +87,8 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     # painel e leu "apelido ou senha inválidos". Passou a procurar defeito na senha, que
     # estava certa — só o endereço é que era outro.
     if not (usuario.abre_painel or usuario.abre_empresa or usuario.abre_tecnico):
+        # sem linha no registro: a senha está certa e quem chama (o meuGuarda tenta esta porta antes da do dono)
+        # entra pela outra logo em seguida, que registra a entrada
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Esta conta é de dono de usina: ela entra pelo aplicativo ou pelo portal do "
@@ -104,6 +102,8 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
     if usuario.abre_empresa or usuario.abre_tecnico:
         empresa = empresas.por_id(db, empresas.empresa_exigida(usuario))
         if not empresa.ativa:
+            acessos.registrar(db, request, acao="recusado", user=usuario, login=body.apelido, ok=False,
+                              motivo="empresa desativada")
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "Esta empresa está desativada na plataforma. Fale com quem a administra.",
@@ -111,6 +111,8 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db)) -> EntrarOut:
 
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
+    acessos.registrar(db, request, acao="entrou", user=usuario, login=body.apelido,
+                      motivo=f"painel ({pessoas.escopo_do_perfil(usuario.perfil)})")
 
     if empresa is not None:
         # Gerente → `escopo=empresa`; técnico → `escopo=tecnico`. Quem escolhe é

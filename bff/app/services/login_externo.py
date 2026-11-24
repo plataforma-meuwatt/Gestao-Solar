@@ -113,10 +113,90 @@ MEUGUARDA = "meuguarda"
 TERMOVISION = "termovision"
 SO_LOGIN = (MEUGUARDA, TERMOVISION)
 
+#: Os quatro sistemas que entram pelo GS ("Plano Casa GS", 24/11/2026: o GS é o pai): o nome que a tela mostra (o
+#: DESTINO do botão, onde a pessoa vai cair, com a marca dele) e os endereços aceitos como `volta`. Lista FIXA: um
+#: `volta` livre seria redirecionamento aberto, e o passe (dois minutos, uso único) iria parar no site de quem montou o
+#: link. Nada de endereço morto: `meuplano.meuwatt.com.br` saiu (morreu com o Railway; quem o registrasse receberia os
+#: passes do meuPlano).
+SISTEMAS: dict[str, tuple[str, frozenset[str]]] = {
+    "meuwatt": ("meuWatt", frozenset({"app.meuwatt.com.br"})),
+    "meuplano": ("meuPlano", frozenset({"app.meuplano.solar"})),
+    "meuguarda": ("meuGuarda", frozenset({"meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
+    # O meuGuarda também recebe a do TermoVision (12/11/2026, pedido do meuGuarda pela queixa do dono: "já estamos no
+    # Gestão Solar justamente para centralizar e tu me pede senha"): o botão "Importar do TermoVision" do mapa leva a
+    # pessoa por aqui, e o servidor do meuGuarda usa a asserção UMA vez para copiar o orto e sai. É a exceção consciente
+    # à regra de um produto não reapresentar a asserção no outro (`AUDIENCIA`): os dois são da família e a pessoa
+    # clicou. Só nesta direção, só para os endereços do meuGuarda.
+    "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech",
+                                              "meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
+}
 
-def assinar(usuario: User, produto: Produto) -> str:
-    """A asserção que prova, para aquele produto, quem é esta conta do Gestão Solar."""
-    return _assinar(usuario, AUDIENCIA[produto])
+
+def entradas() -> dict[str, str]:
+    """Onde cada sistema recebe o passe vindo dos botões do GS (a `volta` padrão)."""
+    s = get_settings()
+    return {"meuwatt": f"{s.meuwatt_web_url.rstrip('/')}/", "meuplano": f"{s.meuplano_web_url.rstrip('/')}/",
+            "meuguarda": f"{s.meuguarda_web_url.rstrip('/')}/",
+            "termovision": f"{s.termovision_web_url.rstrip('/')}/entrar.html"}
+
+
+def liberados(usuario: User) -> list[str]:
+    """Os sistemas que esta conta abre pelo GS, na ordem dos botões. O meuWatt e o meuPlano pela ligação com a conta
+    de lá (só então eles aceitam o passe); o meuGuarda e o TermoVision pelo acesso que o gerente liberou."""
+    return [p for p, ok in (("meuwatt", usuario.entra_no_meuwatt), ("meuplano", usuario.entra_no_meuplano),
+                            ("meuguarda", usuario.entra_no_meuguarda), ("termovision", usuario.entra_no_termovision))
+            if ok]
+
+
+def assinar(usuario: User, produto: Produto, db: Session | None = None, empresa_id: int | None = None) -> str:
+    """A asserção que prova, para aquele produto, quem é esta conta do Gestão Solar. Com `db`, o passe v2 (abaixo)."""
+    aud = AUDIENCIA[produto]
+    return _assinar(usuario, aud, extras_v2(db, usuario, aud, empresa_id) if db is not None else None)
+
+
+
+#: o teto do passe: o meuGuarda e o TermoVision recusam asserção com mais de 8.000 caracteres; acima disto a lista de
+#: usinas sai e o passe diz que ficou de fora (`usinas_fora`)
+TETO_USINAS = 4000
+
+
+def extras_v2(db: Session, usuario: User, audiencia: str, empresa_id: int | None = None) -> dict:
+    """O passe v2 (24/11/2026, "Plano Casa GS": o GS diz quem entra e QUAIS USINAS vê). Vai em toda asserção, ao lado do
+    que cada produto já lia: `v`, o login, o perfil, a empresa e as usinas.
+
+    - `usinas`: `[{"gs": 12, "id": <no sistema>}]` (no meuWatt o slug, no meuPlano o id da usina, no meuGuarda e no
+      TermoVision o número do GS), as da EMPRESA da sessão para a O&M (quem está em duas empresas leva só as da que está
+      operando) e as concedidas para o dono. Lista vazia = nenhuma.
+    - a plataforma (administrador, atendimento) vê todas: `todas_as_usinas: true`, sem a lista.
+    - sem conseguir ler, ou grande demais para o teto: sem a lista e com `usinas_fora: true` (nunca "nenhuma").
+    Quem ainda não usa as usinas daqui segue com as dele; o produto que passar a usar lê isto, nunca uma cópia."""
+    import json
+
+    from app.api.v1.mapa import usinas_do_mapa  # noqa: PLC0415 — circular no topo
+    from app.models.user import Perfil
+
+    empresa = empresa_id if empresa_id is not None else (getattr(usuario, "empresa_da_sessao", None)
+                                                          or usuario.empresa_id)
+    extra: dict = {"v": 2, "apelido": usuario.apelido, "perfil": usuario.perfil.value, "empresa_id": empresa}
+    if usuario.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO):
+        extra["todas_as_usinas"] = True
+        return extra
+    campo = {"meuwatt": "mw_plant_slug", "meuplano": "mp_usina_id"}.get(audiencia)
+    try:
+        links = usinas_do_mapa(db, usuario)
+    except Exception:                                      # noqa: BLE001 — sem a lista, o passe segue dizendo isso
+        logger.warning("passe: não leu as usinas de %s", usuario.apelido, exc_info=True)
+        extra["usinas_fora"] = True
+        return extra
+    if usuario.perfil in (Perfil.GESTOR_EMPRESA, Perfil.TECNICO) and empresa is not None:
+        links = [u for u in links if u.empresa_id == empresa]   # só a empresa da sessão
+    lista = [{"gs": u.id, "id": getattr(u, campo) if campo else u.id} for u in links
+             if (getattr(u, campo) if campo else u.id) is not None]
+    if len(json.dumps(lista)) > TETO_USINAS:
+        extra["usinas_fora"] = True
+    else:
+        extra["usinas"] = lista
+    return extra
 
 
 def meuplano_id_de(db: Session, usuario_id: int) -> int | None:
@@ -128,17 +208,20 @@ def meuplano_id_de(db: Session, usuario_id: int) -> int | None:
 
 
 def assinar_login(usuario: User, produto: str, portao: str, empresa_id: int | None,
-                  meuplano_id: int | None = None) -> str:
+                  meuplano_id: int | None = None, db: Session | None = None, liberado: bool | None = None) -> str:
     """A asserção do "Entrar com o Gestão Solar" de um produto de `SO_LOGIN`. `portao`: cliente, empresa, tecnico ou
     painel — o da sessão que pediu; `empresa_id`: a empresa em que ela está operando; `<produto>`: se o gerente
     liberou o acesso (falso = o produto recusa)."""
     extra = {"apelido": usuario.apelido, "perfil": usuario.perfil.value, "portao": portao, "empresa_id": empresa_id}
     if produto == MEUGUARDA:
         extra[MEUGUARDA] = usuario.entra_no_meuguarda
-    elif produto == TERMOVISION:
-        extra.update({TERMOVISION: usuario.entra_no_termovision, "meuplano_id": meuplano_id})
+    elif produto == TERMOVISION:                         # `liberado`: o acesso do momento (desligar no provisionar)
+        extra.update({TERMOVISION: usuario.entra_no_termovision if liberado is None else liberado,
+                      "meuplano_id": meuplano_id})
     else:
         raise ValueError(produto)
+    if db is not None:                                     # o passe v2 por cima, sem trocar o que o produto já lia
+        extra = {**extras_v2(db, usuario, produto, empresa_id), **extra}
     return _assinar(usuario, produto, extra)
 
 

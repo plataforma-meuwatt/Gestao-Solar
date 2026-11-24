@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     termovision_api_url: str = "https://app.termovision.tech"
     #: o endereço público desta API (o TermoVision só avisa a hosts que ele conhece)
     gs_api_publica: str = "https://api.gestao.solar"
+    #: o IP público dos servidores da KingHost e a rede interna: o que o meuGuarda e o TermoVision repassam SEM a chave
+    #: (antes de adotá-la) tem um teto de senhas erradas por IP mais alto, para 30 erros de estranhos pela tela deles não
+    #: trancarem todo mundo. A KingHost também roda outros projetos: confiança de verdade só com a chave do sistema.
+    ips_da_casa: str = "177.153.20.214"
+    #: o teto por IP desse repasse sem chave. 0 = sem teto por IP (só o limite por login e lugar), que é o TRANSITÓRIO:
+    #: com teto, 120 erros de estranhos pela tela do meuGuarda trancariam todo mundo de lá. Vira 30 quando os dois sistemas
+    #: mandarem a chave (variável TETO_IP_CASA_SEM_CHAVE)
+    teto_ip_casa_sem_chave: int = 0
     #: O SITE do meuPlano, que não é o endereço da API dele. Usado para mandar o cliente
     #: direto para lá, já logado, a partir do portal. `meuplano.meuwatt.com.br` morreu com o
     #: Railway (23/10/2026: o DNS ainda aponta para lá, "Application not found").
@@ -121,6 +129,9 @@ class Settings(BaseSettings):
     # ── o meuGuarda lê as posições das câmeras no mapa único (`api/v1/interno_meuguarda.py`) ──
     #: A chave própria do meuGuarda (a mesma lá). Vazia = a porta recusa tudo (503).
     meuguarda_chave_interna: str = ""
+    #: a chave do servidor do TermoVision quando ele repassa o login de uma pessoa (`X-Chave-Interna` com
+    #: `X-Sistema: termovision`); a do meuGuarda é a `meuguarda_chave_interna`
+    termovision_chave_interna: str = ""
 
     # ── o helper (mw-modbus-helper) pelo assistente ─────────────────────────
     #: A porta do bot do helper (contrato `docs/bot.md` do helper): pelo túnel SSH reverso,

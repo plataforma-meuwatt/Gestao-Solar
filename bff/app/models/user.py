@@ -144,6 +144,15 @@ class User(Base):
         return self.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO) or bool(self.meuguarda_liberado)
 
     @property
+    def entra_no_meuwatt(self) -> bool:
+        """Ligada à conta dela no meuWatt (`gs_vinculos_produto`): só então o meuWatt aceita o passe do GS."""
+        return any(v.produto == "meuwatt" for v in self.vinculos)
+
+    @property
+    def entra_no_meuplano(self) -> bool:
+        return any(v.produto == "meuplano" for v in self.vinculos)
+
+    @property
     def entra_no_termovision(self) -> bool:
         return self.perfil in (Perfil.ADMINISTRADOR, Perfil.ATENDIMENTO) or bool(self.termovision_liberado)
 

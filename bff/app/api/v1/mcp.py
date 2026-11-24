@@ -218,7 +218,7 @@ def _pagina(pedido: str | None, erro: str | None = None, status: int = 200) -> H
     form = "" if pedido is None else (
         '<form method="post" action="/oauth/authorize">'
         f'<input type="hidden" name="pedido" value="{html.escape(pedido)}">'
-        '<label>Apelido<input name="apelido" autocomplete="username" autocapitalize="none" required></label>'
+        '<label>Login ou e-mail<input name="apelido" autocomplete="username" autocapitalize="none" required></label>'
         '<label>Senha<input name="senha" type="password" autocomplete="current-password" required></label>'
         '<button name="acao" value="autorizar">Autorizar</button>'
         '<button name="acao" value="cancelar" class="nao" formnovalidate>Cancelar</button></form>'
@@ -286,6 +286,7 @@ def autorizar(
 
 @router.post("/oauth/authorize")
 def aprovar(
+    request: Request,
     pedido: str = Form(""),
     apelido: str = Form(""),
     senha: str = Form(""),
@@ -293,6 +294,7 @@ def aprovar(
     db: Session = Depends(get_db),
 ):
     """A pessoa decide com a senha do Gestão Solar. O código só vai ao destino conferido na ida."""
+    from app.services import acessos
     _limpar_vencidos()
     p = _pedidos.get(pedido)
     if p is None:
@@ -304,12 +306,18 @@ def aprovar(
     agora = time.time()
     recentes = [t for t in _falhas.get(nome, []) if t > agora - _FALHAS_JANELA]
     if len(recentes) >= _FALHAS_MAX:
-        return _pagina(pedido, "Muitas senhas erradas para este apelido. Espere 15 minutos.", 429)
-    usuario = db.scalar(select(User).where(User.apelido == nome))
-    # a mesma frase para conta inexistente, senha errada e conta desativada, como no login
-    if usuario is None or not usuario.ativo or not conferir_senha(senha, usuario.senha_hash):
+        return _pagina(pedido, "Muitas senhas erradas para este login. Espere 15 minutos.", 429)
+    # a régua de `acessos.autenticar` (o login ou o e-mail) e a mesma frase para conta inexistente, senha errada e
+    # conta desativada, como no login
+    porque = acessos.barrado(request, nome)
+    if porque:
+        acessos.recusar_barrado(db, request, nome, sistema="claude", porque=porque)
+        return _pagina(pedido, acessos.BARRADO, 429)
+    usuario, motivo = acessos.autenticar(db, nome, senha)
+    if usuario is None:
         _falhas[nome] = [*recentes, agora]
-        return _pagina(pedido, "Apelido ou senha inválidos.", 401)
+        acessos.recusar(db, request, nome, motivo, sistema="claude")
+        return _pagina(pedido, acessos.frase(motivo) + ("" if motivo == acessos.AMBIGUO else "."), 401)
     _falhas.pop(nome, None)
     try:
         _empresa_ativa(db, usuario)
@@ -323,6 +331,8 @@ def aprovar(
             403,
         )
     _pedidos.pop(pedido, None)
+    acessos.registrar(db, request, acao="entrou", sistema="claude", user=usuario, login=nome,
+                      motivo="conectou o Gestão Solar no Claude")
     codigo = secrets.token_urlsafe(32)
     _codigos[_hash(codigo)] = {"user_id": usuario.id, "desafio": p["desafio"], "redirect": p["redirect"],
                                "exp": agora + CODIGO_TTL}

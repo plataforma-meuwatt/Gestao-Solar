@@ -60,7 +60,7 @@ function montar(de?: string) {
 }
 
 function preencher(apelido: string, senha: string) {
-  fireEvent.change(screen.getByLabelText('Apelido'), { target: { value: apelido } })
+  fireEvent.change(screen.getByLabelText('Login ou e-mail'), { target: { value: apelido } })
   fireEvent.change(screen.getByLabelText('Senha'), { target: { value: senha } })
 }
 
@@ -109,7 +109,7 @@ describe('tela de entrada do portal', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Apelido ou senha inválidos.'))
     expect(screen.queryByTestId('onde')).toBeNull()
     // O apelido continua digitado: refazê-lo por causa da senha é o atrito que faz desistir.
-    expect((screen.getByLabelText('Apelido') as HTMLInputElement).value).toBe('cliente')
+    expect((screen.getByLabelText('Login ou e-mail') as HTMLInputElement).value).toBe('cliente')
   })
 
   it('recusa de validação (422, lista) também vira frase — nunca um objeto na tela', async () => {
@@ -144,7 +144,7 @@ describe('tela de entrada do portal', () => {
 
   it('o apelido é sempre minúsculo enquanto se digita', () => {
     montar()
-    const campo = screen.getByLabelText('Apelido') as HTMLInputElement
+    const campo = screen.getByLabelText('Login ou e-mail') as HTMLInputElement
 
     fireEvent.change(campo, { target: { value: 'Renan.Marquezini' } })
 

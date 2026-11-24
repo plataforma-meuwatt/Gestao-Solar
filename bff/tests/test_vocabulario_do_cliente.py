@@ -58,6 +58,11 @@ DO_GESTOR = {"painel_clientes.py", "empresa.py"}
 #:
 #: `meuwatt_webhook.py` não é lido por pessoa nenhuma: quem chama é o SERVIDOR do meuWatt (o aviso de parada
 #: confirmada), e o nome do produto é o endereço que se configura lá.
+#:
+#: E uma exceção que mora FORA desta varredura (que só lê `app/api/v1`), escrita aqui para não passar escondida: a lista
+#: dos sistemas do login único (`services/login_externo.SISTEMAS`, Plano Casa GS de 24/11/2026) chega ao cliente como o
+#: nome dos botões "Entrar com o GS" / "Abrir o …". Ali o nome é o DESTINO, o sistema em que a pessoa vai cair, com a
+#: marca dele; as recusas da entrada só nomeiam esse destino.
 COM_MOTIVO = {"billing.py", "meuwatt_webhook.py"}
 
 PRODUTOS = ("meuwatt", "meuplano")

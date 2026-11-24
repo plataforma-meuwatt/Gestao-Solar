@@ -143,15 +143,13 @@ export default function Entrar() {
             ) : null}
 
             {/*
-              O PRIMEIRO CAMPO É O APELIDO, e não o e-mail. A identidade de uma conta aqui é
-              o apelido (`bff/app/core/apelido.py`); o e-mail é contato, opcional e não
-              único — a MESMA pessoa pode ter duas contas, uma de gestor e uma de dono de
-              usina, com o mesmo e-mail. Um campo "E-mail" no topo convidaria a tentar
-              entrar com ele, que é exatamente o que não funciona.
+              O LOGIN OU O E-MAIL (24/11/2026). A identidade de uma conta é o login (`bff/app/core/apelido.py`); o
+              e-mail também entra, e quando a mesma pessoa tem duas contas com ele (gestora e dona de usina) a senha
+              diz qual é (`services/acessos.autenticar`).
             */}
             <Campo
               id="apelido"
-              rotulo="Apelido"
+              rotulo="Login ou e-mail"
               value={apelido}
               // A caixa é corrigida enquanto se digita, e não só no envio: ver "Renan" na
               // tela e receber erro sem entender o motivo é o pior dos dois mundos.
@@ -160,13 +158,12 @@ export default function Entrar() {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="seu.apelido"
+              placeholder="seu.login ou voce@empresa.com"
               autoFocus
               required
             />
             <p className="-mt-2 text-xs text-fraco">
-              Minúsculas, sem acento, um separador por vez — <span className="mono">ponto</span> ou{' '}
-              <span className="mono">hífen</span>.
+              O login (minúsculas, sem acento, ex.: <span className="mono">joao.silva</span>) ou o e-mail da conta.
             </p>
 
             <Campo

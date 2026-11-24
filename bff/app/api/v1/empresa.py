@@ -1641,6 +1641,9 @@ async def editar_conta_da_empresa(
         if getattr(body, campo) is not None:
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
+    if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
+        from app.services import acessos
+        acessos.senha_redefinida(db, conta, gerente, "oem-gs, usuários")
     if tirar_do_meuguarda:
         await _tirar_do_meuguarda(gerente, conta.apelido)
     if mudou_tv:                       # a conta lá nasce, liga ou bloqueia junto (o TermoVision cria pelo GS)

@@ -339,6 +339,9 @@ def editar_usuario_da_empresa(
             )
         alvo.perfil = body.perfil
     db.commit()
+    if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
+        from app.services import acessos
+        acessos.senha_redefinida(db, alvo, gestor, "adm-gs, empresas")
     return resumo_das_contas(db, [alvo], gestor, empresa_id)[0]
 
 

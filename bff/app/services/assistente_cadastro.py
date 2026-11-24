@@ -464,8 +464,11 @@ async def _meuplano(db, quem, conta, mp_: dict, p: dict) -> str:
                                f"({_motivo(e)}): troque em Minha Empresa → Equipe") from e
     if conta is None:                                        # só meuPlano: sem conta no GS não há token a ligar
         return f"✅ meuPlano: {feito}"
-    await mp.provisionar_identidade(alvo, login_externo.assinar(conta, Produto.MEUPLANO))
-    sessao = await mp.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUPLANO))
+    from app.services import acessos
+    await mp.provisionar_identidade(alvo, login_externo.assinar(conta, Produto.MEUPLANO, db=db))
+    sessao = await mp.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUPLANO, db=db))
+    acessos.registrar(db, None, acao="passe", sistema="meuplano", user=conta,
+                      motivo=f"cadastro pelo bot, a pedido de {quem.apelido}: ligar a conta")
     return f"✅ meuPlano: {feito}, {await _ligar_token(db, quem, conta, Produto.MEUPLANO, mp, sessao)}"
 
 
@@ -487,7 +490,10 @@ async def _meuwatt(db, quem, conta, mw_: dict, p: dict) -> str:
         nota = f" (já era {PAPEIS_MW.get(ja.get('role'), ja.get('role'))} lá: o papel não foi trocado)"
     if func.get("role") != "system_admin":                  # técnico, operador e dono só veem por concessão
         await mw.conceder_usinas(eid, func["id"], [u["id"] for u in await mw.usinas() if u.get("slug") in slugs])
-    sessao = await mw.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUWATT))
+    sessao = await mw.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUWATT, db=db))
+    from app.services import acessos
+    acessos.registrar(db, None, acao="passe", sistema="meuwatt", user=conta,
+                      motivo=f"cadastro pelo bot, a pedido de {quem.apelido}: ligar a conta")
     try:
         ligado = await _ligar_token(db, quem, conta, Produto.MEUWATT, mw, sessao)
     finally:
@@ -623,6 +629,8 @@ async def conta_do_gs(ctx, a: dict) -> dict:
             return "❌ Só o gerente da empresa da conta redefine a senha dela. Nada foi feito."
         c.senha_hash = await asyncio.to_thread(gerar_hash_senha, senha)
         db.commit()
+        from app.services import acessos
+        acessos.senha_redefinida(db, c, quem, "pelo bot do WhatsApp")
         return f"✅ Feito: a senha de entrar no GS de {nome} foi trocada (entra como «{login}»)."
 
     return helper.propor(ctx, f"Trocar a senha de entrar no GS de {nome} (entra como «{login}»)", PRAZO_S, executar,

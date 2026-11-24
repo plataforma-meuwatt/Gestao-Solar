@@ -13,9 +13,10 @@
  * serviço quer voltar para a geração no clique seguinte, e substituir a página forçaria
  * refazer o caminho.
  *
- * Só aparece o produto ao qual a conta está vinculada (`tem_meuwatt` / `tem_meuplano`).
- * Um botão que leva a uma recusa é pior do que botão nenhum — e quem recusa é o produto,
- * que é quem sabe do vínculo.
+ * Só aparece o produto liberado para a conta. Um botão que leva a uma recusa é pior do que botão nenhum.
+ *
+ * Desde 24/11/2026 ("Plano Casa GS") a lista é UMA, a do GS (`GET /api/sessao/produtos`), para os quatro sistemas
+ * (meuWatt, meuPlano, meuGuarda, TermoVision): o mesmo caminho e o mesmo registro de acesso para todos.
  */
 
 import { useState } from 'react'
@@ -23,18 +24,11 @@ import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2 } from 'lucide-react'
 
 import { api, mensagemDeErro } from '@/lib/api'
-import { useAuth } from '@/store/auth'
 
-type Produto = 'meuwatt' | 'meuplano'
-
-const ROTULO: Record<Produto, string> = { meuwatt: 'meuWatt', meuplano: 'meuPlano' }
-
-/** O meuGuarda e o TermoVision que o gerente liberou para esta conta (`GET /api/sessao/produtos`): entram pela
- *  asserção do "Entrar com o Gestão Solar", no endereço de entrada deles. */
+/** Os sistemas que esta conta abre pelo GS (`GET /api/sessao/produtos`): entram pelo passe, no endereço de entrada deles. */
 type DaSessao = { produto: string; nome: string; url: string }
 
 export function AbrirProduto() {
-  const usuario = useAuth((s) => s.usuario)
   const [abrindo, setAbrindo] = useState<string | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const { data: daSessao } = useQuery({
@@ -43,20 +37,14 @@ export function AbrirProduto() {
     staleTime: 300_000,
   })
 
-  const disponiveis: Produto[] = [
-    ...(usuario?.tem_meuwatt ? (['meuwatt'] as const) : []),
-    ...(usuario?.tem_meuplano ? (['meuplano'] as const) : []),
-  ]
-  const outros = daSessao ?? []
-  if (disponiveis.length === 0 && outros.length === 0) return null
+  const lista = daSessao ?? []
+  if (lista.length === 0) return null
 
-  async function abrir(produto: string, entrada?: string) {
+  async function abrir(produto: string, entrada: string) {
     setAbrindo(produto)
     setErro(null)
     try {
-      const { data } = entrada
-        ? await api.post<{ url: string }>(`/api/sessao/${encodeURIComponent(produto)}`, { volta: entrada })
-        : await api.post<{ url: string; nome: string }>(`/api/v1/auth/produtos/${produto}/entrar`)
+      const { data } = await api.post<{ url: string }>(`/api/sessao/${encodeURIComponent(produto)}`, { volta: entrada })
       // `noopener` corta o acesso da página nova à que a abriu (`window.opener`), que é a
       // higiene padrão de qualquer link para fora.
       window.open(data.url, '_blank', 'noopener,noreferrer')
@@ -69,10 +57,7 @@ export function AbrirProduto() {
 
   return (
     <div className="flex items-center gap-1.5">
-      {[
-        ...disponiveis.map((p) => ({ chave: p as string, nome: ROTULO[p], entrada: undefined as string | undefined })),
-        ...outros.map((o) => ({ chave: o.produto, nome: o.nome, entrada: o.url })),
-      ].map((p) => (
+      {lista.map((o) => ({ chave: o.produto, nome: o.nome, entrada: o.url })).map((p) => (
         <button
           key={p.chave}
           type="button"

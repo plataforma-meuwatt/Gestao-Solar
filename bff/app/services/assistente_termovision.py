@@ -38,15 +38,9 @@ def disponivel(user) -> bool:
 
 def assercao(db, user, liberado: bool | None = None) -> str:
     """A asserção da pessoa para o TermoVision (2 min, uso único). `liberado` sobrepõe o acesso (desligar)."""
-    a = login_externo.assinar_login(user, login_externo.TERMOVISION, _PORTAO.get(user.perfil, "painel"),
-                                    getattr(user, "empresa_da_sessao", None) or user.empresa_id,
-                                    login_externo.meuplano_id_de(db, user.id))
-    if liberado is None:
-        return a
-    import jwt                                             # o mesmo token, só com o acesso do momento
-    dados = jwt.decode(a, options={"verify_signature": False})
-    dados[login_externo.TERMOVISION] = liberado
-    return jwt.encode(dados, login_externo._privada(), algorithm="RS256")
+    return login_externo.assinar_login(user, login_externo.TERMOVISION, _PORTAO.get(user.perfil, "painel"),
+                                       getattr(user, "empresa_da_sessao", None) or user.empresa_id,
+                                       login_externo.meuplano_id_de(db, user.id), db=db, liberado=liberado)
 
 
 def _detalhe(r: httpx.Response) -> str:
@@ -65,6 +59,9 @@ async def _entrar(c: httpx.AsyncClient, db, user) -> str | None:
         return str(e)
     except httpx.HTTPError:
         return "O TermoVision não respondeu agora. Nada foi feito: tente de novo em alguns minutos."
+    from app.services import acessos
+    acessos.registrar(db, None, acao="passe", sistema="termovision", user=user, ok=r.status_code < 300,
+                      motivo="pelo bot ou pelo conector do Claude", agrupar_s=600)
     return None if r.status_code < 300 else f"O TermoVision recusou a entrada desta pessoa: {_detalhe(r)}."
 
 
@@ -398,17 +395,23 @@ def mensagem(p: dict) -> tuple[str, str]:
 
 
 async def provisionar(db, user, liberado: bool) -> str | None:
-    """Liga (cria ou acha) ou desliga a conta da pessoa no TermoVision. Devolve o erro, ou None."""
+    """Liga (cria ou acha) ou desliga a conta da pessoa no TermoVision. Devolve o erro, ou None. Nunca levanta: quem
+    chama já gravou a mudança no GS, e a tela do gerente não pode virar erro por causa do outro lado."""
+    from app.services import acessos
+
     if user.perfil not in _PORTAO:
         return None                                        # a plataforma nunca nasce lá
+    erro = None
     try:
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.post(f"{_base()}/api/conta/gs/provisionar", json={"assercao": assercao(db, user, liberado)})
-    except (httpx.HTTPError, login_externo.SemChave) as e:
-        log.warning("termovision: provisionar %s falhou: %s", user.apelido, e)
-        return "o TermoVision não respondeu"
-    if r.status_code >= 300:
-        log.warning("termovision: provisionar %s recusado: %s", user.apelido, _detalhe(r))
-        return _detalhe(r)
-    log.info("termovision: provisionar %s → %s", user.apelido, r.json().get("acao"))
-    return None
+        if r.status_code >= 300:
+            erro = _detalhe(r)
+        else:
+            log.info("termovision: provisionar %s → %s", user.apelido, r.json().get("acao"))
+    except Exception as e:                                 # noqa: BLE001
+        log.warning("termovision: provisionar %s falhou", user.apelido, exc_info=True)
+        erro = "o TermoVision não respondeu" if isinstance(e, httpx.HTTPError) else f"falha aqui: {type(e).__name__}"
+    acessos.registrar(db, None, acao="acesso", sistema="termovision", user=user, ok=erro is None,
+                      motivo=f"acesso {'ligado' if liberado else 'desligado'} no GS" + (f"; lá: {erro}" if erro else ""))
+    return erro

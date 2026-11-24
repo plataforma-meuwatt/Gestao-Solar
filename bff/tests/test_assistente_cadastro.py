@@ -135,7 +135,7 @@ def cenario(db, bot_local, monkeypatch):
     mw, mp, ligados = _MeuWatt(), _MeuPlano(), []
     monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db_, uid, so_proprio=False: mw)
     monkeypatch.setattr(vinculos, "cliente_meuplano", lambda db_, uid, so_proprio=False: mp)
-    monkeypatch.setattr(login_externo, "assinar", lambda conta, produto: f"assercao:{conta.id}:{produto.value}")
+    monkeypatch.setattr(login_externo, "assinar", lambda conta, produto, **_: f"assercao:{conta.id}:{produto.value}")
 
     async def _conectar(db_, conta, produto, token, *, por):
         ligados.append((conta.apelido, produto.value, token, por.apelido))

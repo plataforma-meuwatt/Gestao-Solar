@@ -21,6 +21,12 @@ class _Db:
     def __init__(self): self.novos = []
     def add(self, x): self.novos.append(x)
     def commit(self): pass
+    def rollback(self): pass
+    def execute(self, *a, **k): pass
+
+    @property
+    def pedidos(self):                                     # só os pedidos (a auditoria de acessos entra junto)
+        return [x for x in self.novos if isinstance(x, ProcessamentoTV)]
 
 
 def _ctx(monkeypatch):
@@ -42,7 +48,7 @@ def test_pede_com_o_sim_e_guarda_o_token(monkeypatch):
     assert "usina NOVA, de Splendor O&M" in ctx.proposta.resumo
     texto = asyncio.run(ctx.proposta.executar(ctx.db, ctx.user, "5517999"))
     assert pedido.called and f"{B}/p/tvp_abc" in texto
-    assert ctx.db.novos[0].token == "tvp_abc" and ctx.db.novos[0].telefone == "5517999"
+    assert ctx.db.pedidos[0].token == "tvp_abc" and ctx.db.pedidos[0].telefone == "5517999"
     helper.PENDENTES.clear()
 
 
@@ -213,3 +219,26 @@ def test_o_conector_so_le_o_termovision(monkeypatch):
     assert r["isError"] and not any(c["method"] == "tools/call" for c in chamadas)
     r = asyncio.run(mcp._chamar(None, SimpleNamespace(id=1), "termovision_usina_estado", {"usina": "x"}))
     assert r["content"][0]["text"] == "ok usina_estado"
+
+
+@respx.mock
+def test_provisionar_de_verdade_assina_o_acesso_do_momento(db, monkeypatch):
+    """Sem simular a asserção: em 24/11/2026 ela usava uma biblioteca que não existe na imagem e o desligar dava erro."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jose import jwt
+
+    from app.core.config import get_settings
+    from app.models.user import User
+
+    chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    monkeypatch.setattr(get_settings(), "gs_sso_private_key", chave.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode())
+    u = User(apelido="gerente.tv", nome="G", perfil=Perfil.GESTOR_EMPRESA, termovision_liberado=True)
+    db.add(u)
+    db.commit()
+    rota = respx.post(f"{B}/api/conta/gs/provisionar").respond(200, json={"acao": "bloqueada"})
+    assert asyncio.run(tv.provisionar(db, u, False)) is None
+    import json
+    c = jwt.get_unverified_claims(json.loads(rota.calls[0].request.content)["assercao"])
+    assert c["termovision"] is False and c["aud"] == "termovision" and c["v"] == 2
