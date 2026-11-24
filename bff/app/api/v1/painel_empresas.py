@@ -311,6 +311,8 @@ def editar_usuario_da_empresa(
     alvo = _conta_desta_empresa(db, empresa_id, usuario_id)
     if body.ativo is False or (body.perfil is not None and body.perfil is not Perfil.GESTOR_EMPRESA):
         svc.exigir_outro_gerente_em_todas(db, alvo)
+    from app.services import acessos
+    antes = acessos.retrato(alvo)
 
     if body.ativo is not None:
         alvo.ativo = body.ativo
@@ -340,8 +342,8 @@ def editar_usuario_da_empresa(
         alvo.perfil = body.perfil
     db.commit()
     if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
-        from app.services import acessos
         acessos.senha_redefinida(db, alvo, gestor, "adm-gs, empresas")
+    acessos.mudou(db, alvo, gestor, acessos.diferencas(antes, acessos.retrato(alvo)), "adm-gs, empresas")
     return resumo_das_contas(db, [alvo], gestor, empresa_id)[0]
 
 
@@ -391,6 +393,8 @@ def criar_usuario_da_empresa(
     criado.usuario.empresa_id = empresa_id
     criado.usuario.perfil = body.perfil
     db.commit()
+    from app.services import acessos
+    acessos.criada(db, criado.usuario, gestor, "adm-gs, empresas", empresa_id=empresa_id)
     return NovoUsuarioOut(
         id=criado.usuario.id,
         nome=criado.usuario.nome,
@@ -411,8 +415,13 @@ def por_usuario_na_empresa(
     conta = db.get(User, usuario_id)
     if conta is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta não encontrada.")
+    ja = empresa_id in svc.empresas_da_conta(db, conta)
     svc.por_na_empresa(db, conta, empresa_id, gestor)
     db.commit()
+    if not ja:
+        from app.services import acessos
+        acessos.mudou(db, conta, gestor, [f"entrou na empresa {svc.por_id(db, empresa_id).nome}"], "adm-gs, empresas",
+                      empresa_id=empresa_id)
     return resumo_das_contas(db, [conta], gestor, empresa_id)[0]
 
 
@@ -431,3 +440,6 @@ def tirar_usuario_da_empresa(
     svc.exigir_outro_gerente(db, empresa_id, conta)
     svc.tirar_da_empresa(db, conta, empresa_id)
     db.commit()
+    from app.services import acessos
+    acessos.mudou(db, conta, _gestor, [f"saiu da empresa {svc.por_id(db, empresa_id).nome}"], "adm-gs, empresas",
+                  empresa_id=empresa_id)

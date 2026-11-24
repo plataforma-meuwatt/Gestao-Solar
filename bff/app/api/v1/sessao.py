@@ -126,12 +126,11 @@ def trocar(
     aberto numa aba e o da empresa em outra.
     """
     from app.services import acessos
-    alvo = (body.apelido or "").strip().lower()
     chave = f"papel:{usuario.id}"                          # por conta (e lugar), não por alvo: sondar nomes não cria chaves
     if acessos.barrado(request, chave, por_ip=False):      # a senha de subir para a plataforma também tem limite
         if acessos._uma_vez(f"{chave}|barrado"):
-            acessos.registrar(db, request, acao="recusado", user=usuario, ok=False,
-                              motivo=f"troca de papel para {alvo}: bloqueada, 10 senhas erradas em 15 min")
+            acessos.registrar(db, request, acao="bloqueado", user=usuario, ok=False,
+                              motivo="troca de papel: 10 senhas erradas em 15 min")
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, acessos.BARRADO)
     try:
         destino = pessoas.trocar(db, usuario, body.apelido, body.senha)
@@ -139,10 +138,10 @@ def trocar(
         acessos.contar_erro(request, chave)                # 404 (conta que não é dela) também conta, sem linha
         if e.status_code == status.HTTP_401_UNAUTHORIZED:  # só a senha errada entra no registro
             acessos.registrar(db, request, acao="recusado", user=usuario, ok=False,
-                              motivo=f"troca de papel para {alvo}: senha errada")
+                              motivo="troca de papel: senha errada")
         raise
-    acessos.registrar(db, request, acao="entrou", user=destino,
-                      motivo=f"trocou de papel, vindo de {usuario.apelido} ({pessoas.escopo_do_perfil(destino.perfil)})")
+    acessos.registrar(db, request, acao="entrou", user=destino, por=usuario,   # `por`: a conta de onde veio
+                      motivo=f"trocou de papel, para o {acessos.PORTAO[pessoas.escopo_do_perfil(destino.perfil)]}")
     token, expira = pessoas.emitir(destino)
     return TrocaOut(
         token=token,
@@ -414,7 +413,7 @@ def entrar_no_produto(
     except login_externo.SemChave as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     acessos.registrar(db, request, acao="passe", sistema=produto, user=usuario,
-                      motivo=f"já dentro do GS ({'entrada do gestao.solar' if _escopo(cred) == 'entrada' else portao})")
+                      motivo=f"já dentro do GS ({acessos.PORTAO.get('entrada' if _escopo(cred) == 'entrada' else portao, portao)})")
     if _escopo(cred) == "entrada":                          # renova: 30 dias a partir do último uso
         entrada, expira = criar_token_entrada(usuario.id)
         return EntrarOut(url=f"{volta}#assercao={assercao}", entrada=entrada, entrada_expira_em=expira)

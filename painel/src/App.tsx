@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom'
 
+import { Acessos } from '@/features/acessos/Acessos'
 import { LogDoBot } from '@/features/bot/LogDoBot'
 import { Diagnostico } from '@/features/diagnostico/Diagnostico'
 import { EmpresaPagina } from '@/features/empresas/Empresa'
@@ -114,6 +115,14 @@ export function App() {
               }
             />
             <Route
+              path="/acessos"
+              element={
+                <SoArea area="acessos">
+                  <Acessos daEmpresa={false} />
+                </SoArea>
+              }
+            />
+            <Route
               path="/usinas"
               element={
                 <SoArea area="usinas">
@@ -163,6 +172,14 @@ export function App() {
             {/* "Clientes" repetia "Usuários" com um segundo formulário: os donos de usina
                 são usuários da empresa, e moram lá. */}
             <Route path="/minha-empresa/clientes" element={<Navigate to="/minha-empresa/usuarios" replace />} />
+            <Route
+              path="/minha-empresa/acessos"
+              element={
+                <SoEmpresa>
+                  <Acessos daEmpresa />
+                </SoEmpresa>
+              }
+            />
             <Route
               path="/minha-empresa/bot"
               element={

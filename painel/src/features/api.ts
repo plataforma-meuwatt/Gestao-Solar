@@ -1105,3 +1105,60 @@ export const conectarMeuWhatsapp = (dados: ConexaoWhatsappIn) =>
 
 export const desconectarMeuWhatsapp = (phoneNumberId: string) =>
   apiTecnico.delete(`/whatsapp/${encodeURIComponent(phoneNumberId)}`)
+
+// ── Registro de acessos: quem entrou, onde e de onde (24/11/2026) ─────────────────────────
+
+/** Um acesso: entrada no GS, entrada num sistema pelo GS, recusa, bloqueio, troca de senha ou de acesso. Os textos vêm
+ *  prontos do servidor (`quem`, `acao_rotulo`, `sistema_rotulo`, `por`, `aparelho`): a tela não monta nenhum. */
+export interface Acesso {
+  id: number
+  em: string
+  usuario_id: number | null
+  quem: string
+  empresa: string | null
+  /** o que foi digitado, quando é de uma conta; senão, um resumo que não volta ao texto ("? 1a2b…") */
+  login: string
+  acao: string
+  acao_rotulo: string
+  sistema: string
+  sistema_rotulo: string
+  ok: boolean
+  motivo: string
+  /** quem fez, quando não foi a própria pessoa */
+  por: string | null
+  ip: string
+  aparelho: string
+  aparelho_completo: string
+}
+
+export interface RegistroDeAcessos {
+  acessos: Acesso[]
+  sistemas: { chave: string; rotulo: string }[]
+  /** de quem é o filtro por pessoa, quando ela está no alcance de quem pergunta */
+  pessoa: string | null
+  limite: number
+  /** o período aplicado (sem `de` pedido, o padrão do servidor: os últimos 30 dias) */
+  de: string | null
+  ate: string | null
+}
+
+export interface FiltroAcessos {
+  empresa_id?: number
+  usuario_id?: number
+  sistema?: string
+  so_recusas?: boolean
+  de?: string
+  /** sem limite de início (quem limpou o campo "De") */
+  todo_periodo?: boolean
+  ate?: string
+  busca?: string
+  limite?: number
+}
+
+/** adm-gs: todos os acessos (ou de uma empresa, de uma pessoa). */
+export const acessosDaPlataforma = (filtro: FiltroAcessos = {}) =>
+  api.get<RegistroDeAcessos>('/acessos', { params: filtro }).then((r) => r.data)
+
+/** oem-gs: os acessos das pessoas da empresa da sessão. */
+export const acessosDaEmpresa = (filtro: FiltroAcessos = {}) =>
+  apiEmpresa.get<RegistroDeAcessos>('/acessos', { params: filtro }).then((r) => r.data)

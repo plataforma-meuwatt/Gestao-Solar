@@ -386,6 +386,8 @@ async def _executar(db, quem, p: dict) -> str:
                 feitas.append(f"❌ {nome}: {_motivo(e)}")
     if p.get("bot"):
         db.refresh(conta)
+        from app.services import acessos
+        antes = acessos.retrato(conta)
         ligadas = []
         for parte in p["bot"]:
             try:
@@ -398,6 +400,8 @@ async def _executar(db, quem, p: dict) -> str:
             cadastro.liberar_meuguarda(conta, True)
             ligadas.append("acesso às câmeras")
         db.commit()
+        acessos.mudou(db, conta, quem, acessos.diferencas(antes, acessos.retrato(conta)), "cadastro pelo bot",
+                      empresa_id=p["empresa"])
         if ligadas:
             feitas.append(f"✅ Bot ligado: {', '.join(ligadas)} (sem senha de atuação)")
     cabeca = f"⚠️ Cadastro de {p['nome']} feito EM PARTE:" if falhou else f"✅ Cadastro de {p['nome']} feito:"
@@ -407,8 +411,11 @@ async def _executar(db, quem, p: dict) -> str:
 def _conta_no_gs(db, quem, p: dict, senha_hash: str | None) -> User:
     from app.services import cadastro, clientes
     perfil = PERFIS_GS[p["perfil"]][0]
+    from app.services import acessos
+    antes = None
     if p["gs_conta"]:
         conta = db.get(User, p["gs_conta"])
+        antes = acessos.retrato(conta)
     else:
         conta = clientes.criar(db, nome=p["nome"], apelido=p["apelido"], email=p["email"], empresa=None,
                                criado_por=quem, senha_pronta=("", senha_hash)).usuario
@@ -420,6 +427,11 @@ def _conta_no_gs(db, quem, p: dict, senha_hash: str | None) -> User:
     if p["email"] and not conta.email:
         conta.email = p["email"]
     db.commit()
+    if antes is None:
+        acessos.criada(db, conta, quem, "cadastro pelo bot", empresa_id=p["empresa"])
+    else:
+        acessos.mudou(db, conta, quem, acessos.diferencas(antes, acessos.retrato(conta)), "cadastro pelo bot",
+                      empresa_id=p["empresa"])
     return conta
 
 
@@ -467,8 +479,8 @@ async def _meuplano(db, quem, conta, mp_: dict, p: dict) -> str:
     from app.services import acessos
     await mp.provisionar_identidade(alvo, login_externo.assinar(conta, Produto.MEUPLANO, db=db))
     sessao = await mp.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUPLANO, db=db))
-    acessos.registrar(db, None, acao="passe", sistema="meuplano", user=conta,
-                      motivo=f"cadastro pelo bot, a pedido de {quem.apelido}: ligar a conta")
+    acessos.registrar(db, None, acao="passe", sistema="meuplano", user=conta, por=quem,
+                      motivo="cadastro pelo bot: ligar a conta")
     return f"✅ meuPlano: {feito}, {await _ligar_token(db, quem, conta, Produto.MEUPLANO, mp, sessao)}"
 
 
@@ -492,8 +504,8 @@ async def _meuwatt(db, quem, conta, mw_: dict, p: dict) -> str:
         await mw.conceder_usinas(eid, func["id"], [u["id"] for u in await mw.usinas() if u.get("slug") in slugs])
     sessao = await mw.entrar_pelo_gs(login_externo.assinar(conta, Produto.MEUWATT, db=db))
     from app.services import acessos
-    acessos.registrar(db, None, acao="passe", sistema="meuwatt", user=conta,
-                      motivo=f"cadastro pelo bot, a pedido de {quem.apelido}: ligar a conta")
+    acessos.registrar(db, None, acao="passe", sistema="meuwatt", user=conta, por=quem,
+                      motivo="cadastro pelo bot: ligar a conta")
     try:
         ligado = await _ligar_token(db, quem, conta, Produto.MEUWATT, mw, sessao)
     finally:

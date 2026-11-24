@@ -250,3 +250,7 @@ def definir_permissoes(
             )
         )
     db.commit()
+    from app.services import acessos
+    rotulo = {(i.categoria, i.subcategoria): i.rotulo for i in catalogo.CATALOGO}
+    acessos.mudou(db, cliente, gestor, acessos.conjunto("permissões", {rotulo[x] for x in atuais},
+                                                        {rotulo[x] for x in desejadas}), "adm-gs, clientes")

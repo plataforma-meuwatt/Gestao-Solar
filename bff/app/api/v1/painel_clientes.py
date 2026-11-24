@@ -233,6 +233,8 @@ async def editar_cliente(
     _: User = Depends(EXIGE_CLIENTES),
 ) -> ClienteResumo:
     cliente = _cliente(db, cliente_id)
+    from app.services import acessos
+    antes = acessos.retrato(cliente)
     if body.nome is not None and body.nome.strip():
         # O mesmo caminho do oem-gs: ligado ao meuPlano, o nome grava lá também (base única)
         # — senão a próxima sincronização desfaria a edição.
@@ -242,6 +244,7 @@ async def editar_cliente(
     if body.ativo is not None:
         cliente.ativo = body.ativo
     db.commit()
+    acessos.mudou(db, cliente, _, acessos.diferencas(antes, acessos.retrato(cliente)), "adm-gs, clientes")
 
     return ClienteResumo(
         id=cliente.id,

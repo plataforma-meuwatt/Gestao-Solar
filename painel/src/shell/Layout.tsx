@@ -33,6 +33,7 @@ import {
   UsersRound,
   X,
   type LucideIcon,
+  History,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import React from 'react'
@@ -90,6 +91,8 @@ const MENU: ItemMenu[] = [
   { para: '/usuarios', rotulo: 'Usuários', icone: UsersRound, soAdministrador: true },
   { para: '/usinas', rotulo: 'Usinas', icone: Sun, area: 'usinas' },
   { para: '/bot', rotulo: 'Log do bot', icone: ScrollText, area: 'bot' },
+  // A auditoria dos acessos de cada pessoa (24/11/2026, o GS é o detentor dos acessos).
+  { para: '/acessos', rotulo: 'Registro de acessos', icone: History, area: 'acessos' },
   // O número da plataforma, não o de um cliente: por onde o bot responde e TODAS as
   // notificações saem. Por isso Sistema, e por isso área própria.
   {
@@ -127,6 +130,8 @@ const MENU_EMPRESA: ItemMenu[] = [
   // O bot do WhatsApp de cada pessoa da empresa: celular, o token DELA e o que o
   // assistente responde (meuWatt, meuPlano, helper — um, dois ou todos).
   { para: '/minha-empresa/bot', rotulo: 'Bot do WhatsApp', icone: Bot },
+  // Quem da empresa entrou, onde e de onde: a auditoria dos acessos (24/11/2026).
+  { para: '/minha-empresa/acessos', rotulo: 'Registro de acessos', icone: History },
   // As contas da empresa nos produtos. Fica por último porque é configuração, não o dia
   // a dia — mas é o primeiro lugar aonde ir quando as listas acima vierem vazias.
   { para: '/minha-empresa/conexoes', rotulo: 'Conexões', icone: Link2 },
@@ -225,14 +230,14 @@ function TrocarPapel() {
               <div key={p.apelido} className="px-2.5 py-2 rounded-campo">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm text-forte truncate">
+                    <p className="text-sm text-forte break-words">
                       {p.escopo === 'painel'
                         ? 'Plataforma'
                         : p.escopo === 'empresa'
                           ? `Empresa · ${p.empresa ?? 'sem nome'}`
                           : 'Dono de usina'}
                     </p>
-                    <p className="text-[11px] text-fraco truncate">{p.apelido}</p>
+                    <p className="text-[11px] text-fraco break-words">{p.apelido}</p>
                   </div>
                   {p.atual ? (
                     <span className="text-[11px] text-ok shrink-0">atual</span>
@@ -480,10 +485,10 @@ function FaixaDePapel({
       }`}
     >
       {daEmpresa ? <Building2 size={15} /> : <ShieldCheck size={15} />}
-      <p className="text-sm font-semibold truncate">
+      <p className="text-sm font-semibold break-words">
         {daEmpresa ? `Empresa · ${empresa ?? 'sem nome'}` : 'Plataforma · Gestão Solar'}
       </p>
-      <span className="text-xs opacity-80 truncate">
+      <span className="text-xs opacity-80 break-words">
         {escopo === 'tecnico'
           ? 'técnico: você vê apenas o seu WhatsApp'
           : daEmpresa
@@ -605,7 +610,7 @@ export function Layout() {
           {/* De qual empresa é esta sessão, sempre visível. Não é enfeite: quem opera
               duas contas cadastra o cliente na empresa errada e ninguém descobre no
               mesmo dia. */}
-          <p className="text-[11px] text-fraco mt-1 truncate" title={empresa ?? undefined}>
+          <p className="text-[11px] text-fraco mt-1 break-words">
             {escopo !== 'painel' ? (empresa ?? 'empresa') : 'painel'}
           </p>
         </div>
@@ -636,7 +641,7 @@ export function Layout() {
         </ul>
 
         <div className="mt-auto p-3 border-t border-borda">
-          <p className="text-sm text-forte truncate px-1">{nome}</p>
+          <p className="text-sm text-forte break-words px-1">{nome}</p>
           {/* O papel por extenso, e não o código com `capitalize`: `gestor_empresa` viraria
               "Gestor_empresa" na tela — código de banco lido por gente é o mesmo defeito
               que o CLAUDE.md nomeia. */}

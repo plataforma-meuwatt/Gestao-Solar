@@ -15,7 +15,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Check, ChevronDown, ChevronRight, KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
+import { Building2, Check, ChevronDown, ChevronRight, History, KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -248,6 +248,10 @@ function LinhaDaConta({
               Ficha
             </Link>
           ) : null}
+          <Link to={`/acessos?usuario=${conta.id}`} className="btn-fantasma">
+            <History size={13} />
+            Registro de acessos
+          </Link>
           <button className="btn-fantasma" onClick={() => setSenhaAberta((v) => !v)}>
             <KeyRound size={13} />
             Senha
@@ -322,6 +326,10 @@ function LinhaDaEquipe({
             <option value="atendimento">Atendimento</option>
             <option value="administrador">Administrador</option>
           </select>
+          <Link to={`/acessos?usuario=${conta.id}`} className="btn-fantasma">
+            <History size={13} />
+            Registro de acessos
+          </Link>
           <button onClick={aoRedefinirSenha} className="btn-fantasma" title={`Definir uma senha nova para ${conta.nome}`}>
             <KeyRound size={13} />
             Senha

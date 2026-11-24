@@ -262,7 +262,8 @@ _ultimos: dict[tuple, float] = {}
 
 
 def registrar(db: Session, request: Request | None, *, acao: str, sistema: str = "gs", user: User | None = None,
-              login: str | None = None, ok: bool = True, motivo: str = "", agrupar_s: int | None = None) -> None:
+              login: str | None = None, ok: bool = True, motivo: str = "", agrupar_s: int | None = None,
+              por: User | None = None, empresa_id: int | None = None) -> None:
     """Grava UMA linha e confirma na hora (a recusa levanta logo depois e não pode levar o registro junto). Falhar ao
     gravar não derruba a entrada: vai ao log do servidor. De vez em quando apaga o que passou da retenção.
     `agrupar_s`: o passe que o BOT e o conector emitem a cada consulta entra uma vez por janela (pessoa, sistema)."""
@@ -277,7 +278,8 @@ def registrar(db: Session, request: Request | None, *, acao: str, sistema: str =
         db.add(AcessoGS(
             gs_user_id=user.id if user is not None else None,
             login=((login if login is not None else (user.apelido if user is not None else "")) or "")[:160],
-            acao=acao, sistema=sistema, ok=ok, motivo=(motivo or "")[:200], ip=ip, aparelho=aparelho))
+            acao=acao, sistema=sistema, ok=ok, motivo=(motivo or "")[:200], ip=ip, aparelho=aparelho,
+            por_id=por.id if por is not None else None, empresa_id=empresa_id))
         db.commit()
         if random.random() < 0.005:                      # noqa: S311 — limpeza, não segurança
             db.execute(delete(AcessoGS).where(AcessoGS.em < datetime.now(UTC) - RETENCAO))
@@ -315,7 +317,7 @@ def recusar_barrado(db: Session, request: Request | None, login: str | None, sis
     if not _uma_vez(_par(request, texto) if porque == "par" else f"ip|{_ip(request)}"):
         return
     contas = _contas_do_login(db, texto) if porque == "par" else []
-    registrar(db, request, acao="recusado", sistema=sistema, user=contas[0] if len(contas) == 1 else None,
+    registrar(db, request, acao="bloqueado", sistema=sistema, user=contas[0] if len(contas) == 1 else None,
               login=texto if contas else "", ok=False,
               motivo=("bloqueado: 10 senhas erradas deste login, deste lugar, em 15 min" if porque == "par" else
                       f"bloqueado: {_POR_IP} senhas erradas deste IP em 15 min"))
@@ -342,8 +344,213 @@ def entrar_ou_recusar(db: Session, request: Request | None, login: str | None, s
     return usuario
 
 
-def senha_redefinida(db: Session, alvo: User, por: User | None, como: str) -> None:
+def senha_redefinida(db: Session, alvo: User, por: User | None, como: str, empresa_id: int | None = None) -> None:
     """A senha de entrar trocada por OUTRA pessoa (plataforma, gerente, bot): fica no registro de quem teve a senha
     trocada, com quem trocou. Chamar depois do commit da troca."""
-    quem = f"{por.apelido}" if por is not None else "o sistema"
-    registrar(db, None, acao="senha", user=alvo, motivo=f"redefinida por {quem} ({como})")
+    registrar(db, None, acao="senha", user=alvo, por=por, motivo=f"senha de entrar redefinida ({como})",
+              empresa_id=empresa_id)
+
+
+def mudou(db: Session, alvo: User, por: User | None, mudancas: list[str], onde: str,
+          empresa_id: int | None = None) -> None:
+    """O acesso de alguém mudado por OUTRA pessoa (ativa, papel, senha de atuação, e-mail e celular, que são login e
+    bot, o meuGuarda, o bot, as usinas, as telas): uma linha com o que mudou e quem fez. Chamar depois do commit."""
+    if mudancas:
+        registrar(db, None, acao="acesso", user=alvo, por=por, motivo=f"{'; '.join(mudancas)} ({onde})",
+                  empresa_id=empresa_id)
+
+
+#: o papel em palavras, para "papel: X → Y"
+PERFIL = {"administrador": "administrador da plataforma", "atendimento": "atendimento da plataforma",
+          "gestor_empresa": "gerente da O&M", "tecnico": "técnico", "cliente": "dono de usina"}
+_BOT = {"bot_meuplano": "meuPlano", "bot_meuwatt": "meuWatt", "bot_helper": "helper", "bot_meuguarda": "meuGuarda"}
+
+
+def retrato(conta: User) -> dict:
+    """O que é acesso numa conta, tirado antes da mudança para `diferencas` dizer o que mudou."""
+    return {"ativo": conta.ativo, "perfil": conta.perfil.value, "email": conta.email, "telefone": conta.telefone,
+            "atuacao": conta.senha_atuacao_hash, "meuguarda": conta.meuguarda_liberado,
+            **{c: getattr(conta, c) for c in _BOT}}
+
+
+def diferencas(antes: dict, depois: dict) -> list[str]:
+    """O que mudou entre dois `retrato`s, em palavras."""
+    d = []
+    if antes["ativo"] != depois["ativo"]:
+        d.append("conta reativada" if depois["ativo"] else "conta desativada")
+    if antes["perfil"] != depois["perfil"]:
+        d.append(f"papel: {PERFIL.get(antes['perfil'], antes['perfil'])} → "
+                 f"{PERFIL.get(depois['perfil'], depois['perfil'])}")
+    for campo, nome, a in (("email", "e-mail", "o"), ("telefone", "celular", "o"),
+                           ("atuacao", "senha de atuação do bot", "a")):
+        if antes[campo] != depois[campo]:
+            d.append(f"{nome} " + ("apagad" if not depois[campo] else "definid" if not antes[campo] else "trocad") + a)
+    if antes["meuguarda"] != depois["meuguarda"]:
+        d.append(f"meuGuarda {'liberado' if depois['meuguarda'] else 'desligado'}")
+    for campo, nome in _BOT.items():
+        if antes[campo] != depois[campo]:
+            d.append(f"bot do WhatsApp, {nome}: {'ligado' if depois[campo] else 'desligado'}")
+    return d
+
+
+def conjunto(nome: str, antes: set[str], depois: set[str]) -> list[str]:
+    """A mudança de uma lista (usinas, telas) em palavras: as liberadas e as tiradas; longa demais, só as contas."""
+    mais, menos = sorted(depois - antes), sorted(antes - depois)
+    partes = ([f"liberadas {', '.join(mais)}"] if mais else []) + ([f"tiradas {', '.join(menos)}"] if menos else [])
+    if not partes:
+        return []
+    texto = f"{nome}: {'; '.join(partes)}"
+    return [texto if len(texto) <= 160 else f"{nome}: {len(mais)} liberada(s), {len(menos)} tirada(s)"]
+
+
+def usinas_de(db: Session, conta: User) -> set[str]:
+    """As usinas concedidas à conta (o nome), para `conjunto`."""
+    from app.models.plant import PlantLink
+    from app.models.user import UserPlantAccess
+    return set(db.scalars(select(PlantLink.nome).join(UserPlantAccess, UserPlantAccess.plant_link_id == PlantLink.id)
+                          .where(UserPlantAccess.user_id == conta.id)))
+
+
+def criada(db: Session, conta: User, por: User | None, onde: str, extras: list[str] | None = None,
+           empresa_id: int | None = None) -> None:
+    """A conta criada por outra pessoa (o papel e o que já nasce com ela). Chamar depois do commit."""
+    registrar(db, None, acao="acesso", user=conta, por=por, empresa_id=empresa_id,
+              motivo="; ".join([f"conta criada: {PERFIL.get(conta.perfil.value, conta.perfil.value)}",
+                                *(extras or [])]) + f" ({onde})")
+
+
+#: o portão em palavras (o escopo da sessão é código: "painel", "empresa"…)
+PORTAO = {"painel": "adm-gs", "empresa": "oem-gs", "tecnico": "oem-gs, técnico", "cliente": "portal ou aplicativo",
+          "entrada": "entrada do gestao.solar"}
+
+
+# --------------------------------------------------------------------------- a tela Acessos (oem-gs e adm-gs)
+#: o que a tela escreve (o vocabulário é traduzido aqui, uma vez: a tela não monta texto a partir do código)
+ACAO = {"entrou": "Entrou no GS", "passe": "Entrou no sistema pelo GS", "recusado": "Recusado",
+        "bloqueado": "Bloqueado", "senha": "Senha trocada", "acesso": "Acesso mudado"}
+#: a mesma ação quando não deu certo (o rótulo segue o resultado, não só a ação)
+ACAO_FALHOU = {"entrou": "Não entrou no GS", "passe": "Não entrou no sistema", "senha": "Senha não trocada",
+               "acesso": "Mudança de acesso falhou"}
+SISTEMA = {"gs": "Gestão Solar", "claude": "Conector do Claude", "meuwatt": "meuWatt", "meuplano": "meuPlano",
+           "meuguarda": "meuGuarda", "termovision": "TermoVision"}
+
+
+def aparelho_curto(ua: str | None) -> str:
+    """O aparelho em palavras ("Chrome no Android", "aplicativo", "servidor de outro sistema"); o texto inteiro fica
+    ao lado, para quem precisar."""
+    t = (ua or "").lower()
+    if not t:
+        return "não informado"
+    if any(x in t for x in ("python-httpx", "httpx", "python-requests", "aiohttp", "node-fetch", "undici", "axios/")):
+        return "servidor de outro sistema"
+    if "expo" in t or "okhttp" in t or "cfnetwork" in t:
+        return "aplicativo"
+    navegador = next((n for n, chave in (("Edge", "edg/"), ("Opera", "opr/"), ("Chrome", "chrome/"),
+                                         ("Firefox", "firefox/"), ("Safari", "safari/")) if chave in t), "navegador")
+    sistema = next((s for s, chave in (("Android", "android"), ("iPhone", "iphone"), ("iPad", "ipad"),
+                                       ("Windows", "windows"), ("Mac", "mac os"), ("Linux", "linux")) if chave in t), "")
+    return f"{navegador} no {sistema}" if sistema else navegador
+
+
+def _quem(a: AcessoGS, u: User | None) -> str:
+    """De quem é a linha, em palavras: a conta, ou por que não há conta."""
+    if u is not None:
+        return f"{u.nome} ({u.apelido})"
+    if a.motivo.startswith("inundação"):
+        return "Vários logins que não são conta"
+    if a.acao == "bloqueado" and not a.login:
+        return "Vários logins, do mesmo lugar"
+    if a.motivo == AMBIGUO:
+        return f"E-mail de mais de uma conta ({a.login})"
+    if not a.login:
+        return "Login em branco"
+    if a.login.startswith("? "):
+        return "Login que não é conta"
+    return f"Conta apagada ({a.login})"
+
+
+OUTRA_EMPRESA = "a outra empresa da pessoa"
+#: o que a empresa lê no lugar do que a OUTRA empresa da pessoa mudou
+_DA_OUTRA = {"acesso": "mudança de acesso feita na outra empresa da pessoa",
+             "senha": "senha de entrar redefinida na outra empresa da pessoa"}
+
+
+def _por(p: User | None, daqui: set[int] | None, da_outra: bool) -> str | None:
+    """Quem fez, para quem vê. A empresa (`daqui` = as contas dela) não vê a conta da plataforma, nem a de outra empresa,
+    nem quem fez algo na OUTRA empresa da pessoa (`da_outra`)."""
+    if p is None:
+        return None
+    from app.services.pessoas import DA_PLATAFORMA
+    if daqui is not None and p.perfil in DA_PLATAFORMA:
+        return "equipe da plataforma"
+    if daqui is not None and (da_outra or p.id not in daqui):
+        return OUTRA_EMPRESA
+    return f"{p.nome} ({p.apelido})"
+
+
+def listar(db: Session, *, contas=None, empresa_vista: int | None = None, usuario_id: int | None = None,
+           sistema: str | None = None, so_recusas: bool = False, de=None, ate=None, busca: str | None = None,
+           limite: int = 300) -> list[dict]:
+    """Os acessos, do mais novo para o mais velho. `contas`: o filtro das contas (o recorte da empresa, de
+    `empresas.contas_da_empresa`); None = todas, inclusive as recusas de login que não é conta (só a plataforma).
+    `empresa_vista`: a empresa que está vendo (o oem-gs): a mudança feita em OUTRA empresa da pessoa (`empresa_id` da
+    linha) sai sem o que mudou e sem quem fez, e a busca não a acha pelo que ela esconde. `busca`: no nome, no login, no
+    IP, no porquê e em quem fez."""
+    from datetime import datetime as _dt
+    from datetime import time as _time
+
+    from sqlalchemy import and_, or_
+    from sqlalchemy.orm import aliased
+
+    from app.core.datas import BRT
+    from app.models.empresa import Empresa
+
+    from app.services.pessoas import DA_PLATAFORMA
+
+    feito = aliased(User)
+    q = (select(AcessoGS, User, feito).outerjoin(User, User.id == AcessoGS.gs_user_id)
+         .outerjoin(feito, feito.id == AcessoGS.por_id))
+    daqui = None
+    if contas is not None:
+        q = q.where(AcessoGS.gs_user_id.isnot(None)).where(contas)
+        daqui = set(db.scalars(select(User.id).where(contas)))
+    if usuario_id is not None:
+        q = q.where(AcessoGS.gs_user_id == usuario_id)
+    if sistema:
+        q = q.where(AcessoGS.sistema == sistema)
+    if so_recusas:
+        q = q.where(AcessoGS.ok.is_(False))
+    if de is not None:                                     # o dia inteiro, no fuso de Brasília, comparado em UTC
+        q = q.where(AcessoGS.em >= _dt.combine(de, _time.min, tzinfo=BRT).astimezone(UTC))
+    if ate is not None:
+        q = q.where(AcessoGS.em < _dt.combine(ate + timedelta(days=1), _time.min, tzinfo=BRT).astimezone(UTC))
+    t = (busca or "").strip().lower()
+    if t:
+        like = f"%{t.replace(chr(92), chr(92) * 2).replace('%', chr(92) + '%').replace('_', chr(92) + '_')}%"
+        de_quem_fez = or_(*(func.lower(c).like(like, escape=chr(92)) for c in (feito.nome, feito.apelido)))
+        no_motivo = func.lower(AcessoGS.motivo).like(like, escape=chr(92))
+        if daqui is not None:                              # a empresa acha só quem ela vê pelo nome, e não acha pelo
+            visivel = or_(AcessoGS.empresa_id.is_(None), AcessoGS.empresa_id == empresa_vista)   # que está escondido
+            de_quem_fez = and_(de_quem_fez, visivel, feito.id.in_(daqui or {-1}), feito.perfil.notin_(DA_PLATAFORMA))
+            no_motivo = and_(no_motivo, visivel)
+        q = q.where(or_(de_quem_fez, no_motivo, *(func.lower(c).like(like, escape=chr(92)) for c in
+                                                  (User.nome, User.apelido, AcessoGS.login, AcessoGS.ip))))
+    linhas = db.execute(q.order_by(AcessoGS.em.desc(), AcessoGS.id.desc()).limit(max(1, min(limite, 1000)))).all()
+    nomes = {e.id: e.nome for e in db.scalars(select(Empresa))}
+    def da_outra(a: AcessoGS) -> bool:
+        return daqui is not None and a.empresa_id is not None and a.empresa_id != empresa_vista
+
+    return [{
+        "id": a.id, "em": a.em, "usuario_id": a.gs_user_id, "quem": _quem(a, u),
+        # a empresa de origem da pessoa só para a plataforma: a outra empresa de quem é de duas não sai daqui
+        "empresa": nomes.get(u.empresa_id) if daqui is None and u and u.empresa_id else None,
+        "login": a.login, "acao": a.acao,
+        "acao_rotulo": ACAO.get(a.acao, a.acao) if a.ok else ACAO_FALHOU.get(a.acao, ACAO.get(a.acao, a.acao)),
+        "sistema": a.sistema, "sistema_rotulo": SISTEMA.get(a.sistema, a.sistema), "ok": a.ok,
+        # a mudança feita na outra empresa da pessoa não mostra o que mudou (as usinas, as telas de lá)
+        "motivo": _DA_OUTRA.get(a.acao, a.motivo) if da_outra(a) else a.motivo,
+        # sem IP e sem aparelho, a linha nasceu no próprio servidor (o bot, o conector, a mudança feita por alguém)
+        "por": _por(p, daqui, da_outra(a)), "ip": a.ip,
+        "aparelho": aparelho_curto(a.aparelho) if (a.ip or a.aparelho) else "registrado pelo próprio GS",
+        "aparelho_completo": a.aparelho,
+    } for a, u, p in linhas]

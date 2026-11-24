@@ -158,6 +158,10 @@ def criar(
 
     db.commit()
     db.refresh(membro)
+    from app.services import acessos
+    rotulo = {a.chave: a.rotulo for a in areas_painel.CATALOGO}
+    acessos.criada(db, membro, admin, "adm-gs, equipe da plataforma", acessos.conjunto(
+        "telas do adm-gs", set(), {rotulo.get(c, c) for c in areas_painel.concedidas(db, membro)}))
     return _membro_out(db, membro)
 
 
@@ -189,6 +193,8 @@ def editar(
             "Você não pode remover o próprio acesso de administrador.",
         )
 
+    from app.services import acessos
+    antes, telas_antes = acessos.retrato(membro), areas_painel.concedidas(db, membro)
     if body.perfil is not None:
         membro.perfil = body.perfil
     if body.ativo is not None:
@@ -213,6 +219,10 @@ def editar(
 
     db.commit()
     db.refresh(membro)
+    rotulo = {a.chave: a.rotulo for a in areas_painel.CATALOGO}
+    acessos.mudou(db, membro, admin, acessos.diferencas(antes, acessos.retrato(membro)) + acessos.conjunto(
+        "telas do adm-gs", {rotulo.get(c, c) for c in telas_antes},
+        {rotulo.get(c, c) for c in areas_painel.concedidas(db, membro)}), "adm-gs, equipe da plataforma")
     return _membro_out(db, membro)
 
 
@@ -429,12 +439,14 @@ def editar_conta(
         from app.services.empresas import exigir_outro_gerente_em_todas
 
         exigir_outro_gerente_em_todas(db, conta)
+    from app.services import acessos
+    antes = acessos.retrato(conta)
     if body.ativo is not None:
         conta.ativo = body.ativo
     if body.senha:
         conta.senha_hash = gerar_hash_senha(body.senha)
     db.commit()
     if body.senha:
-        from app.services import acessos
         acessos.senha_redefinida(db, conta, admin, "adm-gs, usuários")
+    acessos.mudou(db, conta, admin, acessos.diferencas(antes, acessos.retrato(conta)), "adm-gs, usuários")
     return next(c for c in todas_as_contas(db=db, admin=admin) if c.id == conta.id)

@@ -112,7 +112,7 @@ def entrar(body: EntrarIn, db: Session = Depends(get_db), request: Request = Non
     usuario.ultimo_login = datetime.now(UTC)
     db.commit()
     acessos.registrar(db, request, acao="entrou", user=usuario, login=body.apelido,
-                      motivo=f"painel ({pessoas.escopo_do_perfil(usuario.perfil)})")
+                      motivo=f"pelo {acessos.PORTAO[pessoas.escopo_do_perfil(usuario.perfil)]}")
 
     if empresa is not None:
         # Gerente → `escopo=empresa`; técnico → `escopo=tecnico`. Quem escolhe é

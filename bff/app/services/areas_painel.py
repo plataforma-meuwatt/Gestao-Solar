@@ -73,6 +73,15 @@ CATALOGO: list[Area] = [
         grupo="Operação",
     ),
     Area(
+        chave="acessos",
+        rotulo="Registro de acessos",
+        descricao=(
+            "A auditoria dos acessos de cada pessoa: quem entrou no GS e em cada sistema pelo GS, de onde e com que "
+            "aparelho, as senhas erradas e os bloqueios, as trocas de senha e as mudanças de acesso, com quem fez."
+        ),
+        grupo="Operação",
+    ),
+    Area(
         chave="diagnostico",
         rotulo="Diagnóstico",
         descricao="Conferir se o dado chega dos dois produtos para cada cliente.",

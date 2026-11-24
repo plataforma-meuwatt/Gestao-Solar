@@ -165,7 +165,7 @@ export function LinhaDoLog({ registro: r, primeiro }: { registro: RegistroBot; p
   return (
     <div className={primeiro ? '' : 'border-t border-borda'}>
       <button
-        className="w-full text-left px-5 py-3 flex items-start sm:items-center gap-3 hover:bg-superficie-alta/40"
+        className="w-full text-left px-5 py-3 flex items-start sm:items-center gap-3 hover:bg-superficie-alta"
         onClick={() => setAberta((v) => !v)}
       >
         {aberta ? <ChevronDown size={14} className="shrink-0 text-fraco mt-1 sm:mt-0" /> : <ChevronRight size={14} className="shrink-0 text-fraco mt-1 sm:mt-0" />}

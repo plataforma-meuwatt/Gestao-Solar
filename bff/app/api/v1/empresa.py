@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.v1.painel_acessos import AcessosOut, responder
 from app.api.v1.painel_whatsapp import (RegistroBotOut, UsoDoBotOut, registros_do_bot, saude_atual, ultima_respondida,
                                         uso_do_bot)
 from app.core.db import get_db
@@ -996,6 +997,8 @@ async def criar_cliente(
     criado.usuario.telefone = telefone
     cadastro.adotar_mensagens(db, criado.usuario)
     db.commit()
+    from app.services import acessos
+    acessos.criada(db, criado.usuario, gerente, "oem-gs, usuários", empresa_id=empresa_id)
 
     avisos: list[str] = []
     if body.mp_user_id is not None:
@@ -1092,11 +1095,15 @@ def definir_usinas_do_cliente(
             for pid in fora:
                 db.get(PlantLink, pid).empresa_id = empresa_id
 
+    from app.services import acessos
+    antes = acessos.usinas_de(db, cliente)
     try:
         clientes.definir_usinas(db, cliente, body.plant_link_ids, empresa_id=empresa_id)
     except clientes.RegraDeNegocio as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     db.commit()
+    acessos.mudou(db, cliente, gerente, acessos.conjunto("usinas", antes, acessos.usinas_de(db, cliente)),
+                  "oem-gs, usuários", empresa_id=empresa_id)
 
 
 # ------------------------------------------------------------- as micro usinas
@@ -1608,6 +1615,8 @@ async def editar_conta_da_empresa(
     if body.ativo is False:
         # A conta pode ser a única gerente de OUTRA empresa em que também está.
         svc.exigir_outro_gerente_em_todas(db, conta)
+    from app.services import acessos
+    antes = acessos.retrato(conta)
 
     if body.ativo is not None:
         conta.ativo = body.ativo
@@ -1642,13 +1651,15 @@ async def editar_conta_da_empresa(
             cadastro.liberar_bot(conta, campo, getattr(body, campo))
     db.commit()
     if body.senha:                                         # depois do commit: a troca recusada não fica meio gravada
-        from app.services import acessos
-        acessos.senha_redefinida(db, conta, gerente, "oem-gs, usuários")
+        acessos.senha_redefinida(db, conta, gerente, "oem-gs, usuários", empresa_id=empresa_id)
+    acessos.mudou(db, conta, gerente, acessos.diferencas(antes, acessos.retrato(conta)), "oem-gs, usuários",
+                  empresa_id=empresa_id)
     if tirar_do_meuguarda:
         await _tirar_do_meuguarda(gerente, conta.apelido)
     if mudou_tv:                       # a conta lá nasce, liga ou bloqueia junto (o TermoVision cria pelo GS)
         from app.services import assistente_termovision
-        await assistente_termovision.provisionar(db, conta, conta.termovision_liberado)
+        await assistente_termovision.provisionar(db, conta, conta.termovision_liberado, por=gerente,
+                                                 empresa_id=empresa_id)
 
     return UsuarioDetalhado(
         id=conta.id,
@@ -1899,6 +1910,29 @@ async def bot_ouvindo(
                 "cadastro de vocês. A administração do Gestão Solar vê o mesmo aviso."),
         **helper,
     )
+
+
+@router.get("/acessos", response_model=AcessosOut)
+def acessos_da_empresa(
+    usuario_id: int | None = None,
+    sistema: str | None = None,
+    so_recusas: bool = False,
+    de: date | None = None,
+    ate: date | None = None,
+    busca: str | None = None,
+    todo_periodo: bool = False,
+    limite: int = 300,
+    db: Session = Depends(get_db),
+    gerente: User = Depends(gestor_empresa_atual),
+) -> AcessosOut:
+    """A auditoria dos acessos das pessoas DESTA empresa (a de origem ou membro): entradas no GS e nos sistemas pelo GS,
+    recusas, trocas de senha e de acesso. Recusa de login que não é conta não aparece aqui (não é de ninguém da
+    empresa), e a conta da plataforma que fez alguma mudança aparece como "equipe da plataforma"; a plataforma vê tudo
+    no adm-gs."""
+    empresa_id = svc.empresa_exigida(gerente)
+    return responder(db, contas=svc.contas_da_empresa(empresa_id), empresa_vista=empresa_id, usuario_id=usuario_id,
+                     sistema=sistema, so_recusas=so_recusas, de=de, ate=ate, busca=busca, limite=limite,
+                     todo_periodo=todo_periodo)
 
 
 @router.get("/bot/registros", response_model=list[RegistroBotOut])

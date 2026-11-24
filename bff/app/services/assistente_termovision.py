@@ -11,6 +11,7 @@ Contrato: `docs/contrato-gs-processar.md` do repositório do TermoVision (outro 
 """
 
 import logging
+import time
 import unicodedata
 
 import httpx
@@ -51,8 +52,25 @@ def _detalhe(r: httpx.Response) -> str:
     return d if isinstance(d, str) and d else f"o TermoVision respondeu {r.status_code}"
 
 
-async def _entrar(c: httpx.AsyncClient, db, user) -> str | None:
-    """Abre a sessão da pessoa no cliente `c` (o cookie fica nele). Devolve o erro em português, ou None."""
+#: a sessão de cada pessoa no TermoVision, reusada pelas leituras do bot e do conector (24/11/2026, o TermoVision: 853
+#: entradas por dia na conta do Renan, uma por consulta, cada uma uma sessão de 30 dias lá). Vale 30 min aqui: a lista
+#: de usinas do passe se renova nesse prazo. Um 401 de lá a descarta antes (`ClienteMcp.mcp`).
+# ponytail: memória do processo; vários processos = uma sessão por processo, o que ainda é pouco
+_SESSOES: dict[int, tuple[float, httpx.Cookies]] = {}
+SESSAO_S = 1800
+
+
+def esquecer(user_id: int) -> None:
+    _SESSOES.pop(user_id, None)
+
+
+async def _entrar(c: httpx.AsyncClient, db, user, reusar: bool = False) -> str | None:
+    """Abre a sessão da pessoa no cliente `c` (o cookie fica nele). Devolve o erro em português, ou None. `reusar`: a
+    sessão guardada da pessoa, se ainda vale aqui (as leituras); as ações entram de novo."""
+    guardada = _SESSOES.get(user.id) if reusar else None
+    if guardada and time.monotonic() - guardada[0] < SESSAO_S:
+        c.cookies.update(guardada[1])
+        return None
     try:
         r = await c.post(f"{_base()}/api/conta/gs", json={"assercao": assercao(db, user)})
     except login_externo.SemChave as e:
@@ -62,7 +80,11 @@ async def _entrar(c: httpx.AsyncClient, db, user) -> str | None:
     from app.services import acessos
     acessos.registrar(db, None, acao="passe", sistema="termovision", user=user, ok=r.status_code < 300,
                       motivo="pelo bot ou pelo conector do Claude", agrupar_s=600)
-    return None if r.status_code < 300 else f"O TermoVision recusou a entrada desta pessoa: {_detalhe(r)}."
+    if r.status_code >= 300:
+        return f"O TermoVision recusou a entrada desta pessoa: {_detalhe(r)}."
+    if reusar:
+        _SESSOES[user.id] = (time.monotonic(), httpx.Cookies(c.cookies))
+    return None
 
 
 def _nome(s: str) -> str:
@@ -276,17 +298,22 @@ FERRAMENTA_STRINGS = {"type": "function", "function": {
 # conector (`api/v1/mcp.py`, serviço termovision) e, por ele, no catálogo do bot; os comandos que mudam algo passam por
 # `comando_termovision`, com o Sim onde o TermoVision pede (`_meta.confirmar`, destrutivo ou pesado).
 class ClienteMcp:
-    """O /mcp do TermoVision como a pessoa: cada chamada abre a sessão dela (asserção de 2 min, uso único)."""
+    """O /mcp do TermoVision como a pessoa, na sessão guardada dela (`_entrar` com `reusar`)."""
 
     def __init__(self, db, user):
         self.db, self.user = db, user
 
     async def mcp(self, payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=120) as c:
-            erro = await _entrar(c, self.db, self.user)
-            if erro:                                       # a recusa de entrar chega como erro do JSON-RPC
-                return {"jsonrpc": "2.0", "id": payload.get("id"), "error": {"code": -32001, "message": erro}}
-            r = await c.post(f"{_base()}/mcp", json=payload)
+            for reusar in (True, False):                   # a guardada; recusada lá (401), uma entrada nova
+                erro = await _entrar(c, self.db, self.user, reusar=reusar)
+                if erro:                                   # a recusa de entrar chega como erro do JSON-RPC
+                    return {"jsonrpc": "2.0", "id": payload.get("id"), "error": {"code": -32001, "message": erro}}
+                r = await c.post(f"{_base()}/mcp", json=payload)
+                if r.status_code != 401 or not reusar:
+                    break
+                esquecer(self.user.id)
+                c.cookies.clear()
             r.raise_for_status()
             return r.json()
 
@@ -394,13 +421,14 @@ def mensagem(p: dict) -> tuple[str, str]:
     return f"rodando:{i}", f"🛠️ {usina}: {e['titulo']}, etapa {i + 1} de {len(etapas)}{texto}"
 
 
-async def provisionar(db, user, liberado: bool) -> str | None:
+async def provisionar(db, user, liberado: bool, por=None, empresa_id: int | None = None) -> str | None:
     """Liga (cria ou acha) ou desliga a conta da pessoa no TermoVision. Devolve o erro, ou None. Nunca levanta: quem
     chama já gravou a mudança no GS, e a tela do gerente não pode virar erro por causa do outro lado."""
     from app.services import acessos
 
     if user.perfil not in _PORTAO:
         return None                                        # a plataforma nunca nasce lá
+    esquecer(user.id)                                      # o acesso mudou: a próxima leitura entra de novo
     erro = None
     try:
         async with httpx.AsyncClient(timeout=20) as c:
@@ -412,6 +440,7 @@ async def provisionar(db, user, liberado: bool) -> str | None:
     except Exception as e:                                 # noqa: BLE001
         log.warning("termovision: provisionar %s falhou", user.apelido, exc_info=True)
         erro = "o TermoVision não respondeu" if isinstance(e, httpx.HTTPError) else f"falha aqui: {type(e).__name__}"
-    acessos.registrar(db, None, acao="acesso", sistema="termovision", user=user, ok=erro is None,
-                      motivo=f"acesso {'ligado' if liberado else 'desligado'} no GS" + (f"; lá: {erro}" if erro else ""))
+    acessos.registrar(db, None, acao="acesso", sistema="termovision", user=user, ok=erro is None, por=por,
+                      empresa_id=empresa_id,
+                      motivo=f"TermoVision {'liberado' if liberado else 'desligado'}" + (f"; lá: {erro}" if erro else ""))
     return erro

@@ -21,8 +21,14 @@ class AcessoGS(Base):
     gs_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("gs_users.id", ondelete="SET NULL"),
                                                    nullable=True)
     login: Mapped[str] = mapped_column(String(160), default="", server_default="")
-    #: entrou · passe · recusado · senha
+    #: entrou · passe · recusado · bloqueado · senha · acesso
     acao: Mapped[str] = mapped_column(String(20))
+    #: quem fez, quando não foi a própria pessoa: a senha redefinida, o acesso mudado, a origem da troca de papel
+    por_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True)
+    #: a empresa onde a mudança aconteceu (nula = da plataforma ou da própria pessoa): a outra empresa de quem é de duas
+    #: não vê o que esta mudou (as usinas, as telas de cá)
+    empresa_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("gs_empresas.id", ondelete="SET NULL"),
+                                                   nullable=True)
     #: onde: gs (portal, app e painel), claude (o conector), meuwatt, meuplano, meuguarda, termovision
     sistema: Mapped[str] = mapped_column(String(20))
     ok: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")

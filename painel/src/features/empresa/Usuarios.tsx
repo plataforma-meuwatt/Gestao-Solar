@@ -19,8 +19,9 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Link2, UserCog, UserPlus } from 'lucide-react'
+import { History, KeyRound, Link2, UserCog, UserPlus } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Aviso, Campo, Cartao, Carregando, Erro, Modal, Pagina, Selo, Vazio } from '@/components/base'
 import {
@@ -261,6 +262,10 @@ function Linha({
           ) : null}
 
           <div className="flex items-center gap-2 flex-wrap pt-3 mt-3 border-t border-borda">
+            <Link to={`/minha-empresa/acessos?usuario=${usuario.id}`} className="btn-fantasma">
+              <History size={13} />
+              Registro de acessos
+            </Link>
             {/* Gerente não recebe concessão: ele vê a carteira inteira da empresa por SER
                 gerente. Um botão que só sabe recusar é pior que botão nenhum. */}
             {usuario.perfil === 'cliente' ? (

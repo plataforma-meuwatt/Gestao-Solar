@@ -496,6 +496,27 @@ conector do meuguarda também, nesse do GS") não tem conector próprio: as LEIT
 (estado e alarmes abertos, eventos de um período, a foto de agora como imagem), com o acesso ao meuGuarda; o link ao
 vivo fica de fora (abre a câmera sem login).
 
+### O GS é o autenticador da família, e guarda cada acesso (Plano Casa GS, 24/11/2026)
+
+O dono: "GS é o pai, é o autenticador" e "o GS é o detentor dos acessos, quero que ele tenha a auditoria completa dos
+logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa GS" (Claude Docs).
+
+- **Senha se confere aqui, num lugar só:** `services/acessos.entrar_ou_recusar` (login OU e-mail; a frase única "Login
+  ou senha inválidos"; 10 erros por login e lugar e 30 por IP em 15 min). Toda porta que confere senha passa por ali:
+  portal e app, painel, conector do Claude e a entrada dos outros sistemas. O sistema que repassa o login pelo servidor
+  se prova com `X-Sistema` + `X-Chave-Interna` e manda o IP da pessoa em `X-Usuario-IP`.
+- **O passe** (`login_externo.assinar_login`, v2): JWT RS256 de 2 min e uso único, com as usinas que a pessoa vê
+  (`usinas`, `todas_as_usinas` ou `usinas_fora`). Contrato em `docs/CONTRATO_PASSE.md`: a janelinha
+  (`/entrar/<sistema>?janela=1&volta=` → `postMessage`), a navegação (`#assercao=`) e o servidor a servidor. A volta só
+  vai aos endereços de `login_externo.SISTEMAS`.
+- **O registro** (`gs_acessos`; tela Registro de acessos no adm-gs e no oem-gs): entrada, passe, recusa, bloqueio, troca
+  de senha e mudança de acesso, com IP, aparelho, quem fez (`por_id`) e a empresa onde a mudança aconteceu
+  (`empresa_id`). Nunca a senha; o que foi digitado só fica quando é de uma conta (senão um HMAC). Mudança de acesso
+  NOVA (um campo da conta, uma concessão, uma tela) entra com `acessos.retrato` antes e `acessos.mudou(diferencas)`
+  depois do commit, com a empresa do contexto: a pessoa que é de duas empresas não leva a uma o que a outra mudou.
+- **O bot e o conector reusam a sessão da pessoa no TermoVision** por 30 min (`assistente_termovision._entrar` com
+  `reusar`); antes, cada consulta abria uma sessão de 30 dias lá (853 por dia numa conta).
+
 ### Nada de "chips" para selecionar opção
 
 Regra herdada do meuPlano e válida aqui: filtro, tipo, categoria, status — tudo é lista
