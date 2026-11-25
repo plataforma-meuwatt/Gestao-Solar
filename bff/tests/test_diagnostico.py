@@ -397,3 +397,16 @@ def test_livro_do_bot_tem_as_licoes_que_o_diagnostico_cita():
     livro = (Path(__file__).resolve().parents[2] / "docs" / "LIVRO_DO_BOT.md").read_text()
     citadas = set(re.findall(r"lição (\d+) do livro do bot", Path(diagnostico.__file__).read_text()))
     assert citadas and all(re.search(rf"^## Lição {n} · ", livro, re.M) for n in citadas)
+
+
+def test_o_titulo_diz_quem_parou():
+    """O Renan, 25/11/2026, Porto Ferreira: "recebi alerta que os inversores do skid 4 pararam, mas não estão parados no
+    unifilar". Só o Inv 42 de quatro tinha parado; o título dizia "SKID-04: inversores parados"."""
+    um = [_manha(1, "Inv 42", "SKID-04", 4, "20:21", None, "zero_active_power")]
+    assert diagnostico._titulo_sem_trip(um, [], ["SKID-04"], False) == "Inv 42 parado (os outros do skid geram)"
+    assert diagnostico._titulo_sem_trip(um, [], ["SKID-04"], True) == "Inv 42 não ligou (os outros do skid geram)"
+    dois = um + [_manha(2, "Inv 41", "SKID-04", 4, "20:21", None, "zero_active_power")]
+    assert diagnostico._titulo_sem_trip(dois, [], ["SKID-04"], False) == "Inv 41 e Inv 42 parados (os outros do skid geram)"
+    assert diagnostico._titulo_sem_trip(dois, ["SKID-04"], [], False) == "skid inteiro parado"
+    assert diagnostico._titulo_sem_trip(dois, ["SKID-03", "SKID-04"], [], True) == "skids inteiros não ligaram"
+    assert diagnostico._titulo_sem_trip(dois, [], [], False) == "Inv 41 e Inv 42 parados"           # sem a frota do skid

@@ -32,6 +32,8 @@ FORMAS = {"subestacao": ("Polygon",), "rele": ("Point",), "transformador": ("Poi
 #: o `origem` do objeto que o GS cria por um item (único por usina no meuWatt: dois pedidos juntos não fazem dois)
 ORIGEM = "gs-item:"
 OUTRA_PESSOA = "Outra pessoa mexeu neste item depois que você o viu: releia o mapa."
+#: o `relay_kind` do meuWatt (a régua de Leituras e da Comunicação) em palavras
+TIPO_DO_RELE = {"protection": "relé de proteção", "thermal": "relé de temperatura", "gateway": "caixa de I/O"}
 
 
 class ItemIn(BaseModel):
@@ -104,8 +106,9 @@ def itens(equipamentos: dict, objetos: list) -> list[dict]:
                              desenhados.pop(f"str:{s}:{n}", None), {"slot_id": s, "string_number": n}))
     for r in equipamentos.get("reles") or []:
         tid = r.get("transformer_id")
+        detalhe = " · ".join(x for x in (TIPO_DO_RELE.get(r.get("relay_kind")), trafos.get(tid) or "Geral") if x)
         out.append(_item(f"rele:{r['relay_id']}", "rele", r.get("nome") or f"Relé {r['relay_id']}",
-                         f"trafo:{tid}" if tid in trafos else None, trafos.get(tid) or "Geral",
+                         f"trafo:{tid}" if tid in trafos else None, detalhe,
                          desenhados.pop(f"rele:{r['relay_id']}", None), {"relay_id": r["relay_id"]}))
     for o in [*desenhados.values(), *soltos]:            # desenhado sem o equipamento na lista
         ref = _ref_do_objeto(o)

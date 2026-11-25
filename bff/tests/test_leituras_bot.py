@@ -14,6 +14,9 @@ class _MW:
     def __init__(self, marca, pode=True):
         self.marca, self.pode = marca, pode
 
+    async def monitoramento_atual(self, slug):                     # o último dado do meuWatt: fresco
+        return {"data_at": datetime.now(UTC).isoformat()}
+
     async def leituras(self, slug):
         return {"can_mark": self.pode, "relays": [{"relay_id": 21, "name": "Relé Skid 3", "transformer_name": "TR-03", "readings": [
             {"key": "voltage_a", "label": "Tensão fase A", "status": "zeroed", "value": 52.0, "mark": self.marca,

@@ -57,7 +57,8 @@ def ler(token: str, agora: float | None = None) -> tuple[int, int, int] | None:
 
 def pessoa_e_usina(db, token: str):
     """(pessoa, usina do GS, quando vence) do link que ainda vale para ela: assinado e no prazo, emitido depois de um
-    "encerrar todas", a conta ativa, o helper liberado no bot e a usina no recorte do bot dela, com o slug do meuWatt."""
+    "encerrar todas", a conta e a empresa ativas, o helper liberado no bot e a usina no recorte do bot dela, com o slug
+    do meuWatt."""
     from app.models.user import User
     from app.services import assistente_geracao as ger
 
@@ -67,6 +68,13 @@ def pessoa_e_usina(db, token: str):
     uid, pid, emitido = lido
     u = db.get(User, uid)
     if u is None or not u.ativo or "bot_helper" not in u.bot_ativo:
+        return None
+    from fastapi import HTTPException
+
+    from app.core.security import _empresa_ativa
+    try:
+        _empresa_ativa(db, u)                             # desativar a empresa para tudo, o link também
+    except HTTPException:
         return None
     if u.sessoes_desde is not None:
         fim = u.sessoes_desde if u.sessoes_desde.tzinfo else u.sessoes_desde.replace(tzinfo=UTC)

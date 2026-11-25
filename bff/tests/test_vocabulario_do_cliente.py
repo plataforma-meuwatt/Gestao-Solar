@@ -61,13 +61,14 @@ DO_GESTOR = {"painel_clientes.py", "empresa.py"}
 #:
 #: `interno_sistemas.py` (a porta dos sistemas da família, Plano Casa GS) também só responde ao SERVIDOR de cada sistema;
 #: a frase volta à tela daquele sistema, onde o nome é o dele mesmo ("entre no meuWatt pelo GS"), ou diz à equipe da O&M
-#: onde mora o mapa. O dono de usina nunca a lê no GS.
+#: onde mora o mapa. O dono de usina nunca a lê no GS. `interno_mapa_itens.py` (os itens do mapa, fase 2 do mapa novo) é a
+#: mesma porta: quem chama é o servidor do TermoVision, e a frase ("o meuWatt não respondeu") vai à tela dele.
 #:
 #: E uma exceção que mora FORA desta varredura (que só lê `app/api/v1`), escrita aqui para não passar escondida: a lista
 #: dos sistemas do login único (`services/login_externo.SISTEMAS`, Plano Casa GS de 24/11/2026) chega ao cliente como o
 #: nome dos botões "Entrar com o GS" / "Abrir o …". Ali o nome é o DESTINO, o sistema em que a pessoa vai cair, com a
 #: marca dele; as recusas da entrada só nomeiam esse destino.
-COM_MOTIVO = {"billing.py", "meuwatt_webhook.py", "interno_sistemas.py"}
+COM_MOTIVO = {"billing.py", "meuwatt_webhook.py", "interno_sistemas.py", "interno_mapa_itens.py"}
 
 PRODUTOS = ("meuwatt", "meuplano")
 

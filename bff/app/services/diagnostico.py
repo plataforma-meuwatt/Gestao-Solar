@@ -331,8 +331,21 @@ def _sem_trip(usina: str, juntos: list[tuple[str, list[dict]]], cegos: dict[str,
         causa = "não há como ver trip (o porquê vem abaixo)" if cego else "sem trip no relé do skid"
         fazer = list(item.fazer) if nao_ligou else [alarmes]
     return Achado("NAO_LIGOU" if nao_ligou else f"PARADA:{ps[0].get('cause')}",
-                  "inversores não ligaram" if nao_ligou else "inversores parados", "alta", usina, skids, _inicio(ps),
+                  _titulo_sem_trip(ps, inteiros, parciais, nao_ligou), "alta", usina, skids, _inicio(ps),
                   max(resolvidas) if all(resolvidas) else None, causa, provas + [_verificacao(ps, vereditos)], fazer)
+
+
+def _titulo_sem_trip(ps: list[dict], inteiros: list[str], parciais: list[str], nao_ligou: bool) -> str:
+    """O título diz QUEM parou: "Inv 42 parado" não é "inversores parados" (o Renan, 25/11/2026, Porto Ferreira: o
+    aviso "SKID-04: inversores parados" com um inversor de quatro parado, e o unifilar com os outros três gerando)."""
+    nomes = sorted({str(p.get("slot_label")) for p in ps}, key=lambda n: (len(n), n))
+    verbo = ("não ligou", "não ligaram") if nao_ligou else ("parado", "parados")
+    if inteiros and not parciais:
+        return f"skid inteiro {verbo[0]}" if len(inteiros) == 1 else f"skids inteiros {verbo[1]}"
+    if len(nomes) == 1:
+        return f"{nomes[0]} {verbo[0]}" + (" (os outros do skid geram)" if parciais else "")
+    lista = ", ".join(nomes[:-1]) + " e " + nomes[-1]
+    return f"{lista} {verbo[1]}" + (" (os outros do skid geram)" if parciais and not inteiros else "")
 
 
 async def diagnosticar(mw, usina: dict, paradas: list[dict], agora: datetime | None = None,

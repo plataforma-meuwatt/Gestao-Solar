@@ -345,7 +345,7 @@ def test_os_itens_do_mapa_para_o_termovision_por_mover_e_tirar(http, cenario, db
             return {"transformadores": [{"id": 3, "nome": "TR-01", "kva": 1250}],
                     "vagas": [{"slot_id": 5, "rotulo": "Inv 13", "posicao": 13, "transformer_id": 3,
                                "inversor": {"sn": "SN13", "modelo": "SUN2000"}, "strings": [1, 2]}],
-                    "reles": [{"relay_id": 9, "nome": "URP6000 TR-01", "transformer_id": 3},
+                    "reles": [{"relay_id": 9, "nome": "URP6000 TR-01", "transformer_id": 3, "relay_kind": "protection"},
                               {"relay_id": 10, "nome": "URP Geral", "transformer_id": None}]}
 
         async def mapa(self, slug):
@@ -391,6 +391,7 @@ def test_os_itens_do_mapa_para_o_termovision_por_mover_e_tirar(http, cenario, db
     assert (por["inv:5"]["pai"], por["inv:5"]["detalhe"], por["inv:5"]["geometria"]) == ("trafo:3", "SUN2000 · SN13", None)
     assert por["str:5:2"]["pai"] == "inv:5" and por["str:5:2"]["meuwatt"] == {"objeto": None, "slot_id": 5, "string_number": 2}
     assert (por["rele:9"]["pai"], por["rele:10"]["pai"], por["rele:10"]["detalhe"]) == ("trafo:3", None, "Geral")
+    assert por["rele:9"]["detalhe"] == "relé de proteção · TR-01"                  # o relay_kind do meuWatt
     assert por["obj:41"]["tipo"] == "string" and por["obj:41"]["geometria"] == area             # o as-built solto
 
     # pôr o inversor no mapa, e o mesmo pedido de novo não cria outro

@@ -22,13 +22,12 @@ PECA_OUTRO = "Peça outro pelo WhatsApp do Gestão Solar."
 
 
 def _aviso(titulo: str, texto: str, status: int) -> HTMLResponse:
+    """Escura, como o unifilar que ela substitui."""
     corpo = (
         '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">'
         "<title>Unifilar da usina</title><style>"
-        ":root{--fundo:#f4f6f8;--cartao:#fff;--texto:#1d2733;--fraco:#5b6775;--borda:#d5dbe1}"
-        "@media (prefers-color-scheme:dark){:root{--fundo:#0f1419;--cartao:#1a2129;--texto:#e6ebf0;--fraco:#9aa7b4;"
-        "--borda:#2e3843}}"
+        ":root{--fundo:#0f1419;--cartao:#1a2129;--texto:#e6ebf0;--fraco:#9aa7b4;--borda:#2e3843;color-scheme:dark}"
         "body{margin:0;background:var(--fundo);color:var(--texto);font:16px/1.5 system-ui,sans-serif}"
         "main{max-width:420px;margin:12vh auto;padding:0 16px}"
         "section{background:var(--cartao);border:1px solid var(--borda);border-radius:12px;padding:24px}"

@@ -65,6 +65,16 @@ def test_o_link_cai_com_encerrar_todas_e_com_o_helper_tirado(db, pessoa):
     u.bot_helper = True
     db.commit()
     assert up.pessoa_e_usina(db, up.criar(u.id, p.id + 1)[0]) is None            # usina fora do recorte
+    from app.models.empresa import Empresa
+    e = Empresa(nome="Splendor O&M")
+    db.add(e)
+    db.commit()
+    u.empresa_id = e.id
+    db.commit()
+    assert up.pessoa_e_usina(db, token) is not None
+    e.ativa = False                                                              # desativar a empresa para tudo
+    db.commit()
+    assert up.pessoa_e_usina(db, token) is None
 
 
 @pytest.fixture
@@ -107,7 +117,7 @@ def test_link_vencido_nao_le_nada(cliente):
     c, chamadas = cliente
     vencido, _ = up.criar(1, 1, agora=datetime.now(UTC).timestamp() - up.VALIDADE_S - 1)
     r = c.get(f"/publico/unifilar/{vencido}/")
-    assert r.status_code == 410 and "venceu" in r.text
+    assert r.status_code == 410 and "venceu" in r.text and "color-scheme:dark" in r.text
     assert c.get(f"/publico/unifilar/{vencido}/documento?ler=1").status_code == 410
     assert c.get(f"/publico/unifilar/{vencido}/unifilar.js").status_code == 404
     assert chamadas == []
@@ -132,18 +142,90 @@ async def test_o_bot_manda_o_link_pelo_pe_da_resposta(db, pessoa, monkeypatch):
 
     async def _vpn(cliente):
         return None
+
+    class Helper:
+        doc = {"equipamentos": [{"id": "dj_bt_skid1"}], "avisos": ["o Relé Geral não tem disjuntor no mapa do helper"]}
+        pedidos = []
+
+        async def chamar(self, rota, corpo, origem, metodo="POST"):
+            self.pedidos.append((rota, corpo))
+            return {"ok": True, "tipo": "leitura", "resposta": {"ok": True, "documento": self.doc}}
+    helper = Helper()
     monkeypatch.setattr(up, "pronto", _pronto)
-    monkeypatch.setattr(h, "_cliente", lambda ctx, user: object())
+    monkeypatch.setattr(h, "_cliente", lambda ctx, user: helper)
     monkeypatch.setattr(h, "_vpn_parada", _vpn)
     ctx = ger.Contexto(db=db, user=u, telefone="+5517997377626")
     r = await h.diagrama_unifilar(ctx, {"usina": "pirapozinho"})
     assert r["link_enviado_pelo_sistema"] and "publico/unifilar/" not in str(r)   # a IA não vê o link
+    assert r["o_desenho_avisa"] == helper.doc["avisos"]
+    assert helper.pedidos == [("/api/religa/documento", {"slug": "pirapozinho", "ler": False, "publico": True})]
     url = ctx.segredos[0]
     assert url in ctx.rodape[0] and url.endswith("/")
     assert up.ler(url.rstrip("/").rsplit("/", 1)[1])[:2] == (u.id, p.id)
 
+    helper.doc = {"equipamentos": []}                                      # a usina sem desenho no helper
+    ctx = ger.Contexto(db=db, user=u, telefone="+5517997377626")
+    r = await h.diagrama_unifilar(ctx, {"usina": "pirapozinho"})
+    assert "não abriu no helper" in r["erro"] and not ctx.segredos and not ctx.rodape
+
     async def _fora():
         return False
+    helper.doc = {"equipamentos": [{"id": "x"}]}
     monkeypatch.setattr(up, "pronto", _fora)
     ctx = ger.Contexto(db=db, user=u, telefone="+5517997377626")
     assert "erro" in await h.diagrama_unifilar(ctx, {"usina": "pirapozinho"}) and not ctx.segredos and not ctx.rodape
+
+
+def test_limpar_os_trips_diz_cada_rele():
+    """"Limpar os trips da usina" (helper 2.51.4): executado mesmo com o `ok` falso (o helper só dá ok quando tudo
+    apagou), e cada relé com o que aconteceu, pela releitura dele."""
+    resposta = {"ok": False, "todos": True, "resultado": "6 relés lidos; 2 com luz de desarme receberam o comando",
+                "itens": [{"rele": "7SR10 SKID 1", "sent": True, "limpo": True, "resultado": "a luz apagou"},
+                          {"rele": "7SR10 SKID 2", "sent": True, "limpo": False, "resultado": "a luz CONTINUA acesa"},
+                          {"rele": "7SR10 SKID 3", "sent": False, "limpo": None,
+                           "resultado": "o relé não respondeu à leitura: NADA enviado"},
+                          {"rele": "7SR10 SKID 4", "sent": False, "limpo": True, "resultado": "já estava sem luz"}]}
+    texto = h._desfecho("LIMPAR a luz de desarme de TODOS os relés da usina porto-ferreira.",
+                        {"ok": False, "tipo": "execucao", "resposta": resposta})
+    linhas = texto.splitlines()
+    assert linhas[0] == "LIMPAR a luz de desarme de TODOS os relés da usina porto-ferreira:"
+    assert linhas[1] == resposta["resultado"] and "Não executado" not in texto
+    assert linhas[2:6] == ["✅ 7SR10 SKID 1: a luz apagou", "❌ 7SR10 SKID 2: a luz CONTINUA acesa",
+                           "⚠️ 7SR10 SKID 3: o relé não respondeu à leitura: NADA enviado",
+                           "✅ 7SR10 SKID 4: já estava sem luz"]
+    assert linhas[-1].startswith("⚠️ Nem tudo apagou")
+    tudo = {**resposta, "ok": True, "itens": resposta["itens"][:1]}
+    assert h._desfecho("LIMPAR…", {"ok": True, "resposta": tudo}).endswith("✅ Tudo o que tinha luz de desarme apagou.")
+    assert h._aceite("/api/religa/limpar", {"slug": "porto-ferreira", "disjuntor": "todos"}) == h._ACEITE_LIMPAR
+
+
+async def test_a_proposta_de_limpar_vai_com_o_link_do_unifilar(db, pessoa, monkeypatch):
+    u, p = pessoa
+    u.senha_atuacao_hash = "x"
+    db.commit()
+
+    class Helper:
+        async def chamar(self, rota, corpo, origem, metodo="POST"):
+            return {"ok": True, "tipo": "proposta", "proposta": "P1", "resumo": "LIMPAR … de TODOS os relés",
+                    "expira_em_s": 120}
+
+    async def _pronto():
+        return True
+
+    async def _nada(*a, **k):
+        return None
+    monkeypatch.setattr(up, "pronto", _pronto)
+    monkeypatch.setattr(h, "_cliente", lambda ctx, user: Helper())
+    monkeypatch.setattr(h, "_vpn_parada", _nada)
+    ctx = ger.Contexto(db=db, user=u, telefone="+5517997377626")
+    r = await h.usina_helper(ctx, {"rota": "/api/religa/limpar", "corpo": {"slug": "pirapozinho", "disjuntor": "todos"}})
+    assert r["proposta_pendente"] and ctx.rodape and "Acompanhe ao vivo no unifilar de Pirapozinho" in ctx.rodape[0]
+    assert ctx.segredos and ctx.segredos[0] in ctx.rodape[0]                 # o link sai do Log do bot
+    h.PENDENTES.pop(u.id, None)
+    ctx = ger.Contexto(db=db, user=u, telefone="+5517997377626")             # ler não leva link
+    monkeypatch.setattr(Helper, "chamar", lambda self, *a, **k: _leitura())
+
+    async def _leitura():
+        return {"ok": True, "tipo": "leitura", "status_http": 200, "resposta": {"ok": True}}
+    await h.usina_helper(ctx, {"rota": "/api/religa/painel", "corpo": {"slug": "pirapozinho"}})
+    assert not ctx.rodape and not ctx.segredos

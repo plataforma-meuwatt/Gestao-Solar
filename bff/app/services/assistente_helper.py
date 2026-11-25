@@ -1242,9 +1242,14 @@ _ACEITE_TRACKER = ("Ao mandar a senha, você confirma que não há ninguém pert
                    "assume o risco de comandar os rastreadores.")
 _ACEITE_RELIGA = ("Ao mandar a senha, você confirma que não há ninguém exposto nem trabalhando nos circuitos da usina e "
                   "assume o risco de religar.")
+_ACEITE_LIMPAR = ("Ao mandar a senha, você confirma que viu o desarme e quer apagar a luz que o relé memorizou (nenhum "
+                  "disjuntor liga ou desliga).")
 _ROTAS_COM_ACEITE = {"/api/trackers/comando": _ACEITE_TRACKER, "/api/trackers/destravar": _ACEITE_TRACKER,
                      "/api/trackers/rocagem": _ACEITE_TRACKER, "/api/religa/start": _ACEITE_RELIGA,
-                     "/api/religa/comando": _ACEITE_RELIGA}
+                     "/api/religa/comando": _ACEITE_RELIGA, "/api/religa/limpar": _ACEITE_LIMPAR}
+#: a ação que o unifilar mostra (disjuntor, desarme): a proposta leva o link dele, para ver a mudança ao vivo (o Renan,
+#: 25/11/2026: "para atuar, eu envio pelo WhatsApp, aí ele atua e vejo ao vivo pelo link")
+_ROTAS_DO_UNIFILAR = ("/api/religa/limpar", "/api/religa/comando", "/api/religa/start")
 
 
 def _aceite(rota: str, corpo: dict) -> str | None:
@@ -1304,6 +1309,8 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
         d["resposta"] = _so_liberadas(d.get("resposta"), liberadas)
     if d.get("tipo") == "proposta":
         proposta, resumo = d["proposta"], d.get("resumo") or rota
+        if rota.split("?")[0] in _ROTAS_DO_UNIFILAR:
+            await _acompanhe(ctx, corpo.get("slug"))
 
         async def executar(db, user, telefone: str) -> str:
             try:
@@ -1319,11 +1326,31 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     return _corta({"status_http": d.get("status_http"), "resposta": resposta, **({"nota": nota} if nota else {})})
 
 
-async def diagrama_unifilar(ctx: ger.Contexto, a: dict) -> dict:
-    """O link público e temporário do unifilar do helper, só para ver (`unifilar_publico`): o SISTEMA o põe ao pé da
-    resposta e o tira do Log do bot e da cópia do gateway (o link abre a usina sem login). Comandar continua sendo
-    aqui, com a senha de atuação (o Renan, 25/11/2026)."""
+async def _link_unifilar(ctx: ger.Contexto, usina_id: int) -> tuple[str, str] | None:
+    """O link público e temporário do unifilar da usina, só para ver (`unifilar_publico`): (endereço, até quando). Vai
+    para `ctx.segredos` (o link abre a usina sem login: some do Log do bot e da cópia do gateway). None = o helper não
+    tem o modo "somente ver" agora (o link sairia quebrado)."""
     from app.services import unifilar_publico as up
+
+    if not await up.pronto():
+        return None
+    token, vence = up.criar(ctx.user.id, usina_id)
+    url = f"{get_settings().gs_api_publica.rstrip('/')}/publico/unifilar/{token}/"
+    ctx.segredos.append(url)
+    return url, hora_brt(vence.isoformat())
+
+
+async def _acompanhe(ctx: ger.Contexto, slug: str | None) -> None:
+    """A proposta de uma ação que o unifilar mostra (limpar o desarme, ligar ou desligar, religar) vai com o link dele:
+    a pessoa abre antes da senha e vê a mudança ao vivo. Sem o link, a proposta sai igual."""
+    usina = next((p for p in ger.usinas_do_bot(ctx.db, ctx.user) if slug and p.mw_plant_slug == slug), None)
+    if usina is not None and (link := await _link_unifilar(ctx, usina.id)):
+        ctx.rodape.append(f"🔌 Acompanhe ao vivo no unifilar de {usina.nome} (só ver, até {link[1]}):\n{link[0]}")
+
+
+async def diagrama_unifilar(ctx: ger.Contexto, a: dict) -> dict:
+    """O link público e temporário do unifilar do helper, só para ver: o SISTEMA o põe ao pé da resposta. Comandar
+    continua sendo aqui, com a senha de atuação (o Renan, 25/11/2026)."""
     from app.services.vinculos import SemConexao
 
     links = [p for p in ger.usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug]
@@ -1333,20 +1360,28 @@ async def diagrama_unifilar(ctx: ger.Contexto, a: dict) -> dict:
     except SemConexao as e:
         return {"erro": f"Helper indisponível: {e}"}
     ctx.db.commit()                                       # solta a conexão enquanto o túnel responde
-    if not await up.pronto():
+    # o desenho existe para esta usina? (a estrutura, sem ler o equipamento): link que abre num erro não sai
+    d = await cliente.chamar("/api/religa/documento", {"slug": u["slug"], "ler": False, "publico": True},
+                             origem=f"whatsapp {ctx.telefone}")
+    doc = (d.get("resposta") or {}).get("documento") if isinstance(d.get("resposta"), dict) else None
+    if not d.get("ok") or not isinstance(doc, dict) or not doc.get("equipamentos"):
+        r = d.get("resposta") if isinstance(d.get("resposta"), dict) else {}
+        motivo = r.get("error") or d.get("error") or "o desenho desta usina não está no mapa do helper"
+        return {"erro": f"O unifilar de {u['nome']} não abriu no helper: {motivo}. Nada foi enviado."}
+    if (link := await _link_unifilar(ctx, u["id"])) is None:
         return {"erro": "O unifilar não abriu agora: o helper não respondeu. Nada foi enviado; tente de novo em instantes."}
-    token, vence = up.criar(ctx.user.id, u["id"])
-    url = f"{get_settings().gs_api_publica.rstrip('/')}/publico/unifilar/{token}/"
-    ate = hora_brt(vence.isoformat())
-    ctx.segredos.append(url)
+    url, ate = link
     ctx.rodape.append(f"🔌 Unifilar de {u['nome']} ao vivo, só para ver, até {ate}:\n{url}")
     parada = await _vpn_parada(cliente)
+    avisos = [str(x.get("texto") if isinstance(x, dict) else x) for x in doc.get("avisos") or []][:3]
     return {"usina": u["nome"], "link_enviado_pelo_sistema": True, "vale_ate": ate,
             **({"aviso": "A VPN das usinas está sem contato: o desenho abre, mas sem leitura dos equipamentos até ela "
                          "voltar."} if parada else {}),
-            "instrucao": ("Diga uma linha curta (o unifilar da usina vai no link abaixo), sem repetir a hora nem o 'só para "
-                          "ver': o rodapé já diz os dois. Se a pessoa quiser comandar, ela pede aqui (a ação pede a senha "
-                          "de atuação), e o desenho mostra a mudança na leitura seguinte (até uns 30 s).")}
+            **({"o_desenho_avisa": avisos} if avisos else {}),
+            "instrucao": ("Responda numa frase só que o unifilar da usina vai no link abaixo. Não repita a hora, o 'só para "
+                          "ver' nem o 'ao vivo': o rodapé já diz. Se houver `aviso` ou `o_desenho_avisa`, diga o principal "
+                          "em poucas palavras. Comandar é pedindo aqui (a ação pede a senha de atuação); só diga isso se a "
+                          "pessoa perguntar.")}
 
 
 _ESTADO = {"ok": "✅ confirmado", "ja": "já estava", "falhou": "❌ falhou", "incerto": "⚠️ incerto",
@@ -1371,6 +1406,12 @@ def _desfecho(resumo: str, r: dict) -> str:
         else:
             fim = "⚠️ A leitura final NÃO confere em tudo. Veja os itens."
         return "\n".join([f"{resumo}:", *linhas, fim])
+    resposta = r.get("resposta") if isinstance(r.get("resposta"), dict) else {}
+    if linhas := _por_rele(resposta):
+        # executado, mesmo com o `ok` falso (o helper só dá ok quando TUDO apagou): cada relé com o que aconteceu
+        fim = ("✅ Tudo o que tinha luz de desarme apagou." if resposta.get("ok") else
+               "⚠️ Nem tudo apagou: veja cada relé (❌ = o desarme continua presente; ⚠️ = sem confirmação).")
+        return "\n".join(x for x in (f"{resumo.rstrip('. ')}:", resposta.get("resultado"), *linhas, fim) if x)
     if r.get("reason") == "proposta_inexistente":
         return ("⌛ O pedido expirou no helper (ele vale 2 minutos). Nada foi feito. Peça de novo e mande "
                 "a senha logo em seguida.")
@@ -1382,6 +1423,16 @@ def _desfecho(resumo: str, r: dict) -> str:
     else:
         texto = f"✅ Executado: {r.get('resumo') or resumo}."
     return texto + (f"\nReleitura do equipamento: {releitura}" if releitura else "")
+
+
+def _por_rele(resposta: dict) -> list[str] | None:
+    """O limpar dos relés (helper 2.51.4, "limpar os trips da usina"): uma linha por relé, pela releitura de cada um
+    (`limpo` true = apagou ou já estava sem luz; false = a luz voltou; nulo = sem confirmação). None se não é isso."""
+    itens = resposta.get("itens")
+    if not (isinstance(itens, list) and itens and all(isinstance(i, dict) and i.get("rele") for i in itens)):
+        return None
+    return [f"{ {True: '✅', False: '❌'}.get(i.get('limpo'), '⚠️') } {i['rele']}: {i.get('resultado') or ''}".rstrip(": ")
+            for i in itens]
 
 
 #: Chaves de leitura que não dizem nada a quem lê no celular.

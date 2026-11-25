@@ -170,12 +170,17 @@ async def test_leituras_mostra_o_inversor_sem_dado(monkeypatch):
     class MW:
         async def leituras(self, slug):
             return {"relays": []}
+
+        async def monitoramento_atual(self, slug):
+            from datetime import UTC, datetime, timedelta
+            return {"data_at": (datetime.now(UTC) - timedelta(minutes=77)).isoformat()}
     monkeypatch.setattr(ger, "_strings_por_inversor", _strings)
     ctx = ger.Contexto(db=None, user=SimpleNamespace(id=1), telefone="", mw=MW(),
                        usinas={"p": {"id": 1, "nome": "Pirapozinho", "slug": "p"}})
     r = await ger.leituras_usina(ctx, {"usina": "p"})
     assert r["strings"][0] == {"inversor": "Inv 4", "skid": "TR-01", "strings": [ger.SEM_DADO_DAS_STRINGS]}
     assert r["strings"][1]["inversor"] == "Inv 13" and "o dia ainda não fechou" in r["strings_do_dia"]
+    assert ", das " in r["strings_do_dia"] and "há 77 min" in r["aviso"]          # a hora do dado, e velho
 
 
 def test_dado_velho_do_meuwatt_nao_e_agora():
@@ -208,3 +213,31 @@ async def test_geracao_com_dado_velho_nao_afirma_sem_falha(monkeypatch):
     r = await ger.geracao(ctx, {"usina": "p"})
     assert r["agora"]["inversores_com_falha"] is None and r["agora"]["potencia_agora_kw"] is None
     assert "há 46 min" in r["agora"]["aviso"] and r["inversores_do_melhor_ao_pior"][0]["com_falha"] is None
+
+
+def test_so_com_as_ja_sabidas_a_parte_que_falta_por_projeto():
+    """O Renan marca «já sei» só na string que falta por projeto: o bot diz o que o inversor geraria só com ela; a
+    perda que sobra (a outra zerada) é defeito (avaliador 2, 25/11)."""
+    dia = date(2026, 11, 25)
+    r = ger._strings_na_comparacao(_inv13({"ignored": True, "note": "falta uma string"}), 369.31, 364.0, 1.127, dia, dia)
+    assert r["energia_se_as_strings_gerassem_kwh"] == 410.3 and r["energia_com_as_ja_sabidas_kwh"] == 389.8
+    assert r["desvio_da_mediana_com_as_ja_sabidas_pct"] == -5.0
+    duas = _inv13()
+    for x in duas["strings"][-2:]:
+        x["mark"] = {"ignored": True}
+    assert "energia_com_as_ja_sabidas_kwh" not in ger._strings_na_comparacao(duas, 369.31, 364.0, 1.127, dia, dia)
+    varios = ger._strings_na_comparacao(_inv13({"ignored": True}), 3600.0, 364.0, 11.0, date(2026, 11, 1), date(2026, 11, 10))
+    assert varios["energia_com_as_ja_sabidas_kwh"] == 3800.0                     # 19 de 18 strings, pela potência
+
+
+async def test_a_etiqueta_propria_vale_antes_do_numero(grava):
+    class Etiqueta(_MW):
+        async def strings_por_vaga(self, slug):
+            inv = _inv13()
+            inv["strings"][-1]["tag"] = "U1-3S22"                                # a string 28 com etiqueta da planta
+            return {"can_mark": True, "inverters": [inv]}
+    ctx = _ctx(9311, Etiqueta())
+    r = await ger.marcar_strings(ctx, {"usina": "pirapozinho", "inversor": "13", "strings": ["u1-3s22"]})
+    assert r["proposta_pendente"] == "Marcar «já sei» no meuWatt: Inv 13 · U1-3S22 (Pirapozinho)"
+    await h.PENDENTES.pop(9311).executar(None, ctx.user, ctx.telefone)
+    assert grava.pedidos[-1][2] == "string_28"                                   # nunca a string_22

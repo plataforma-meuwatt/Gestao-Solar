@@ -199,7 +199,19 @@ def dado_velho(iso: str | None) -> str | None:
     if idade <= VELHO_S:
         return None
     return (f"O último dado do meuWatt é das {hora_brt(quando.isoformat())} (há {int(idade // 60)} min): diga essa hora "
-            "junto dos números de hoje; não diga 'agora', nem 'sem falha', nem 'todos gerando'.")
+            "junto dos números de hoje; não diga 'agora', 'sem falha', 'todos gerando' nem que estão comunicando.")
+
+
+async def dado_de_hoje(ctx: "Contexto", slug: str) -> dict:
+    """A hora do último dado do meuWatt da usina e, se velho, o aviso: o que toda leitura de HOJE leva junto ("nunca
+    enganar": diga de quando é o dado). Sem a resposta, o aviso diz que não deu para conferir."""
+    from app.core.datas import hora_brt
+
+    try:
+        iso = (await ctx.mw.monitoramento_atual(slug) or {}).get("data_at")
+    except httpx.HTTPError:
+        return {"aviso": "Não deu para conferir de quando é o último dado do meuWatt: não diga 'agora' nem 'sem falha'."}
+    return {"dado_do_meuwatt": hora_brt(iso) if iso else None, **({"aviso": v} if (v := dado_velho(iso)) else {})}
 
 
 def _periodo(inicio: str | None, fim: str | None) -> tuple[date, date]:
@@ -374,7 +386,8 @@ async def comparar_usinas(ctx: Contexto, a: dict) -> dict:
                 "pr_pct": _pct(r.get("performance_ratio")) if u["estacao"] else None,
                 "irradiacao_poa_kwh_m2": _irr_total(u, r)["poa"],
                 "disponibilidade_real_pct": _r(r.get("availability_real_pct")),
-                "perdido_kwh": _r((r.get("summary") or {}).get("total_lost_kwh"))}
+                "perdido_kwh": _r((r.get("summary") or {}).get("total_lost_kwh")),
+                **(await dado_de_hoje(ctx, u["slug"]) if fim == hoje() else {})}
 
     linhas = list(await asyncio.gather(*(uma(u) for u in todas)))
     _, irr = await _irradiacao(ctx, [u["slug"] for u in todas], ini, fim)
@@ -382,7 +395,8 @@ async def comparar_usinas(ctx: Contexto, a: dict) -> dict:
         x["irradiacao_ghi_satelite_kwh_m2"] = _soma((irr.get(u["slug"]) or {}).get("irradiacao_ghi_sat_dia") or [])
     linhas.sort(key=lambda x: (x.get("produtividade_kwh_kwp") is None, -(x.get("produtividade_kwh_kwp") or 0)))
     return {"inicio": ini.isoformat(), "fim": fim.isoformat(), "usinas": linhas,
-            "nota": "Compare pela produtividade (kWh/kWp). Irradiação entre todas: a de satélite."}
+            "nota": ("Compare pela produtividade (kWh/kWp). Irradiação entre todas: a de satélite. Usina com `aviso`: o "
+                     "dado dela é velho; diga a hora dele e não a compare como se fosse de agora.")}
 
 
 async def irradiacao(ctx: Contexto, a: dict) -> dict:
@@ -554,7 +568,7 @@ async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
             await diagnostico.com_helper(_cliente(ctx, ctx.user), u["slug"], achados)
         except Exception:                                 # noqa: BLE001 (sem o helper, fica o que o meuWatt disse)
             pass
-    return {"usina": u["nome"], "achados": [x.para_ia() for x in achados],
+    return {"usina": u["nome"], "achados": [x.para_ia() for x in achados], **(await dado_de_hoje(ctx, u["slug"])),
             **({"nao_sao_parada": info["nao_paradas"]} if info.get("nao_paradas") else {}),
             "nota": (("Relés com a comunicação NÃO conferida agora: " + ", ".join(info["nao_conferidos"])
                       + " (nenhum equipamento da usina mandou leitura há pouco: não diga que estão ok nem que não há "
@@ -708,6 +722,11 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
         titulo = f"{d['usina']} · {o_que} ({unid}) · {_periodo_br(d['inicio'], d['fim'])}"
     if not pts:
         return {"erro": "Sem dados no período para desenhar."}
+    velhos = ([f"{x['usina']} até {x.get('dado_do_meuwatt')}" for x in d.get("usinas") or [] if x.get("aviso")]
+              if tipo == "usinas" else [f"dado até {_hora(d['agora'].get('dado_de'))}"]
+              if (d.get("agora") or {}).get("aviso") else [])
+    if velhos:                                            # o gráfico de hoje com dado velho diz de quando é
+        titulo += " · " + ", ".join(velhos)
     png = await asyncio.to_thread(_desenhar, pts, titulo, unid)
     r = await whatsapp.enviar_conteudo(telefone=ctx.telefone, tipo="image", arquivo=png, filename="grafico.png",
                                        mime="image/png", texto=titulo)
@@ -721,7 +740,13 @@ async def grafico(ctx: Contexto, a: dict) -> dict:
             "menor": [mn[0], _arred(mn[1])],
             **(({"total_mwh": round(tot / 1000, 1)} if tot >= 10_000 else {"total": _arred(tot)}) if unid == "kWh"
                else {"media": _arred(tot / len(pts))}),
+            **({"aviso": "Dado velho do meuWatt: " + ", ".join(velhos) + ". Diga isso junto dos números."} if velhos else {}),
             "nota": "Comente com 1 a 3 números: o total (ou a média), o melhor e o pior; datas em dd/mm."}
+
+
+def _hora(iso: str | None) -> str:
+    from app.core.datas import hora_brt
+    return hora_brt(iso)
 
 
 def _arred(v: float) -> float:
@@ -1172,7 +1197,11 @@ async def leituras_usina(ctx: Contexto, a: dict) -> dict:
             if (lista := [SEM_DADO_DAS_STRINGS] if i.get("no_data") else [
                 texto_da_string(x) for x in i.get("strings") or []
                 if x.get("registered") and (x.get("status") in PROBLEMA_DA_STRING or x.get("mark"))])]
-        saida["strings_do_dia"] = f"hoje, {hoje():%d/%m}: o dia ainda não fechou (vale até a última leitura do meuWatt)"
+        hora = await dado_de_hoje(ctx, u["slug"])
+        saida["strings_do_dia"] = (f"hoje, {hoje():%d/%m}: o dia ainda não fechou (vale até a última leitura do meuWatt"
+                                   + (f", das {hora['dado_do_meuwatt']})" if hora.get("dado_do_meuwatt") else ")"))
+        if hora.get("aviso"):
+            saida["aviso"] = hora["aviso"]
     return saida
 
 
@@ -1183,7 +1212,9 @@ SEM_DADO_DAS_STRINGS = ("sem leitura das strings no dia: o inversor não mandou 
                         "corrente (o inversor inteiro pode estar parado)")
 NOTA_STRINGS = ("Inversor com string parada: diga qual, desde quando e o «já sei» da equipe (`strings_com_problema`). "
                 "`energia_se_as_strings_gerassem_kwh` é o que ele geraria com elas (a perda é a que o meuWatt conta): "
-                "perto da mediana (`desvio_da_mediana_se_as_strings_gerassem_pct`), o resto do inversor está ok.")
+                "perto da mediana (`desvio_da_mediana_se_as_strings_gerassem_pct`), o resto do inversor está ok. Se a "
+                "equipe marcou «já sei» só numa parte (a string que falta por projeto), `energia_com_as_ja_sabidas_kwh` é "
+                "o que ele geraria só com elas, e a perda que sobra é defeito para ver em campo.")
 
 
 async def _strings_por_inversor(ctx: Contexto, slug: str, dia: date) -> dict[str, dict] | str:
@@ -1228,13 +1259,15 @@ def _strings_na_comparacao(inv: dict, kwh: float | None, kwp: float | None, med:
     zeradas = [x for x in ruins if x.get("status") == "zero"]
     if kwh is None or not zeradas:
         return out
+    sabidas = [x for x in zeradas if (x.get("mark") or {}).get("ignored")]
     if ini == fim:
         if inv.get("loss_kwh_day") is None:
             return out
         com = kwh + inv["loss_kwh_day"]
-        sabida = sum(x.get("loss_kwh_day") or 0 for x in zeradas if (x.get("mark") or {}).get("ignored"))
+        sabida = sum(x.get("loss_kwh_day") or 0 for x in sabidas)
         out.update(perda_das_strings_kwh=_r(inv["loss_kwh_day"]),
                    **({"perda_ja_sabida_kwh": _r(sabida)} if sabida else {}))
+        com_sabidas = kwh + sabida if sabidas and len(sabidas) < len(zeradas) else None
     else:
         if any(not x.get("zero_since") or date.fromisoformat(str(x["zero_since"])[:10]) > ini for x in zeradas):
             return out
@@ -1245,9 +1278,15 @@ def _strings_na_comparacao(inv: dict, kwh: float | None, kwp: float | None, med:
         com = kwh * todas / gerando
         out["como"] = (f"estimado pela potência das strings: {len(ligadas) - len(zeradas)} de {len(ligadas)} "
                        "gerando o período todo")
+        com_sabidas = (kwh * (gerando + sum(x.get("kwp") or 0 for x in sabidas)) / gerando
+                       if sabidas and len(sabidas) < len(zeradas) else None)
     out["energia_se_as_strings_gerassem_kwh"] = _r(com)
     if kwp and med:
         out["desvio_da_mediana_se_as_strings_gerassem_pct"] = _r((com / kwp / med - 1) * 100)
+    if com_sabidas is not None:                           # só parte das paradas é conhecida: o resto é defeito
+        out["energia_com_as_ja_sabidas_kwh"] = _r(com_sabidas)
+        if kwp and med:
+            out["desvio_da_mediana_com_as_ja_sabidas_pct"] = _r((com_sabidas / kwp / med - 1) * 100)
     return out
 
 
@@ -1286,7 +1325,11 @@ async def marcar_strings(ctx: Contexto, a: dict) -> dict:
     pedidas = a.get("strings") or []
     if pedidas:
         numeros = []
+        por_tag = {_norm(x.get("tag")).replace(" ", ""): n for n, x in ligadas.items() if x.get("tag")}
         for p in pedidas:
+            if (n := por_tag.get(_norm(str(p)).replace(" ", ""))) is not None:
+                numeros.append(n)
+                continue
             achados = re.findall(r"\d+", str(p))
             if not achados or int(achados[-1]) not in ligadas:
                 raise Recusa(f"A string '{p}' não está ligada no {inv.get('label')} no meuWatt. As ligadas: "

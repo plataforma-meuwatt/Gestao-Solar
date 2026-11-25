@@ -2864,5 +2864,25 @@
       }
     },
     "origem": "pedido do Renan 25/11: o unifilar do helper num link só de ver (variação)"
+  },
+  {
+    "frase": "limpar trips de porto ferreira",
+    "espera": [
+      "reles",
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "pedido do Renan 25/11: limpar os trips da usina inteira (helper 2.51.4, disjuntor \"todos\"), com o unifilar na proposta"
+  },
+  {
+    "frase": "os inversores de pirapozinho estão comunicando e funcionando?",
+    "espera": [
+      "geracao",
+      "diagnostico_usina",
+      "usina_helper",
+      "reles",
+      "leituras_usina"
+    ],
+    "origem": "log 25/11 16:06 (o Renan): com o coletor parado desde 15:50, a resposta tem de dizer a hora do dado e não afirmar 'comunicando'"
   }
 ]

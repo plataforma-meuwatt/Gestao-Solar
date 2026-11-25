@@ -3677,7 +3677,8 @@ async def test_comando_de_tracker_e_religa_vai_com_o_aceite_posto_pelo_sistema(d
         return None
 
     monkeypatch.setattr(h, "_vpn_parada", _vpn_ok)
-    monkeypatch.setattr(ger, "usinas_do_bot", lambda db, user: [type("U", (), {"mw_plant_slug": "ibitinga"})()])
+    monkeypatch.setattr(ger, "usinas_do_bot", lambda db, user: [type("U", (), {"mw_plant_slug": "ibitinga", "id": 1,
+                                                                                "nome": "Ibitinga"})()])
     dono = _conta(db, "dono", "+5517997377626")
     dono.bot_helper, dono.senha_atuacao_hash = True, gerar_hash_senha("482913")
     db.commit()
