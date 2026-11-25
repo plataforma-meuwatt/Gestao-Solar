@@ -170,6 +170,12 @@ class MeuPlanoClient:
         dados = await self._get("/api/v1/meuacesso/owners/", kind="PRESTADORA")
         return dados if isinstance(dados, list) else (dados or {}).get("items") or []
 
+    async def criar_usina(self, dados: dict[str, Any], organizacao: int | None) -> dict[str, Any]:
+        """A usina nova nasce no GS e é criada aqui (docs/USINA_NASCE_NO_GS.md). `owner_id` = a proprietária;
+        `organizacao` = a da O&M (o seletor de empresa de lá): sem ela, um admin cria a usina sem a O&M ligada."""
+        cab = {"X-Empresa-Id": str(organizacao)} if organizacao else {}
+        return (await self._req("POST", "/api/v1/meuacesso/usinas/", json=dados, headers=cab)).json()
+
     async def usinas(self, token: str | None = None) -> list[dict[str, Any]]:
         """As usinas visíveis. Com `token` do usuário, devolve o escopo DELE — é assim que
         o teste da ponte descobre o que a conta de serviço enxerga.

@@ -17,7 +17,8 @@ sistemas; criar num sistema registra no GS (a parecida espera o gerente em oem-g
 
 ## Fases
 
-1. **Nova usina no GS** (oem-gs › Usinas): nome, proprietária, endereço, cidade, UF, coordenada e kWp → nasce em
+1. ✅ (25/11/2026: `POST /api/empresa/usinas/nova`, botão "Nova usina" no cartão da proprietária, em oem-gs ›
+   Proprietárias; parecida = 409 com a lista, "É outra: criar mesmo assim"). **Nova usina no GS**: nome, proprietária, endereço, cidade, UF, coordenada e kWp → nasce em
    `gs_plant_links` e, com o token da EMPRESA, no meuPlano (`POST /meuacesso/usinas/` com `owner_id` = o
    `mp_owner_id` da proprietária); o `mp_usina_id` volta e fica gravado. O meuWatt entra quando a usina ganha
    coletor (lá a usina sem coletor não tem o que medir): o GS mostra "falta no meuWatt" até lá.

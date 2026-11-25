@@ -1032,6 +1032,26 @@ export const usinasDaProprietaria = (id: number, ids: number[]) =>
 export const pessoasDaProprietaria = (id: number, ids: number[]) =>
   apiEmpresa.put<Proprietaria>(`/proprietarias/${id}/pessoas`, { ids }).then((r) => r.data)
 
+export type UsinaNova = {
+  id: number | null
+  codigo: string | null
+  sistemas: string[]
+  parecidas: { gs: number; nome: string; distancia_km: number | null; pelo_nome: boolean }[]
+}
+
+/** A usina nasce no GS e o GS a cria no meuPlano (docs/USINA_NASCE_NO_GS.md). 409 = parecidas: vêm na resposta. */
+export const criarUsinaNova = (dados: {
+  nome: string
+  cidade?: string | null
+  uf?: string | null
+  kwp?: number | null
+  proprietaria_id?: number | null
+  mesmo_assim?: boolean
+}) =>
+  apiEmpresa
+    .post<UsinaNova>('/usinas/nova', dados, { validateStatus: (s) => s === 201 || s === 409 })
+    .then((r) => r.data)
+
 export const darUsinasDaProprietaria = (id: number) =>
   apiEmpresa
     .post<{ pessoas: Record<string, number> }>(`/proprietarias/${id}/dar-usinas`)

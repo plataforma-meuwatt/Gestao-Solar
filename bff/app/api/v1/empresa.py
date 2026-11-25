@@ -1639,6 +1639,69 @@ def criar_proprietaria(body: ProprietariaIn, db: Session = Depends(get_db),
     return _proprietaria_out(db, p)
 
 
+class UsinaNovaIn(DadosIn):
+    nome: str
+    proprietaria_id: int | None = None
+    #: força criar mesmo com uma usina parecida na empresa (o gerente viu a lista e disse que é outra)
+    mesmo_assim: bool = False
+
+
+class UsinaNovaOut(BaseModel):
+    id: int | None = None
+    codigo: str | None = None
+    #: o que aconteceu em cada sistema, em frases
+    sistemas: list[str] = []
+    parecidas: list[dict] = []
+
+
+@router.post("/usinas/nova", response_model=UsinaNovaOut, status_code=201)
+async def criar_usina(body: UsinaNovaIn, db: Session = Depends(get_db),
+                      gerente: User = Depends(gestor_empresa_atual)) -> UsinaNovaOut:
+    """A usina nasce no GS (docs/USINA_NASCE_NO_GS.md) e o GS a cria no meuPlano, com a proprietária. O meuWatt entra
+    quando ela tiver coletor. A falha do meuPlano não desfaz a do GS: ela fica fora do aplicativo e a frase diz."""
+    from fastapi.responses import JSONResponse
+
+    from app.services import dados_da_usina
+    empresa_id = svc.empresa_exigida(gerente)
+    dados = body.model_dump(exclude={"proprietaria_id", "mesmo_assim"})
+    try:
+        limpos = {c: dados_da_usina._limpo(c, v) for c, v in dados.items()}
+        if (limpos["latitude"] is None) != (limpos["longitude"] is None):
+            raise dados_da_usina.DadoInvalido("A coordenada vai inteira: latitude e longitude juntas.")
+    except dados_da_usina.DadoInvalido as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    dona = _a_proprietaria(db, gerente, body.proprietaria_id) if body.proprietaria_id else None
+    if not body.mesmo_assim and (iguais := dados_da_usina.parecidas(db, empresa_id, limpos["nome"],
+                                                                    limpos["latitude"], limpos["longitude"])):
+        return JSONResponse(status_code=409, content=UsinaNovaOut(parecidas=iguais).model_dump(mode="json"))
+    link = PlantLink(empresa_id=empresa_id, ativo=False, atualizado_em=datetime.now(UTC),
+                     proprietaria_id=dona.id if dona else None, **{c: limpos[c] for c in dados_da_usina.CAMPOS})
+    db.add(link)
+    db.flush()
+    dados_da_usina.historico(db, link, "criada", None, "no GS", por=gerente, sistema="gs")
+    db.commit()
+    feito = ["GS: criada"]
+    try:
+        mp = await integracoes.cliente_meuplano(db, empresa_id)
+        corpo = {"name": link.nome, "address": link.endereco, "city": link.cidade, "uf": link.uf,
+                 "latitude": link.latitude, "longitude": link.longitude, "potencia_kwp": link.kwp,
+                 "owner_id": dona.mp_owner_id if dona else None}
+        criada = await mp.criar_usina({k: v for k, v in corpo.items() if v is not None},
+                                      db.get(Empresa, empresa_id).mp_tenant_id)
+        link.mp_usina_id, link.ativo = int(criada["id"]), True
+        dados_da_usina.historico(db, link, "mp_usina_id", None, str(link.mp_usina_id), por=gerente, sistema="gs")
+        db.commit()
+        feito.append(f"meuPlano: criada (#{link.mp_usina_id})"
+                     + ("" if dona is None or dona.mp_owner_id else ", sem a proprietária: ela não está no meuPlano"))
+    except Exception as exc:                               # noqa: BLE001
+        db.rollback()
+        log.warning("usina nova %s: meuPlano falhou: %s", link.id, type(exc).__name__)
+        feito.append("meuPlano: NÃO criada (" + (str(getattr(getattr(exc, "response", None), "status_code", ""))
+                                                 or type(exc).__name__) + "); a usina fica fora do aplicativo")
+    feito.append("meuWatt: entra quando a usina tiver coletor")
+    return UsinaNovaOut(id=link.id, codigo=codigo_do_gs(link.id), sistemas=feito)
+
+
 @router.patch("/proprietarias/{pid}", response_model=ProprietariaOut)
 def alterar_proprietaria(pid: int, body: ProprietariaIn, db: Session = Depends(get_db),
                          gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:

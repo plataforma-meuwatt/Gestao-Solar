@@ -173,3 +173,36 @@ def test_mudar_de_proprietaria_tira_as_usinas_da_antiga(db, c):
     assert {x.plant_link_id for x in db.query(UserPlantAccess).filter_by(user_id=c["luiz"].id)} == set()
     assert rotas.dar_usinas_da_proprietaria(a.id, db, g)["pessoas"] == {"Fernando": 0}    # sem 409
     assert rotas.dar_usinas_da_proprietaria(b.id, db, g)["pessoas"] == {"Luiz": 1}
+
+
+def test_usina_nasce_no_gs_e_e_criada_no_meuplano_com_a_proprietaria(db, c, monkeypatch):
+    """docs/USINA_NASCE_NO_GS.md, fase 1: o GS cria a dele e a do meuPlano (com a dona); parecida pede confirmação;
+    o meuPlano fora deixa a usina do GS fora do aplicativo, sem desfazer."""
+    g = c["gerente"]
+    c["a"].mp_tenant_id = 1
+    dona = Proprietaria(nome="Eldorado", empresa_id=c["a"].id, mp_owner_id=6)
+    db.add(dona)
+    db.commit()
+    enviados = []
+
+    class Mp:
+        async def criar_usina(self, dados, organizacao):
+            enviados.append(dados)
+            assert organizacao == 1
+            if dados["name"] == "Cai":
+                raise RuntimeError("fora")
+            return {"id": 777}
+
+    async def cliente(db_, eid):
+        return Mp()
+    monkeypatch.setattr(rotas.integracoes, "cliente_meuplano", cliente)
+    out = asyncio.run(rotas.criar_usina(rotas.UsinaNovaIn(nome="Mairinque 2", cidade="Mairinque", uf="SP",
+                                                          proprietaria_id=dona.id), db, g))
+    link = db.get(PlantLink, out.id)
+    assert (link.mp_usina_id, link.ativo, link.proprietaria_id) == (777, True, dona.id)
+    assert enviados[-1] == {"name": "Mairinque 2", "city": "Mairinque", "uf": "SP", "owner_id": 6}
+    r = asyncio.run(rotas.criar_usina(rotas.UsinaNovaIn(nome="Ouro Fino"), db, g))      # parecida: não cria
+    assert r.status_code == 409 and len(enviados) == 1
+    out = asyncio.run(rotas.criar_usina(rotas.UsinaNovaIn(nome="Cai"), db, g))
+    link = db.get(PlantLink, out.id)
+    assert (link.mp_usina_id, link.ativo) == (None, False) and "NÃO criada" in out.sistemas[1]

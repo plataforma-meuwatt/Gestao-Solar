@@ -17,6 +17,7 @@ import { Campo, Carregando, Cartao, Erro, Modal, Pagina, Vazio } from '@/compone
 import {
   alterarProprietaria,
   criarProprietaria,
+  criarUsinaNova,
   darUsinasDaProprietaria,
   importarProprietarias,
   pessoasDaProprietaria,
@@ -143,6 +144,7 @@ function CartaoDaProprietaria({
   const [editando, setEditando] = useState<{ nome: string; documento: string } | null>(null)
   const [escolha, setEscolha] = useState<'usinas' | 'pessoas' | null>(null)
   const [dado, setDado] = useState<string | null>(null)
+  const [nova, setNova] = useState(false)
   const salvar = useMutation({
     mutationFn: (d: { nome?: string; documento?: string | null }) => alterarProprietaria(p.id, d),
     onSuccess: () => {
@@ -228,9 +230,14 @@ function CartaoDaProprietaria({
           ) : (
             <p className="text-sm text-fraco">Nenhuma usina desta dona ainda.</p>
           )}
-          <button className="btn-fantasma mt-2" onClick={() => setEscolha('usinas')}>
-            Escolher as usinas
-          </button>
+          <div className="flex gap-2 flex-wrap mt-2">
+            <button className="btn-fantasma" onClick={() => setEscolha('usinas')}>
+              Escolher as usinas
+            </button>
+            <button className="btn-fantasma" onClick={() => setNova(true)}>
+              Nova usina
+            </button>
+          </div>
         </div>
         <div>
           <p className="rotulo-campo">Pessoas ({p.pessoas.length})</p>
@@ -265,6 +272,7 @@ function CartaoDaProprietaria({
       </div>
       {dar.error ? <Erro>{mensagemDeErro(dar.error)}</Erro> : null}
 
+      {nova ? <NovaUsina p={p} aoFechar={() => setNova(false)} aoMudar={aoMudar} /> : null}
       {escolha ? (
         <Escolha p={p} todas={todas} qual={escolha} aoFechar={() => setEscolha(null)} aoMudar={aoMudar} />
       ) : null}
@@ -363,6 +371,86 @@ function Escolha({
             Cancelar
           </button>
         </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** A usina nasce no GS, já com esta dona, e o GS a cria no meuPlano (docs/USINA_NASCE_NO_GS.md). */
+function NovaUsina({ p, aoFechar, aoMudar }: { p: Proprietaria; aoFechar: () => void; aoMudar: () => void }) {
+  const [d, setD] = useState({ nome: '', cidade: '', uf: '', kwp: '' })
+  const criar = useMutation({
+    mutationFn: (mesmoAssim: boolean) =>
+      criarUsinaNova({
+        nome: d.nome,
+        cidade: d.cidade || null,
+        uf: d.uf || null,
+        kwp: d.kwp ? Number(d.kwp.replace(',', '.')) : null,
+        proprietaria_id: p.id,
+        mesmo_assim: mesmoAssim,
+      }),
+    onSuccess: (r) => {
+      if (r.id) aoMudar()
+    },
+  })
+  const r = criar.data
+  return (
+    <Modal titulo={`Nova usina de ${p.nome}`} aoFechar={aoFechar}>
+      <div className="grid gap-3">
+        {r?.id ? (
+          <>
+            <p className="text-forte font-semibold">
+              Usina {r.codigo} criada
+            </p>
+            <ul className="text-sm text-rotulo grid gap-0.5">
+              {r.sistemas.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+            <button className="btn-secundario" onClick={aoFechar}>
+              Fechar
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-rotulo">
+              A usina nasce no GS e é criada no meuPlano com esta proprietária. O meuWatt entra quando ela tiver coletor.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Campo rotulo="Nome" value={d.nome} onChange={(e) => setD({ ...d, nome: e.target.value })} />
+              <Campo rotulo="Cidade" value={d.cidade} onChange={(e) => setD({ ...d, cidade: e.target.value })} />
+              <Campo rotulo="UF" value={d.uf} maxLength={2} onChange={(e) => setD({ ...d, uf: e.target.value.toUpperCase() })} />
+              <Campo rotulo="Potência (kWp)" value={d.kwp} inputMode="decimal" onChange={(e) => setD({ ...d, kwp: e.target.value })} />
+            </div>
+            {r?.parecidas.length ? (
+              <div className="text-sm text-rotulo">
+                <p className="text-forte font-semibold">Parece uma usina que já existe:</p>
+                <ul className="grid gap-0.5">
+                  {r.parecidas.map((x) => (
+                    <li key={x.gs}>
+                      {x.nome}
+                      {x.distancia_km != null ? ` · a ${x.distancia_km} km` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">Se for uma delas, não crie: ligue a que existe. Se for outra, crie mesmo assim.</p>
+              </div>
+            ) : null}
+            {criar.error ? <Erro>{mensagemDeErro(criar.error)}</Erro> : null}
+            <div className="flex gap-2 flex-wrap">
+              <button
+                className="btn-secundario"
+                disabled={criar.isPending || d.nome.trim().length < 2}
+                onClick={() => criar.mutate(Boolean(r?.parecidas.length))}
+              >
+                {criar.isPending ? 'Criando…' : r?.parecidas.length ? 'É outra: criar mesmo assim' : 'Criar'}
+              </button>
+              <button className="btn-fantasma" onClick={aoFechar}>
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   )
