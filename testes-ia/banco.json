@@ -2741,5 +2741,54 @@
       "processar_usina"
     ],
     "origem": "log #642"
+  },
+  {
+    "frase": "Me dê a planta geral de Pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #648"
+  },
+  {
+    "frase": "Me dê o memorial descritivo de Pirapozinho",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #651"
+  },
+  {
+    "frase": "Qual a área total da usina de Pirapozinho?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #649"
+  },
+  {
+    "frase": "Qual a area da usina de ouro fino?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #653"
+  },
+  {
+    "frase": "Você tem uma planta geral de ouro fino que mostre a área total cercada?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #656"
+  },
+  {
+    "frase": "Qual é a ferramenta do meuplano que separa automaticamente as fotos de termografia?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #646"
+  },
+  {
+    "frase": "me mostre a string s12 de ibitinga",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #644"
   }
 ]
