@@ -313,3 +313,119 @@ def test_a_chave_sozinha_nao_fala_por_ninguem(http, cenario, db):
     assert http.get("/api/v1/interno/usinas", headers=_h(g)).status_code == 404
     leituras = [a for a in db.query(A).filter(A.acao == "leitura", A.gs_user_id == adm.id) if "renovação" not in a.motivo]
     assert len(leituras) == 1 and "as usinas" in leituras[0].motivo                         # uma por hora
+
+
+def test_os_itens_do_mapa_para_o_termovision_por_mover_e_tirar(http, cenario, db, monkeypatch):
+    """Fase 2 do mapa novo (o Renan, 25/11/2026: "arrastar os inversores e transformadores para a planta" e "marcar a
+    subestação e a posição dos relés"): a lista de tudo o que existe na usina, e pôr, mover e tirar com o "antes" (o
+    meuWatt confere e devolve 409; a mesma geometria de novo é 200 sem mudar). Ler é de quem vê; editar, da O&M."""
+    import httpx
+
+    from app.core.security import criar_token_sistema
+    from app.services import vinculos
+    c, g, dono = cenario, cenario["gerente"], cenario["dono"]
+    dono.termovision_liberado = True
+    db.commit()
+    ponto, area = {"type": "Point", "coordinates": [-48.8, -21.7]}, \
+        {"type": "Polygon", "coordinates": [[[-48.8, -21.7], [-48.79, -21.7], [-48.79, -21.69], [-48.8, -21.7]]]}
+
+    def erro(codigo, corpo):
+        return httpx.HTTPStatusError("x", request=httpx.Request("PATCH", "http://mw"),
+                                     response=httpx.Response(codigo, json=corpo))
+
+    class MW:
+        def __init__(self):
+            self.proximo, self.objetos = 100, [
+                {"id": 41, "tipo": "string", "nome": "U1-3S22", "geometria": area, "slot_id": None},
+                {"id": 42, "tipo": "transformador", "nome": "TR-01", "geometria": ponto, "transformer_id": 3,
+                 "atualizado_em": "2026-11-25T18:00:00+00:00", "atualizado_por": {"id": 8, "nome": "Renan"}},
+                {"id": 43, "tipo": "camera", "nome": "Câmera 01", "geometria": ponto}]
+
+        async def mapa_equipamentos(self, slug):
+            return {"transformadores": [{"id": 3, "nome": "TR-01", "kva": 1250}],
+                    "vagas": [{"slot_id": 5, "rotulo": "Inv 13", "posicao": 13, "transformer_id": 3,
+                               "inversor": {"sn": "SN13", "modelo": "SUN2000"}, "strings": [1, 2]}],
+                    "reles": [{"relay_id": 9, "nome": "URP6000 TR-01", "transformer_id": 3},
+                              {"relay_id": 10, "nome": "URP Geral", "transformer_id": None}]}
+
+        async def mapa(self, slug):
+            return {"objetos": [dict(o) for o in self.objetos]}
+
+        def _o(self, oid):
+            o = next((x for x in self.objetos if x["id"] == oid), None)
+            if o is None:
+                raise erro(404, {"detail": "não existe"})
+            return o
+
+        async def mapa_criar(self, slug, objeto):
+            if any(x.get("origem") == objeto.get("origem") for x in self.objetos):
+                raise erro(409, {"detail": "origem repetida"})
+            self.proximo += 1
+            self.objetos.append({**objeto, "id": self.proximo})
+
+        async def mapa_alterar(self, slug, oid, campos):
+            o = self._o(oid)
+            if o["geometria"] == campos["geometria"]:
+                return
+            if campos.get("antes") is not None and o["geometria"] != campos["antes"]:
+                raise erro(409, {"detail": "mexeram", "objeto": o})
+            o["geometria"] = campos["geometria"]
+
+        async def mapa_apagar(self, slug, oid, antes=None):
+            o = self._o(oid)
+            if antes is not None and o["geometria"] != antes:
+                raise erro(409, {"detail": "mexeram", "objeto": o})
+            self.objetos.remove(o)
+
+    mw = MW()
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db, uid, **k: mw)
+    url = f"/api/v1/interno/usinas/{c['ib'].id}/mapa/itens"
+    h = {**_h(g, sistema="termovision", empresa=c["a"].id), "X-Sessao-GS": criar_token_sistema(g.id, "termovision")}
+    j = http.get(url, headers=h).json()
+    assert j["pode_editar"] is True and j["lido_em"].endswith("-03:00")
+    por = {i["ref"]: i for i in j["itens"]}
+    assert set(por) == {"trafo:3", "inv:5", "str:5:1", "str:5:2", "rele:9", "rele:10", "obj:41"}   # a câmera não é item
+    assert por["trafo:3"] == {"ref": "trafo:3", "tipo": "transformador", "nome": "TR-01", "pai": None,
+                              "detalhe": "1.250 kVA", "geometria": ponto, "meuwatt": {"objeto": 42, "transformer_id": 3},
+                              "alterado_por": "Renan", "alterado_em": "2026-11-25T18:00:00+00:00"}
+    assert (por["inv:5"]["pai"], por["inv:5"]["detalhe"], por["inv:5"]["geometria"]) == ("trafo:3", "SUN2000 · SN13", None)
+    assert por["str:5:2"]["pai"] == "inv:5" and por["str:5:2"]["meuwatt"] == {"objeto": None, "slot_id": 5, "string_number": 2}
+    assert (por["rele:9"]["pai"], por["rele:10"]["pai"], por["rele:10"]["detalhe"]) == ("trafo:3", None, "Geral")
+    assert por["obj:41"]["tipo"] == "string" and por["obj:41"]["geometria"] == area             # o as-built solto
+
+    # pôr o inversor no mapa, e o mesmo pedido de novo não cria outro
+    for _ in range(2):
+        r = http.put(f"{url}/inv:5", headers=h, json={"geometria": ponto, "antes": None})
+        assert r.status_code == 200 and r.json()["item"]["geometria"] == ponto
+    criados = [o for o in mw.objetos if o.get("origem") == "gs-item:inv:5"]
+    assert len(criados) == 1 and criados[0]["slot_id"] == 5 and criados[0]["tipo"] == "inversor"
+    # mover com o "antes" certo; com o "antes" velho, 409 com o item como está
+    longe = {"type": "Point", "coordinates": [-48.7, -21.6]}
+    assert http.put(f"{url}/trafo:3", headers=h, json={"geometria": longe, "antes": ponto}).json()["item"]["geometria"] == longe
+    r = http.put(f"{url}/trafo:3", headers=h, json={"geometria": ponto, "antes": ponto})
+    assert r.status_code == 409 and r.json()["item"]["geometria"] == longe
+    r = http.put(f"{url}/trafo:3", headers=h, json={"geometria": ponto, "antes": None})   # a tela o viu fora do mapa
+    assert r.status_code == 409
+    # a forma de cada tipo, o ref que não existe e a subestação nova (idempotente pelo ref)
+    assert http.put(f"{url}/str:5:1", headers=h, json={"geometria": ponto}).status_code == 400
+    assert http.put(f"{url}/inv:999", headers=h, json={"geometria": ponto}).status_code == 404
+    assert http.put(f"{url}/novo:abc", headers=h, json={"geometria": area}).status_code == 400       # sem tipo e nome
+    for _ in range(2):
+        r = http.put(f"{url}/novo:abc", headers=h, json={"geometria": area, "tipo": "subestacao", "nome": "Subestação"})
+        assert r.status_code == 200 and r.json()["item"]["ref"] == "novo:abc"
+    assert len([o for o in mw.objetos if o.get("origem") == "gs-item:novo:abc"]) == 1
+    # tirar: com o "antes" velho, 409; certo, sai (a subestação some da lista); de novo, 200
+    assert http.request("DELETE", f"{url}/inv:5", headers=h, json={"antes": longe}).status_code == 409
+    r = http.request("DELETE", f"{url}/inv:5", headers=h, json={"antes": ponto})
+    assert r.status_code == 200 and r.json()["item"]["geometria"] is None                  # volta à lista sem posição
+    r = http.put(f"{url}/inv:5", headers=h, json={"geometria": longe, "antes": ponto})     # a tela o via no mapa
+    assert r.status_code == 409 and r.json()["item"]["geometria"] is None
+    for _ in range(2):
+        r = http.request("DELETE", f"{url}/novo:abc", headers=h, json={"antes": area})
+        assert r.status_code == 200 and r.json()["item"] is None
+    # o dono lê (a usina dele) e não edita
+    hd = {**_h(dono, sistema="termovision"), "X-Sessao-GS": criar_token_sistema(dono.id, "termovision")}
+    url_dono = f"/api/v1/interno/usinas/{c['of'].id}/mapa/itens"
+    assert http.get(url_dono, headers=hd).json()["pode_editar"] is False
+    assert http.put(f"{url_dono}/inv:5", headers=hd, json={"geometria": ponto}).status_code == 403
+    assert http.get(url, headers=hd).status_code == 404                                    # Ibitinga não é dele

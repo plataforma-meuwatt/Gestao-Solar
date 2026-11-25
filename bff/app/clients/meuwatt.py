@@ -189,8 +189,16 @@ class MeuWattClient:
     async def mapa_alterar(self, slug: str, objeto_id: int, campos: dict[str, Any]) -> Any:
         return await self._enviar("PATCH", f"/plants/{slug}/mapa/objetos/{int(objeto_id)}", json=campos)
 
-    async def mapa_apagar(self, slug: str, objeto_id: int) -> Any:
-        return await self._enviar("DELETE", f"/plants/{slug}/mapa/objetos/{int(objeto_id)}")
+    async def mapa_apagar(self, slug: str, objeto_id: int, antes: dict[str, Any] | None = None) -> Any:
+        """Com `antes` (a geometria que a tela viu), o meuWatt confere numa transação: outra pessoa mexeu depois = 409."""
+        return await self._enviar("DELETE", f"/plants/{slug}/mapa/objetos/{int(objeto_id)}",
+                                  **({"json": {"antes": antes}} if antes is not None else {}))
+
+    async def mapa_equipamentos(self, slug: str) -> dict[str, Any]:
+        """Tudo o que EXISTE na usina para pôr no mapa, numa leitura: `transformadores` [{id, nome, kva}], `vagas`
+        [{slot_id, rotulo, posicao, transformer_id, inversor {sn, modelo}, strings [n…]}] e `reles` [{relay_id, nome,
+        transformer_id}]."""
+        return await self._get(f"/plants/{slug}/mapa/equipamentos", timeout=20)
 
     async def mcp(self, mensagem: dict[str, Any]) -> dict[str, Any]:
         """Uma mensagem JSON-RPC ao conector do Claude daqui (`POST /mcp`), com o token PESSOAL da pessoa: o conector

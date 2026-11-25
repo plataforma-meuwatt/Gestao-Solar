@@ -524,7 +524,9 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   o bot faz por ela não conta), e o código do mapa fica em `gs_plant_links.tv_codigo`, único dos dois lados. A LEITURA
   dos objetos do mapa (`/usinas/<gs>/mapa/objetos`) com a sessão do passe do TermoVision (`X-Sessao-GS`) é de quem vê a
   usina na lista do GS, o dono também (o mapa embutido; fase 1 do mapa novo, o "libere" do Renan em 25/11/2026); sem a
-  sessão, segue a régua do "Importar do GS" (a O&M, passe de 12 h).
+  sessão, segue a régua do "Importar do GS" (a O&M, passe de 12 h). Os ITENS do mapa (`api/v1/interno_mapa_itens.py`,
+  fase 2): tudo o que existe na usina (`/plants/{slug}/mapa/equipamentos` do meuWatt) com ref estável, e pôr, mover e
+  tirar com o `antes` (o meuWatt confere e dá 409); a posição segue no mapa do meuWatt, sem cópia aqui.
 - **"Onde fica" no bot** (`mapa_equipamento`): primeiro o mapa do GS; sem o objeto lá, a leitura `localizar` do
   TermoVision (string, mesa, fileira, módulo); nos dois, vale o GS (o dono, 24/11/2026).
 - **A porta dos sistemas** (`api/v1/interno_sistemas.py`, contrato em `docs/CONTRATO_SISTEMAS.md`): os quatro sistemas
