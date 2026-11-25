@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -156,7 +157,13 @@ def _usina(ctx: Contexto, nome: str | None) -> dict:
         raise Recusa(f"O monitoramento (meuWatt) não respondeu agora: {ctx.mw_falha} Tente de novo em instantes.")
     if ctx.mw is None or not ctx.usinas:
         raise Recusa("Não há usina com monitoramento liberada para você no Gestão Solar.")
-    todas = list(ctx.usinas.values())
+    return escolher_usina(list(ctx.usinas.values()), nome)
+
+
+def escolher_usina(todas: list[dict], nome: str | None) -> dict:
+    """A usina ({nome, slug, …}) pelo nome falado ou pelo slug: a única, a exata ou a única que contém o nome."""
+    if not todas:
+        raise Recusa("Não há usina liberada para você no Gestão Solar.")
     if not (nome or "").strip():
         if len(todas) == 1:
             return todas[0]
@@ -273,18 +280,28 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
             "inversores_com_falha": len(c.get("faulty_inverters") or []), "dado_de": c.get("data_at")}
     r = await _range(ctx, u, ini, fim, c)
     kwp = r.get("total_capacity_kwp")
-    invs = []
+    invs, brutos = [], []
     for i in r.get("inverters") or []:
         kwh, ik = i.get("total_yield_kwh"), i.get("capacity_kwp")
         invs.append({"inversor": i.get("slot_label") or i.get("sn"), "skid": i.get("transformer_name"),
                      "energia_kwh": _r(kwh), "produtividade_kwh_kwp": _r(kwh / ik, 2) if kwh is not None and ik else None,
                      "perdido_kwh": _r(i.get("total_lost_kwh")), "com_falha": i.get("is_faulty"),
                      **_conta_da_perda(i.get("perda_memoria"))})
+        brutos.append((str(i.get("sn") or ""), kwh, ik))
     prods = [i["produtividade_kwh_kwp"] for i in invs if i["produtividade_kwh_kwp"] is not None]
     med = median(prods) if prods else None
     for i in invs:
         x = i["produtividade_kwh_kwp"]
         i["desvio_da_mediana_pct"] = _r((x / med - 1) * 100) if x is not None and med else None
+    strings = await _strings_por_inversor(ctx, u["slug"], fim) if invs else {}
+    if isinstance(strings, str):
+        out["strings"] = strings
+    else:
+        for i, (sn, kwh, ik) in zip(invs, brutos):
+            if sn in strings:
+                i.update(_strings_na_comparacao(strings[sn], kwh, ik, med, ini, fim))
+        if any("strings_com_problema" in i for i in invs):
+            out["nota_strings"] = NOTA_STRINGS
     invs.sort(key=lambda i: (i["produtividade_kwh_kwp"] is None, -(i["produtividade_kwh_kwp"] or 0)))
     cd = r.get("chart_data") or {}
     pr_dia = {d["t"]: d.get("pr") for d in cd.get("daily_pr") or []}
@@ -1111,16 +1128,199 @@ def _o_rele(reles: list[dict], nome: str | None) -> dict:
 
 
 async def leituras_usina(ctx: Contexto, a: dict) -> dict:
-    """A tela Leituras do meuWatt: o que não está ok e o que alguém marcou "já sei" (a regra é de lá)."""
+    """A tela Leituras do meuWatt: o que não está ok e o que alguém marcou "já sei" (a regra é de lá), dos relés de
+    proteção e das strings dos inversores."""
     u = _usina(ctx, a.get("usina"))
     reles = (await ctx.mw.leituras(u["slug"])).get("relays") or []
     if a.get("rele"):
         reles = [_o_rele(reles, a["rele"])]
-    saida = [{"rele": r.get("name"), "skid": r.get("transformer_name"), "leituras": _atencao(r)} for r in reles]
-    return {"usina": u["nome"], "reles": saida,
-            "nota": ("Só as leituras com problema ou com marcação (as outras estão ok). `ja_sei` = alguém marcou na tela "
-                     "Leituras do meuWatt que o problema é conhecido: o aviso dela não sai. Para marcar ou tirar, "
-                     "`marcar_leitura`.")}
+    saida = {"usina": u["nome"],
+             "reles": [{"rele": r.get("name"), "skid": r.get("transformer_name"), "leituras": _atencao(r)} for r in reles],
+             "nota": ("Só as leituras com problema ou com marcação (as outras estão ok). `ja_sei` = alguém marcou na tela "
+                      "Leituras do meuWatt que o problema é conhecido: o aviso dela não sai. Para marcar ou tirar, "
+                      "`marcar_leitura` (relé) e `marcar_strings` (strings de um inversor).")}
+    if not a.get("rele"):
+        strings = await _strings_por_inversor(ctx, u["slug"], hoje())
+        saida["strings"] = strings if isinstance(strings, str) else [
+            {"inversor": i.get("label"), "skid": i.get("transformer_name"), "strings": lista,
+             **({"perda_kwh_hoje": _r(i["loss_kwh_day"])} if i.get("loss_kwh_day") else {})}
+            for i in strings.values()
+            if (lista := [texto_da_string(x) for x in i.get("strings") or []
+                          if x.get("registered") and (x.get("status") in PROBLEMA_DA_STRING or x.get("mark"))])]
+    return saida
+
+
+#: o estado de uma string que pede atenção, como a tela Leituras do meuWatt diz (a regra é de lá)
+PROBLEMA_DA_STRING = {"zero": "zerada", "intermittent": "intermitente", "weak": "fraca"}
+NOTA_STRINGS = ("Inversor com string parada: diga qual, desde quando e o «já sei» da equipe (`strings_com_problema`). "
+                "`energia_se_as_strings_gerassem_kwh` é o que ele geraria com elas (a perda é a que o meuWatt conta): "
+                "perto da mediana (`desvio_da_mediana_se_as_strings_gerassem_pct`), o resto do inversor está ok.")
+
+
+async def _strings_por_inversor(ctx: Contexto, slug: str, dia: date) -> dict[str, dict] | str:
+    """Por número de série, o inversor da tela Leituras do meuWatt (`readings/strings`: as strings ligadas, o estado de
+    cada uma pela regra de lá, a perda do dia e o «já sei» da equipe). Sem resposta, o motivo: quem compara diz que não
+    leu as strings, nunca as esquece calado."""
+    from app.services import assistente_series as series
+
+    try:
+        invs = await series._leituras_strings(ctx, slug, dia)
+    except Exception as e:  # noqa: BLE001 — a comparação dos inversores não cai porque as strings não vieram
+        return f"sem as strings do meuWatt agora ({type(e).__name__})"
+    return {str(i["serial_number"]): i for i in invs} if invs else "sem as strings do meuWatt agora"
+
+
+def texto_da_string(x: dict) -> str:
+    """Uma string em palavras: a etiqueta, o estado, desde quando está zerada e o que a equipe marcou."""
+    t = f"{x.get('tag') or 'PV' + str(x.get('number'))} {PROBLEMA_DA_STRING.get(x.get('status'), 'ok')}"
+    if x.get("zero_since"):
+        t += f" desde {date.fromisoformat(str(x['zero_since'])[:10]):%d/%m/%Y}" + (
+            " ou antes" if x.get("zero_since_before_window") else "")
+    m = x.get("mark") or {}
+    if m.get("ignored"):
+        t += " (a equipe marcou «já sei»" + (f": {m['note']})" if m.get("note") else ")")
+    elif m.get("note"):
+        t += f" (observação da equipe: {m['note']})"
+    return t
+
+
+def _strings_na_comparacao(inv: dict, kwh: float | None, kwp: float | None, med: float | None,
+                           ini: date, fim: date) -> dict:
+    """O que as strings explicam da geração do inversor. A regra e a perda são do meuWatt; aqui só a soma. Um dia: a
+    energia mais a perda que o meuWatt conta das strings paradas. Vários dias: só com as strings zeradas o período
+    todo, pela potência delas no cadastro (a perda do meuWatt é por dia)."""
+    ligadas = [x for x in inv.get("strings") or [] if x.get("registered")]
+    ruins = [x for x in ligadas if x.get("status") in PROBLEMA_DA_STRING]
+    if not ruins:
+        return {}
+    out: dict[str, Any] = {"strings_ligadas": len(ligadas), "strings_com_problema": [texto_da_string(x) for x in ruins]}
+    zeradas = [x for x in ruins if x.get("status") == "zero"]
+    if kwh is None or not zeradas:
+        return out
+    if ini == fim:
+        if inv.get("loss_kwh_day") is None:
+            return out
+        com = kwh + inv["loss_kwh_day"]
+        sabida = sum(x.get("loss_kwh_day") or 0 for x in zeradas if (x.get("mark") or {}).get("ignored"))
+        out.update(perda_das_strings_kwh=_r(inv["loss_kwh_day"]),
+                   **({"perda_ja_sabida_kwh": _r(sabida)} if sabida else {}))
+    else:
+        if any(not x.get("zero_since") or date.fromisoformat(str(x["zero_since"])[:10]) > ini for x in zeradas):
+            return out
+        todas = sum(x.get("kwp") or 0 for x in ligadas)
+        gerando = todas - sum(x.get("kwp") or 0 for x in zeradas)
+        if not gerando:
+            return out
+        com = kwh * todas / gerando
+        out["como"] = (f"estimado pela potência das strings: {len(ligadas) - len(zeradas)} de {len(ligadas)} "
+                       "gerando o período todo")
+    out["energia_se_as_strings_gerassem_kwh"] = _r(com)
+    if kwp and med:
+        out["desvio_da_mediana_se_as_strings_gerassem_pct"] = _r((com / kwp / med - 1) * 100)
+    return out
+
+
+def _o_inversor(invs: list[dict], nome: str | None) -> dict:
+    """O inversor da tela Leituras pelo nome falado ("inversor 13", "Inv 13", "13")."""
+    alvo = _norm(nome)
+    numeros = {int(x) for x in re.findall(r"\d+", alvo)}
+
+    def numero(i: dict) -> int | None:                    # "Inv 13", "INV-013": um número só no rótulo
+        achados = re.findall(r"\d+", _norm(i.get("label")))
+        return int(achados[0]) if len(achados) == 1 else None
+
+    cands = [i for i in invs if _norm(i.get("label")) == alvo] or [i for i in invs if numero(i) in numeros]
+    if len(cands) != 1:
+        raise Recusa(("Mais de um inversor casa" if cands else "Não achei o inversor") + f" '{nome or ''}': "
+                     + ", ".join(i.get("label") or "" for i in (cands or invs)) + ". Pergunte qual.")
+    return cands[0]
+
+
+async def marcar_strings(ctx: Contexto, a: dict) -> dict:
+    """O «já sei» (o X da tela Leituras do meuWatt) em strings de um inversor, com a observação: o "inversor 13 tem
+    uma string a menos" do Renan (25/11/2026), que a comparação dos inversores passa a dizer. Ação com o Sim, gravada
+    com o token DA PESSOA (só a operação da usina marca lá). Sem `strings`, as que o meuWatt dá com problema; se a
+    pessoa disse quantas e o meuWatt mede outro número, devolve a lista para ela escolher (nunca marca a mais)."""
+    from app.core.datas import hora_brt
+    from app.services import assistente_helper as helper
+    from app.services.vinculos import cliente_meuwatt
+
+    u = _usina(ctx, a.get("usina"))
+    lido = await ctx.mw.strings_por_vaga(u["slug"])
+    if not lido.get("can_mark"):                          # o papel da pessoa NESTA usina no meuWatt (o mesmo do PUT)
+        raise Recusa("O seu papel nesta usina no meuWatt não marca leituras (só a operação). Nada foi feito.")
+    inv = _o_inversor(lido.get("inverters") or [], a.get("inversor"))
+    ligadas = {int(x["number"]): x for x in inv.get("strings") or [] if x.get("registered") and x.get("number") is not None}
+    ruins = [n for n, x in ligadas.items() if x.get("status") in PROBLEMA_DA_STRING]
+    pedidas = a.get("strings") or []
+    if pedidas:
+        numeros = []
+        for p in pedidas:
+            achados = re.findall(r"\d+", str(p))
+            if not achados or int(achados[-1]) not in ligadas:
+                raise Recusa(f"A string '{p}' não está ligada no {inv.get('label')} no meuWatt. As ligadas: "
+                             + ", ".join(x.get("tag") or str(n) for n, x in ligadas.items()) + ".")
+            numeros.append(int(achados[-1]))
+    else:
+        numeros = ruins
+        if not numeros:
+            raise Recusa(f"O meuWatt não mede string com problema no {inv.get('label')} hoje: pergunte qual string "
+                         "marcar (a etiqueta, ex.: 6S27).")
+        quantas = a.get("quantas")
+        quantas = int(quantas) if isinstance(quantas, str) and quantas.strip().isdigit() else quantas
+        if isinstance(quantas, int) and not isinstance(quantas, bool) and quantas != len(numeros):
+            raise Recusa(f"A pessoa falou em {quantas} string(s), e o meuWatt mede {len(numeros)} com problema no "
+                         f"{inv.get('label')}: " + "; ".join(texto_da_string(ligadas[n]) for n in numeros)
+                         + ". Mostre e pergunte quais marcar (ou se são todas).")
+    numeros = list(dict.fromkeys(numeros))
+    ja_sei = a.get("ja_sei", True) is not False
+    nova = (a.get("observacao") or "").strip() or None
+    vence = None
+    if ja_sei and a.get("dias") not in (None, ""):
+        try:
+            dias = int(a["dias"])
+        except (TypeError, ValueError):
+            raise Recusa("Não entendi o prazo: pergunte em dias (de 1 a 365).") from None
+        if not 1 <= dias <= 365:
+            raise Recusa("O prazo vai de 1 a 365 dias: pergunte de novo.")
+        vence = (datetime.now(UTC) + timedelta(days=dias)).isoformat()
+    tags = [ligadas[n].get("tag") or f"PV{n}" for n in numeros]
+    onde = f"{inv.get('label')} · {' e '.join(tags) if len(tags) <= 2 else ', '.join(tags)} ({u['nome']})"
+    resumo = f"Marcar «já sei» no meuWatt: {onde}" if ja_sei else f"Tirar o «já sei» no meuWatt: {onde}"
+    detalhes = ["Agora: " + "; ".join(texto_da_string(ligadas[n]) for n in numeros),
+                f"Observação: {nova}" if nova else "Sem observação nova (fica a que já existe)",
+                (f"Vale até {hora_brt(vence)}." if vence else "Vale até alguém tirar.") if ja_sei
+                else "A string volta a contar como problema."]
+    slug, vaga = u["slug"], int(inv["slot_id"])
+
+    async def executar(db, user, telefone: str) -> str:
+        mw = cliente_meuwatt(db, user.id, so_proprio=True)
+        try:                                              # o PUT troca a marcação inteira: relê a nota de agora
+            agora = next((i for i in (await mw.strings_por_vaga(slug)).get("inverters") or []
+                          if i.get("slot_id") == vaga), inv)
+        except httpx.HTTPError:
+            agora = inv
+        marcas = {int(x["number"]): x.get("mark") or {} for x in agora.get("strings") or [] if x.get("number") is not None}
+        feitas, falhas = [], []
+        for n, tag in zip(numeros, tags):
+            m = marcas.get(n) or {}
+            try:
+                await mw.marcar_leitura(slug, vaga, f"string_{n}", ja_sei, nova or m.get("note"),
+                                        vence or (m.get("expires_at") if ja_sei else None), equipamento="inverter")
+                feitas.append(tag)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403 and not feitas:
+                    return "❌ O seu papel nesta usina no meuWatt não marca leituras (só a operação). Nada foi feito."
+                falhas.append(f"{tag} (o meuWatt recusou: {e.response.status_code})")
+            except httpx.HTTPError:
+                falhas.append(f"{tag} (o meuWatt não respondeu: PODE ter sido gravada, confira na tela Leituras)")
+        feito = "marcado «já sei»" if ja_sei else "«já sei» tirado"
+        if not feitas:
+            return "❌ Nada foi gravado: " + "; ".join(falhas) + "."
+        texto = f"{inv.get('label')} · {' e '.join(feitas)} ({u['nome']}): {feito}" + (f". Observação: {nova}" if nova else "")
+        return (f"⚠️ Feito EM PARTE. {texto}. Faltou: " + "; ".join(falhas) + ".") if falhas else f"✅ {texto}."
+
+    return helper.propor(ctx, resumo, 600, executar, detalhes, parte="bot_meuwatt", confirmacao="sim")
 
 
 async def marcar_leitura(ctx: Contexto, a: dict) -> dict:
@@ -1206,7 +1406,8 @@ FERRAMENTAS = {
     "listar_usinas": (listar_usinas, _f("listar_usinas", "As usinas da pessoa com monitoramento (nome, kWp, estação).")),
     "geracao": (geracao, _f("geracao", "Geração de UMA usina num período: energia, produtividade (kWh/kWp), PR, "
         "disponibilidade, esperado/perdido, melhor e pior dia, dia a dia, meses e RANKING dos inversores com desvio da "
-        "mediana. Período de hoje traz 'agora' (até o momento).", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
+        "mediana e as strings paradas de cada um (com o que ele geraria com elas). Período de hoje traz 'agora' (até o "
+        "momento).", {"usina": _USINA, "inicio": _INI, "fim": _FIM})),
     "comparar_usinas": (comparar_usinas, _f("comparar_usinas", "Todas as usinas da pessoa no período, da mais à menos "
         "produtiva (kWh/kWp), com PR, irradiação e disponibilidade.", {"inicio": _INI, "fim": _FIM})),
     "irradiacao": (irradiacao, _f("irradiacao", "IRRADIAÇÃO de uma usina por dia e total (estação POA/GHI quando houver; "
@@ -1226,9 +1427,23 @@ FERRAMENTAS = {
         "32, 86…), relé sem comunicação e fase zerada na medição, lê os equipamentos pelo helper e diz a causa provável e "
         "o que fazer. Com `codigo` (ex.: 27, 59N, 86) explica a função de proteção.",
         {"usina": _USINA, "codigo": {"type": "string", "description": "Função ANSI ou condição (27, 59N, NAO_LIGOU)."}})),
-    "leituras_usina": (leituras_usina, _f("leituras_usina", "LEITURAS dos relés de proteção (tela Leituras do meuWatt): "
-        "as que não estão ok (fase zerada, sem comunicação, sem leitura) e as que alguém marcou «já sei» com a observação.",
+    "leituras_usina": (leituras_usina, _f("leituras_usina", "LEITURAS da tela Leituras do meuWatt: dos relés de proteção "
+        "(fase zerada, sem comunicação, sem leitura) e das strings dos inversores (zerada, intermitente, fraca), as que "
+        "não estão ok e as que alguém marcou «já sei» com a observação.",
         {"usina": _USINA, "rele": {"type": "string", "description": "Nome ou skid do relé (opcional)."}})),
+    "marcar_strings": (marcar_strings, _f("marcar_strings", "AÇÃO (com Sim): marca «já sei» em STRINGS de um inversor "
+        "na tela Leituras do meuWatt, com a observação (\"o inversor 13 tem uma string a menos\", \"a 6S27 está aberta, "
+        "já sei\"): o problema passa a ser conhecido, e a comparação dos inversores diz isso. Sem `strings`, as que o "
+        "meuWatt dá com problema naquele inversor; `quantas` = o número que a pessoa disse (\"uma string a menos\" = 1). "
+        "`ja_sei`=false tira a marcação.",
+        {"usina": _USINA, "inversor": {"type": "string", "description": "O inversor (ex.: Inv 13, 13)."},
+         "strings": {"type": "array", "items": {"type": "string"},
+                     "description": "As strings, pela etiqueta ou número (6S27, 27). Só se a pessoa disse quais."},
+         "quantas": {"type": "integer", "description": "Quantas strings a pessoa disse (opcional)."},
+         "ja_sei": {"type": "boolean", "description": "true = marcar «já sei» (padrão); false = tirar."},
+         "observacao": {"type": "string", "description": "O que a pessoa disse, nas palavras dela."},
+         "dias": {"type": "integer", "description": "Prazo do «já sei» em dias, só se a pessoa disser (sem = até tirar)."}},
+        ["inversor"])),
     "marcar_leitura": (marcar_leitura, _f("marcar_leitura", "AÇÃO (com Sim): marca «já sei» numa leitura de um relé "
         "(o problema é conhecido, ex.: \"já sei, o relé tá com defeito\"), com a observação, na tela Leituras do "
         "meuWatt: o aviso daquela leitura deixa de sair. `ja_sei`=false tira a marcação (o aviso volta), ou, numa "

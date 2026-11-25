@@ -1319,6 +1319,36 @@ async def usina_helper(ctx: ger.Contexto, a: dict) -> dict:
     return _corta({"status_http": d.get("status_http"), "resposta": resposta, **({"nota": nota} if nota else {})})
 
 
+async def diagrama_unifilar(ctx: ger.Contexto, a: dict) -> dict:
+    """O link público e temporário do unifilar do helper, só para ver (`unifilar_publico`): o SISTEMA o põe ao pé da
+    resposta e o tira do Log do bot e da cópia do gateway (o link abre a usina sem login). Comandar continua sendo
+    aqui, com a senha de atuação (o Renan, 25/11/2026)."""
+    from app.services import unifilar_publico as up
+    from app.services.vinculos import SemConexao
+
+    links = [p for p in ger.usinas_do_bot(ctx.db, ctx.user) if p.mw_plant_slug]
+    u = ger.escolher_usina([{"nome": p.nome, "slug": p.mw_plant_slug, "id": p.id} for p in links], a.get("usina"))
+    try:
+        cliente = _cliente(ctx, ctx.user)
+    except SemConexao as e:
+        return {"erro": f"Helper indisponível: {e}"}
+    ctx.db.commit()                                       # solta a conexão enquanto o túnel responde
+    if not await up.pronto():
+        return {"erro": "O unifilar não abriu agora: o helper não respondeu. Nada foi enviado; tente de novo em instantes."}
+    token, vence = up.criar(ctx.user.id, u["id"])
+    url = f"{get_settings().gs_api_publica.rstrip('/')}/publico/unifilar/{token}/"
+    ate = hora_brt(vence.isoformat())
+    ctx.segredos.append(url)
+    ctx.rodape.append(f"🔌 Unifilar de {u['nome']} ao vivo, só para ver, até {ate}:\n{url}")
+    parada = await _vpn_parada(cliente)
+    return {"usina": u["nome"], "link_enviado_pelo_sistema": True, "vale_ate": ate,
+            **({"aviso": "A VPN das usinas está sem contato: o desenho abre, mas sem leitura dos equipamentos até ela "
+                         "voltar."} if parada else {}),
+            "instrucao": ("Diga uma linha; o link já vai ao pé da resposta. Ele só mostra o que está ligado, desligado, em "
+                          "trip ou sem leitura: para comandar, a pessoa pede aqui (a ação pede a senha de atuação), e o "
+                          "desenho mostra a mudança na leitura seguinte (até uns 30 s).")}
+
+
 _ESTADO = {"ok": "✅ confirmado", "ja": "já estava", "falhou": "❌ falhou", "incerto": "⚠️ incerto",
            "nao_enviado": "não enviado"}
 
@@ -1470,4 +1500,11 @@ FERRAMENTAS = {
                                       "/api/healthcheck/state?id=<id> (o resultado do teste de comunicação)."},
             "corpo": {"type": "object", "description": "O JSON que a tela da web mandaria (ex.: {\"slug\": \"pirapozinho\"})."},
         }, "required": ["rota"]}}}),
+    "diagrama_unifilar": (diagrama_unifilar, {"type": "function", "function": {
+        "name": "diagrama_unifilar",
+        "description": ("O DIAGRAMA UNIFILAR da usina AO VIVO, só para ver: o sistema manda um link público e temporário "
+                        "(2 h) do desenho do helper, com o que está ligado, desligado, em trip ou sem leitura. Não comanda "
+                        "nada: para atuar, a pessoa pede aqui (`usina_helper`) e acompanha a mudança pelo link."),
+        "parameters": {"type": "object", "properties": {
+            "usina": {"type": "string", "description": "A usina (nome)."}}, "required": []}}}),
 }

@@ -179,7 +179,8 @@ class MeuWattClient:
         return await self._get(f"/plants/{slug}/mapa/estado", timeout=15)
 
     async def strings_por_vaga(self, slug: str) -> dict[str, Any]:
-        """As vagas de inversor da usina e as strings de cada uma (a tela Leituras): a quem um objeto do mapa se liga."""
+        """As vagas de inversor da usina e as strings de cada uma (a tela Leituras): a quem um objeto do mapa se liga.
+        `can_mark` diz se a pessoa marca «já sei» nelas (o papel de operação na usina)."""
         return await self._get(f"/plants/{slug}/readings/strings", timeout=20)
 
     async def mapa_criar(self, slug: str, objeto: dict[str, Any]) -> Any:
@@ -333,12 +334,13 @@ class MeuWattClient:
         return await self._get(f"/plants/{slug}/readings")
 
     async def marcar_leitura(self, slug: str, relay_id: int, leitura: str, ja_sei: bool, nota: str | None,
-                             vence: str | None = None) -> None:
+                             vence: str | None = None, equipamento: str = "relay") -> None:
         """O X e a observação de UMA leitura (com o token DA PESSOA: só o papel de operação na usina grava). O PUT
-        troca a marcação inteira: quem chama manda a nota e o prazo que ficam. Sem X e sem observação, ela some."""
+        troca a marcação inteira: quem chama manda a nota e o prazo que ficam. Sem X e sem observação, ela some.
+        `equipamento` "inverter": a string de um inversor, com o id da VAGA e a leitura "string_<n>"."""
         await self._enviar("PUT", f"/plants/{slug}/readings/marks", json={
-            "equipment": "relay", "equipment_id": int(relay_id), "reading": leitura, "ignored": ja_sei, "note": nota,
-            "expires_at": vence})
+            "equipment": equipamento, "equipment_id": int(relay_id), "reading": leitura, "ignored": ja_sei,
+            "note": nota, "expires_at": vence})
 
     async def trackers_travamentos(self, slug: str, inicio: str, fim: str) -> dict[str, Any]:
         """Os travamentos dos trackers nos dias [inicio, fim] (BRT), mais os abertos: `{travados, pendentes,

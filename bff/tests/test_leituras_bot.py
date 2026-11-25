@@ -1,6 +1,7 @@
 """O "já sei" pelo bot (dono, 14/11/2026): `marcar_leitura` propõe com o Sim e grava no meuWatt com o token da pessoa,
 SEM apagar a observação nem o prazo que a tela Leituras já tinha (o PUT de lá troca a marcação inteira)."""
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -59,7 +60,7 @@ async def test_ja_sei_sem_observacao_nova_mantem_a_da_tela_e_o_prazo(grava):
     p, fim = await _sim(ctx)
     assert grava.pedidos == [("pirapozinho", 21, "voltage_a", True, "OS 2001 aberta", None)] and fim.startswith("✅")
 
-    vence = "2026-11-21T12:00:00+00:00"
+    vence = (datetime.now(UTC) + timedelta(days=3)).isoformat()      # um prazo que ainda não venceu
     ctx = _ctx({"ignored": True, "note": "OS 2001 aberta", "expires_at": vence}, 9102)
     await ger.marcar_leitura(ctx, {"usina": "pirapozinho", "rele": "TR-03", "leitura": "voltage_a",
                                    "observacao": "relé trocado na terça"})

@@ -32,6 +32,7 @@ from app.api.v1 import (
     interno_termovision,
     interno_sistemas,
     termovision_aviso,
+    unifilar_publico,
     auth,
     billing,
     carteira,
@@ -298,6 +299,8 @@ app.include_router(tecnico.router)
 app.include_router(mapa.router)
 # o conector do Claude: /mcp, /oauth/* e /.well-known/* na raiz, como o MCP pede
 app.include_router(mcp.router)
+# o unifilar do helper num link só de ver (/publico/unifilar/<link>/), pedido pelo WhatsApp
+app.include_router(unifilar_publico.router)
 
 
 @app.get("/health", tags=["infra"])

@@ -239,6 +239,43 @@ def test_os_objetos_do_mapa_para_o_importar_do_termovision(http, cenario, db, mo
     assert http.get(url, headers=_h(c["dono"], sistema="termovision")).status_code == 403   # o dono não importa
 
 
+def test_o_mapa_embutido_le_pela_sessao_do_passe_tambem_o_dono(http, cenario, db, monkeypatch):
+    """Fase 1 do mapa novo ("libere", o Renan em 25/11/2026): com a sessão do passe do TermoVision, lê quem vê a usina
+    na lista do GS — o dono, as dele; a O&M, as da empresa. Sem a sessão, a régua do Importar (o dono leva 403)."""
+    from app.core.security import criar_token_sistema
+    from app.services import vinculos
+    c, dono, g = cenario, cenario["dono"], cenario["gerente"]
+    dono.termovision_liberado = True
+    db.commit()
+    lidos = []
+
+    class MW:
+        async def mapa(self, slug):
+            lidos.append(slug)
+            return {"objetos": [{"id": 7, "tipo": "string", "nome": "U1-1S01", "geometria": None}]}
+
+        async def slots(self, slug):
+            return []
+
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db, uid, **k: MW())
+    url = f"/api/v1/interno/usinas/{c['of'].id}/mapa/objetos"
+    sessao = {"X-Sessao-GS": criar_token_sistema(dono.id, "termovision")}
+    r = http.get(url, headers={**_h(dono, sistema="termovision"), **sessao})
+    assert r.status_code == 200 and [o["nome"] for o in r.json()["objetos"]] == ["U1-1S01"] and lidos == ["ouro-fino"]
+    assert http.get(url, headers=_h(dono, sistema="termovision")).status_code == 403          # sem a sessão: Importar
+    assert http.get(f"/api/v1/interno/usinas/{c['ib'].id}/mapa/objetos",                     # não é dele
+                    headers={**_h(dono, sistema="termovision"), **sessao}).status_code == 404
+    assert http.get(url, headers={**_h(dono, sistema="termovision"),                          # sessão de outro sistema
+                                  "X-Sessao-GS": criar_token_sistema(dono.id, "meuwatt")}).status_code == 404
+    r = http.get(f"/api/v1/interno/usinas/{c['ib'].id}/mapa/objetos",
+                 headers={**_h(g, sistema="termovision", empresa=c["a"].id),
+                          "X-Sessao-GS": criar_token_sistema(g.id, "termovision")})
+    assert r.status_code == 200 and lidos[-1] == "ibitinga"                                     # a O&M, a da empresa
+    leitura = db.query(AcessoGS).filter(AcessoGS.gs_user_id == dono.id, AcessoGS.acao == "leitura",
+                                        AcessoGS.motivo.contains(f"GS-{c['of'].id:04d}")).one()
+    assert leitura.sistema == "termovision" and "sem a sessão" not in leitura.motivo
+
+
 def test_a_chave_sozinha_nao_fala_por_ninguem(http, cenario, db):
     """Sem a sessão do passe (`X-Sessao-GS`), só quem entrou pelo GS nos últimos 60 dias; com ela, só a sessão DELA
     neste sistema, e encerrar as sessões no GS a encerra aqui também."""

@@ -349,7 +349,13 @@ async def objetos_do_mapa(gs: int, request: Request, db: Session = Depends(get_d
 
     from app.services.vinculos import SemConexao, cliente_meuplano, cliente_meuwatt
 
-    u, todas = _pedido(db, request, f"o mapa da usina {codigo(gs)}")
+    if sistema(request) == "termovision" and (request.headers.get("x-sessao-gs") or "").strip():
+        # o mapa EMBUTIDO (fase 1 do mapa novo, o "libere" do Renan em 25/11/2026): lê quem vê a usina na lista do GS,
+        # pela sessão do passe (o dono também); sem ela, a régua do "Importar do GS" (a O&M, passe de 12 h)
+        u = pessoa(db, request, "termovision", o_que=f"o mapa da usina {codigo(gs)}")
+        todas = visiveis(db, u, empresa_do_pedido(db, u, request.headers.get("x-empresa-gs")))
+    else:
+        u, todas = _pedido(db, request, f"o mapa da usina {codigo(gs)}")
     link = next((x for x in todas if x.id == gs), None)
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)

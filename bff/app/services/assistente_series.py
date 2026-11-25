@@ -1364,27 +1364,16 @@ async def strings_ligadas(ctx, slug: str, dia: date) -> dict[str, dict[int, str]
             for i in await _leituras_strings(ctx, slug, dia)}
 
 
-_ESTADO = {"zero": "zerada", "intermittent": "intermitente", "weak": "fraca"}
-
-
 async def strings_com_problema(ctx, slug: str, dia: date, serial: str) -> dict | None:
     """As strings ligadas do inversor que a regra do meuWatt dá como zeradas, intermitentes ou fracas, desde quando,
     a perda do dia e o que a equipe já marcou — a fonte da tela Leituras, nada calculado aqui (17/11/2026: o Inv 13 de
     Pirapozinho com a 6S27 e a 6S28 zeradas desde 19/10, 174,5 kWh por dia)."""
     inv = next((i for i in await _leituras_strings(ctx, slug, dia) if str(i["serial_number"]) == serial), {})
-    ruins = [x for x in inv.get("strings") or [] if x.get("registered") and x.get("status") in _ESTADO]
+    ruins = [x for x in inv.get("strings") or [] if x.get("registered") and x.get("status") in ger.PROBLEMA_DA_STRING]
     if not ruins:
         return None
-    textos = []
-    for x in ruins:
-        t = f"{x.get('tag') or 'PV' + str(x.get('number'))} {_ESTADO[x['status']]}"
-        if x.get("zero_since"):
-            t += f" desde {date.fromisoformat(str(x['zero_since'])[:10]):%d/%m/%Y}" + (
-                " ou antes" if x.get("zero_since_before_window") else "")
-        if (m := x.get("mark") or {}).get("note"):
-            t += f" (a equipe já marcou: {m['note']})"
-        textos.append(t)
-    return {"strings": textos, **({"perda_kwh_dia": inv["loss_kwh_day"]} if inv.get("loss_kwh_day") else {})}
+    return {"strings": [ger.texto_da_string(x) for x in ruins],
+            **({"perda_kwh_dia": inv["loss_kwh_day"]} if inv.get("loss_kwh_day") else {})}
 
 
 _GERACAO: dict[tuple[int, str, str], tuple[float, dict]] = {}

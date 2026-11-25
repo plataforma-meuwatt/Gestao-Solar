@@ -521,7 +521,10 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   `reusar`); antes, cada consulta abria uma sessão de 30 dias lá (853 por dia numa conta).
 - **O TermoVision liga o mapa dele à usina do GS** ("Enviar ao GS") pelas rotas `/api/v1/interno/usinas` (contrato em
   `docs/CONTRATO_PASSE.md`): só a O&M, só quem entrou no TermoVision pelo GS ela mesma nas últimas 12 h (a entrada que
-  o bot faz por ela não conta), e o código do mapa fica em `gs_plant_links.tv_codigo`, único dos dois lados.
+  o bot faz por ela não conta), e o código do mapa fica em `gs_plant_links.tv_codigo`, único dos dois lados. A LEITURA
+  dos objetos do mapa (`/usinas/<gs>/mapa/objetos`) com a sessão do passe do TermoVision (`X-Sessao-GS`) é de quem vê a
+  usina na lista do GS, o dono também (o mapa embutido; fase 1 do mapa novo, o "libere" do Renan em 25/11/2026); sem a
+  sessão, segue a régua do "Importar do GS" (a O&M, passe de 12 h).
 - **"Onde fica" no bot** (`mapa_equipamento`): primeiro o mapa do GS; sem o objeto lá, a leitura `localizar` do
   TermoVision (string, mesa, fileira, módulo); nos dois, vale o GS (o dono, 24/11/2026).
 - **A porta dos sistemas** (`api/v1/interno_sistemas.py`, contrato em `docs/CONTRATO_SISTEMAS.md`): os quatro sistemas
@@ -991,6 +994,29 @@ a quem tem "Usina parada", por push e, para quem falou com o bot nas últimas 24
 esse bot"): cada lição com as palavras dele, o caso, a regra que a aplica e o teste; lição nova entra lá JUNTO com a
 regra e o teste (`test_livro_do_bot_tem_as_licoes_que_o_diagnostico_cita` reprova a citação sem lição). A 1ª: dois
 DJ BT não desligam juntos de manhã; sem trip à vista e sem comunicação, o provável é trip.
+
+**Strings que a equipe já conhece** (dono, 25/11/2026: "o inversor 13 possui uma string a menos … a resposta da
+diferença de geração entre inversores seria a mesma, porém ele ia dizer que falta uma string e, se tivesse, geraria X e
+estaria ok"): o «já sei» da string é o MESMO X da tela Leituras do meuWatt (`PUT /readings/marks` com `equipment`
+"inverter", a VAGA e `string_<n>`). `marcar_strings` marca com o Sim e o token da pessoa; sem `strings`, as que o meuWatt
+dá com problema, e se a pessoa disse quantas (`quantas`) e o meuWatt mede outro número, a lista volta para ela escolher
+(o Inv 13 de Pirapozinho tinha DUAS zeradas, a 6S27 e a 6S28). `geracao` põe em cada inversor as strings com problema
+(`readings/strings`, a regra é de lá, `texto_da_string`) e o que ele geraria com elas: num dia, a energia mais a perda
+que o meuWatt conta; em vários dias, só com as strings paradas o período todo, pela potência delas. `leituras_usina`
+mostra as strings junto dos relés. Sem a resposta das strings, a comparação diz que não as leu.
+
+**Unifilar num link só de ver** (dono, 25/11/2026: "me dê o diagrama unifilar da usina X … um link público e temporário
+do diagrama que a gente fez pelo helper Splendor … nesse link não posso atuar, apenas ver; para atuar, eu envio pelo
+WhatsApp e vejo ao vivo pelo link"): `diagrama_unifilar` (parte helper) põe ao pé da resposta
+`https://api.gestao.solar/publico/unifilar/<link>/` (`ctx.rodape` e `ctx.segredos`: fora do Log do bot e do gateway). O
+desenho é o do helper no modo "somente ver" (2.51.0, meta `mw-uf-ver`): `api/v1/unifilar_publico.py` serve a página e os
+dois arquivos dela, buscados pelo túnel (o filtro do srvclaude deixa passar só `GET /static/unifilar.{html,js,css}`,
+com a chave do chamador), e o documento pela porta do bot (`/api/religa/documento`, leitura) com o token do meuWatt de
+quem pediu. O link é assinado aqui, sem tabela (`services/unifilar_publico.py`): a pessoa, a usina e a hora; vale 2 h,
+cai com o "encerrar todas" e, a cada leitura, confere de novo o helper liberado no bot e a usina no recorte dela. Nada
+ali comanda: atuar continua pelo WhatsApp, com a senha de atuação. A API serve essa página como serve a do login do
+conector (exceção ao "a API não serve tela": ela é do helper, aqui só passa). Se o helper perder o modo "somente ver",
+`pronto()` falha e o bot não manda link quebrado.
 
 ---
 

@@ -2194,9 +2194,10 @@
     "espera": [
       "procurar_consulta",
       "usina_helper",
-      "usina_helper_catalogo"
+      "usina_helper_catalogo",
+      "leituras_usina"
     ],
-    "origem": "o dono, 17/11 (\"faça tudo\": o bot usa o catálogo do conector do Claude); o helper lê ao vivo e também responde (×8: 8/8 no helper com a descrição genérica)"
+    "origem": "o dono, 17/11 (\"faça tudo\": o bot usa o catálogo do conector do Claude); o helper lê ao vivo e também responde (×8: 8/8 no helper com a descrição genérica); desde 25/11 a tela Leituras do meuWatt (`leituras_usina`, com as strings) também responde, pela regra de lá"
   },
   {
     "frase": "Qual a temperatura dos trafos de Porto Ferreira agora?",
@@ -2790,5 +2791,78 @@
       "mapa_equipamento"
     ],
     "origem": "log #644"
+  },
+  {
+    "antes": [
+      {
+        "role": "user",
+        "content": "os inversores de pirapozinho estão comunicando e funcionando?"
+      },
+      {
+        "role": "assistant",
+        "content": "Sim, os 10 inversores de *Pirapozinho* estão comunicando e gerando pelo meuWatt: nenhum com falha e disponibilidade de 100% hoje.\n• Agora: *568,2 kW*. Hoje até agora: *4.047,8 kWh* (1,11 kWh/kWp).\n• O *Inv 13* (Skid 1) está 10,2% abaixo da mediana (1,01 contra 1,12 kWh/kWp). Vale olhar."
+      },
+      {
+        "role": "user",
+        "content": "monte uma tabela com a diferença em % entre eles da energia gerada"
+      },
+      {
+        "role": "assistant",
+        "content": "Aqui está a diferença da energia de hoje entre os inversores de *Pirapozinho*, até agora. A base é o melhor inversor, o Inv 22 com 414,6 kWh.\n\n| Inversor | Skid | kWh | vs melhor |\n|---|---|---|---|\n| Inv 22 | TR-02 | 414,6 | 0,0% |\n| Inv 24 | TR-02 | 414,5 | -0,0% |\n| Inv 12 | TR-01 | 408,8 | -1,4% |\n| Inv 11 | TR-01 | 397,8 | -4,1% |\n| Inv 13 | TR-01 | 369,3 | -10,9% |\n\nSó o *Inv 13* destoa: está uns 45 kWh abaixo do melhor."
+      }
+    ],
+    "frase": "cadastre no meuwatt, em problemas, acho que é isso nao sei, que o inversor 13 possui uma string a menos",
+    "espera": [
+      "marcar_strings",
+      "leituras_usina"
+    ],
+    "argumentos": {
+      "marcar_strings": {
+        "inversor": "13",
+        "quantas": 1
+      }
+    },
+    "origem": "log 25/11 16:11 (o Renan): o «já sei» da string vai ao meuWatt, não é pendência do meuPlano"
+  },
+  {
+    "antes": [
+      {
+        "role": "user",
+        "content": "os inversores de pirapozinho estão comunicando e funcionando?"
+      },
+      {
+        "role": "assistant",
+        "content": "Sim, os 10 inversores de *Pirapozinho* estão comunicando e gerando pelo meuWatt: nenhum com falha e disponibilidade de 100% hoje.\n• Agora: *568,2 kW*. Hoje até agora: *4.047,8 kWh* (1,11 kWh/kWp).\n• O *Inv 13* (Skid 1) está 10,2% abaixo da mediana (1,01 contra 1,12 kWh/kWp). Vale olhar."
+      }
+    ],
+    "frase": "monte uma tabela com a diferença em % entre eles da energia gerada",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log 25/11 16:10: a comparação dos inversores (com as strings paradas de cada um desde 25/11)"
+  },
+  {
+    "frase": "me de o diagrama unifilar da usina de pirapozinho",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "argumentos": {
+      "diagrama_unifilar": {
+        "usina": "pirapozinho"
+      }
+    },
+    "origem": "pedido do Renan 25/11: o unifilar do helper num link só de ver"
+  },
+  {
+    "frase": "manda o unifilar de porto ferreira pra eu ver o que ta ligado e o que ta desligado",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "argumentos": {
+      "diagrama_unifilar": {
+        "usina": "porto"
+      }
+    },
+    "origem": "pedido do Renan 25/11: o unifilar do helper num link só de ver (variação)"
   }
 ]
