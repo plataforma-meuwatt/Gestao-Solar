@@ -155,6 +155,18 @@ def visiveis(db: Session, u: User, empresa_id: int | None) -> list[PlantLink]:
     return usinas_do_usuario(db, u)
 
 
+def usina_da_pessoa(db: Session, u: User, gs: int, x_empresa_gs: str | None) -> PlantLink | None:
+    """A usina que a pessoa vê: na empresa do passe e, para a O&M de mais de uma empresa, numa outra empresa ATIVA dela
+    (o mapa embutido aberto com o passe de uma empresa, numa usina da outra: antes dava 404)."""
+    empresa = empresa_do_pedido(db, u, x_empresa_gs)
+    link = next((x for x in visiveis(db, u, empresa) if x.id == gs), None)
+    if link is None and u.perfil in _O_E_M:
+        outras = db.scalars(select(Empresa.id).where(
+            Empresa.id.in_([e for e in empresas.empresas_da_conta(db, u) if e != empresa] or [-1]), Empresa.ativa)).all()
+        link = next((x for e in outras for x in da_empresa(db, e, so_ativas=False) if x.id == gs), None)
+    return link
+
+
 class RefMeuWatt(BaseModel):
     slug: str
 
@@ -353,10 +365,10 @@ async def objetos_do_mapa(gs: int, request: Request, db: Session = Depends(get_d
         # o mapa EMBUTIDO (fase 1 do mapa novo, o "libere" do Renan em 25/11/2026): lê quem vê a usina na lista do GS,
         # pela sessão do passe (o dono também); sem ela, a régua do "Importar do GS" (a O&M, passe de 12 h)
         u = pessoa(db, request, "termovision", o_que=f"o mapa da usina {codigo(gs)}")
-        todas = visiveis(db, u, empresa_do_pedido(db, u, request.headers.get("x-empresa-gs")))
+        link = usina_da_pessoa(db, u, gs, request.headers.get("x-empresa-gs"))
     else:
         u, todas = _pedido(db, request, f"o mapa da usina {codigo(gs)}")
-    link = next((x for x in todas if x.id == gs), None)
+        link = next((x for x in todas if x.id == gs), None)
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
     slug = link.mw_plant_slug

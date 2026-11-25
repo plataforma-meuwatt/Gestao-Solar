@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.v1.interno_sistemas import (_NAO, _O_E_M, codigo, empresa_do_pedido, pessoa, sistema, visiveis)
+from app.api.v1.interno_sistemas import _NAO, _O_E_M, codigo, pessoa, sistema, usina_da_pessoa
 from app.core.db import get_db
 from app.services import pessoas
 
@@ -123,8 +123,7 @@ def _da_porta(db: Session, request: Request, gs: int, o_que: str = ""):
     if sistema(request) != "termovision":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Os itens do mapa são do TermoVision.")
     u = pessoa(db, request, "termovision", o_que=o_que)
-    link = next((x for x in visiveis(db, u, empresa_do_pedido(db, u, request.headers.get("x-empresa-gs")))
-                 if x.id == gs), None)
+    link = usina_da_pessoa(db, u, gs, request.headers.get("x-empresa-gs"))
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NAO)
     if not link.mw_plant_slug:

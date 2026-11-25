@@ -266,18 +266,19 @@ function LinhaDoBot({
   )
 }
 
-/** A senha de atuação: o bot a pede antes de ação no equipamento (helper). Só números — é digitada no
- *  celular —, e a de login nunca serve: ela não deve ser escrita no WhatsApp. */
+/** A senha de atuação: o bot a pede antes de ação no equipamento (helper). Números (6 a 8) ou uma palavra só (o
+ *  Renan, 25/11/2026: "a senha é explosao") — é digitada no celular —, e a de login nunca serve: ela não deve ser
+ *  escrita no WhatsApp. Quem confere a regra é o servidor (`validar_senha_atuacao`). */
 function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFechar: () => void }) {
   const qc = useQueryClient()
   const [senha, setSenha] = useState('')
   const [repetida, setRepetida] = useState('')
-  // O campo só guarda número; a letra digitada some, e sem aviso parecia que o campo não aceitava nada.
-  const [soNumeros, setSoNumeros] = useState(false)
-  const SO_NUMEROS = 'Só números (6 a 8). Não é a senha de login.'
-  const numeros = (v: string) => {
-    setSoNumeros(/\D/.test(v))
-    return v.replace(/\D/g, '')
+  // Uma palavra só: o espaço some, e sem aviso parecia que o campo não aceitava nada.
+  const [comEspaco, setComEspaco] = useState(false)
+  const UMA_SO = 'Uma palavra só (ou só números), sem espaço. Não é a senha de login.'
+  const limpa = (v: string) => {
+    setComEspaco(/\s/.test(v))
+    return v.replace(/\s/g, '')
   }
   const diferentes = repetida.length > 0 && senha !== repetida
   const salvar = useMutation({
@@ -293,28 +294,26 @@ function SenhaDeAtuacao({ usuario, aoFechar }: { usuario: UsuarioDetalhado; aoFe
         <Aviso>
           O bot pede esta senha antes de <strong>ligar, desligar ou gravar</strong> no equipamento
           (helper). Ação no meuPlano (criar ou fechar OS) a pessoa confirma com Sim, sem senha. Ler
-          não pede. Só números, de 6 a 8, sem sequência nem número repetido. Entregue à pessoa
-          como a senha provisória: ela não aparece de novo.
+          não pede. De 6 a 8 números (sem sequência nem número repetido) ou uma palavra só, de 6 a 32 letras
+          (maiúscula e acento não contam). Entregue à pessoa como a senha provisória: ela não aparece de novo.
         </Aviso>
         <Campo
           rotulo="Senha de atuação"
           type="password"
-          inputMode="numeric"
           autoComplete="new-password"
-          maxLength={8}
+          maxLength={32}
           value={senha}
-          onChange={(e) => setSenha(numeros(e.target.value))}
-          erro={soNumeros ? SO_NUMEROS : undefined}
+          onChange={(e) => setSenha(limpa(e.target.value))}
+          erro={comEspaco ? UMA_SO : undefined}
           autoFocus
         />
         <Campo
           rotulo="Repita a senha"
           type="password"
-          inputMode="numeric"
           autoComplete="new-password"
-          maxLength={8}
+          maxLength={32}
           value={repetida}
-          onChange={(e) => setRepetida(numeros(e.target.value))}
+          onChange={(e) => setRepetida(limpa(e.target.value))}
           nota={diferentes ? 'As duas não batem.' : undefined}
         />
         {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}

@@ -643,9 +643,18 @@ class MeuWattClient:
         return await self._get_analise(f"/gemeos/{plant_id}/regua", timeout=120)
 
     async def gemeo_pendencias(self, plant_id: int) -> list[dict[str, Any]]:
-        """As pendências de performance da usina no gêmeo: o problema, os serviços feitos (com a OS do meuPlano) e se deu
-        resultado."""
+        """Os PROBLEMAS CONHECIDOS da usina no gêmeo (a rota guarda o nome antigo, "pendências"; o Renan, 25/11/2026:
+        pendência é do meuPlano): o problema, os serviços feitos (com a OS do meuPlano) e se deu resultado."""
         return await self._get_analise(f"/gemeos/{plant_id}/pendencias")
+
+    async def gemeo_problema_criar(self, plant_id: int, titulo: str, problema: str, origem: str) -> dict[str, Any]:
+        """Um problema conhecido novo na lista do Gêmeos, como a pessoa (lá, a plataforma e quem opera a usina)."""
+        base = get_settings().meuwatt_analise_url.rstrip("/")
+        r = await sessao(base, self._timeout).post(
+            f"{base}/gemeos/{int(plant_id)}/pendencias", headers={"Authorization": f"Bearer {await self._token_servico()}"},
+            json={"titulo": titulo, "problema": problema, "origem": origem}, timeout=self._timeout)
+        r.raise_for_status()
+        return r.json()
 
     async def gemeo_config(self, plant_id: int) -> dict[str, Any]:
         """O que o gêmeo sabe da usina (configuração, padrão do PDF, inversores e a última leitura de limite)."""

@@ -74,7 +74,14 @@ async def test_geracao_diz_as_strings_e_quando_nao_leu(monkeypatch):
 
 class _MW:
     def __init__(self, pode=True, marca=None):
-        self.pode, self.marca, self.pedidos = pode, marca, []
+        self.pode, self.marca, self.pedidos, self.problemas = pode, marca, [], []
+
+    async def gemeo_pendencias(self, plant_id):
+        return [{"titulo": t, "status": "aberta"} for t in self.problemas]
+
+    async def gemeo_problema_criar(self, plant_id, titulo, problema, origem):
+        self.problemas.append(titulo)
+        return {"id": len(self.problemas), "titulo": titulo, "status": "aberta"}
 
     async def strings_por_vaga(self, slug):
         return {"can_mark": self.pode, "inverters": [_inv13(self.marca),
@@ -85,7 +92,7 @@ class _MW:
 
 
 def _ctx(uid, mw):
-    user = SimpleNamespace(id=uid, senha_atuacao_hash=None, bot_ativo=["bot_meuwatt"])
+    user = SimpleNamespace(id=uid, senha_atuacao_hash=None, bot_ativo=["bot_meuwatt"], apelido="renan.marquezini")
     return ger.Contexto(db=None, user=user, telefone="+5517997377626", mw=mw,
                         usinas={"pirapozinho": {"id": 9376, "nome": "Pirapozinho", "slug": "pirapozinho"}})
 
@@ -115,6 +122,9 @@ async def test_marca_a_string_dita_na_vaga_do_inversor(grava):
     assert grava.pedidos == [("pirapozinho", 127, "string_27", True, "o inversor 13 possui uma string a menos", None,
                               "inverter")]
     assert fim.startswith("✅ Inv 13 · 6S27 (Pirapozinho): marcado «já sei»")
+    assert grava.problemas == ["Inv 13 · 6S27: o inversor 13 possui uma string a menos"]          # e na lista do Gêmeos
+    assert fim.endswith("✅ Registrado como problema conhecido (Pirapozinho): Inv 13 · 6S27: o inversor 13 possui uma "
+                        "string a menos.")
 
 
 async def test_sem_strings_marca_as_duas_zeradas_e_mantem_a_nota_da_tela(grava):
@@ -241,3 +251,76 @@ async def test_a_etiqueta_propria_vale_antes_do_numero(grava):
     assert r["proposta_pendente"] == "Marcar «já sei» no meuWatt: Inv 13 · U1-3S22 (Pirapozinho)"
     await h.PENDENTES.pop(9311).executar(None, ctx.user, ctx.telefone)
     assert grava.pedidos[-1][2] == "string_28"                                   # nunca a string_22
+
+
+
+async def test_problemas_conhecidos_le_o_gemeo_e_os_ja_sei(monkeypatch):
+    """O Renan, 25/11: "pendências é um termo do meuPlano … para o meuWatt quero outro nome" (problemas conhecidos), e o
+    bot os lê das duas fontes: a lista do Gêmeos e os «já sei» da tela Leituras."""
+    import httpx
+
+    async def _strings(ctx, slug, dia):
+        return {"SN13": _inv13({"ignored": True, "note": "falta uma string"})}
+
+    class MW:
+        negar = False
+
+        async def gemeo_pendencias(self, pid):
+            if self.negar:
+                raise httpx.HTTPStatusError("x", request=httpx.Request("GET", "http://a"), response=httpx.Response(403))
+            return [{"titulo": "Recuo a mais dos trackers", "status": "aberta", "problema": "fileiras a 6,5 m",
+                     "servicos": [{"tipo": "ajuste_trackers", "resultado": "parcial"}]}]
+
+        async def leituras(self, slug):
+            return {"relays": [{"name": "Relé Skid 3", "readings": [
+                {"key": "voltage_a", "label": "Tensão fase A", "mark": {"ignored": True, "note": "TP com defeito"}},
+                {"key": "current_a", "label": "Corrente fase A", "mark": None}]}]}
+
+    monkeypatch.setattr(ger, "_strings_por_inversor", _strings)
+    mw = MW()
+    ctx = ger.Contexto(db=None, user=SimpleNamespace(id=1), telefone="", mw=mw,
+                       usinas={"p": {"id": 7, "nome": "Pirapozinho", "slug": "p"}})
+    r = await ger.problemas_conhecidos(ctx, {"usina": "p"})
+    assert r["lista_do_gemeo"][0]["titulo"] == "Recuo a mais dos trackers"
+    assert r["lista_do_gemeo"][0]["servicos"][0] == {"servico": "ajuste dos trackers", "o_que_foi_feito": None,
+                                                     "os_meuplano": None, "feito_em": None, "deu_resultado": "em parte",
+                                                     "anotacao": None}
+    assert r["ja_sei_nas_leituras"] == ["Relé Skid 3 · Tensão fase A: já sei (TP com defeito)",
+                                        "Inv 13 · 6S27 zerada desde 27/10/2026 ou antes (a equipe marcou «já sei»: falta "
+                                        "uma string)"]
+    mw.negar = True                                                   # sem acesso ao Gêmeos: diz, e os «já sei» ficam
+    r = await ger.problemas_conhecidos(ctx, {"usina": "p"})
+    assert "equipe da plataforma" in r["lista_do_gemeo"] and len(r["ja_sei_nas_leituras"]) == 2
+    assert await ger.conhecidos_abertos(ctx, {"id": 7}) is None
+    mw.negar = False
+    assert await ger.conhecidos_abertos(ctx, {"id": 7}) == ["Recuo a mais dos trackers: fileiras a 6,5 m"]
+
+
+async def test_registrar_problema_conhecido_com_o_sim_sem_duplicar(grava):
+    ctx = _ctx(9312, _MW())
+    ctx.user.apelido = "renan.marquezini"
+    r = await ger.registrar_problema_conhecido(ctx, {"usina": "pirapozinho", "titulo": "Trafo 2 esquenta mais",
+                                                     "problema": "10 °C acima do TR-01 na mesma carga"})
+    assert r["proposta_pendente"] == "Registrar como problema conhecido no meuWatt (Pirapozinho): Trafo 2 esquenta mais"
+    p = h.PENDENTES.pop(9312)
+    assert (await p.executar(None, ctx.user, ctx.telefone)).startswith("✅ Registrado como problema conhecido")
+    assert grava.problemas == ["Trafo 2 esquenta mais"]
+    ctx = _ctx(9313, _MW())
+    ctx.user.apelido = "renan.marquezini"
+    await ger.registrar_problema_conhecido(ctx, {"usina": "pirapozinho", "titulo": "trafo 2 esquenta mais"})
+    assert "já estava" in await h.PENDENTES.pop(9313).executar(None, ctx.user, ctx.telefone)
+    assert grava.problemas == ["Trafo 2 esquenta mais"]                         # o mesmo título aberto não duplica
+    with pytest.raises(ger.Recusa, match="título"):
+        await ger.registrar_problema_conhecido(_ctx(9314, _MW()), {"usina": "pirapozinho", "titulo": " "})
+
+
+async def test_registrar_de_quem_so_acompanha_diz_a_recusa():
+    import httpx
+
+    class Nega:
+        async def gemeo_pendencias(self, pid):
+            return []
+
+        async def gemeo_problema_criar(self, *a):
+            raise httpx.HTTPStatusError("x", request=httpx.Request("POST", "http://a"), response=httpx.Response(403))
+    assert "só quem opera a usina" in await ger._registrar(Nega(), 7, "Pirapozinho", "x", "", "bot")

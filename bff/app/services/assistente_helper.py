@@ -213,6 +213,41 @@ class Analise:
 _CONFERENCIAS: dict[int, list[float]] = {}
 
 
+#: a marca na frente do hash da senha de atuação que é uma palavra (`hash_da_senha_atuacao`)
+MARCA_PALAVRA = "palavra:"
+
+
+def _palavra(t: str) -> str:
+    """Minúscula e sem acento: "Explosão" e "explosao" são a mesma senha."""
+    return "".join(c for c in unicodedata.normalize("NFD", (t or "").lower()) if not unicodedata.combining(c))
+
+
+def palavra_da_senha(texto: str) -> str | None:
+    """A palavra, se a mensagem INTEIRA é uma palavra só (com "senha" ou "pin" na frente, se vier): 6 a 32 letras,
+    sem acento e minúscula. Palavra de conversa ("cancela", "obrigado", "pode") nunca é a senha."""
+    m = re.fullmatch(r"[\W_]*(?:(?:senha|pin|confirmo)[\W_]+)?([^\W\d_]{6,32})[\W_]*", (texto or "").strip(),
+                     flags=re.IGNORECASE)
+    if m is None:
+        return None
+    p = _palavra(m.group(1))
+    return None if p in _AFIRMA | _CIENCIA | _CANCELA_NEUTRAS | _PARAR else p
+
+
+def senha_e_palavra(user) -> bool:
+    return bool(user is not None and (getattr(user, "senha_atuacao_hash", None) or "").startswith(MARCA_PALAVRA))
+
+
+def _hash(user) -> str:
+    return (user.senha_atuacao_hash or "").removeprefix(MARCA_PALAVRA)
+
+
+def candidata(user, texto: str) -> str | None:
+    """O que pode ser a senha, se a mensagem INTEIRA é ela: os números (todos) ou a palavra (de quem tem senha de
+    palavra)."""
+    d = digitos_da_senha(texto)
+    return palavra_da_senha(texto) if d is None and senha_e_palavra(user) else d
+
+
 def digitos_da_senha(texto: str) -> str | None:
     """Os dígitos, se a mensagem INTEIRA é a senha (ver `NUMERO`); senão `None`."""
     m = PURA.match(_digitos_normais(texto))
@@ -248,11 +283,11 @@ async def analisar(user, texto: str, tentativa: bool = True) -> Analise:
     if user is None or not user.senha_atuacao_hash:
         return Analise()
     texto = texto or ""
-    digitos = digitos_da_senha(texto)
+    digitos = candidata(user, texto)
     if digitos is not None and tentativa:
         if monotonic() < _BLOQUEIO.get(user.id, 0):
             return Analise(pura=True, bloqueada=True)
-        acertou = await asyncio.to_thread(conferir_senha, digitos, user.senha_atuacao_hash)
+        acertou = await asyncio.to_thread(conferir_senha, digitos, _hash(user))
         return Analise(pura=True, acertou=acertou)
     candidatos = candidatos_a_senha(texto)
     ordem = list(dict.fromkeys(d for _, _, d in candidatos))
@@ -262,7 +297,7 @@ async def analisar(user, texto: str, tentativa: bool = True) -> Analise:
         if i >= MAX_CONFERIDOS or not _pode_conferir(user.id):
             sem_conferir.update(ordem[i:])
             break
-        if await asyncio.to_thread(conferir_senha, d, user.senha_atuacao_hash):
+        if await asyncio.to_thread(conferir_senha, d, _hash(user)):
             senha.add(d)
     return Analise(trechos=[(a, b, SENHA_OCULTA if d in senha else OCULTO)
                             for a, b, d in candidatos if d in senha or d in sem_conferir])
@@ -341,22 +376,36 @@ def _contar_falhas(user_id: int, falhas: int) -> int:
 
 
 def parece_senha(texto: str) -> bool:
-    """Para quem não tem conta conferida: a mensagem inteira parece uma senha — nunca vai em
-    claro ao log."""
-    return digitos_da_senha(texto) is not None
+    """A mensagem inteira parece uma senha (os números, ou uma palavra solta que não é de conversa: há senha de
+    palavra): antes de a conta ser conferida, nunca vai em claro ao log."""
+    return digitos_da_senha(texto) is not None or palavra_da_senha(texto) is not None
 
 
 def validar_senha_atuacao(senha: str) -> str:
-    """6 a 8 números, sem repetir nem seguir em sequência (111111, 123456, 654321). Devolve
-    limpa. Seis no mínimo: a senha anda numa conversa de WhatsApp, e cada dígito a mais
-    multiplica por dez o trabalho de quem tentar adivinhar."""
+    """6 a 8 números, sem repetir nem seguir em sequência (111111, 123456, 654321), ou uma PALAVRA de 6 a 32 letras (o
+    Renan, 25/11/2026: "a senha é explosao"): sem acento e minúscula, que o celular põe sozinho. Devolve limpa. Seis
+    no mínimo: a senha anda numa conversa de WhatsApp. Palavra de conversa ("obrigado", "cancela") não serve: nunca
+    seria lida como senha."""
     s = (senha or "").strip()
+    if not s.isdigit():
+        palavra = palavra_da_senha(s)
+        if palavra is None or palavra != _palavra(s):
+            raise ValueError("A senha de atuação é de 6 a 8 números ou uma palavra só, de 6 a 32 letras, que não seja "
+                             "de conversa (sim, cancela, obrigado).")
+        return palavra
     if not re.fullmatch(r"\d{6,8}", s):
-        raise ValueError("A senha de atuação tem de 6 a 8 números.")
+        raise ValueError("A senha de atuação tem de 6 a 8 números (ou ser uma palavra).")
     passos = {int(b) - int(a) for a, b in zip(s, s[1:])}
     if passos in ({0}, {1}, {-1}):
         raise ValueError("Senha fácil demais (número repetido ou em sequência). Escolha outra.")
     return s
+
+
+def hash_da_senha_atuacao(limpa: str) -> str:
+    """O hash que se grava: a senha de palavra leva a marca `MARCA_PALAVRA` na frente, para o bot saber que, desta pessoa,
+    uma palavra solta pode ser a senha (de quem tem senha de número, palavra solta continua sendo conversa)."""
+    from app.core.security import gerar_hash_senha
+    return gerar_hash_senha(limpa) if limpa.isdigit() else MARCA_PALAVRA + gerar_hash_senha(limpa)
 
 
 def nova_senha(user_id: int) -> None:
@@ -800,7 +849,7 @@ def e_tentativa(user, texto: str) -> bool:
     ela esperando, o número é conversa (a UC, o protocolo que a IA pediu) — tenha a pessoa senha ou
     não: ação do meuPlano não pede senha, e o número não conta erro nem bloqueia (avaliação 13). Se
     for a senha, some como numa frase (`analisar`, com o limite por hora)."""
-    return digitos_da_senha(texto) is not None and not espera_sim(user.id)
+    return candidata(user, texto) is not None and not espera_sim(user.id)
 
 
 #: O toque num botão de um resumo que não é o da ação esperando agora.

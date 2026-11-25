@@ -349,6 +349,7 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
             for d in r.get("daily_summaries") or []]
     com = [d for d in dias if d["energia_kwh"] is not None]
     s = r.get("summary") or {}
+    out.update(_conhecidos(await conhecidos_abertos(ctx, u)))
     out.update({
         "energia_kwh": _r(r.get("total_generation_kwh")), "potencia_kwp": _r(kwp),
         "produtividade_kwh_kwp": _r(r.get("productivity"), 2),
@@ -475,7 +476,7 @@ async def paradas(ctx: Contexto, a: dict) -> dict:
                 "situacao": _RESOLUCAO.get(x.get("resolution_reason"), x.get("resolution_reason")),
                 "perda_kwh": None if x.get("loss_method") in SEM_CONTA else _r(x.get("shadow_loss_kwh"), 2)}
 
-    return {"usina": u["nome"], "inicio": saida.inicio, "fim": saida.fim, "total": saida.total,
+    return {"usina": u["nome"], **_conhecidos(await conhecidos_abertos(ctx, u)), "inicio": saida.inicio, "fim": saida.fim, "total": saida.total,
             "em_aberto": saida.em_aberto if saida.total is not None else None,
             "fechadas": saida.total - saida.em_aberto if saida.total is not None else None,
             "perda_total_kwh": saida.perda_kwh, "minutos_parados_total": saida.tempo_parado_min,
@@ -569,6 +570,7 @@ async def diagnostico_usina(ctx: Contexto, a: dict) -> dict:
         except Exception:                                 # noqa: BLE001 (sem o helper, fica o que o meuWatt disse)
             pass
     return {"usina": u["nome"], "achados": [x.para_ia() for x in achados], **(await dado_de_hoje(ctx, u["slug"])),
+            **_conhecidos(await conhecidos_abertos(ctx, u)),
             **({"nao_sao_parada": info["nao_paradas"]} if info.get("nao_paradas") else {}),
             "nota": (("Relés com a comunicação NÃO conferida agora: " + ", ".join(info["nao_conferidos"])
                       + " (nenhum equipamento da usina mandou leitura há pouco: não diga que estão ok nem que não há "
@@ -1107,21 +1109,111 @@ _TIPO_SERVICO = {"lavagem": "lavagem", "curva_iv": "curva IV", "termografia": "t
 _RESULTADO = {"deu_bom": "deu bom", "parcial": "em parte", "nao_deu_bom": "não deu bom"}
 
 
-async def gemeo_pendencias(ctx: Contexto, a: dict) -> dict:
-    """As pendências de performance da usina no gêmeo (o Renan, 07/11/2026: "isso vira uma caixa de conteúdo para a própria
-    IA usar e para a gente aprender"): o problema, os serviços feitos com a OS do meuPlano e se deu resultado."""
+def _da_lista(e: httpx.HTTPError) -> str:
+    """Por que a lista de problemas conhecidos do Gêmeos não veio (nunca uma lista vazia que parece "nenhum")."""
+    st = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+    return ("sem acesso: a lista do Gêmeos é da equipe da plataforma" if st in (401, 403) else
+            "esta usina não tem gêmeo digital, onde a lista mora" if st == 404 else
+            f"o módulo de análise recusou ({st})" if st else "o módulo de análise não respondeu agora")
+
+
+async def problemas_conhecidos(ctx: Contexto, a: dict) -> dict:
+    """Os PROBLEMAS CONHECIDOS da usina no meuWatt (o Renan, 25/11/2026: "pendências é um termo do meuPlano … para o
+    meuWatt quero outro nome"): a lista do Gêmeos (o problema, os serviços feitos com a OS do meuPlano e se deu
+    resultado; 07/11: "isso vira uma caixa de conteúdo para a própria IA usar") e os «já sei» da tela Leituras."""
     u = _usina(ctx, a.get("usina"))
-    ps = await _gemeo_ler(ctx, u, ctx.mw.gemeo_pendencias(u["id"]))
-    return {"usina": u["nome"],
-            "pendencias": [{"titulo": p["titulo"], "situacao": p["status"], "problema": p.get("problema") or None,
-                            "de_onde_veio": p.get("origem") or None, "criada_em": (p.get("criada_em") or "")[:10],
-                            "servicos": [{"servico": _TIPO_SERVICO.get(s["tipo"], s["tipo"]), "o_que_foi_feito": s.get("descricao") or None,
-                                          "os_meuplano": s.get("os_meuplano"), "feito_em": s.get("feito_em"),
-                                          "deu_resultado": _RESULTADO.get(s.get("resultado") or "", "não anotado"),
-                                          "anotacao": s.get("anotacao") or None} for s in p.get("servicos") or []]}
-                           for p in ps],
-            "nota": "O antes × depois de cada serviço o gêmeo mede na tela Gêmeos › Pendências ('Medir no gêmeo'); aqui vale "
-                    "o que a equipe anotou. Pendência sem serviço = ainda não se fez nada."}
+    out: dict[str, Any] = {"usina": u["nome"]}
+    try:
+        ps = await ctx.mw.gemeo_pendencias(u["id"])
+        out["lista_do_gemeo"] = [
+            {"titulo": p["titulo"], "situacao": p["status"], "problema": p.get("problema") or None,
+             "de_onde_veio": p.get("origem") or None, "criado_em": (p.get("criada_em") or "")[:10],
+             "servicos": [{"servico": _TIPO_SERVICO.get(s["tipo"], s["tipo"]), "o_que_foi_feito": s.get("descricao") or None,
+                           "os_meuplano": s.get("os_meuplano"), "feito_em": s.get("feito_em"),
+                           "deu_resultado": _RESULTADO.get(s.get("resultado") or "", "não anotado"),
+                           "anotacao": s.get("anotacao") or None} for s in p.get("servicos") or []]}
+            for p in ps or []]
+    except httpx.HTTPError as e:
+        out["lista_do_gemeo"] = _da_lista(e)
+    ja_sei: list[str] = []
+    try:
+        for r in (await ctx.mw.leituras(u["slug"])).get("relays") or []:
+            for x in r.get("readings") or []:
+                if (m := x.get("mark") or {}).get("ignored") or m.get("note"):
+                    ja_sei.append(f"{r.get('name')} · {x.get('label') or x.get('key')}: "
+                                  + ("já sei" if m.get("ignored") else "observação") + (f" ({m['note']})" if m.get("note") else ""))
+    except httpx.HTTPError:
+        ja_sei.append("as leituras dos relés não responderam agora")
+    strings = await _strings_por_inversor(ctx, u["slug"], hoje())
+    if isinstance(strings, str):
+        ja_sei.append(strings)
+    else:
+        ja_sei += [f"{i.get('label')} · {texto_da_string(x)}" for i in strings.values() for x in i.get("strings") or []
+                   if (x.get("mark") or {}).get("ignored") or (x.get("mark") or {}).get("note")]
+    out["ja_sei_nas_leituras"] = ja_sei
+    out["nota"] = ("O que a equipe já conhece: diga que é sabido. O antes × depois de cada serviço o gêmeo mede na tela "
+                   "Gêmeos › Problemas conhecidos. Pendência é outra coisa (do meuPlano: `manutencao`).")
+    return out
+
+
+async def conhecidos_abertos(ctx: Contexto, u: dict) -> list[str] | None:
+    """Os problemas conhecidos ABERTOS da usina (a lista do Gêmeos), para toda leitura sobre ela levar o que a equipe já
+    sabe (o Renan, 25/11/2026: "o BOT sempre vai olhar esses problemas conhecidos antes de dar a resposta"). Sem acesso
+    ou sem gêmeo: None (quem não vê a lista não a recebe)."""
+    try:
+        ps = await ctx.mw.gemeo_pendencias(u["id"])
+    except Exception:  # noqa: BLE001 — é contexto: a lista que não veio não derruba a resposta sobre a usina
+        return None
+    return [p["titulo"] + (f": {p['problema']}" if p.get("problema") else "")
+            for p in ps or [] if p.get("status") == "aberta"][:10]
+
+
+def _conhecidos(k: list[str] | None) -> dict:
+    return {"problemas_conhecidos": k, "nota_conhecidos": NOTA_CONHECIDOS} if k else {}
+
+
+NOTA_CONHECIDOS = ("`problemas_conhecidos`: o que a equipe já sabe desta usina. O que você for apontar e já estiver ali, "
+                   "diga que é conhecido.")
+
+
+async def registrar_problema_conhecido(ctx: Contexto, a: dict) -> dict:
+    """AÇÃO (com Sim): um problema conhecido novo na lista do Gêmeos do meuWatt, com as palavras da pessoa (o Renan,
+    25/11/2026: "o bot vai receber os problemas conhecidos e cadastrar"). Gravado com o token DELA (lá, só a equipe da
+    plataforma e quem opera a usina cadastram); o mesmo título aberto não duplica."""
+    from app.services import assistente_helper as helper
+    from app.services.vinculos import cliente_meuwatt
+
+    u = _usina(ctx, a.get("usina"))
+    titulo, problema = (a.get("titulo") or "").strip()[:200], (a.get("problema") or "").strip()
+    if not titulo:
+        raise Recusa("Falta o problema em poucas palavras (o título): pergunte.")
+    pid, nome, origem = int(u["id"]), u["nome"], f"bot do WhatsApp · {ctx.user.apelido}"
+
+    async def executar(db, user, telefone: str) -> str:
+        return await _registrar(cliente_meuwatt(db, user.id, so_proprio=True), pid, nome, titulo, problema, origem)
+
+    return helper.propor(ctx, f"Registrar como problema conhecido no meuWatt ({nome}): {titulo}", 600, executar,
+                         [f"Detalhe: {problema}" if problema else "Sem detalhe"], parte="bot_meuwatt", confirmacao="sim")
+
+
+async def _registrar(mw, pid: int, nome: str, titulo: str, problema: str, origem: str) -> str:
+    """Grava na lista do Gêmeos e diz o desfecho (o mesmo título ABERTO não duplica)."""
+    try:
+        if any(p.get("status") == "aberta" and _norm(p.get("titulo")) == _norm(titulo)
+               for p in await mw.gemeo_pendencias(pid) or []):
+            return f"✅ {titulo} ({nome}): já estava na lista de problemas conhecidos."
+        await mw.gemeo_problema_criar(pid, titulo, problema, origem)
+    except httpx.HTTPStatusError as e:
+        st = e.response.status_code
+        if st in (401, 403):
+            return ("❌ No meuWatt, só quem opera a usina cadastra problema conhecido (quem acompanha só lê). Nada foi "
+                    "gravado.")
+        if st == 404:
+            return f"❌ {nome} não tem gêmeo digital no meuWatt, onde a lista de problemas conhecidos mora. Nada foi gravado."
+        return f"❌ O meuWatt recusou ({st}). Nada foi gravado."
+    except httpx.HTTPError:
+        return "⚠️ O meuWatt não respondeu: o problema PODE ter sido gravado. Confira em Gêmeos › Problemas conhecidos."
+    return f"✅ Registrado como problema conhecido ({nome}): {titulo}."
 
 
 # --------------------------------------------------------------------------- catálogo
@@ -1308,8 +1400,9 @@ def _o_inversor(invs: list[dict], nome: str | None) -> dict:
 
 async def marcar_strings(ctx: Contexto, a: dict) -> dict:
     """O «já sei» (o X da tela Leituras do meuWatt) em strings de um inversor, com a observação: o "inversor 13 tem
-    uma string a menos" do Renan (25/11/2026), que a comparação dos inversores passa a dizer. Ação com o Sim, gravada
-    com o token DA PESSOA (só a operação da usina marca lá). Sem `strings`, as que o meuWatt dá com problema; se a
+    uma string a menos" do Renan (25/11/2026), que a comparação dos inversores passa a dizer, e o mesmo problema na
+    lista dos problemas conhecidos do Gêmeos. Ação com o Sim, gravada com o token DA PESSOA (só a operação da usina
+    marca lá). Sem `strings`, as que o meuWatt dá com problema; se a
     pessoa disse quantas e o meuWatt mede outro número, devolve a lista para ela escolher (nunca marca a mais)."""
     from app.core.datas import hora_brt
     from app.services import assistente_helper as helper
@@ -1396,7 +1489,12 @@ async def marcar_strings(ctx: Contexto, a: dict) -> dict:
         if not feitas:
             return "❌ Nada foi gravado: " + "; ".join(falhas) + "."
         texto = f"{inv.get('label')} · {' e '.join(feitas)} ({u['nome']}): {feito}" + (f". Observação: {nova}" if nova else "")
-        return (f"⚠️ Feito EM PARTE. {texto}. Faltou: " + "; ".join(falhas) + ".") if falhas else f"✅ {texto}."
+        texto = (f"⚠️ Feito EM PARTE. {texto}. Faltou: " + "; ".join(falhas) + ".") if falhas else f"✅ {texto}."
+        if ja_sei:                                        # o problema contado entra também na lista dos conhecidos
+            titulo = f"{inv.get('label')} · {' e '.join(feitas)}: {nova or 'string sem corrente, já sabido'}"[:200]
+            texto += "\n" + await _registrar(mw, int(u["id"]), u["nome"], titulo, nova or "",
+                                              f"bot do WhatsApp · {user.apelido} (o «já sei» da tela Leituras)")
+        return texto
 
     return helper.propor(ctx, resumo, 600, executar, detalhes, parte="bot_meuwatt", confirmacao="sim")
 
@@ -1554,11 +1652,19 @@ FERRAMENTAS = {
     "gemeo_regua": (gemeo_regua, _f("gemeo_regua", "A RÉGUA do gêmeo digital: o quanto ele reproduz o PVsyst rodando com "
         "o clima e as premissas do PDF — diagrama de perdas etapa por etapa, mês a mês, ajustes (k, contraste), "
         "variantes e versões gravadas.", {"usina": _USINA})),
-    "gemeo_pendencias": (gemeo_pendencias, _f("gemeo_pendencias", "As PENDÊNCIAS DE PERFORMANCE da usina no gêmeo digital "
-        "(Gêmeos › Pendências): cada problema de geração que o gêmeo apontou, os serviços feitos para resolver (lavagem, "
-        "curva IV, termografia, ajuste dos trackers…) com a data e a OS do meuPlano, se deu resultado (deu bom / em parte "
-        "/ não deu bom) e o que a equipe anotou. Para 'a lavagem resolveu?', 'o que já foi feito para a perda de X', 'o "
-        "que aprendemos'. Não é a lista de OS do meuPlano (essa é `manutencao`).", {"usina": _USINA})),
+    "problemas_conhecidos": (problemas_conhecidos, _f("problemas_conhecidos", "Os PROBLEMAS CONHECIDOS da usina no meuWatt "
+        "(o que a equipe já sabe): a lista do Gêmeos › Problemas conhecidos (cada problema, os serviços feitos para "
+        "resolver, como lavagem, curva IV, termografia e ajuste dos trackers, com a data e a OS do meuPlano, se deu "
+        "resultado e o que a equipe anotou) e os «já sei» da tela Leituras (relés e strings). Para 'quais os problemas "
+        "conhecidos de X', 'a lavagem resolveu?'. É só o que a equipe CADASTROU: não é o estado nem o histórico do "
+        "equipamento (tracker travado agora ou que costuma travar, paradas, alarmes: as outras ferramentas) e não é "
+        "'pendências' (essas são do meuPlano: `manutencao`).", {"usina": _USINA})),
+    "registrar_problema_conhecido": (registrar_problema_conhecido, _f("registrar_problema_conhecido", "AÇÃO (com Sim): "
+        "registra um PROBLEMA CONHECIDO novo da usina no meuWatt (a lista do Gêmeos), com as palavras da pessoa ('já "
+        "sabemos que o trafo 2 de Tietê esquenta mais', 'cadastre como problema conhecido'). String ou inversor com "
+        "string a menos: use `marcar_strings`, que marca o «já sei» e registra aqui junto.",
+        {"usina": _USINA, "titulo": {"type": "string", "description": "O problema em poucas palavras."},
+         "problema": {"type": "string", "description": "O detalhe, nas palavras da pessoa (opcional)."}}, ["titulo"])),
     "gemeo_config": (gemeo_config, _f("gemeo_config", "O que o gêmeo digital sabe da usina: geometria, módulo e .PAN, "
         "inversor e .OND, perdas do PDF do PVsyst, limites reais e o comando de potência lido em cada inversor.",
         {"usina": _USINA})),

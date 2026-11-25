@@ -4427,3 +4427,42 @@ async def test_o_manual_anexado_no_meuplano_vai_como_arquivo(monkeypatch):
         "Segue o manual do traçador: (o PDF vai aqui no chat)."
     assert baixados == [url + "&arquivo=1"] and mandados[0]["arquivo"] == b"%PDF-1.7"
     assert mandados[0]["filename"] == "Manual I-V600 (portugues).pdf"
+
+
+async def test_senha_de_atuacao_de_palavra(db, helper_ligado):
+    """O Renan, 25/11/2026: "falei para apagar os trips, falei a senha e ele não executou, a senha foi cancelada … eu já
+    pedi para trocar". A senha de atuação pode ser uma PALAVRA (maiúscula e acento não contam), e só de quem tem senha
+    de palavra uma palavra solta é tentativa: de quem tem número, palavra continua sendo conversa."""
+    from app.core.security import gerar_hash_senha
+    from app.services import assistente_helper as h
+
+    assert h.validar_senha_atuacao("Fotovoltaica") == "fotovoltaica"
+    for ruim in ("obrigado", "cancela", "abc", "duas palavras", "123456"):
+        with pytest.raises(ValueError):
+            h.validar_senha_atuacao(ruim)
+    dono = _conta(db, "dono", "+5517997377626")
+    numero = _conta(db, "numero", "+5517997370000")
+    dono.bot_helper = numero.bot_helper = True
+    dono.senha_atuacao_hash = h.hash_da_senha_atuacao("fotovoltaica")
+    numero.senha_atuacao_hash = gerar_hash_senha("482913")
+    db.commit()
+    assert dono.senha_atuacao_hash.startswith(h.MARCA_PALAVRA) and not numero.senha_atuacao_hash.startswith(h.MARCA_PALAVRA)
+    assert h.e_tentativa(dono, "Fotovoltáica") and h.e_tentativa(dono, "senha: fotovoltaica")
+    assert not h.e_tentativa(dono, "cancela") and not h.e_tentativa(dono, "Pode")           # conversa, nunca tentativa
+    assert not h.e_tentativa(numero, "Pereiras")                                             # de quem tem número
+    # a palavra solta nunca vai em claro ao log antes da conta ser conferida,
+    # e a mensagem que é a palavra sai do log, do histórico e do gateway como a de número (`analise.pura`)
+    assert h.parece_senha("Fotovoltaica") and not h.parece_senha("obrigado") and not h.parece_senha("qual a geração?")
+    assert (await h.analisar(dono, "fotovoltaica", h.e_tentativa(dono, "fotovoltaica"))).pura
+    ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone)
+    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    h.mostrada(dono.id)
+    assert "não confere" in await h.confirmar_por_mensagem(db, dono, dono.telefone, "fotovoltaico")
+    assert helper_ligado.confirmadas == []
+    assert (await h.confirmar_por_mensagem(db, dono, dono.telefone, "Fotovoltáica")).startswith("✅")
+    assert helper_ligado.confirmadas == [("P-1", "pin")]
+    # e a senha de número de quem tem número segue igual
+    ctx = ger.Contexto(db=db, user=numero, telefone=numero.telefone)
+    await h.usina_helper(ctx, {"rota": "/api/act", "corpo": {"acao": "off"}})
+    h.mostrada(numero.id)
+    assert (await h.confirmar_por_mensagem(db, numero, numero.telefone, "482913")).startswith("✅")

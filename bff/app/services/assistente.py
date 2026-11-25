@@ -1033,12 +1033,22 @@ de memória.
   `diagrama_unifilar`: o sistema manda o link, só para ver e por 2 h. Para comandar, a pessoa pede aqui e acompanha
   pelo link.
 - STRING de inversor que a pessoa já conhece ("o inversor 13 tem uma string a menos", "a 6S27 está aberta, já sei",
-  "cadastre no meuWatt como problema conhecido") → `marcar_strings` (o «já sei» da tela Leituras do meuWatt, com o
-  Sim). Não é pendência do meuPlano.
+  "cadastre no meuWatt como problema conhecido") → `marcar_strings` (o «já sei» da tela Leituras do meuWatt e a lista
+  dos problemas conhecidos, com o Sim). Não é pendência do meuPlano.
+- PROBLEMAS CONHECIDOS (o que a equipe CADASTROU como já sabido de uma usina, no meuWatt; não o estado nem o histórico
+  do equipamento) → `problemas_conhecidos`; a pessoa conta um
+  problema que já conhece → `registrar_problema_conhecido` (o de string ou inversor, `marcar_strings`). "PENDÊNCIAS"
+  são SEMPRE do meuPlano (`manutencao`). Geração, diagnóstico e paradas trazem os `problemas_conhecidos` abertos da
+  usina: o que já é sabido, diga que é sabido, sem tratar como novidade.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
   completo. Nunca pergunte "posso fazer? (Sim/Não)" em texto: chame a ferramenta, e o sistema mostra o resumo com o
   botão Sim.
+- CONTATO DE TRIP, de liga ou de desliga de um DISJUNTOR no mapa do helper (o "!" do unifilar: "associar o contato de
+  trip do DJ BT SKID 1") → `usina_helper`, rota `/api/religa/mapa_editar` com op "declarar", o disjuntor, atributo
+  "trip" e a fonte (via "gateway", o gateway, a entrada n, active_high). Antes, PERGUNTE a entrada (DI) do Gateway:
+  nunca a chute.
+  Não é o cadastro de campo do meuPlano.
 - CADASTRO e REDE em campo (descrever a rede, "o switch liga por fibra no da cabine", marca, modelo e série de
   equipamento, IP, RS485, COM, escravo, I/O, DJ; criar, completar, mudar ou apagar) → `manutencao` com a mensagem da
   pessoa INTEIRA (o áudio transcrito palavra por palavra, nunca resumido): o meuPlano confere o cadastro e o meuWatt,
@@ -1394,7 +1404,8 @@ async def atender(evento: dict) -> None:
     # Quando entrou na fila: a senha que chegou antes de o resumo da ação sair não vale.
     texto = (evento.get("texto") or "").strip()
     item = {"juntavel": fotos.e_foto(evento) or pdf.e_pdf(evento) or evento.get("tipo") == "contacts" or (
-        evento.get("tipo") == "text" and not evento.get("botao") and bool(texto) and not helper.parece_senha(texto))}
+        evento.get("tipo") == "text" and not evento.get("botao") and bool(texto)
+        and helper.digitos_da_senha(texto) is None)}   # só o número: a palavra solta ("assina") é pedido que se junta
     fila = _FILA.setdefault(chave, [])
     fila.append(item)
     evento = {**evento, "_chegou": monotonic(), "_fila": fila, "_item": item}
@@ -2052,7 +2063,7 @@ async def _atender(evento: dict) -> None:
             # O resto do pedido não some calado (avaliação 12: "crie a OS e conclua a 1638" — a
             # criação falhou e a conclusão nem foi lembrada), dito com as palavras da pessoa.
             resposta += "\n\n" + _o_que_ficou(executada)
-        if resposta is not None and helper.digitos_da_senha(texto) is not None:
+        if resposta is not None and (analise.pura or helper.digitos_da_senha(texto) is not None):
             historico[-1]["content"] = helper.OCULTA
         elif resposta is None:
             juntavel = (cadastro_dados is None and avaliacao_dados is None and not esperava

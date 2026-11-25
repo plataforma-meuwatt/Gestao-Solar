@@ -137,13 +137,21 @@ async def test_o_dia_hora_a_hora():
     assert r["horas"][1]["real_kwh"] is None                         # hora sem leitura fica nula, não zero
 
 
-async def test_pendencias_do_gemeo_para_a_ia():
-    """A caixa de conteúdo: o problema, os serviços com a OS do meuPlano e o "deu bom / não deu bom" anotado."""
-    mw = _GemeoFalso()
-    r = await ger.gemeo_pendencias(_ctx(mw), {"usina": "ibiti"})
-    assert mw.pedidos == [("pendencias", 9371)]
-    p = r["pendencias"][0]
-    assert (p["titulo"], p["situacao"], p["criada_em"]) == ("Recuo a mais nos trackers", "aberta", "2026-11-07")
+async def test_problemas_conhecidos_do_gemeo_para_a_ia(monkeypatch):
+    """A caixa de conteúdo (o nome era "pendências"; o Renan, 25/11: pendência é do meuPlano): o problema, os serviços com
+    a OS do meuPlano e o "deu bom / não deu bom" anotado."""
+    async def _sem_strings(ctx, slug, dia):
+        return {}
+
+    class Leituras(_GemeoFalso):
+        async def leituras(self, slug):
+            return {"relays": []}
+    monkeypatch.setattr(ger, "_strings_por_inversor", _sem_strings)
+    mw = Leituras()
+    r = await ger.problemas_conhecidos(_ctx(mw), {"usina": "ibiti"})
+    assert mw.pedidos == [("pendencias", 9371)] and r["ja_sei_nas_leituras"] == []
+    p = r["lista_do_gemeo"][0]
+    assert (p["titulo"], p["situacao"], p["criado_em"]) == ("Recuo a mais nos trackers", "aberta", "2026-11-07")
     assert p["servicos"][0] == {"servico": "ajuste dos trackers", "o_que_foi_feito": "650 cm nos 8 controladores", "os_meuplano": "1901",
                                 "feito_em": "2026-11-10", "deu_resultado": "deu bom", "anotacao": "ângulo das 06:30 subiu"}
     assert p["servicos"][1]["deu_resultado"] == "não anotado" and p["servicos"][1]["o_que_foi_feito"] is None

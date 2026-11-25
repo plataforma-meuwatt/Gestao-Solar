@@ -430,3 +430,33 @@ def test_os_itens_do_mapa_para_o_termovision_por_mover_e_tirar(http, cenario, db
     assert http.get(url_dono, headers=hd).json()["pode_editar"] is False
     assert http.put(f"{url_dono}/inv:5", headers=hd, json={"geometria": ponto}).status_code == 403
     assert http.get(url, headers=hd).status_code == 404                                    # Ibitinga não é dele
+
+
+def test_o_mapa_acha_a_usina_na_outra_empresa_da_pessoa(http, cenario, db, monkeypatch):
+    """O recado do TermoVision (25/11): quem opera em mais de uma empresa abre o mapa embutido com o passe de uma, numa
+    usina da outra. Vale qualquer empresa ATIVA da pessoa que veja a usina; a desativada, não."""
+    from app.core.security import criar_token_sistema
+    from app.models.empresa import MembroDaEmpresa
+    from app.services import vinculos
+    c, g = cenario, cenario["gerente"]
+    da_b = PlantLink(nome="Usina da B", empresa_id=c["b"].id, mw_plant_slug="da-b")
+    db.add_all([da_b, MembroDaEmpresa(user_id=g.id, empresa_id=c["b"].id)])
+    db.commit()
+
+    class MW:
+        async def mapa(self, slug):
+            return {"objetos": []}
+
+        async def slots(self, slug):
+            return []
+
+        async def mapa_equipamentos(self, slug):
+            return {"transformadores": [{"id": 1, "nome": "TR-01"}]}
+
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db, uid, **k: MW())
+    h = {**_h(g, sistema="termovision", empresa=c["a"].id), "X-Sessao-GS": criar_token_sistema(g.id, "termovision")}
+    assert http.get(f"/api/v1/interno/usinas/{da_b.id}/mapa/itens", headers=h).status_code == 200
+    assert http.get(f"/api/v1/interno/usinas/{da_b.id}/mapa/objetos", headers=h).status_code == 200
+    c["b"].ativa = False
+    db.commit()
+    assert http.get(f"/api/v1/interno/usinas/{da_b.id}/mapa/itens", headers=h).status_code == 404

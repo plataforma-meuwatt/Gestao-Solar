@@ -2049,7 +2049,7 @@ async def editar_conta_da_empresa(
             limpa = assistente_helper.validar_senha_atuacao(body.senha_atuacao)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        conta.senha_atuacao_hash = await asyncio.to_thread(gerar_hash_senha, limpa)
+        conta.senha_atuacao_hash = await asyncio.to_thread(assistente_helper.hash_da_senha_atuacao, limpa)
         assistente_helper.nova_senha(conta.id)
     if body.nome is not None or body.email is not None or body.telefone is not None:
         from app.services import cadastro

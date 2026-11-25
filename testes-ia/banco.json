@@ -2884,5 +2884,31 @@
       "leituras_usina"
     ],
     "origem": "log 25/11 16:06 (o Renan): com o coletor parado desde 15:50, a resposta tem de dizer a hora do dado e não afirmar 'comunicando'"
+  },
+  {
+    "frase": "quais as pendências de pirapozinho?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "o Renan 25/11: \"pendências é um termo do meuPlano, quando eu falar pendências o bot deve consultar o meuPlano\""
+  },
+  {
+    "frase": "quais os problemas conhecidos de ibitinga?",
+    "espera": [
+      "problemas_conhecidos"
+    ],
+    "origem": "o Renan 25/11: o do meuWatt se chama \"problemas conhecidos\" (Gêmeos e os «já sei» de Leituras)"
+  },
+  {
+    "frase": "registre como problema conhecido de tietê que o trafo 2 esquenta mais que os outros",
+    "espera": [
+      "registrar_problema_conhecido"
+    ],
+    "argumentos": {
+      "registrar_problema_conhecido": {
+        "usina": "tiet"
+      }
+    },
+    "origem": "o Renan 25/11: \"o bot vai receber os problemas conhecidos e cadastrar\""
   }
 ]

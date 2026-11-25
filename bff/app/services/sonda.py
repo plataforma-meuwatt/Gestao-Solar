@@ -405,7 +405,10 @@ MEUWATT: list[Rota] = [
           ("mw.gemeo_dia", "/gemeos/{plant_id}/dia", "um dia hora a hora"),
           ("mw.gemeo_regua", "/gemeos/{plant_id}/regua", "a régua contra o PVsyst"),
           ("mw.gemeo_config", "/gemeos/{plant_id}/config", "o que o gêmeo sabe da usina"),
-          ("mw.gemeo_pendencias", "/gemeos/{plant_id}/pendencias", "as pendências de performance"))],
+          ("mw.gemeo_pendencias", "/gemeos/{plant_id}/pendencias", "os problemas conhecidos da usina"))],
+    Rota("mw.gemeo_problema_criar", "POST", "/gemeos/{plant_id}/pendencias",
+         "Um problema conhecido novo, pelo bot do WhatsApp (lá, a plataforma e quem opera a usina)", essencial=False,
+         sonda=False, nao_sondada_porque="Grava, e mora no módulo de análise do meuWatt: só roda quando alguém cadastra."),
 ]
 
 #: Rotas do meuPlano. Prefixos `/api/v1/meuacesso` e `/api/v1/maintenance`.
