@@ -76,7 +76,9 @@ async def documento(token: str, ler: int = 0, db: Session = Depends(get_db)) -> 
         return JSONResponse({"ok": False, "error": f"helper indisponível: {e}"}, status_code=503, headers=_SEM_RASTRO)
     slug = usina.mw_plant_slug
     db.commit()                                           # solta a conexão: o helper leva até ~30 s lendo
-    d = await cliente.chamar("/api/religa/documento", {"slug": slug, "ler": bool(ler)}, origem="link do unifilar (GS)")
+    # `publico` (helper 2.51.2): só o que a página desenha, sem IP, porta, endereço Modbus, série nem o registro
+    d = await cliente.chamar("/api/religa/documento", {"slug": slug, "ler": bool(ler), "publico": True},
+                             origem="link do unifilar (GS)")
     r = d.get("resposta") if isinstance(d.get("resposta"), dict) else None
     if d.get("ok") and d.get("tipo") == "leitura" and r is not None:
         return JSONResponse(r, headers=_SEM_RASTRO)

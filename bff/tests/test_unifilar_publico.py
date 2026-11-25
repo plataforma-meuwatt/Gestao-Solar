@@ -98,7 +98,7 @@ def test_pagina_documento_e_arquivos_do_link(cliente, pessoa):
     assert c.get(f"/publico/unifilar/{token}", follow_redirects=False).headers["location"] == f"{token}/"
     d = c.get(f"/publico/unifilar/{token}/documento?ler=1")
     assert d.status_code == 200 and d.json() == {"ok": True, "documento": {"x": 1}}
-    assert chamadas == [("/api/religa/documento", {"slug": "pirapozinho", "ler": True})]
+    assert chamadas == [("/api/religa/documento", {"slug": "pirapozinho", "ler": True, "publico": True})]
     assert c.get(f"/publico/unifilar/{token}/unifilar.js").text == "/* mw-uf-ver */"
     assert c.get(f"/publico/unifilar/{token}/religa.js").status_code == 404      # só os dois arquivos da página
 

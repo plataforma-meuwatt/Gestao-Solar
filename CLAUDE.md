@@ -1013,7 +1013,8 @@ WhatsApp e vejo ao vivo pelo link"): `diagrama_unifilar` (parte helper) põe ao 
 `https://api.gestao.solar/publico/unifilar/<link>/` (`ctx.rodape` e `ctx.segredos`: fora do Log do bot e do gateway). O
 desenho é o do helper no modo "somente ver" (2.51.0, meta `mw-uf-ver`): `api/v1/unifilar_publico.py` serve a página e os
 dois arquivos dela, buscados pelo túnel (o filtro do srvclaude deixa passar só `GET /static/unifilar.{html,js,css}`,
-com a chave do chamador), e o documento pela porta do bot (`/api/religa/documento`, leitura) com o token do meuWatt de
+com a chave do chamador), e o documento pela porta do bot (`/api/religa/documento` com `publico`: sem IP, porta,
+endereço Modbus nem série, helper 2.51.2) com o token do meuWatt de
 quem pediu. O link é assinado aqui, sem tabela (`services/unifilar_publico.py`): a pessoa, a usina e a hora; vale 2 h,
 cai com o "encerrar todas" e, a cada leitura, confere de novo o helper liberado no bot e a usina no recorte dela. Nada
 ali comanda: atuar continua pelo WhatsApp, com a senha de atuação. A API serve essa página como serve a do login do

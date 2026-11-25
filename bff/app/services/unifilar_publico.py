@@ -4,7 +4,8 @@ ligado e o que não tá … nesse link não posso atuar, apenas ver; para atuar,
 
 O desenho é do helper (`web/static/unifilar.{html,js,css}`, o modo "somente ver" desde o 2.51.0, ligado pela meta
 `mw-uf-ver`): o GS busca os três arquivos pelo túnel do bot (o filtro do srvclaude deixa passar só esses três, com a
-chave do chamador) e o documento pela porta do bot (`/api/religa/documento`, leitura), com o token do meuWatt de QUEM
+chave do chamador) e o documento pela porta do bot (`/api/religa/documento` com `publico`, leitura: sem IP, porta,
+endereço Modbus nem série), com o token do meuWatt de QUEM
 PEDIU o link. Nenhum comando passa por aqui: comandar continua sendo pelo WhatsApp, com a senha de atuação.
 
 O link é assinado aqui, sem tabela: a pessoa, a usina do GS e a hora. Vale `VALIDADE_S`, cai com o "encerrar todas"
