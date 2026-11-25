@@ -1344,9 +1344,9 @@ async def diagrama_unifilar(ctx: ger.Contexto, a: dict) -> dict:
     return {"usina": u["nome"], "link_enviado_pelo_sistema": True, "vale_ate": ate,
             **({"aviso": "A VPN das usinas está sem contato: o desenho abre, mas sem leitura dos equipamentos até ela "
                          "voltar."} if parada else {}),
-            "instrucao": ("Diga uma linha; o link já vai ao pé da resposta. Ele só mostra o que está ligado, desligado, em "
-                          "trip ou sem leitura: para comandar, a pessoa pede aqui (a ação pede a senha de atuação), e o "
-                          "desenho mostra a mudança na leitura seguinte (até uns 30 s).")}
+            "instrucao": ("Diga uma linha curta (o unifilar da usina vai no link abaixo), sem repetir a hora nem o 'só para "
+                          "ver': o rodapé já diz os dois. Se a pessoa quiser comandar, ela pede aqui (a ação pede a senha "
+                          "de atuação), e o desenho mostra a mudança na leitura seguinte (até uns 30 s).")}
 
 
 _ESTADO = {"ok": "✅ confirmado", "ja": "já estava", "falhou": "❌ falhou", "incerto": "⚠️ incerto",

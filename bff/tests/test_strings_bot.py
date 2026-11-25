@@ -101,7 +101,7 @@ async def test_uma_string_a_menos_com_duas_zeradas_pergunta_quais(grava):
     with pytest.raises(ger.Recusa, match="mede 2") as e:
         await ger.marcar_strings(_ctx(9301, _MW()), {"usina": "pirapozinho", "inversor": "inversor 13", "quantas": 1,
                                                      "observacao": "o inversor 13 possui uma string a menos"})
-    assert "6S27 zerada" in str(e.value) and "6S28 zerada" in str(e.value)
+    assert "6S27 zerada" in str(e.value) and "6S28 zerada" in str(e.value) and "defeito para ver em campo" in str(e.value)
     assert 9301 not in h.PENDENTES and grava.pedidos == []
 
 
@@ -132,10 +132,79 @@ async def test_recusas_antes_do_sim(grava):
         await ger.marcar_strings(_ctx(9304, _MW(pode=False)), {"usina": "pirapozinho", "inversor": "13"})
     with pytest.raises(ger.Recusa, match="não está ligada"):
         await ger.marcar_strings(_ctx(9305, _MW()), {"usina": "pirapozinho", "inversor": "13", "strings": ["6S25"]})
-    with pytest.raises(ger.Recusa, match="não mede string com problema"):
+    with pytest.raises(ger.Recusa, match="não mede string zerada"):
         await ger.marcar_strings(_ctx(9306, _MW()), {"usina": "pirapozinho", "inversor": "12"})
     with pytest.raises(ger.Recusa, match="Não achei o inversor"):
         await ger.marcar_strings(_ctx(9307, _MW()), {"usina": "pirapozinho", "inversor": "Inv 99"})
     with pytest.raises(ger.Recusa, match="mede 2"):                               # "1" como texto também vale
         await ger.marcar_strings(_ctx(9308, _MW()), {"usina": "pirapozinho", "inversor": "INV-013", "quantas": "1"})
     assert grava.pedidos == [] and not {9304, 9305, 9306, 9307, 9308} & set(h.PENDENTES)
+
+
+async def test_string_a_menos_nao_pega_a_fraca(grava):
+    """Sem dizer quais, só as ZERADAS: a fraca só entra dita pelo nome (avaliador, 25/11)."""
+    class Fraca(_MW):
+        async def strings_por_vaga(self, slug):
+            return {"can_mark": True, "inverters": [{"serial_number": "SN12", "slot_id": 171, "label": "Inv 12",
+                                                     "strings": [_string(2), _string(25, "weak")]}]}
+    with pytest.raises(ger.Recusa, match="não mede string zerada") as e:
+        await ger.marcar_strings(_ctx(9309, Fraca()), {"usina": "pirapozinho", "inversor": "12", "quantas": 1})
+    assert "6S25 fraca" in str(e.value) and 9309 not in h.PENDENTES
+    ctx = _ctx(9310, Fraca())
+    r = await ger.marcar_strings(ctx, {"usina": "pirapozinho", "inversor": "12", "strings": ["6S25"]})
+    assert r["proposta_pendente"] == "Marcar «já sei» no meuWatt: Inv 12 · 6S25 (Pirapozinho)"
+    h.PENDENTES.pop(9310)
+
+
+def test_inversor_sem_dado_nunca_vira_nenhuma_string():
+    sem = {"serial_number": "SN4", "label": "Inv 4", "no_data": True, "strings": [_string(n) for n in range(2, 22)]}
+    r = ger._strings_na_comparacao(sem, 0.0, 364.0, 1.12, date(2026, 11, 25), date(2026, 11, 25))
+    assert r == {"strings_sem_dado": ger.SEM_DADO_DAS_STRINGS}
+
+
+async def test_leituras_mostra_o_inversor_sem_dado(monkeypatch):
+    async def _strings(ctx, slug, dia):
+        return {"SN4": {"label": "Inv 4", "transformer_name": "TR-01", "no_data": True, "strings": []},
+                "SN13": _inv13()}
+
+    class MW:
+        async def leituras(self, slug):
+            return {"relays": []}
+    monkeypatch.setattr(ger, "_strings_por_inversor", _strings)
+    ctx = ger.Contexto(db=None, user=SimpleNamespace(id=1), telefone="", mw=MW(),
+                       usinas={"p": {"id": 1, "nome": "Pirapozinho", "slug": "p"}})
+    r = await ger.leituras_usina(ctx, {"usina": "p"})
+    assert r["strings"][0] == {"inversor": "Inv 4", "skid": "TR-01", "strings": [ger.SEM_DADO_DAS_STRINGS]}
+    assert r["strings"][1]["inversor"] == "Inv 13" and "o dia ainda não fechou" in r["strings_do_dia"]
+
+
+def test_dado_velho_do_meuwatt_nao_e_agora():
+    from datetime import UTC, datetime, timedelta
+    agora = datetime.now(UTC)
+    assert ger.dado_velho((agora - timedelta(minutes=5)).isoformat()) is None
+    velho = ger.dado_velho((agora - timedelta(minutes=46)).isoformat())
+    assert "há 46 min" in velho and "não diga 'agora'" in velho
+    assert "não disse de quando" in ger.dado_velho(None)
+
+
+async def test_geracao_com_dado_velho_nao_afirma_sem_falha(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    async def _range(ctx, u, ini, fim, c):
+        return {"inverters": [{"slot_label": "Inv 13", "sn": "SN13", "total_yield_kwh": 369.31, "capacity_kwp": 364.0,
+                               "is_faulty": False}]}
+
+    async def _strings(ctx, slug, dia):
+        return {}
+
+    class MW:
+        async def monitoramento_atual(self, slug):
+            return {"energy_today_kwh": 4047.8, "inverters": [{"active_power": 568200}], "faulty_inverters": [],
+                    "data_at": (datetime.now(UTC) - timedelta(minutes=46)).isoformat()}
+    monkeypatch.setattr(ger, "_range", _range)
+    monkeypatch.setattr(ger, "_strings_por_inversor", _strings)
+    ctx = ger.Contexto(db=None, user=SimpleNamespace(id=1), telefone="", mw=MW(),
+                       usinas={"p": {"id": 1, "nome": "Pirapozinho", "slug": "p", "estacao": False}})
+    r = await ger.geracao(ctx, {"usina": "p"})
+    assert r["agora"]["inversores_com_falha"] is None and r["agora"]["potencia_agora_kw"] is None
+    assert "há 46 min" in r["agora"]["aviso"] and r["inversores_do_melhor_ao_pior"][0]["com_falha"] is None

@@ -182,6 +182,26 @@ def hoje() -> date:
     return datetime.now(_TZ).date()
 
 
+#: dado do meuWatt mais velho que isto não é "agora" (a mesma régua do unifilar do helper, `VELHO_MW_S`)
+VELHO_S = 20 * 60
+
+
+def dado_velho(iso: str | None) -> str | None:
+    """A frase para a IA quando o último dado do meuWatt é velho demais para ser "agora" (ou não diz de quando é)."""
+    from app.core.datas import hora_brt
+
+    try:
+        quando = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return "O meuWatt não disse de quando é o dado: não diga 'agora', nem 'sem falha', nem 'todos gerando'."
+    quando = quando if quando.tzinfo else quando.replace(tzinfo=_TZ)
+    idade = (datetime.now(UTC) - quando).total_seconds()
+    if idade <= VELHO_S:
+        return None
+    return (f"O último dado do meuWatt é das {hora_brt(quando.isoformat())} (há {int(idade // 60)} min): diga essa hora "
+            "junto dos números de hoje; não diga 'agora', nem 'sem falha', nem 'todos gerando'.")
+
+
 def _periodo(inicio: str | None, fim: str | None) -> tuple[date, date]:
     try:
         a = date.fromisoformat(inicio) if inicio else hoje()
@@ -270,6 +290,7 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
     ini, fim = _periodo(a.get("inicio"), a.get("fim"))
     out: dict[str, Any] = {"usina": u["nome"], "inicio": ini.isoformat(), "fim": fim.isoformat()}
     c = await ctx.mw.monitoramento_atual(u["slug"]) if fim == hoje() else None
+    velho = None
     if c is not None:
         out["agora"] = {
             "energia_hoje_ate_agora_kwh": _r(c.get("energy_today_kwh")),
@@ -278,6 +299,9 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
             "pr_hoje_pct": _pct(c.get("plant_pr_today")) if u["estacao"] else None,
             "usina_dormindo": c.get("plant_sleeping"),
             "inversores_com_falha": len(c.get("faulty_inverters") or []), "dado_de": c.get("data_at")}
+        if velho := dado_velho(c.get("data_at")):
+            # 25/11/2026: "4.047,8 kWh até agora, com todos os inversores sem falha", com o último dado de 40 min antes
+            out["agora"].update(potencia_agora_kw=None, inversores_com_falha=None, aviso=velho)
     r = await _range(ctx, u, ini, fim, c)
     kwp = r.get("total_capacity_kwp")
     invs, brutos = [], []
@@ -285,7 +309,7 @@ async def geracao(ctx: Contexto, a: dict) -> dict:
         kwh, ik = i.get("total_yield_kwh"), i.get("capacity_kwp")
         invs.append({"inversor": i.get("slot_label") or i.get("sn"), "skid": i.get("transformer_name"),
                      "energia_kwh": _r(kwh), "produtividade_kwh_kwp": _r(kwh / ik, 2) if kwh is not None and ik else None,
-                     "perdido_kwh": _r(i.get("total_lost_kwh")), "com_falha": i.get("is_faulty"),
+                     "perdido_kwh": _r(i.get("total_lost_kwh")), "com_falha": None if velho else i.get("is_faulty"),
                      **_conta_da_perda(i.get("perda_memoria"))})
         brutos.append((str(i.get("sn") or ""), kwh, ik))
     prods = [i["produtividade_kwh_kwp"] for i in invs if i["produtividade_kwh_kwp"] is not None]
@@ -1145,13 +1169,18 @@ async def leituras_usina(ctx: Contexto, a: dict) -> dict:
             {"inversor": i.get("label"), "skid": i.get("transformer_name"), "strings": lista,
              **({"perda_kwh_hoje": _r(i["loss_kwh_day"])} if i.get("loss_kwh_day") else {})}
             for i in strings.values()
-            if (lista := [texto_da_string(x) for x in i.get("strings") or []
-                          if x.get("registered") and (x.get("status") in PROBLEMA_DA_STRING or x.get("mark"))])]
+            if (lista := [SEM_DADO_DAS_STRINGS] if i.get("no_data") else [
+                texto_da_string(x) for x in i.get("strings") or []
+                if x.get("registered") and (x.get("status") in PROBLEMA_DA_STRING or x.get("mark"))])]
+        saida["strings_do_dia"] = f"hoje, {hoje():%d/%m}: o dia ainda não fechou (vale até a última leitura do meuWatt)"
     return saida
 
 
 #: o estado de uma string que pede atenção, como a tela Leituras do meuWatt diz (a regra é de lá)
 PROBLEMA_DA_STRING = {"zero": "zerada", "intermittent": "intermitente", "weak": "fraca"}
+#: o inversor que o meuWatt marca `no_data`: sem leitura no dia OU com todas as entradas sem corrente (nunca "nenhuma")
+SEM_DADO_DAS_STRINGS = ("sem leitura das strings no dia: o inversor não mandou dado ou todas as entradas estão sem "
+                        "corrente (o inversor inteiro pode estar parado)")
 NOTA_STRINGS = ("Inversor com string parada: diga qual, desde quando e o «já sei» da equipe (`strings_com_problema`). "
                 "`energia_se_as_strings_gerassem_kwh` é o que ele geraria com elas (a perda é a que o meuWatt conta): "
                 "perto da mediana (`desvio_da_mediana_se_as_strings_gerassem_pct`), o resto do inversor está ok.")
@@ -1189,6 +1218,8 @@ def _strings_na_comparacao(inv: dict, kwh: float | None, kwp: float | None, med:
     """O que as strings explicam da geração do inversor. A regra e a perda são do meuWatt; aqui só a soma. Um dia: a
     energia mais a perda que o meuWatt conta das strings paradas. Vários dias: só com as strings zeradas o período
     todo, pela potência delas no cadastro (a perda do meuWatt é por dia)."""
+    if inv.get("no_data"):
+        return {"strings_sem_dado": SEM_DADO_DAS_STRINGS}
     ligadas = [x for x in inv.get("strings") or [] if x.get("registered")]
     ruins = [x for x in ligadas if x.get("status") in PROBLEMA_DA_STRING]
     if not ruins:
@@ -1262,16 +1293,20 @@ async def marcar_strings(ctx: Contexto, a: dict) -> dict:
                              + ", ".join(x.get("tag") or str(n) for n, x in ligadas.items()) + ".")
             numeros.append(int(achados[-1]))
     else:
-        numeros = ruins
+        # sem dizer quais: as ZERADAS (a string a menos lê zero); a fraca e a intermitente só ditas por nome
+        numeros = [n for n in ruins if ligadas[n].get("status") == "zero"]
         if not numeros:
-            raise Recusa(f"O meuWatt não mede string com problema no {inv.get('label')} hoje: pergunte qual string "
-                         "marcar (a etiqueta, ex.: 6S27).")
+            raise Recusa(f"O meuWatt não mede string zerada no {inv.get('label')} hoje"
+                         + (": com problema, " + "; ".join(texto_da_string(ligadas[n]) for n in ruins) if ruins else "")
+                         + ". Pergunte qual string marcar (a etiqueta, ex.: 6S27).")
         quantas = a.get("quantas")
         quantas = int(quantas) if isinstance(quantas, str) and quantas.strip().isdigit() else quantas
         if isinstance(quantas, int) and not isinstance(quantas, bool) and quantas != len(numeros):
-            raise Recusa(f"A pessoa falou em {quantas} string(s), e o meuWatt mede {len(numeros)} com problema no "
+            raise Recusa(f"A pessoa falou em {quantas} string(s), e o meuWatt mede {len(numeros)} zerada(s) no "
                          f"{inv.get('label')}: " + "; ".join(texto_da_string(ligadas[n]) for n in numeros)
-                         + ". Mostre e pergunte quais marcar (ou se são todas).")
+                         + ". Mostre e pergunte quais marcar (ou se são todas)."
+                         + (" Diga também que, se só essa(s) falta(m) por projeto, a outra zerada é defeito para ver "
+                            "em campo." if quantas < len(numeros) else ""))
     numeros = list(dict.fromkeys(numeros))
     ja_sei = a.get("ja_sei", True) is not False
     nova = (a.get("observacao") or "").strip() or None
