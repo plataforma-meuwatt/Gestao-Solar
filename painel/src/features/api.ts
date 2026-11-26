@@ -762,7 +762,8 @@ export type RegistroBot = {
   usuario: string | null
   apelido: string | null
   empresa: string | null
-  resultado: 'respondeu' | 'a_conferir' | 'sem_conta' | 'nao_liberado' | 'sem_texto' | 'zerou' | 'atrasada' | 'erro'
+  /** `automacao`: o aviso de uma regra que entrou na conversa (não é resposta a uma mensagem). */
+  resultado: 'respondeu' | 'a_conferir' | 'sem_conta' | 'nao_liberado' | 'sem_texto' | 'zerou' | 'atrasada' | 'erro' | 'automacao'
   ferramentas: string[]
   pergunta: string | null
   resposta: string | null
@@ -849,6 +850,84 @@ export const botOuvindo = () =>
       '/bot/saude',
     )
     .then((r) => r.data)
+
+/* ------------------------------------------- automações (oem-gs, 26/11/2026) */
+
+/** `concluida`: o lembrete de uma vez que já tocou (não liga de novo; só se apaga). */
+export type SituacaoDaRegra = 'ligada' | 'ensaio' | 'pausada' | 'concluida'
+
+/** Uma regra (ou lembrete) que alguém da empresa criou pelo bot. Os rótulos vêm prontos do BFF. */
+export type RegraDeAutomacao = {
+  id: number
+  dono: string
+  dono_apelido: string
+  nome: string
+  /** o gatilho em palavras ("de segunda a sexta às 19:00: o resumo da geração") */
+  quando: string
+  /** em quais usinas, em palavras ("todas as usinas menos Tiete"); null no lembrete */
+  onde: string | null
+  /** por onde avisa ("WhatsApp e aplicativo") */
+  entrega_rotulo: string
+  /** horario | uma_vez | leitura | camera */
+  gatilho_tipo: string
+  situacao: SituacaoDaRegra
+  /** "Ligada", "Em ensaio"… e " · cega" quando alguma usina da regra está sem dado */
+  situacao_rotulo: string
+  /** o que a situação quer dizer, numa linha */
+  situacao_ajuda: string
+  /** a agenda pronta: "Próxima vez: 26/11 19:00", "Última conferência: 04:37", "Pausada: não confere"… */
+  agenda_rotulo: string
+  /** as palavras da pessoa ao pedir */
+  texto_original: string | null
+  /** só no horário e no lembrete, ligada ou em ensaio (na leitura e na câmera o motor confere sem hora marcada) */
+  proxima_em: string | null
+  /** a última vez que o motor conferiu esta regra */
+  ultima_volta_em: string | null
+  ultimo_disparo: { em: string; evento: string; evento_rotulo: string; status: string; status_rotulo: string } | null
+  /** a frase pronta: onde está cega e as que leem ("Cega em Pirapozinho desde 04:12 (motivo) · a outra lê") */
+  cega: string | null
+  /** os avisos que o ensaio guardou só no registro */
+  ensaio_segurados: number
+  ultimo_erro: string | null
+  criada_em: string
+}
+
+export type DisparoDeAutomacao = {
+  id: number
+  em: string
+  evento: string
+  evento_rotulo: string
+  ensaio: boolean
+  texto: string
+  canal: string | null
+  canal_rotulo: string
+  status: string
+  status_rotulo: string
+  erro: string | null
+  usina: string | null
+  /** os valores lidos que provaram o disparo, em linhas prontas ("Fase A: 0 V (ok)", "Leitura de 14:12") */
+  leitura_linhas: string[]
+  leitura: Record<string, unknown> | null
+}
+
+export type ListaDeAutomacoes = {
+  regras: RegraDeAutomacao[]
+  /** `ultima_volta`: a deste processo, desde a última publicação (nula = ainda não deu a primeira); `iniciado_em`:
+   *  quando a tarefa do motor subiu neste processo (nula = não subiu); `agora`: a hora do servidor, com que a tela
+   *  compara as duas (nunca o relógio do navegador) */
+  motor: { ligado: boolean; ultima_volta: string | null; iniciado_em: string | null; agora: string }
+}
+
+export const automacoesDaEmpresa = () => apiEmpresa.get<ListaDeAutomacoes>('/automacoes').then((r) => r.data)
+
+export const mudarAutomacao = (id: number, situacao: Exclude<SituacaoDaRegra, 'concluida'>) =>
+  apiEmpresa.patch<RegraDeAutomacao>(`/automacoes/${id}`, { situacao }).then((r) => r.data)
+
+export const apagarAutomacao = (id: number) => apiEmpresa.delete<void>(`/automacoes/${id}`).then(() => undefined)
+
+/** Os 50 últimos avisos da regra, o mais novo primeiro. */
+export const disparosDaAutomacao = (id: number) =>
+  apiEmpresa.get<DisparoDeAutomacao[]>(`/automacoes/${id}/disparos`).then((r) => r.data)
 
 /* ------------------------------------------------ um usuário em mais de uma empresa */
 

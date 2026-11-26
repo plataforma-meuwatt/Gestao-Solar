@@ -32,6 +32,7 @@ import {
   Stethoscope,
   Sun,
   UsersRound,
+  Workflow,
   X,
   type LucideIcon,
   History,
@@ -133,6 +134,9 @@ const MENU_EMPRESA: ItemMenu[] = [
   // O bot do WhatsApp de cada pessoa da empresa: celular, o token DELA e o que o
   // assistente responde (meuWatt, meuPlano, helper — um, dois ou todos).
   { para: '/minha-empresa/bot', rotulo: 'Bot do WhatsApp', icone: Bot },
+  // As regras e lembretes que as pessoas criaram pelo bot: o gerente liga, pausa, põe em ensaio e apaga (26/11/2026).
+  // Só aqui: a plataforma terá a dela.
+  { para: '/minha-empresa/automacoes', rotulo: 'Automações', icone: Workflow },
   // Quem da empresa entrou, onde e de onde: a auditoria dos acessos (24/11/2026).
   { para: '/minha-empresa/acessos', rotulo: 'Registro de acessos', icone: History },
   // As contas da empresa nos produtos. Fica por último porque é configuração, não o dia

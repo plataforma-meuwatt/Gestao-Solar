@@ -625,7 +625,9 @@ async def _amostras_parada(db: Session, volta: _Volta, regra: Automacao, dono: U
     desde = min((t for i in parados if (t := _ts(i.get("down_since")))), default=None)
     a.valor = (f"{len(nomes)} inversor{'es' if len(nomes) > 1 else ''} parado{'s' if len(nomes) > 1 else ''}: "
                + _lista(nomes) + (f" (desde {_hora(desde)})" if desde else "")) if nomes else "nenhum inversor parado"
-    a.leitura = {"parados": a.itens, "leitura_em": quando.isoformat()}
+    a.leitura = {"parados": {str(i.get("id") or i.get("serial_number")): {
+        "nome": str(i.get("name") or i.get("serial_number") or "inversor"), "desde": str(i.get("down_since") or "")}
+        for i in parados}, "leitura_em": quando.isoformat()}
     return [a]
 
 

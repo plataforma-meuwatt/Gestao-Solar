@@ -8,6 +8,7 @@ import { EmpresaPagina } from '@/features/empresas/Empresa'
 import { Empresas } from '@/features/empresas/Empresas'
 import { Entrada } from '@/features/entrada/Entrada'
 import { EntrarNoProduto } from '@/features/entrada/EntrarNoProduto'
+import { AutomacoesDaEmpresa } from '@/features/empresa/Automacoes'
 import { BotDaEmpresa } from '@/features/empresa/Bot'
 import { ConexoesDaEmpresa } from '@/features/empresa/Conexoes'
 import { VinculosDaEmpresa } from '@/features/empresa/Vinculos'
@@ -194,6 +195,14 @@ export function App() {
               element={
                 <SoEmpresa>
                   <BotDaEmpresa />
+                </SoEmpresa>
+              }
+            />
+            <Route
+              path="/minha-empresa/automacoes"
+              element={
+                <SoEmpresa>
+                  <AutomacoesDaEmpresa />
                 </SoEmpresa>
               }
             />

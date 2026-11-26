@@ -27,6 +27,8 @@ const RESULTADO: Record<RegistroBot['resultado'], { tom: Tom; rotulo: string }> 
   zerou: { tom: 'sem-dados', rotulo: 'Conversa zerada' },
   atrasada: { tom: 'alerta', rotulo: 'Chegou atrasada, sem resposta' },
   erro: { tom: 'parado', rotulo: 'Erro' },
+  // o aviso de uma regra de oem-gs › Automações que saiu e entrou na conversa (não responde a uma mensagem)
+  automacao: { tom: 'ok', rotulo: 'Aviso automático' },
 }
 
 export function LogDoBot() {
@@ -176,7 +178,7 @@ export function LinhaDoLog({ registro: r, primeiro }: { registro: RegistroBot; p
           </span>
           <span className="text-xs text-fraco ml-2">{r.empresa ?? (r.usuario ? 'sem empresa' : '')}</span>
           {r.pergunta ? (
-            <span className="block text-xs text-rotulo truncate">{r.pergunta}</span>
+            <span className="block text-xs text-rotulo break-words">{r.pergunta}</span>
           ) : null}
           {/* No celular, quando e o resultado descem para baixo do nome: lado a lado, o selo
               cobria o número e a pergunta virava uma letra (avaliação de 24/10/2026). */}

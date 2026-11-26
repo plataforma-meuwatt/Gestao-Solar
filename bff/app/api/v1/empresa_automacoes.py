@@ -38,6 +38,9 @@ STATUS = {"enviada": "Enviado", "entregue": "Entregue na mensagem seguinte", "ad
           "recusada": "Recusado", "pendente": "Enviando"}
 CANAL = {"whatsapp": "WhatsApp", "push": "Aplicativo", "whatsapp+push": "WhatsApp e aplicativo", "adiado": "—",
          "nenhum": "—"}
+#: O estado de cada leitura, como a tela Leituras do meuWatt o diz (lá o código vem em inglês).
+ESTADO_DA_LEITURA = {"ok": "ok", "zeroed": "zerada", "unknown": "não conferida", "no_comm": "sem comunicação",
+                     "missing": "faltando", "blank": "vazia", "not_read": "não lida"}
 
 
 class UltimoDisparoOut(BaseModel):
@@ -140,12 +143,14 @@ def _cega(db: Session, regra: Automacao) -> str | None:
     partes = []
     for k, st in cegos:
         ref = k.split(":")[0]
-        onde = (nomes.get(int(ref)) if ref.isdigit() else
-                "o meuGuarda" if ref == "meuguarda" else "todas as usinas da regra")
+        onde = (f"em {nomes[int(ref)]}" if ref.isdigit() and int(ref) in nomes else
+                "no meuGuarda" if ref == "meuguarda" else "em todas as usinas da regra")
         desde = auto._ts(st.get("sem_dado_desde"))
-        partes.append(f"cega em {onde or 'uma usina'} desde {auto._hora(desde)} ({st.get('porque') or 'sem dado'})")
+        partes.append(f"cega {onde} desde {auto._hora(desde)} ({st.get('porque') or 'sem dado'})")
     usinas_cegas = {k.split(":")[0] for k, _ in cegos}
-    lendo = {k.split(":")[0] for k, st in alvos.items() if not st.get("cega")} - usinas_cegas
+    # "lê" só a usina acordada e com dado (a de noite não prova nada; `regra` e `meuguarda` não são usina)
+    lendo = {ref for k, st in alvos.items() if (ref := k.split(":")[0]).isdigit() and not st.get("cega")
+             and st.get("acordada_em")} - usinas_cegas
     texto = "; ".join(partes)
     if lendo:
         texto += f" · as outras {len(lendo)} leem" if len(lendo) > 1 else " · a outra lê"
@@ -153,11 +158,10 @@ def _cega(db: Session, regra: Automacao) -> str | None:
 
 
 def _agenda(regra: Automacao) -> str:
+    """Vazio na pausada e na concluída: a ajuda da situação já diz ("Não confere nem avisa", "O lembrete já tocou")."""
     tipo = (regra.gatilho or {}).get("tipo")
-    if regra.situacao == "concluida":
-        return "O lembrete já tocou"
-    if regra.situacao == "pausada":
-        return "Pausada: não confere"
+    if regra.situacao in ("concluida", "pausada"):
+        return ""
     if tipo in ("horario", "uma_vez"):
         prox = auto._utc(regra.proxima_em)
         return f"Próxima vez: {auto._hora(prox, com_dia=True)}" if prox else "Sem próxima vez"
@@ -197,13 +201,17 @@ def _linhas_da_leitura(leitura: dict | None) -> list[str]:
         return []
     linhas = []
     for f, x in (leitura.get("fases") or {}).items():
-        linhas.append(f"Fase {f.upper()}: {auto._n(x.get('valor'), 0)} V ({x.get('estado') or '—'})")
+        estado = ESTADO_DA_LEITURA.get(x.get("estado") or "", x.get("estado") or "—")
+        linhas.append(f"Fase {f.upper()}: {auto._n(x.get('valor'), 0)} V ({estado})")
     for s, v in (leitura.get("sondas") or {}).items():
         linhas.append(f"Sonda {s}: {auto._n(v, 1)} °C")
-    if leitura.get("parados"):
-        linhas.append("Parados: " + ", ".join(sorted(leitura["parados"])))
+    if (parados := leitura.get("parados")):
+        nomes = [f"{p.get('nome')} (desde {auto._hora(auto._ts(p.get('desde')))})" if isinstance(p, dict) else None
+                 for p in parados.values()]
+        linhas.append("Parados: " + (", ".join(n for n in nomes if n) if all(nomes) else f"{len(parados)} inversor(es)"))
     if (ev := leitura.get("evento")):
-        linhas.append(f"Evento do meuGuarda: {ev.get('tipo')} na {ev.get('camera') or 'câmera'}")
+        tipo = auto._NOMES_GENTE.get(ev.get("tipo"), ev.get("tipo"))
+        linhas.append(f"Evento do meuGuarda: {tipo} na {ev.get('camera') or 'câmera'}")
     if leitura.get("leitura_em"):
         linhas.append(f"Leitura de {auto._hora(auto._ts(leitura['leitura_em']), com_dia=True)}")
     return linhas
