@@ -217,6 +217,17 @@ de nó), `desligados` (perderam o nó); o que já estava assim não conta.
 **O registro:** uma linha por sistema, usina e hora no Registro de acessos, sem pessoa ("Servidor do meuWatt (sem
 pessoa)"): `leitura` para o GET, `gravacao` para os dois PUT.
 
+### Quem casa o nó com o dispositivo (27/11/2026)
+
+O meuPlano não tem os inversores nem os transformadores casados com o meuWatt (os vínculos de lá são só de rede),
+então a rota dos nós acima não liga nada sozinha. Quem diz qual nó é qual dispositivo é o **gerente da O&M**, no
+oem-gs › Usinas › Equipamentos (`GET /api/empresa/usinas/{id}/dispositivos` e `PUT …/dispositivos/nos`, com a sessão
+dele; não é rota dos sistemas). O GS lê os nós da usina no meuPlano com a conta da empresa
+(`GET /api/v1/meuacesso/usinas/{usina_id}/nodes`), mostra como candidatos só os `transformador_potencia` e os
+`inversor`, e propõe o par (pelo número; senão pela ordem; o inversor só dentro do transformador cujo nó se sabe). A
+sugestão nunca é gravada sem o Salvar da pessoa. O que ela salva cai na mesma coluna (`mp_node_id`), com a mesma
+regra (um nó é uma posição só), e o meuPlano o recebe na leitura dele (`GET …/dispositivos`, o bloco `meuplano`).
+
 ## "Parecida"
 
 O nome igual depois de tirar acento, "UFV" e pontuação, um contido no outro, a mesma palavra marcante com o mesmo

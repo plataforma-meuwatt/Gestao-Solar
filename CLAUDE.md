@@ -597,6 +597,14 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   nó é UMA posição (o nó em outro dispositivo é 409, salvo a troca no mesmo pedido); **não vir no pedido não é
   desligar** (o vínculo é com a posição; desligar é mandar o nó nulo); a referência desconhecida volta em
   `sem_dispositivo`. A escrita só com a chave continua limitada à coluna de referência de quem chama.
+  **Quem casa o nó com o dispositivo é o GERENTE** (fase 3, 2ª fatia, 27/11/2026; oem-gs › Usinas › Equipamentos,
+  `api/v1/empresa_dispositivos.py`, `painel/src/features/empresa/Equipamentos.tsx`): o meuPlano não tem os inversores
+  e os transformadores casados, então o GS lê os nós da usina com a conta da EMPRESA (`MeuPlanoClient.nos_da_usina`),
+  propõe o par e diz por quê (`services/sugestao_de_nos.py`: pelo número, senão pela ordem; inversor só dentro do
+  transformador cujo nó se sabe; só `transformador_potencia` e `inversor` são candidatos). ⛔ A sugestão NUNCA se
+  aplica sozinha: só o Salvar da pessoa grava, com a mesma regra da máquina (`dispositivos.aplicar_nos`), o nó
+  conferido contra o meuPlano (da usina e do tipo certo) e uma linha por mudança no histórico da usina
+  (`no_do_dispositivo`, com quem fez).
 - **O cadastro mestre da usina** (R10, `services/dados_da_usina.py`): nome, endereço, cidade, UF, coordenada e kWp
   moram em `gs_plant_links`, com histórico por campo (`gs_usinas_historico`: quem, de qual sistema, antes e depois). A
   usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em
