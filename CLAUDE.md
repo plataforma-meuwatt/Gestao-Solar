@@ -592,6 +592,11 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   só as referências DELE de dispositivo, só nas usinas ligadas a ele, nunca um dado da usina e nunca a referência de
   outro sistema. Manda a lista INTEIRA; o que não veio fica ausente (`ativo` falso, nunca apagado) e a referência de
   outra usina recusa o pedido inteiro (409). Não alargue: escrita nova só com a chave não nasce sem essa estreiteza.
+  **O meuPlano liga os nós dele** (fase 3, 1ª fatia, 27/11/2026; `PUT …/dispositivos/nos`, `dispositivos.ligar_nos`):
+  não cria dispositivo, só grava a coluna DELE (`mp_node_id`) no dispositivo que já existe, pela referência padrão. Um
+  nó é UMA posição (o nó em outro dispositivo é 409, salvo a troca no mesmo pedido); **não vir no pedido não é
+  desligar** (o vínculo é com a posição; desligar é mandar o nó nulo); a referência desconhecida volta em
+  `sem_dispositivo`. A escrita só com a chave continua limitada à coluna de referência de quem chama.
 - **O cadastro mestre da usina** (R10, `services/dados_da_usina.py`): nome, endereço, cidade, UF, coordenada e kWp
   moram em `gs_plant_links`, com histórico por campo (`gs_usinas_historico`: quem, de qual sistema, antes e depois). A
   usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em

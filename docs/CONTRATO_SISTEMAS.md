@@ -113,12 +113,15 @@ número ao lado do registro dele. Nesta fase: transformadores e inversores, vind
   `inv:<inverter_slots.id>` (nas fases seguintes, `str:<slot_id>:<n>` e `rele:<relay_id>`). Esta é A grafia: em
   minúsculas, sem espaço, com o número de lá. Os tipos: `transformador` e `inversor` agora; reservados `string`,
   `rele`, `estacao`, `medidor`, `stringbox` e `gateway`.
-- **Quem chama:** só o servidor do **meuWatt**, com `X-Sistema` + `X-Chave-Interna` (sem pessoa). Chave errada: **401**
-  "Chave inválida.". meuGuarda: **403**. meuPlano e TermoVision: **403** "…ainda não recebe…" (as colunas deles já
-  existem). Usina que não existe ou que não está ligada ao sistema que chama: **404** "Pessoa ou usina não
+- **Quem chama:** o servidor do sistema, com `X-Sistema` + `X-Chave-Interna` (sem pessoa). A LISTA (`PUT
+  …/dispositivos`) é só do **meuWatt**; os NÓS (`PUT …/dispositivos/nos`, abaixo) são só do **meuPlano**; os dois leem
+  (`GET`). Chave errada: **401** "Chave inválida.". meuGuarda: **403**. Quem não entra naquela rota: **403** ("…ainda
+  não recebe do meuPlano…" na lista; "Quem liga nós aos dispositivos é o meuPlano…" nos nós; o TermoVision ainda não
+  entra em nenhuma). Usina que não existe ou que não está ligada ao sistema que chama: **404** "Pessoa ou usina não
   encontrada." (a mesma frase).
-- **É uma escrita só com a chave, e é estreita:** o sistema grava só as referências DELE de dispositivo, só nas usinas
-  ligadas a ele; nunca um dado da usina (nem o `atualizado_em` dela), nunca a referência de outro sistema.
+- **É uma escrita só com a chave, e é estreita:** o sistema grava só a coluna DELE no dispositivo (o meuWatt a
+  referência dele, o meuPlano o nó dele), só nas usinas ligadas a ele; nunca um dado da usina (nem o `atualizado_em`
+  dela), nunca a referência de outro sistema. O meuPlano não cria dispositivo nem muda nome, tipo ou pai.
 
 ### `PUT /api/v1/interno/maquina/usinas/{gs}/dispositivos`
 
@@ -162,10 +165,57 @@ agora; os que já estavam não contam).
 
 ### `GET /api/v1/interno/maquina/usinas/{gs}/dispositivos`
 
-A mesma lista (`{"dispositivos": [...]}`), sem os contadores. Mesmas recusas (401, 403, 404).
+A mesma lista (`{"dispositivos": [...]}`), sem os contadores. Mesmas recusas (401, 403, 404). Para o **meuWatt**, como
+acima (só os dispositivos com referência dele, só o bloco `meuwatt`). Para o **meuPlano**, na usina ligada a ele
+(`meuplano: {id}`), TODOS os dispositivos da usina, com os dois blocos, como na resposta dos nós (abaixo).
+
+### `PUT /api/v1/interno/maquina/usinas/{gs}/dispositivos/nos` (o meuPlano liga os nós dele, 27/11/2026)
+
+O meuPlano não cria dispositivo: ele diz "o meu nó N é a posição que vocês conhecem como `inv:99`", e o GS guarda o nó
+naquela linha. Os pares vêm já casados por uma pessoa na tela do meuPlano (não há fila de confirmação aqui). Só o
+meuPlano chama, na usina ligada a ele. Até 5000 pares:
+
+```json
+{"nos": [{"ref": "inv:99", "node_id": 555}, {"ref": "trafo:41", "node_id": 500}]}
+```
+
+`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>`; quem chama traduz a dele). `node_id` é o `nodes.id` do
+meuPlano (inteiro ≥ 1) ou nulo; o campo é obrigatório. Tudo numa transação, e o mesmo pedido de novo não muda nada:
+
+- O dispositivo DESTA usina com aquela `ref` (ativo ou ausente) ganha o nó; o `atualizado_em` só anda se mudou.
+- **A `ref` sem dispositivo nesta usina não é erro:** volta em `sem_dispositivo` e nada é gravado para ela.
+- **Um nó é uma posição só.** O nó que já está em OUTRO dispositivo (de qualquer usina) recusa o pedido inteiro:
+  **409** "O nó 555 já está no dispositivo GD-000021. Um nó é uma posição só: desligue-o de lá no mesmo pedido. Nada
+  foi gravado." A não ser que o MESMO pedido tire aquele dispositivo do nó (dando-lhe outro nó ou nulo): é a troca, e
+  passa. Também 409 quando dois pedidos ligam o mesmo nó ao mesmo tempo ("…mande de novo.").
+- **Não vir não é desligar.** O dispositivo com nó que NÃO veio no pedido fica como está (o vínculo é com a posição e
+  atravessa a troca do aparelho no meuPlano); a lista vazia não muda nada. Desligar é explícito:
+  `{"ref": "inv:99", "node_id": null}`.
+- **422:** a mesma `ref` duas vezes, o mesmo `node_id` duas vezes (dois nulos não contam), a `ref` fora da grafia
+  padrão; nesses o `detail` é uma frase. O corpo fora do formato (campo a mais, `node_id` ausente, zero ou não
+  inteiro, mais de 5000) é o 422 do FastAPI, com `detail` em lista.
+- A lista do meuWatt (`PUT …/dispositivos`) não mexe no nó: o dispositivo que fica ausente lá guarda o nó dele.
+
+Resposta **200**:
+
+```json
+{"dispositivos": [
+   {"gd": 19, "codigo": "GD-000019", "tipo": "transformador", "nome": "TR-01", "pai": null, "ativo": true,
+    "meuwatt": {"ref": "trafo:41"}, "meuplano": {"node_id": 500}},
+   {"gd": 21, "codigo": "GD-000021", "tipo": "inversor", "nome": "INV12", "pai": 19, "ativo": true,
+    "meuwatt": {"ref": "inv:99"}, "meuplano": {"node_id": 555}},
+   {"gd": 22, "codigo": "GD-000022", "tipo": "inversor", "nome": "INV13", "pai": 19, "ativo": true,
+    "meuwatt": {"ref": "inv:100"}, "meuplano": null}],
+ "ligados": 2, "desligados": 0, "sem_dispositivo": ["inv:777"]}
+```
+
+`dispositivos` são TODOS os da usina (para o meuPlano guardar o `gd` em cada nó e ver o que ainda está sem nó), também
+os ausentes, na ordem do `gd`. `meuplano` é nulo quando a posição não tem nó; `meuwatt` seria nulo num dispositivo que
+o meuWatt não conhece (hoje não existe). Os contadores dizem o que ESTE pedido fez: `ligados` (ganharam nó ou trocaram
+de nó), `desligados` (perderam o nó); o que já estava assim não conta.
 
 **O registro:** uma linha por sistema, usina e hora no Registro de acessos, sem pessoa ("Servidor do meuWatt (sem
-pessoa)"): `leitura` para o GET, `gravacao` para o PUT.
+pessoa)"): `leitura` para o GET, `gravacao` para os dois PUT.
 
 ## "Parecida"
 
