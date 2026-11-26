@@ -20,6 +20,10 @@ não confirma quem existe). Cada leitura entra no Registro de acessos, uma linha
   TermoVision; os outros mostram a tela dele). É uma credencial: só para quem tem o TermoVision liberado E entrou no
   sistema que pede pelo GS, ela mesma (um passe com o IP dela), nas últimas 12 h. A sessão aberta pela senha do próprio
   sistema não conta: o GS não a viu.
+- `GET /maquina/usinas[?alteradas_desde=]`: a porta da MÁQUINA, a única que a chave abre sozinha (a rotina do servidor
+  do sistema, sem ninguém na tela, mantendo a cópia dele do vínculo). A chave segue sem falar por ninguém: não lê nada
+  de pessoa, só as linhas do índice ligadas ao PRÓPRIO sistema, com os dados básicos e a referência dele (nem a empresa,
+  nem a proprietária, nem a mesma usina nos outros sistemas). Uma linha por sistema e hora no Registro de acessos.
 """
 import logging
 from datetime import UTC, datetime, timedelta
@@ -34,7 +38,7 @@ from app.core.db import get_db
 from app.core.security import _empresa_ativa
 from app.models.acesso import AcessoGS
 from app.models.empresa import Empresa
-from app.models.plant import PlantLink
+from app.models.plant import HistoricoDaUsina, PlantLink
 from app.models.user import Perfil, User
 from app.services import acessos, empresas, login_externo, pessoas
 
@@ -258,19 +262,35 @@ def usinas(request: Request, response: Response, ids: str | None = None, alterad
            db: Session = Depends(get_db)) -> list[UsinaDoGS]:
     """`X-GS-Lido-Em` (o relógio do GS): para reler só o que mudou, mande este valor (menos 1 min de folga) no
     `alteradas_desde` da próxima vez. Sem fuso, `alteradas_desde` é de Brasília."""
-    response.headers["X-GS-Lido-Em"] = datetime.now(UTC).isoformat(timespec="seconds")
+    _lido_em(response)
     todas = _as_do_pedido(db, request, "as usinas")
     if ids is not None:
         pedidas = {int(x) for x in ids.split(",") if x.strip().isdecimal()}
         todas = [u for u in todas if u.id in pedidas]
-    if alteradas_desde is not None:
-        desde = alteradas_desde if alteradas_desde.tzinfo else alteradas_desde.replace(tzinfo=BRASILIA)
-        todas = [u for u in todas if u.atualizado_em is not None and _com_fuso(u.atualizado_em) >= desde]
-    return [saida(db, u) for u in todas]
+    return [saida(db, u) for u in _alteradas(todas, _desde(alteradas_desde))]
 
 
 def _com_fuso(quando: datetime) -> datetime:
     return quando if quando.tzinfo else quando.replace(tzinfo=UTC)
+
+
+def _lido_em(response: Response) -> None:
+    """O relógio do GS no `X-GS-Lido-Em`, marcado ANTES de ler: o que mudar durante a leitura volta na próxima."""
+    response.headers["X-GS-Lido-Em"] = datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _desde(alteradas_desde: datetime | None) -> datetime | None:
+    """O `alteradas_desde` com fuso (sem fuso, é de Brasília)."""
+    if alteradas_desde is None:
+        return None
+    return alteradas_desde if alteradas_desde.tzinfo else alteradas_desde.replace(tzinfo=BRASILIA)
+
+
+def _alteradas(todas: list[PlantLink], desde: datetime | None) -> list[PlantLink]:
+    """As que tiveram um dado básico (ou um vínculo) mudado de `desde` para cá; sem `desde`, todas."""
+    if desde is None:
+        return todas
+    return [u for u in todas if u.atualizado_em is not None and _com_fuso(u.atualizado_em) >= desde]
 
 
 @router.get("/usinas/{gs}", response_model=UsinaDoGS)
@@ -602,3 +622,97 @@ def _parecidas_daqui(db: Session, parecidas: list[dict], empresa: int) -> list[d
     """As parecidas gravadas no pedido que ainda são desta empresa (a que saiu dela não se nomeia)."""
     daqui = set(db.scalars(select(PlantLink.id).where(PlantLink.empresa_id == empresa)))
     return [p for p in parecidas or [] if p.get("gs") in daqui]
+
+
+# --------------------------------------------------------------------------- a porta da máquina (só a chave do sistema)
+class UsinaDaMaquina(BaseModel):
+    """A usina do índice para o servidor do sistema: os dados básicos e a referência DELE. Sem a empresa, sem a
+    proprietária e sem a mesma usina nos outros sistemas (a chave não aprende o que é dos outros)."""
+    gs: int
+    codigo: str
+    nome: str
+    #: das três, só a do sistema que chama vai na resposta (as outras nem como nulo)
+    meuwatt: RefMeuWatt | None = None
+    meuplano: RefMeuPlano | None = None
+    termovision: RefTermoVision | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    kwp: float | None = None
+    endereco: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    #: no aplicativo do GS (falso = desligada lá); vem assim mesmo, para o sistema ficar sabendo
+    ativo: bool = True
+    atualizado_em: datetime | None = None
+
+
+class DesligadaDaMaquina(BaseModel):
+    """O vínculo que SAIU: esta referência do sistema que chama deixou de ser desta usina do GS."""
+    gs: int
+    codigo: str
+    #: a referência que saiu (só a do sistema que chama)
+    meuwatt: RefMeuWatt | None = None
+    meuplano: RefMeuPlano | None = None
+    termovision: RefTermoVision | None = None
+    desligada_em: datetime
+
+
+class MaquinaOut(BaseModel):
+    usinas: list[UsinaDaMaquina]
+    #: só com `alteradas_desde` (na leitura inteira, o que não veio em `usinas` não está ligado)
+    desligadas: list[DesligadaDaMaquina]
+
+
+def _ref(quem: str, valor) -> dict:
+    """A referência no formato da porta, no campo do sistema (`{"meuwatt": {"slug": …}}`)."""
+    if quem == "meuplano":
+        return {quem: RefMeuPlano(id=int(valor))}
+    if quem == "termovision":
+        return {quem: RefTermoVision(codigo=str(valor))}
+    return {quem: RefMeuWatt(slug=str(valor))}
+
+
+def _desligadas(db: Session, quem: str, desde: datetime) -> list[DesligadaDaMaquina]:
+    """As referências do sistema que deixaram a usina do GS de `desde` para cá, pelo histórico por campo (a troca de
+    vínculo grava uma linha com o antes). A que voltou para a mesma usina não conta; a que foi para OUTRA usina sai
+    daqui e a outra vem em `usinas`."""
+    campo = REFERENCIA[quem]
+    linhas = db.execute(
+        select(HistoricoDaUsina, PlantLink).join(PlantLink, PlantLink.id == HistoricoDaUsina.plant_link_id)
+        .where(HistoricoDaUsina.campo == campo, HistoricoDaUsina.antes.isnot(None))
+        .order_by(HistoricoDaUsina.em, HistoricoDaUsina.id)).all()
+    saiu: dict[tuple[int, str], DesligadaDaMaquina] = {}
+    for h, link in linhas:
+        agora = getattr(link, campo)
+        if _com_fuso(h.em) < desde or (agora is not None and str(agora) == h.antes):
+            continue
+        if quem == "meuplano" and not h.antes.isdecimal():
+            continue
+        saiu[(link.id, h.antes)] = DesligadaDaMaquina(gs=link.id, codigo=codigo(link.id),
+                                                      desligada_em=_com_fuso(h.em), **_ref(quem, h.antes))
+    return sorted(saiu.values(), key=lambda d: (d.gs, d.desligada_em))
+
+
+@router.get("/maquina/usinas", response_model=MaquinaOut, response_model_exclude_unset=True)
+def usinas_da_maquina(request: Request, response: Response, alteradas_desde: datetime | None = None,
+                      db: Session = Depends(get_db)) -> MaquinaOut:
+    """A porta da máquina: a rotina do servidor do sistema lê, só com a chave dele, as usinas do índice ligadas a ELE
+    (para manter a cópia dele do vínculo sem ninguém na tela). Nenhum cabeçalho de pessoa é lido. Vêm também as
+    desligadas no aplicativo (`ativo` falso). `alteradas_desde` e `X-GS-Lido-Em` são os de `GET /usinas`; com
+    `alteradas_desde` vêm ainda as `desligadas` (o vínculo que saiu: apliquem antes das `usinas`). O meuGuarda, que usa
+    o número do GS, não tem o que ler aqui: 403."""
+    quem = sistema(request)
+    if quem not in REFERENCIA:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este sistema usa as usinas do GS: não tem usina ligada a ele.")
+    _lido_em(response)
+    acessos.registrar(db, request, acao="leitura", sistema=quem, agrupar_s=3600,
+                      motivo=f"{NOMES[quem]} leu pela porta da máquina (só a chave, sem pessoa): as usinas ligadas a ele")
+    campo, desde = REFERENCIA[quem], _desde(alteradas_desde)
+    ligadas = list(db.scalars(select(PlantLink).where(getattr(PlantLink, campo).isnot(None))
+                              .order_by(PlantLink.nome, PlantLink.id)).all())
+    return MaquinaOut(
+        usinas=[UsinaDaMaquina(gs=u.id, codigo=codigo(u.id), nome=u.nome, cidade=u.cidade, uf=u.uf, kwp=u.kwp,
+                               endereco=u.endereco, latitude=u.latitude, longitude=u.longitude, ativo=bool(u.ativo),
+                               atualizado_em=u.atualizado_em, **_ref(quem, getattr(u, campo)))
+                for u in _alteradas(ligadas, desde)],
+        desligadas=_desligadas(db, quem, desde) if desde is not None else [])
