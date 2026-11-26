@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     helper_bot_chamador: str = "gestao-solar"
     #: A chave do chamador `gestao-solar` (a mesma do `MW_BOT_CALLERS_FILE` do helper).
     helper_bot_chave: str = ""
+    #: O gerador do PDF NÃO REVISADO do relatório do meuWatt (`POST /relatorio/pdf`, mesma chave do chamador). Desde
+    #: 26/11/2026 o helper de produção fica na VM do Gabriel (túnel 18081) e o gerador segue na VM do Renan (túnel
+    #: 18080): endereços separados. Vazio = o mesmo do helper.
+    relatorio_pdf_url: str = ""
 
     # ── assistente do WhatsApp ──────────────────────────────────────────────
     #: DeepSeek (API compatível com a da OpenAI). Vazia = o assistente responde que está

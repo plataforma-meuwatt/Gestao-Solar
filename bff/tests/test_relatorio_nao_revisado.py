@@ -25,8 +25,8 @@ def _ctx(rel=None):
     return ctx
 
 
-def _patch(monkeypatch, pdf=b"%PDF-nao-revisado", erro=None, token="mw_pat_dela"):
-    enviados, pedidos = [], []
+def _patch(monkeypatch, pdf=b"%PDF-nao-revisado", erro=None, token="mw_pat_dela", relatorio_pdf_url=""):
+    enviados, pedidos, bases = [], [], []
 
     async def enviar(**k):
         enviados.append(k)
@@ -34,14 +34,17 @@ def _patch(monkeypatch, pdf=b"%PDF-nao-revisado", erro=None, token="mw_pat_dela"
 
     async def gera(base, chamador, chave, tok, usina, mes, doc, espera_s=560):
         pedidos.append((tok, usina, mes, doc))
+        bases.append(base)
         return (pdf, f"{doc} - Tiete - NÃO REVISADO.pdf", None) if pdf else (None, None, erro)
 
     monkeypatch.setattr("app.clients.whatsapp.enviar_conteudo", enviar)
     monkeypatch.setattr("app.clients.helper_bot.relatorio_nao_revisado", gera)
     monkeypatch.setattr("app.services.vinculos.token_do_cliente", lambda db, uid, prod, so_proprio=False: token)
     monkeypatch.setattr("app.core.config.get_settings", lambda: SimpleNamespace(
-        helper_bot_url="http://10.0.1.1:18080", helper_bot_chamador="gestao-solar", helper_bot_chave="k"))
+        helper_bot_url="http://10.0.1.1:18080", helper_bot_chamador="gestao-solar", helper_bot_chave="k",
+        relatorio_pdf_url=relatorio_pdf_url))
     monkeypatch.setattr(ger, "_usina", lambda ctx, nome: ctx.usinas["tiete"])
+    _patch.bases = bases
     return enviados, pedidos
 
 
@@ -80,3 +83,13 @@ async def test_gerador_falhou_diz_por_que(monkeypatch):
     enviados, _ = _patch(monkeypatch, pdf=None, erro="o documento não ficou pronto a tempo")
     r = await ger.relatorio_pdf(_ctx(), {"usina": "tiete", "mes": "2026-10", "tipo": "paradas"})
     assert "não ficou pronto a tempo" in r["erro"] and enviados == []
+
+
+async def test_o_pdf_vai_ao_gerador_proprio_quando_o_helper_mudou_de_vm(monkeypatch):
+    """26/11/2026: o helper de produção foi para a VM do Gabriel (túnel 18081) e o gerador ficou na do Renan (18080)."""
+    _patch(monkeypatch, relatorio_pdf_url="http://10.0.1.1:18080")
+    import app.core.config as cfg
+    s = cfg.get_settings(); s.helper_bot_url = "http://10.0.1.1:18081"
+    monkeypatch.setattr("app.core.config.get_settings", lambda: s)
+    await ger.relatorio_pdf(_ctx(), {"usina": "tiete", "mes": "2026-10", "tipo": "paradas"})
+    assert _patch.bases == ["http://10.0.1.1:18080"]

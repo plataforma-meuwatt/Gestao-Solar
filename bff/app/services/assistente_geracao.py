@@ -632,7 +632,8 @@ async def _relatorio_nao_revisado(ctx: Contexto, u: dict, mes: str, tipo: str) -
     except SemConexao as e:
         return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e a versão não revisada sai com o "
                         f"token do meuWatt da pessoa: {e}"}
-    if not (s.helper_bot_url and s.helper_bot_chave and token):
+    gerador = s.relatorio_pdf_url or s.helper_bot_url
+    if not (gerador and s.helper_bot_chave and token):
         return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e a versão não revisada não "
                         "pode ser gerada agora."}
     if tipo == "geracao":          # leva alguns minutos quando a IA ainda não comentou o mês: avisa antes
@@ -640,7 +641,7 @@ async def _relatorio_nao_revisado(ctx: Contexto, u: dict, mes: str, tipo: str) -
             telefone=ctx.telefone, tipo="text",
             texto=f"⏳ O relatório de {mes} de {u['nome']} ainda não foi revisado pela equipe. Estou gerando a versão "
                   "NÃO REVISADA agora; leva uns 3 minutos.")
-    raw, nome, erro = await relatorio_nao_revisado(s.helper_bot_url, s.helper_bot_chamador, s.helper_bot_chave,
+    raw, nome, erro = await relatorio_nao_revisado(gerador, s.helper_bot_chamador, s.helper_bot_chave,
                                                    token, u["slug"], mes, tipo)
     if raw is None:
         return {"erro": f"A equipe ainda não emitiu o relatório de {mes} de {u['nome']}, e não consegui gerar a versão "
