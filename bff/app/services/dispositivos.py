@@ -11,6 +11,16 @@ da máquina (`api/v1/interno_dispositivos.py`), sempre com a lista INTEIRA da us
 
 A grafia da referência do meuWatt é a que as rotas do mapa já usam (`interno_mapa_itens`): `trafo:<transformers.id>`,
 `inv:<inverter_slots.id>` (depois `str:<slot_id>:<n>`, `rele:<relay_id>`). É A grafia padrão.
+
+O meuPlano não cria dispositivo (fase 3, 1ª fatia, 27/11/2026): ele diz "o meu nó N é a posição que vocês conhecem como
+`inv:99`" e o GS guarda o nó naquela linha (`ligar_nos`). Os pares vêm já casados por uma pessoa na tela do meuPlano,
+por isso não há fila de confirmação aqui.
+
+- um nó é UMA posição: o nó que já está em outro dispositivo recusa o pedido inteiro, a não ser que o mesmo pedido tire
+  aquele dispositivo do nó (a troca);
+- o dispositivo que NÃO veio no pedido fica como está (não vir não é desligar: o vínculo é com a posição e atravessa a
+  troca do aparelho no meuPlano). Desligar é mandar o nó nulo;
+- a referência que o GS não conhece nesta usina não é erro: volta em `sem_dispositivo`.
 """
 import re
 from datetime import UTC, datetime
@@ -26,7 +36,10 @@ TIPOS = ("transformador", "inversor", "string", "rele", "estacao", "medidor", "s
 REFERENCIA = {"meuwatt": "mw_ref", "meuplano": "mp_node_id", "termovision": "tv_ref"}
 #: a grafia aceita de cada sistema nesta fase: o prefixo da referência e o tipo que ele diz. Sistema fora daqui ainda
 #: não manda dispositivos
-GRAFIA = {"meuwatt": {"trafo": "transformador", "inv": "inversor"}}
+PADRAO = {"trafo": "transformador", "inv": "inversor"}
+GRAFIA = {"meuwatt": PADRAO}
+#: quem liga os nós dele aos dispositivos que já existem (não cria dispositivo)
+LIGA_NOS = ("meuplano",)
 #: o teto da lista de uma usina
 TETO = 5000
 
@@ -37,6 +50,14 @@ class ListaInvalida(ValueError):
 
 class DeOutraUsina(ValueError):
     """Uma referência da lista já é de outra usina do GS (409)."""
+
+
+class NoDeOutro(ValueError):
+    """O nó do pedido já está em outro dispositivo, que o pedido não tira de lá (409)."""
+
+    def __init__(self, no: int, gd: int):
+        super().__init__(f"nó {no} no dispositivo {gd}")
+        self.no, self.gd = no, gd
 
 
 def conferir(quem: str, itens: list[dict]) -> None:
@@ -115,3 +136,49 @@ def gravar(db: Session, quem: str, usina: PlantLink, itens: list[dict]) -> dict:
             ausentes += 1
     db.flush()
     return {"criados": len(nascidos), "alterados": len(mudados), "ausentes": ausentes}
+
+
+def todos_da_usina(db: Session, usina: PlantLink) -> list[DeviceLink]:
+    """Todos os dispositivos da usina, de qualquer sistema, também os ausentes."""
+    return list(db.scalars(select(DeviceLink).where(DeviceLink.plant_link_id == usina.id).order_by(DeviceLink.id)).all())
+
+
+def conferir_nos(itens: list[dict]) -> None:
+    """Os pares (referência, nó) antes de gravar: a grafia padrão, sem referência repetida e sem nó repetido."""
+    padrao = re.compile(rf"({'|'.join(PADRAO)}):\d+")
+    refs, nos = set(), set()
+    for d in itens:
+        ref, no = d["ref"], d["node_id"]
+        if padrao.fullmatch(ref) is None:
+            raise ListaInvalida(f"A referência {ref!r} não serve: use " + " ou ".join(f"{p}:<número>" for p in PADRAO)
+                                + ".")
+        if ref in refs:
+            raise ListaInvalida(f"A referência {ref} veio mais de uma vez.")
+        if no is not None and no in nos:
+            raise ListaInvalida(f"O nó {no} veio mais de uma vez: um nó é uma posição só.")
+        refs.add(ref)
+        nos.add(no)
+
+
+def ligar_nos(db: Session, usina: PlantLink, itens: list[dict]) -> dict:
+    """Guarda o nó do meuPlano nos dispositivos da usina que o pedido nomeia pela referência padrão (já conferido). Só
+    mexe no que veio. Devolve quantos ganharam (ou trocaram de) nó e quantos perderam NESTE pedido, e as referências
+    que não são de dispositivo desta usina. Não confirma: quem chama dá o commit."""
+    por_ref = {x.mw_ref: x for x in todos_da_usina(db, usina) if x.mw_ref}
+    sem = [d["ref"] for d in itens if d["ref"] not in por_ref]
+    mudam = {por_ref[d["ref"]]: d["node_id"] for d in itens
+             if d["ref"] in por_ref and por_ref[d["ref"]].mp_node_id != d["node_id"]}
+    nos = [no for no in mudam.values() if no is not None]
+    if nos:                                                # um nó é uma posição: quem o tem hoje sai dele NESTE pedido?
+        for dono in db.scalars(select(DeviceLink).where(DeviceLink.mp_node_id.in_(nos)).order_by(DeviceLink.id)).all():
+            if dono not in mudam:
+                raise NoDeOutro(dono.mp_node_id, dono.id)
+    agora = datetime.now(UTC)
+    desligados = sum(1 for no in mudam.values() if no is None)
+    for linha in mudam:                                    # primeiro todos soltam o nó (a troca não esbarra na trava)
+        linha.mp_node_id, linha.atualizado_em = None, agora
+    db.flush()
+    for linha, no in mudam.items():
+        linha.mp_node_id = no
+    db.flush()
+    return {"ligados": len(nos), "desligados": desligados, "sem_dispositivo": sem}

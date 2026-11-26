@@ -1,7 +1,9 @@
 """O índice de dispositivos pela porta da máquina (`PUT`/`GET /api/v1/interno/maquina/usinas/{gs}/dispositivos`), pela
 porta HTTP de verdade: só a chave do sistema, sem pessoa; o meuWatt manda a lista inteira da usina ligada a ele e cada
 posição ganha um número do GS; a mesma lista de novo não muda nada; o que não veio fica ausente (nunca é apagado) e
-volta com o mesmo número; a referência de outra usina recusa o pedido inteiro; e os outros sistemas ainda não entram."""
+volta com o mesmo número; a referência de outra usina recusa o pedido inteiro; e os outros sistemas ainda não mandam
+lista. O meuPlano liga os nós dele aos dispositivos que já existem (`PUT …/dispositivos/nos`): só o que veio muda, um nó
+é uma posição só, a troca cabe num pedido, o nó nulo desliga e a referência desconhecida volta em `sem_dispositivo`."""
 from datetime import UTC, datetime
 
 import pytest
@@ -164,9 +166,11 @@ def test_so_a_usina_ligada_ao_sistema_que_chama(http, c, db):
             assert r.status_code == 404 and r.json()["detail"] == "Pessoa ou usina não encontrada.", r.text
     for r in (http.put(_url(c["ib"]), headers=_h("meuguarda"), json=corpo), http.get(_url(c["ib"]), headers=_h("meuguarda"))):
         assert r.status_code == 403 and "não tem usina ligada" in r.json()["detail"]
-    for quem in ("meuplano", "termovision"):               # ligados à usina, mas ainda não mandam dispositivos
-        for r in (http.put(_url(c["ib"]), headers=_h(quem), json=corpo), http.get(_url(c["ib"]), headers=_h(quem))):
-            assert r.status_code == 403 and "ainda não" in r.json()["detail"], r.text
+    # ligados à usina, mas não mandam a lista (o meuPlano lê e liga nós; o TermoVision ainda não entra)
+    for r in (http.put(_url(c["ib"]), headers=_h("meuplano"), json=corpo),
+              http.put(_url(c["ib"]), headers=_h("termovision"), json=corpo),
+              http.get(_url(c["ib"]), headers=_h("termovision"))):
+        assert r.status_code == 403 and "ainda não" in r.json()["detail"], r.text
     for h in (_h(chave="errada"), {}, {"X-Sistema": "meuwatt"}):
         r = http.put(_url(c["ib"]), headers=h, json=corpo)
         assert r.status_code == 401 and r.json()["detail"] == "Chave inválida."
@@ -220,6 +224,157 @@ def test_a_escrita_da_maquina_so_toca_os_dispositivos_dela_e_entra_no_registro(h
     assert linhas[0].motivo == (f"meuWatt gravou pela porta da máquina (só a chave, sem pessoa): os dispositivos da "
                                 f"usina GS-{ib.id:04d}")
     assert [x["quem"] for x in acessos.listar(db)] == ["Servidor do meuWatt (sem pessoa)"] * 2
+
+
+# --------------------------------------------------------------------------- o meuPlano liga os nós dele
+TRES = [*LISTA, {"ref": "inv:100", "tipo": "inversor", "nome": "INV13", "pai": "trafo:41"}]
+
+
+def _nos(usina) -> str:
+    return _url(usina) + "/nos"
+
+
+def _ligar(http, usina, *pares):
+    return http.put(_nos(usina), headers=_h("meuplano"), json={"nos": [{"ref": r, "node_id": n} for r, n in pares]})
+
+
+def _nos_de(resposta: dict) -> dict:
+    return {d["meuwatt"]["ref"]: (d["meuplano"] or {}).get("node_id") for d in resposta["dispositivos"] if d["meuwatt"]}
+
+
+def test_o_meuplano_liga_os_nos_e_de_novo_nao_muda_nada(http, c, db):
+    do_mw = http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": TRES}).json()
+    gd = {ref: d["gd"] for ref, d in _por(do_mw).items()}
+    r = _ligar(http, c["ib"], ("inv:99", 555), ("trafo:41", 500), ("inv:777", 900))
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert (corpo["ligados"], corpo["desligados"], corpo["sem_dispositivo"]) == (2, 0, ["inv:777"])   # não é erro
+    # TODOS os dispositivos da usina, com a referência do meuWatt e o nó (nulo no que ainda não tem)
+    assert corpo["dispositivos"] == [
+        {"gd": gd["trafo:41"], "codigo": f"GD-{gd['trafo:41']:06d}", "tipo": "transformador", "nome": "TR-01",
+         "pai": None, "ativo": True, "meuwatt": {"ref": "trafo:41"}, "meuplano": {"node_id": 500}},
+        {"gd": gd["inv:99"], "codigo": f"GD-{gd['inv:99']:06d}", "tipo": "inversor", "nome": "INV12",
+         "pai": gd["trafo:41"], "ativo": True, "meuwatt": {"ref": "inv:99"}, "meuplano": {"node_id": 555}},
+        {"gd": gd["inv:100"], "codigo": f"GD-{gd['inv:100']:06d}", "tipo": "inversor", "nome": "INV13",
+         "pai": gd["trafo:41"], "ativo": True, "meuwatt": {"ref": "inv:100"}, "meuplano": None}]
+    assert db.query(DeviceLink).filter(DeviceLink.mp_node_id == 900).count() == 0
+    antes = _marcas(db)
+    r = _ligar(http, c["ib"], ("trafo:41", 500), ("inv:99", 555), ("inv:777", 900))
+    assert r.json() == {**corpo, "ligados": 0} and _marcas(db) == antes                # o mesmo de novo: nada muda
+    # a leitura do meuPlano traz a mesma lista; a do meuWatt segue igual à de antes (sem o nó)
+    assert http.get(_url(c["ib"]), headers=_h("meuplano")).json() == {"dispositivos": corpo["dispositivos"]}
+    assert http.get(_url(c["ib"]), headers=_h()).json() == {"dispositivos": do_mw["dispositivos"]}
+    assert http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": TRES}).json() == {**do_mw, "criados": 0}
+    assert _nos_de(http.get(_url(c["ib"]), headers=_h("meuplano")).json())["inv:99"] == 555   # a lista não mexe no nó
+
+
+def test_so_o_que_veio_muda_e_o_no_nulo_desliga(http, c, db):
+    http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": TRES})
+    _ligar(http, c["ib"], ("inv:99", 555), ("trafo:41", 500))
+    antes = _marcas(db)
+    # o que não veio fica como está (não vir não é desligar); o que veio com outro nó muda, e só ele
+    corpo = _ligar(http, c["ib"], ("inv:99", 556)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (1, 0)
+    assert _nos_de(corpo) == {"trafo:41": 500, "inv:99": 556, "inv:100": None}
+    depois = _marcas(db)
+    assert depois["trafo:41"] == antes["trafo:41"] and depois["inv:99"] != antes["inv:99"]
+    assert _ligar(http, c["ib"]).json()["dispositivos"] == corpo["dispositivos"]            # a lista vazia: nada
+    # o nó nulo desliga; de novo, e no que nunca teve nó, não muda nada
+    corpo = _ligar(http, c["ib"], ("inv:99", None), ("inv:100", None)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (0, 1)
+    assert _nos_de(corpo) == {"trafo:41": 500, "inv:99": None, "inv:100": None}
+    antes = _marcas(db)
+    corpo = _ligar(http, c["ib"], ("inv:99", None)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (0, 0) and _marcas(db) == antes
+    # o dispositivo AUSENTE na lista do meuWatt guarda o nó (a posição existe) e o ausente também pode ser ligado
+    _ligar(http, c["ib"], ("inv:99", 555))
+    http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": LISTA[:1]})
+    corpo = _ligar(http, c["ib"], ("inv:100", 600)).json()
+    assert _nos_de(corpo) == {"trafo:41": 500, "inv:99": 555, "inv:100": 600}
+    assert [d["ativo"] for d in corpo["dispositivos"]] == [True, False, False]
+
+
+def test_um_no_e_uma_posicao_so_e_a_troca_cabe_num_pedido(http, c, db):
+    http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": TRES})
+    http.put(_url(c["of"]), headers=_h(), json={"dispositivos": [
+        {"ref": "inv:300", "tipo": "inversor", "nome": "INV01", "pai": None}]})
+    c["of"].mp_usina_id = 8
+    db.commit()
+    assert _ligar(http, c["ib"], ("inv:99", 555), ("inv:100", 556)).status_code == 200
+    gd99 = db.query(DeviceLink).filter_by(mw_ref="inv:99").one().id
+    antes = _marcas(db)
+    # o nó que está em outro dispositivo, que o pedido não tira de lá: recusa o pedido inteiro, com o nó e o código
+    for usina, pares in ((c["ib"], [("trafo:41", 500), ("inv:100", 555)]), (c["of"], [("inv:300", 555)])):
+        r = _ligar(http, usina, *pares)
+        assert r.status_code == 409 and "nó 555" in r.json()["detail"] and f"GD-{gd99:06d}" in r.json()["detail"], r.text
+    assert _marcas(db) == antes and db.query(DeviceLink).filter_by(mw_ref="trafo:41").one().mp_node_id is None
+    # a troca: os dois no mesmo pedido
+    corpo = _ligar(http, c["ib"], ("inv:99", 556), ("inv:100", 555)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (2, 0)
+    assert _nos_de(corpo) == {"trafo:41": None, "inv:99": 556, "inv:100": 555}
+    # o nó passa de um para o outro quando o mesmo pedido desliga o primeiro
+    corpo = _ligar(http, c["ib"], ("inv:99", None), ("trafo:41", 556)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (1, 1)
+    assert _nos_de(corpo) == {"trafo:41": 556, "inv:99": None, "inv:100": 555}
+    # e o nó solto aqui pode ir para a outra usina
+    assert _ligar(http, c["of"], ("inv:300", 700)).json()["ligados"] == 1
+
+
+def test_os_pares_que_nao_servem_sao_422_e_nada_e_gravado(http, c, db):
+    http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": TRES})
+    for pares, frase in (([("inv:99", 555), ("inv:99", 556)], "mais de uma vez"),         # a mesma referência
+                         ([("inv:99", 555), ("inv:100", 555)], "nó 555 veio mais de uma vez"),
+                         ([("inversor:99", 555)], "não serve"),                           # a grafia do meuPlano
+                         ([("str:99:1", 555)], "não serve"), ([("INV:99", 555)], "não serve")):
+        r = _ligar(http, c["ib"], *pares)
+        assert r.status_code == 422 and frase in r.json()["detail"], (pares, r.text)
+    assert _ligar(http, c["ib"], ("inv:99", None), ("inv:100", None)).status_code == 200    # dois nulos não são repetição
+    for corpo in ({"nos": [{"ref": "inv:99"}]}, {"nos": [{"ref": "inv:99", "node_id": 0}]}, {},
+                  {"nos": [{"ref": "inv:99", "node_id": "abc"}]}, {"nos": [{"ref": "inv:99", "node_id": 1, "tipo": "x"}]},
+                  {"nos": [{"ref": f"inv:{i}", "node_id": i + 1} for i in range(dispositivos.TETO + 1)]}):
+        assert http.put(_nos(c["ib"]), headers=_h("meuplano"), json=corpo).status_code == 422, str(corpo)[:80]
+    assert db.query(DeviceLink).filter(DeviceLink.mp_node_id.isnot(None)).count() == 0
+
+
+def test_so_o_meuplano_liga_nos_e_so_na_usina_ligada_a_ele(http, c, db):
+    http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": LISTA})
+    registros = db.query(AcessoGS).count()
+    corpo = {"nos": [{"ref": "inv:99", "node_id": 555}]}
+    for usina in (c["of"], 9999):                          # a que não é do meuPlano e a que não existe: a mesma frase
+        for r in (http.put(_nos(usina), headers=_h("meuplano"), json=corpo), http.get(_url(usina), headers=_h("meuplano"))):
+            assert r.status_code == 404 and r.json()["detail"] == "Pessoa ou usina não encontrada.", r.text
+    for quem in ("meuwatt", "termovision"):
+        r = http.put(_nos(c["ib"]), headers=_h(quem), json=corpo)
+        assert r.status_code == 403 and "é o meuPlano" in r.json()["detail"], r.text
+    r = http.put(_nos(c["ib"]), headers=_h("meuguarda"), json=corpo)
+    assert r.status_code == 403 and "não tem usina ligada" in r.json()["detail"]
+    for h in (_h("meuplano", chave="errada"), {}, {"X-Sistema": "meuplano"}):
+        r = http.put(_nos(c["ib"]), headers=h, json=corpo)
+        assert r.status_code == 401 and r.json()["detail"] == "Chave inválida."
+    assert db.query(DeviceLink).filter(DeviceLink.mp_node_id.isnot(None)).count() == 0
+    assert db.query(AcessoGS).count() == registros
+    # a usina só do meuPlano, sem dispositivo nenhum: a lista vazia, e tudo volta em `sem_dispositivo`
+    r = http.put(_nos(c["so_mp"]), headers=_h("meuplano"), json=corpo)
+    assert r.status_code == 200 and r.json() == {"dispositivos": [], "ligados": 0, "desligados": 0,
+                                                 "sem_dispositivo": ["inv:99"]}
+
+
+def test_ligar_nos_so_grava_o_no_e_entra_no_registro(http, c, db):
+    ib = c["ib"]
+    http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA})
+    marca = ib.atualizado_em
+    inv = db.query(DeviceLink).filter_by(mw_ref="inv:99").one()
+    antes = (inv.tipo, inv.nome, inv.pai_id, inv.mw_ref, inv.tv_ref, inv.ativo, inv.ausente_desde)
+    for _ in range(2):
+        assert _ligar(http, ib, ("inv:99", 555)).status_code == 200
+    db.refresh(inv)
+    db.refresh(ib)
+    assert (inv.tipo, inv.nome, inv.pai_id, inv.mw_ref, inv.tv_ref, inv.ativo, inv.ausente_desde) == antes
+    assert inv.mp_node_id == 555 and (ib.atualizado_em, ib.mp_usina_id) == (marca, 7)       # a usina não muda
+    linhas = db.query(AcessoGS).filter_by(sistema="meuplano").all()
+    assert [(a.acao, a.gs_user_id, a.login, a.ok) for a in linhas] == [("gravacao", None, "", True)]
+    assert linhas[0].motivo == (f"meuPlano gravou pela porta da máquina (só a chave, sem pessoa): os nós dele nos "
+                                f"dispositivos da usina GS-{ib.id:04d}")
 
 
 if __name__ == "__main__":
