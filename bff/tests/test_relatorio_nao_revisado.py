@@ -93,3 +93,21 @@ async def test_o_pdf_vai_ao_gerador_proprio_quando_o_helper_mudou_de_vm(monkeypa
     monkeypatch.setattr("app.core.config.get_settings", lambda: s)
     await ger.relatorio_pdf(_ctx(), {"usina": "tiete", "mes": "2026-10", "tipo": "paradas"})
     assert _patch.bases == ["http://10.0.1.1:18080"]
+
+
+async def test_interno_gera_na_propria_api_sem_tunel(monkeypatch):
+    """26/11/2026: RELATORIO_PDF_URL=interno → o gerador da própria API (services/relatorio_pdf), sem túnel."""
+    from app.clients import helper_bot
+    from app.services import relatorio_pdf
+    chamadas = []
+
+    async def abrir(token, usina, mes, doc):
+        chamadas.append((token, usina, mes, doc))
+        return b"%PDF-local", "paradas - Tiete.pdf", None
+    monkeypatch.setattr(relatorio_pdf, "_abrir", abrir)
+    pdf, nome, erro = await helper_bot.relatorio_nao_revisado("interno", "gestao-solar", "k", "mw_pat_dela",
+                                                              "tiete", "2026-10", "paradas")
+    assert (pdf, nome, erro) == (b"%PDF-local", "paradas - Tiete.pdf", None)
+    assert chamadas == [("mw_pat_dela", "tiete", "2026-10", "paradas")]
+    assert (await relatorio_pdf.gerar("t", "Tiete; drop", "2026-10", "paradas"))[2] == "pedido inválido para o gerador de PDF"
+    assert (await relatorio_pdf.gerar("t", "tiete", "2026-13", "paradas"))[2] == "pedido inválido para o gerador de PDF"

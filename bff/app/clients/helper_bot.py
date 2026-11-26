@@ -80,6 +80,9 @@ async def relatorio_nao_revisado(
     devolve o PDF com o carimbo. O Relatório de Geração leva alguns minutos quando a IA ainda não comentou o mês."""
     from urllib.parse import unquote
 
+    if base_url == "interno":                  # 26/11/2026: o gerador mora na própria API (services/relatorio_pdf.py)
+        from app.services import relatorio_pdf
+        return await relatorio_pdf.gerar(token, usina, mes, doc, espera_s)
     try:
         async with httpx.AsyncClient(timeout=espera_s) as c:
             r = await c.post(
