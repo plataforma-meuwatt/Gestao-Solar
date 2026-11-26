@@ -150,7 +150,7 @@ async def test_horario_perdido_mais_de_60_min_avisa_e_reagenda(mundo):
                        acao={"tipo": "mensagem", "texto": "x"}, agora=T0)
     await auto.rodar_tique(db, T0 + timedelta(hours=3))
     [d] = _disparos(db, regra)
-    assert d.evento == "perdida" and "não rodou" in d.texto
+    assert d.evento == "perdida" and "não rodou a tempo" in d.texto
     assert auto._utc(regra.proxima_em) == T0 + timedelta(days=1, minutes=30)
 
 
@@ -665,4 +665,27 @@ async def test_o_resumo_atrasado_diz_a_hora_que_era(mundo):
     auto.criar(db, renan, nome="Resumo", gatilho={"tipo": "horario", "hora": "11:30"}, acao={"tipo": "resumo_geracao"},
                escopo={"usinas": [mundo["piraz"].id]}, agora=T0)
     await auto.rodar_tique(db, T0 + timedelta(minutes=50))
-    assert "(era para 11:30: o servidor estava fora)" in s["whatsapp"][0]["texto"]
+    assert "(era para 11:30; atrasou)" in s["whatsapp"][0]["texto"]
+
+
+async def test_o_lembrete_que_nao_sai_em_1_h_desiste_com_o_erro_registrado(mundo, monkeypatch):
+    db, renan = mundo["db"], mundo["renan"]
+    _janela(db, renan, T0)
+    regra = auto.criar(db, renan, nome="L", gatilho={"tipo": "uma_vez", "em": (T0 + timedelta(minutes=1)).isoformat()},
+                       acao={"tipo": "ia", "prompt": "analisa"}, escopo={"todas": True}, agora=T0)
+    monkeypatch.setattr(auto, "_ia_hoje", lambda db_, dono, agora: auto.IA_POR_DIA)   # a ação quebra sempre
+    await auto.rodar_tique(db, T0 + timedelta(minutes=1))
+    assert regra.situacao == "ligada" and auto._utc(regra.proxima_em) == T0 + timedelta(minutes=6)   # tenta de novo
+    await auto.rodar_tique(db, T0 + timedelta(minutes=70))
+    assert regra.situacao == "concluida" and regra.proxima_em is None and regra.ultimo_erro       # passou de 1 h: desiste
+    assert {d.evento for d in _disparos(db, regra)} == {"erro"}
+
+
+async def test_a_leitura_e_dividida_entre_as_regras_do_mesmo_dono_na_mesma_volta(mundo):
+    db, renan, mw = mundo["db"], mundo["renan"], mundo["mw"]
+    for nome in ("A", "B"):
+        _regra_tensao(db, renan, mundo["piraz"]).nome = nome
+    db.commit()
+    mw.leit["pirapozinho"], mw.mon["pirapozinho"] = _rele([7900, 7900, 7900], T0), _mon(T0)
+    await auto.rodar_tique(db, T0)
+    assert sorted(mw.chamadas) == [("leituras", "pirapozinho"), ("monitoramento", "pirapozinho")]   # uma vez cada

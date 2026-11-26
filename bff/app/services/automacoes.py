@@ -942,8 +942,8 @@ async def _avaliar_horario(db: Session, regra: Automacao, dono: User, volta: _Vo
     seguinte = None if unica else proxima_execucao(g, max(marcada, volta.agora - timedelta(seconds=1)))
     if atraso > ATRASO_MAX and not unica:
         await _disparar(db, regra, dono, evento="perdida", chave=f"perdida:{marcada.isoformat()}", agora=volta.agora,
-                        texto=(f"⚠️ A regra {regra.id} «{regra.nome}» era para {_hora(marcada)} e não rodou (o servidor "
-                               f"estava fora). A próxima é {_hora(seguinte, com_dia=True)}."))
+                        texto=(f"⚠️ A regra {regra.id} «{regra.nome}» era para {_hora(marcada)} e não rodou a tempo. "
+                               f"A próxima é {_hora(seguinte, com_dia=True)}."))
     elif _condicoes_do_relogio(regra, volta.agora):
         texto = await texto_da_acao(db, regra, dono, volta, atrasada=marcada if atraso > timedelta(minutes=2) else None)
         if texto:
@@ -984,7 +984,7 @@ async def texto_da_acao(db: Session, regra: Automacao, dono: User, volta: _Volta
     else:
         raise RegraInvalida(f"ação desconhecida: {tipo}")
     return (corpo + ("\n\n" + " ".join(notas) if notas else "")
-            + (f"\n\n(era para {_hora(atrasada)}: o servidor estava fora)" if atrasada else ""))
+            + (f"\n\n(era para {_hora(atrasada)}; atrasou)" if atrasada else ""))
 
 
 async def _usinas_que_passam(db: Session, regra: Automacao, dono: User, volta: _Volta,
