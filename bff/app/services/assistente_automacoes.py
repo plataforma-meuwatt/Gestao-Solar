@@ -217,6 +217,8 @@ async def _montar(ctx, a: dict) -> dict:
         canais = canais or ["whatsapp", "push"]
     elif tipo == "horario":
         hora = _hora(a.get("hora"))
+        if hora is None and a.get("pr_abaixo_de") is not None:
+            hora = dtime(18, 30)                           # o PR do dia: às 18:30 o dia solar fechou
         if hora is None:
             raise Recusa("A que horas? Pergunte (ex.: 19:00).")
         dias = _dias_da_semana(a.get("dias"))

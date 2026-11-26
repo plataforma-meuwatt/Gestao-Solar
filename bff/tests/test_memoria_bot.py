@@ -144,3 +144,14 @@ async def test_listar_e_pausar_pelo_bot(db, renan):
 def test_a_ia_da_automacao_nao_recebe_as_ferramentas_de_automacao_nem_de_memoria():
     assert {"criar_automacao", "memoria", "mexer_automacao", "minhas_automacoes"} <= bot.SO_NA_CONVERSA
     assert set(bot.FERRAMENTAS) <= set(assistente.FERRAMENTAS)
+
+
+async def test_analise_do_pr_sem_hora_dita_roda_as_18h30(db, renan):
+    from app.models.plant import PlantLink
+
+    db.add(PlantLink(mw_plant_slug="ibitinga", nome="Ibitinga", empresa_id=renan.empresa_id, ativo=True))
+    db.commit()
+    plano = await bot._montar(_ctx(db, renan), {"tipo": "horario", "acao": "ia", "texto": "analisa o rendimento",
+                                               "pr_abaixo_de": 75, "usinas": ["Ibitinga"]})
+    assert plano["gatilho"]["hora"] == "18:30" and plano["situacao"] == "ensaio"
+    assert plano["condicoes"] == [{"tipo": "pr_dia", "operador": "<", "limite": 75.0}]

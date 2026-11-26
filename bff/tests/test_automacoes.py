@@ -408,7 +408,8 @@ async def test_uma_regra_quebrada_nao_para_as_outras(mundo, monkeypatch):
     boa = auto.criar(db, renan, nome="Boa", gatilho={"tipo": "horario", "hora": "11:01"},
                      acao={"tipo": "mensagem", "texto": "ok"}, agora=T0)
     await auto.rodar_tique(db, T0 + timedelta(minutes=1, seconds=5))
-    assert ruim.ultimo_erro and auto._utc(ruim.proxima_em) == T0 + timedelta(minutes=6, seconds=5)
+    # a de horário que quebra vai à próxima hora marcada (tentar a cada 5 min rodaria "a de hoje" de madrugada)
+    assert ruim.ultimo_erro and auto._utc(ruim.proxima_em) == T0 + timedelta(days=1, minutes=1)
     assert [d.evento for d in _disparos(db, boa)] == ["disparo"]
     assert [d.evento for d in _disparos(db, ruim)] == ["erro"]
 
@@ -564,11 +565,10 @@ async def test_a_tela_diz_onde_esta_cega_a_agenda_os_avisos_e_recusa_ligar_lembr
     regra = auto.criar(db, renan, nome="Paradas", agora=T0, gatilho={"tipo": "leitura", "grandeza": "usina_parada"},
                        acao={"tipo": "mensagem"}, escopo={"todas": True})
     velho = T0 - timedelta(hours=1)
-    mw.mon["pirapozinho"], mw.mon["tiete"] = _mon(velho), _mon(T0)          # Pirapozinho calado, Tietê lendo
-    for minuto in (0, 21):
+    for minuto in (0, 21):                                    # Pirapozinho calado, Tietê lendo
+        mw.mon["pirapozinho"], mw.mon["tiete"] = _mon(velho), _mon(T0 + timedelta(minutes=minuto))
         _acordar(db, regra)
         await auto.rodar_tique(db, T0 + timedelta(minutes=minuto))
-        mw.mon["tiete"] = _mon(T0 + timedelta(minutes=minuto + 1))
     [r] = rotas.listar(db=db, gerente=renan).regras
     assert r.situacao_rotulo == "Ligada · cega" and r.cega.startswith("Cega em Pirapozinho desde")
     assert r.cega.endswith("a outra lê") and r.onde == "todas as usinas" and r.entrega_rotulo == "WhatsApp e aplicativo"
@@ -587,3 +587,82 @@ async def test_a_tela_diz_onde_esta_cega_a_agenda_os_avisos_e_recusa_ligar_lembr
     assert e.value.status_code == 409 and "já passou" in e.value.detail
     assert rotas._linhas_da_leitura({"fases": {"a": {"valor": 0, "estado": "ok"}}, "leitura_em": T0.isoformat()}) == [
         "Fase A: 0 V (ok)", "Leitura de 26/11 11:00"]
+
+
+# ── o que a reavaliação do plano cobrou (26/11): cada afirmação do documento com o seu teste ──────────────
+
+
+async def test_de_dia_a_regra_se_diz_cega_uns_20_min_depois_da_ultima_leitura(mundo):
+    db, renan, mw = mundo["db"], mundo["renan"], mundo["mw"]
+    _janela(db, renan, T0)
+    regra = _regra_tensao(db, renan, mundo["piraz"])
+    for minuto in (0, 5, 10):                                 # lendo bem, acordada desde as 11:00
+        t = T0 + timedelta(minutes=minuto)
+        mw.leit["pirapozinho"], mw.mon["pirapozinho"] = _rele([7900, 7900, 7900], t), _mon(t)
+        _acordar(db, regra)
+        await auto.rodar_tique(db, t)
+    ultima = T0 + timedelta(minutes=10)                       # o relé cala às 11:10
+    for minuto in (25, 31):
+        t = T0 + timedelta(minutes=minuto)
+        mw.leit["pirapozinho"], mw.mon["pirapozinho"] = _rele([7900, 7900, 7900], ultima), _mon(t)
+        _acordar(db, regra)
+        await auto.rodar_tique(db, t)
+    [d] = _disparos(db, regra)
+    assert d.evento == "cega" and "desde 11:10" in d.texto and auto._utc(d.em) is not None
+
+
+async def test_sem_usina_no_recorte_a_regra_fica_cega_e_diz_por_que(mundo):
+    db, renan = mundo["db"], mundo["renan"]
+    _janela(db, renan, T0)
+    regra = auto.criar(db, renan, nome="X", agora=T0, gatilho={"tipo": "leitura", "grandeza": "usina_parada"},
+                       acao={"tipo": "mensagem"}, escopo={"usinas": [999]})   # usina que ele não vê
+    for minuto in (0, 21):
+        _acordar(db, regra)
+        await auto.rodar_tique(db, T0 + timedelta(minutes=minuto))
+    [d] = _disparos(db, regra)
+    assert d.evento == "cega" and "nenhuma usina desta regra está no seu recorte" in d.texto
+
+
+async def test_o_teto_de_ia_vira_erro_e_a_regra_vai_para_a_proxima_hora_marcada(mundo, monkeypatch):
+    db, renan = mundo["db"], mundo["renan"]
+    _janela(db, renan, T0)
+    monkeypatch.setattr(auto, "_ia_hoje", lambda db_, dono, agora: auto.IA_POR_DIA)
+    regra = auto.criar(db, renan, nome="Análise", gatilho={"tipo": "horario", "hora": "11:30"},
+                       acao={"tipo": "ia", "prompt": "analisa"}, escopo={"todas": True}, agora=T0)
+    await auto.rodar_tique(db, T0 + timedelta(minutes=30, seconds=5))
+    [d] = _disparos(db, regra)
+    assert d.evento == "erro" and "análises da IA hoje" in d.texto
+    assert auto._utc(regra.proxima_em) == T0 + timedelta(days=1, minutes=30)   # não tenta de novo de madrugada
+
+
+async def test_o_teto_de_leituras_da_volta_adia_a_regra_para_a_volta_seguinte(mundo, monkeypatch):
+    db, renan, mw = mundo["db"], mundo["renan"], mundo["mw"]
+    monkeypatch.setattr(auto, "MAX_LEITURAS_POR_VOLTA", 0)
+    regra = _regra_tensao(db, renan, mundo["piraz"])
+    mw.leit["pirapozinho"], mw.mon["pirapozinho"] = _rele([0, 0, 0], T0), _mon(T0)
+    await auto.rodar_tique(db, T0)
+    assert mw.chamadas == [] and auto._utc(regra.proxima_em) == T0 + timedelta(seconds=auto.VOLTA_S)
+    assert _disparos(db, regra) == []
+
+
+async def test_a_condicao_que_nao_vale_deixa_registro_sem_mandar_nada(mundo):
+    db, renan, mw, s = mundo["db"], mundo["renan"], mundo["mw"], mundo["saidas"]
+    _janela(db, renan, T0)
+    mw.mon["pirapozinho"] = _mon(T0, plant_pr_today=0.81)
+    regra = auto.criar(db, renan, nome="PR", gatilho={"tipo": "horario", "hora": "11:30"},
+                       acao={"tipo": "resumo_geracao"}, condicoes=[{"tipo": "pr_dia", "operador": "<", "limite": 70}],
+                       escopo={"usinas": [mundo["piraz"].id]}, agora=T0)
+    await auto.rodar_tique(db, T0 + timedelta(minutes=30, seconds=5))
+    [d] = _disparos(db, regra)
+    assert d.evento == "nao_valeu" and d.status == "simulada" and "Pirapozinho: PR 81% (limite 70%)" in d.texto
+    assert s["whatsapp"] == [] and s["push"] == []
+
+
+async def test_o_resumo_atrasado_diz_a_hora_que_era(mundo):
+    db, renan, mw, s = mundo["db"], mundo["renan"], mundo["mw"], mundo["saidas"]
+    _janela(db, renan, T0)
+    mw.mon["pirapozinho"] = _mon(T0 + timedelta(minutes=50), energy_today_kwh=1000.0, capacity_kwp=3640.0)
+    auto.criar(db, renan, nome="Resumo", gatilho={"tipo": "horario", "hora": "11:30"}, acao={"tipo": "resumo_geracao"},
+               escopo={"usinas": [mundo["piraz"].id]}, agora=T0)
+    await auto.rodar_tique(db, T0 + timedelta(minutes=50))
+    assert "(era para 11:30: o servidor estava fora)" in s["whatsapp"][0]["texto"]

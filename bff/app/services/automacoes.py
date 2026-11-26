@@ -333,7 +333,7 @@ def segurados(db: Session, regra: Automacao) -> int:
     """Os avisos de ensaio que ficaram só no registro."""
     return int(db.scalar(select(func.count(AutomacaoDisparo.id)).where(
         AutomacaoDisparo.automacao_id == regra.id, AutomacaoDisparo.status == "simulada",
-        AutomacaoDisparo.evento != "teste")) or 0)
+        AutomacaoDisparo.evento.not_in(("teste", "nao_valeu")))) or 0)
 
 
 # ── a volta ─────────────────────────────────────────────────────────────────
@@ -346,6 +346,8 @@ class _Volta:
     lidos: dict = field(default_factory=dict)
     leituras: int = 0
     clientes: dict = field(default_factory=dict)
+    #: regra → os valores lidos que NÃO passaram na condição (o registro da volta em que nada saiu)
+    nao_valeu: dict = field(default_factory=dict)
 
 
 def pegar_devidas(db: Session, agora: datetime) -> list[int]:
@@ -383,7 +385,13 @@ async def rodar_tique(db: Session, agora: datetime | None = None) -> dict:
             regra = db.get(Automacao, id_)
             log.exception("automacoes: a regra %s falhou", id_)
             await _registrar_erro(db, regra, agora, e)
-            regra.proxima_em = agora + timedelta(minutes=5)
+            tipo = (regra.gatilho or {}).get("tipo")
+            if tipo == "horario":                          # a de horário vai à próxima hora marcada: tentar a cada
+                regra.proxima_em = proxima_execucao(regra.gatilho, agora)   # 5 min rodaria "a de hoje" de madrugada
+            elif tipo == "uma_vez" and agora - (_utc(regra.proxima_em) or agora) > ATRASO_MAX:
+                regra.situacao, regra.proxima_em = "concluida", None       # o lembrete que não sai em 1 h desiste
+            else:
+                regra.proxima_em = agora + timedelta(minutes=5)
         regra.rodando_ate = None
         regra.ultima_volta_em = agora
         db.commit()
@@ -659,6 +667,13 @@ async def _avaliar_leitura(db: Session, regra: Automacao, dono: User, volta: _Vo
             continue
         await _cegueira_resolvida(db, regra, dono, volta, alvos, f"{link.id}:*", link, teste)
         for a in amostras:
+            if teste is None:                              # desde quando a usina está acordada (o prazo da cegueira)
+                st0 = dict(alvos.get(a.chave) or {})
+                if a.dormindo:
+                    st0["acordada_em"] = None
+                elif not st0.get("acordada_em"):
+                    st0["acordada_em"] = volta.agora.isoformat()
+                alvos[a.chave] = st0
             if a.fora is None:
                 if teste is not None:
                     teste.append(f"{link.nome} · {a.alvo}: sem leitura fresca ({a.porque or 'sem dado'}"
@@ -740,13 +755,17 @@ async def _cegueira(db: Session, regra: Automacao, dono: User, volta: _Volta, al
         return
     st = dict(alvos.get(chave) or {})
     if dormindo:                                           # de noite o coletor dorme: o prazo recomeça de manhã
-        if not st.get("cega") and st.get("sem_dado_desde"):
-            st["sem_dado_desde"] = None
+        if not st.get("cega"):
+            st["sem_dado_desde"], st["acordada_em"] = None, None
             alvos[chave] = st
         return
-    # O prazo conta de quando a regra NOTOU a falta, acordada: ao nascer do sol o último dado é da véspera, e contar
-    # dele diria "cega" toda manhã antes de o coletor voltar. A frase diz a hora da última leitura que houve.
-    notou = _ts(st.get("sem_dado_desde")) or volta.agora
+    # O prazo conta da última leitura, mas nunca de antes de a usina acordar: ao nascer do sol o último dado é da
+    # véspera, e contar dele diria "cega" toda manhã antes de o coletor voltar. Durante o dia, ~20 min depois da última
+    # leitura. A frase diz a hora da última leitura que houve.
+    if not st.get("acordada_em"):
+        st["acordada_em"] = volta.agora.isoformat()
+    acordada = _ts(st["acordada_em"])
+    notou = max(ultima, acordada) if ultima else acordada
     st["sem_dado_desde"], st["porque"] = notou.isoformat(), porque
     prazo = CEGA["meuguarda"] if regra.gatilho.get("tipo") == "camera" else CEGA["leituras"]
     if not st.get("cega") and volta.agora - notou >= prazo:
@@ -928,6 +947,12 @@ async def _avaliar_horario(db: Session, regra: Automacao, dono: User, volta: _Vo
         if texto:
             await _disparar(db, regra, dono, evento="disparo", chave=f"h:{marcada.isoformat()}", agora=volta.agora,
                             texto=texto, rodape=not unica)
+        else:                                              # nada saiu, e fica escrito por quê (nada sem registro)
+            valores = "; ".join(volta.nao_valeu.get(regra.id) or []) or "a condição não valeu"
+            db.add(AutomacaoDisparo(automacao_id=regra.id, user_id=dono.id, evento="nao_valeu",
+                                    ensaio=regra.situacao == "ensaio", chave=f"nv:{marcada.isoformat()}",
+                                    texto=f"A condição não valeu, nada foi mandado: {valores}.", status="simulada"))
+            db.commit()
     if unica:
         regra.situacao = "concluida"
         regra.proxima_em = None
@@ -956,7 +981,8 @@ async def texto_da_acao(db: Session, regra: Automacao, dono: User, volta: _Volta
         corpo = await _rodar_ia(db, regra, dono, usinas, teste=teste)
     else:
         raise RegraInvalida(f"ação desconhecida: {tipo}")
-    return corpo + ("\n\n" + " ".join(notas) if notas else "")
+    return (corpo + ("\n\n" + " ".join(notas) if notas else "")
+            + (f"\n\n(era para {_hora(atrasada)}: o servidor estava fora)" if atrasada else ""))
 
 
 async def _usinas_que_passam(db: Session, regra: Automacao, dono: User, volta: _Volta,
@@ -983,6 +1009,8 @@ async def _usinas_que_passam(db: Session, regra: Automacao, dono: User, volta: _
                     break
                 limite = float(c.get("limite") or 0)
                 if not (pr * 100 < limite if (c.get("operador") or "<") == "<" else pr * 100 > limite):
+                    volta.nao_valeu.setdefault(regra.id, []).append(
+                        f"{u.nome}: PR {_n(pr * 100, 0)}% (limite {_n(limite, 0)}%)")
                     ok = False
                     break
             elif c["tipo"] == "os_aberta":
@@ -990,6 +1018,8 @@ async def _usinas_que_passam(db: Session, regra: Automacao, dono: User, volta: _
                 if not oss:
                     if oss is None:
                         notas.append(f"{u.nome}: não consegui conferir as OS no meuPlano.")
+                    else:
+                        volta.nao_valeu.setdefault(regra.id, []).append(f"{u.nome}: nenhuma OS aberta")
                     ok = False
                     break
         if ok:

@@ -31,7 +31,8 @@ AJUDA = {"ligada": "Os avisos saem para a pessoa.",
          "ensaio": "Só o 1º aviso sai para a pessoa; os outros ficam só no registro.",
          "pausada": "Não confere nem avisa.", "concluida": "O lembrete já tocou."}
 EVENTO = {"disparo": "Aviso", "voltou": "Voltou ao normal", "cega": "Ficou cega (sem dado)", "enxergou": "Voltou a ler",
-          "sem_dado": "Sem dado para conferir", "perdida": "Horário perdido", "erro": "Erro", "teste": "Teste"}
+          "sem_dado": "Sem dado para conferir", "perdida": "Horário perdido", "erro": "Erro", "teste": "Teste",
+          "nao_valeu": "A condição não valeu"}
 STATUS = {"enviada": "Enviado", "entregue": "Entregue na mensagem seguinte", "adiada": "Esperando a pessoa falar",
           "venceu": "Venceu sem chegar", "simulada": "Só no registro (ensaio)", "falhou": "Falhou",
           "recusada": "Recusado", "pendente": "Enviando"}
@@ -117,7 +118,7 @@ class MudarIn(BaseModel):
 
 def _status(d: AutomacaoDisparo) -> str:
     """O teste nunca manda nada: o rótulo diz só isso (o evento já diz "Teste")."""
-    return "Nada foi mandado" if d.evento == "teste" else STATUS.get(d.status, d.status)
+    return "Nada foi mandado" if d.evento in ("teste", "nao_valeu") else STATUS.get(d.status, d.status)
 
 
 def _da_empresa(db: Session, gerente: User, regra_id: int) -> Automacao:
