@@ -159,7 +159,20 @@ def _usina(ctx: Contexto, nome: str | None) -> dict:
         raise Recusa(f"O monitoramento (meuWatt) não respondeu agora: {ctx.mw_falha} Tente de novo em instantes.")
     if ctx.mw is None or not ctx.usinas:
         raise Recusa("Não há usina com monitoramento liberada para você no Gestão Solar.")
-    return escolher_usina(list(ctx.usinas.values()), nome)
+    todas = list(ctx.usinas.values())
+    try:
+        return escolher_usina(todas, nome)
+    except Recusa:
+        # o vocabulário que a pessoa ensinou ("PF é Porto Ferreira"): o SISTEMA acha a usina, não só a IA (Fase 2)
+        from app.services import memoria
+
+        dito = memoria.traduzir(getattr(ctx, "db", None), getattr(ctx, "user", None), nome)
+        if dito:
+            try:
+                return escolher_usina(todas, dito)
+            except Recusa:
+                pass
+        raise
 
 
 def escolher_usina(todas: list[dict], nome: str | None) -> dict:

@@ -120,12 +120,17 @@ async def test_criar_lembrete_pelo_bot_pede_o_sim_e_so_grava_depois(db, renan):
     assert regra.gatilho["tipo"] == "uma_vez" and regra.acao == {"tipo": "mensagem", "texto": "ver a geração"}
 
 
-async def test_cliente_nao_pede_analise_de_ia_na_automacao(db, renan):
+async def test_cliente_pede_analise_de_ia_na_automacao_e_so_ele_recebe(db, renan):
+    """Decisão do Renan (26/11/2026): o dono de usina cria regra com IA, só para ele."""
     renan.perfil = Perfil.CLIENTE
     db.commit()
-    with pytest.raises(ger.Recusa, match="equipe da O&M"):
-        await bot.criar_automacao(_ctx(db, renan), {"tipo": "lembrete", "texto": "analisa a geração", "dia": "amanha",
+    r = await bot.criar_automacao(_ctx(db, renan), {"tipo": "lembrete", "texto": "analisa a geração", "dia": "amanha",
                                                      "hora": "12:00", "acao": "ia"})
+    assert r.get("proposta_pendente", "").startswith("Criar a regra")
+    await helper.PENDENTES[renan.id].executar(db, renan, renan.telefone)
+    regra = db.query(Automacao).one()
+    assert regra.user_id == renan.id and regra.acao["tipo"] == "ia"
+    assert regra.situacao == "ensaio"                                  # regra de IA nasce em ensaio, de quem for
 
 
 async def test_listar_e_pausar_pelo_bot(db, renan):
@@ -155,3 +160,39 @@ async def test_analise_do_pr_sem_hora_dita_roda_as_18h30(db, renan):
                                                "pr_abaixo_de": 75, "usinas": ["Ibitinga"]})
     assert plano["gatilho"]["hora"] == "18:30" and plano["situacao"] == "ensaio"
     assert plano["condicoes"] == [{"tipo": "pr_dia", "operador": "<", "limite": 75.0}]
+
+
+def test_sem_a_parte_helper_o_prompt_diz_o_motivo_e_nao_que_falta_ferramenta(db, renan):
+    """O Marlon (26/11/2026) pediu "Destrave" sem a parte helper e ouviu "não tenho ferramenta de comando de
+    tracker". O motivo certo: comandar equipamento não está liberado para ele; quem libera é o gerente."""
+    renan.bot_helper = False
+    db.commit()
+    sem = assistente._sistema(_ctx(db, renan))
+    assert "Comandar equipamento não está liberado para você" in sem and "oem-gs › Bot do WhatsApp" in sem
+    assert "usina_helper" not in assistente.permitidas(renan)
+    assert assistente._texto_do_helper(["usina_helper"]) == ""       # com a parte liberada, a linha não entra
+
+
+def test_o_vocabulario_da_pessoa_acha_a_usina(db, renan):
+    """Fase 2: "PF" que a pessoa ensinou acha Porto Ferreira pelo SISTEMA, e só o vocabulário dela."""
+    from types import SimpleNamespace
+
+    from app.services import memoria
+
+    usinas = {"porto-ferreira": {"nome": "Porto Ferreira", "slug": "porto-ferreira"},
+              "tiete": {"nome": "Tietê", "slug": "tiete"}}
+    ctx = SimpleNamespace(db=db, user=renan, mw=object(), mw_falha=None, usinas=usinas)
+    with pytest.raises(ger.Recusa, match="Não achei 'PF'"):
+        ger._usina(ctx, "PF")                                          # sem ensinar, segue não achando
+    memoria.gravar(db, renan, "vocabulario", "PF é Porto Ferreira")
+    memoria.gravar(db, renan, "anotacao", "TT é Tietê")                # anotação não é vocabulário
+    db.commit()
+    assert memoria.traduzir(db, renan, "pf") == "Porto Ferreira"
+    assert ger._usina(ctx, "PF")["slug"] == "porto-ferreira"
+    assert ger._usina(ctx, "tiete")["slug"] == "tiete"                 # o nome direto continua valendo primeiro
+    with pytest.raises(ger.Recusa):
+        ger._usina(ctx, "TT")
+    memoria.gravar(db, renan, "vocabulario", "XX = Usina que não existe")
+    db.commit()
+    with pytest.raises(ger.Recusa, match="Não achei 'XX'"):            # a recusa fala do que a pessoa disse
+        ger._usina(ctx, "XX")

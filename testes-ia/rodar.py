@@ -139,6 +139,8 @@ def _passou(caso: dict, r: dict) -> bool:
     (`ou_sem_ferramenta`: responder direto também vale)."""
     if r.get("erro"):
         return False
+    if caso.get("diz") and not any(t.lower() in (r.get("texto") or "").lower() for t in caso["diz"]):
+        return False                                        # `diz`: a resposta traz ao menos um destes trechos
     if not r["ferramentas"]:
         return not caso["espera"] or caso.get("ou_sem_ferramenta", False)
     return bool(set(r["ferramentas"]) & set(caso["espera"])) and _argumentos_certos(caso, r)
@@ -219,6 +221,7 @@ def main() -> None:
             erros += not ok
             print(f"{'OK  ' if ok else 'ERRO'} | {caso['frase'][:70]} | esperado {caso['espera'] or 'sem ferramenta'}"
                   f" | chamou {r['ferramentas'] or 'nada'}" + ("" if ok else f" | {r.get('erro') or r['texto'][:200]}"
+                  + (f" | devia dizer um de {caso['diz']}" if caso.get("diz") else "")
                   + "".join(f" | {c['nome']}: {c['dados'][:200]}" for c in r.get("chamadas", [])
                             if c["nome"] in (caso.get("argumentos") or {}))))
             continue

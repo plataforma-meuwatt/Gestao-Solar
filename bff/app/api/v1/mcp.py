@@ -50,7 +50,7 @@ from app.core.tokens_produto import NOME
 from app.models.integracao import Produto
 from app.models.mcp import TokenMcp
 from app.models.user import User
-from app.services import assistente_meuguarda, assistente_termovision, vinculos
+from app.services import assistente_automacoes, assistente_meuguarda, assistente_termovision, memoria, vinculos
 
 router = APIRouter(tags=["Conector do Claude"])
 
@@ -444,6 +444,38 @@ MEUGUARDA: dict[str, tuple[str, dict]] = {
 }
 
 
+# As regras e a memória da PRÓPRIA pessoa (Plano Assistente GS, Fase 2: "Conector do Claude: minhas regras e minha
+# memória"). Moram aqui, não em outro sistema; só leitura: criar, pausar, lembrar e esquecer seguem no bot.
+_SEM_PARAMETROS = {"type": "object", "properties": {}}
+GS: dict[str, tuple[str, dict]] = {
+    "minhas_regras": ("As AUTOMAÇÕES desta pessoa no Gestão Solar (lembretes, avisos de horário, de leitura e de gente "
+                      "na usina): o número de cada regra, quando roda, a situação (ligada, ensaio, pausada), a próxima "
+                      "execução, o último aviso e se está cega. Só leitura: criar ou mexer é pelo bot do WhatsApp.",
+                      _SEM_PARAMETROS),
+    "minha_memoria": ("O que esta pessoa pediu para o bot do Gestão Solar LEMBRAR (instruções, vocabulário, anotações). "
+                      "É contexto dela, não fato dos sistemas. Só leitura: gravar ou esquecer é pelo bot do WhatsApp.",
+                      _SEM_PARAMETROS),
+}
+
+
+def _tem_gs(usuario: User) -> bool:
+    """Quem usa o bot tem regras e memória (as mesmas ferramentas do bot: `assistente.permitidas`)."""
+    return bool(usuario.bot_ativo)
+
+
+async def _chamar_gs(db: Session, usuario: User, ferramenta: str) -> dict:
+    if ferramenta == "minhas_regras":
+        r = await assistente_automacoes.minhas_automacoes(SimpleNamespace(user=usuario, db=db), {})
+        return _texto({"regras": r["regras"], "como_mexer": "Pelo bot do WhatsApp do Gestão Solar: «pausa a regra N», "
+                       "«liga a regra N», «apaga a regra N», «testa a regra N», ou peça uma nova."})
+    if ferramenta == "minha_memoria":
+        itens = [{"n": i["n"], "tipo": memoria.TIPOS.get(i["tipo"], i["tipo"]), "texto": i["texto"]}
+                 for i in memoria.listar(db, usuario)]
+        return _texto({"itens": itens, "nota": "O que a pessoa pediu para lembrar: é contexto dela, não fato. Para "
+                       "gravar ou esquecer, pelo bot do WhatsApp: «lembre que…», «esquece o N»."})
+    return _erro(f"Ferramenta desconhecida: gs_{ferramenta}")
+
+
 def _texto(dado: dict) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(dado, ensure_ascii=False, default=str)}],
             "isError": bool(isinstance(dado, dict) and dado.get("erro"))}
@@ -524,11 +556,17 @@ async def _ferramentas(db: Session, usuario: User) -> list[dict]:
     listas = await asyncio.gather(*(de(s) for s in ativos if s in SERVICOS))
     locais = [{"name": f"meuguarda_{n}", "description": f"[meuGuarda] {d}", "inputSchema": esquema}
               for n, (d, esquema) in MEUGUARDA.items()] if "meuguarda" in ativos else []
-    return [t for lista in listas for t in lista] + locais
+    da_casa = [{"name": f"gs_{n}", "description": f"[Gestão Solar] {d}", "inputSchema": esquema}
+               for n, (d, esquema) in GS.items()] if _tem_gs(usuario) else []
+    return [t for lista in listas for t in lista] + locais + da_casa
 
 
 async def _chamar(db: Session, usuario: User, nome: str, args: Any) -> dict:
     servico, _, ferramenta = nome.partition("_")
+    if servico == "gs":
+        if not _tem_gs(usuario):
+            return _erro("Gestão Solar: esta conta não usa o bot (o gerente da O&M libera em Bot do WhatsApp).")
+        return await _chamar_gs(db, usuario, ferramenta)
     if servico == "meuguarda":
         if servico not in servicos(usuario):
             return _erro("meuGuarda: esta conta não tem o acesso às câmeras liberado no Gestão Solar (o gerente da O&M "
@@ -577,6 +615,9 @@ async def _instrucoes(db: Session, usuario: User) -> str:
         partes.append("meuGuarda (ferramentas meuguarda_…): as câmeras de segurança (CFTV) das usinas — o estado e os "
                       "alarmes abertos (meuguarda_cameras), os eventos de um período (meuguarda_eventos) e a foto de "
                       "agora (meuguarda_foto). O ao vivo e as ações ficam no aplicativo do meuGuarda e no bot.")
+    if _tem_gs(usuario):
+        partes.append("Gestão Solar (ferramentas gs_…): as automações da própria pessoa (gs_minhas_regras) e o que ela "
+                      "pediu para o bot lembrar (gs_minha_memoria). Só leitura; criar e mexer é pelo bot do WhatsApp.")
     if not partes:
         return INSTRUCOES + "\n\nEsta conta não tem nenhum serviço liberado para consulta: o gerente da O&M libera " \
                             "em Usuários (oem-gs)."

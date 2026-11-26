@@ -119,6 +119,24 @@ def esquecer_tudo(db: Session, user) -> int:
     return n
 
 
+_VOCABULO = re.compile(r"^(?P<termo>.{1,40}?)(?:\s*[=:]\s*|\s+(?:é|significa|quer dizer)\s+)(?:a |o |as |os )?(?P<e>.{2,80})$", re.I)
+
+
+def traduzir(db: Session | None, user, termo: str | None) -> str | None:
+    """O que a pessoa ensinou que um termo quer dizer ("PF é Porto Ferreira" → "Porto Ferreira"), ou None. Só os
+    itens de VOCABULÁRIO, o mais novo vence. É o sistema garantindo o que a IA só "tendia" a traduzir (Fase 2)."""
+    if db is None or user is None or getattr(user, "id", None) is None or not (termo or "").strip():
+        return None
+    alvo = _limpo(termo).casefold()
+    for i in reversed(listar(db, user)):
+        if i["tipo"] != "vocabulario":
+            continue
+        m = _VOCABULO.match(i["texto"].strip().rstrip("."))
+        if m and _limpo(m["termo"]).casefold() == alvo:
+            return _limpo(m["e"])
+    return None
+
+
 def bloco(db: Session | None, user) -> str:
     """O pedaço do prompt: vazio sem memória. Os mais novos primeiro, até `TETO_PROMPT`; o resto é contado."""
     if db is None or user is None or getattr(user, "id", None) is None:

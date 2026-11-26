@@ -69,8 +69,8 @@ OS_ABERTA = ("ABERTA", "PROGRAMADA", "EM_EXECUCAO")
 DIAS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
 GRANDEZAS = {"tensao_rele": "tensão do relé", "temperatura_trafo": "temperatura do trafo",
              "usina_parada": "usina parada"}
-#: Quem pode pedir análise de IA numa automação (a ponte da IA é cara e lenta): a equipe, não o cliente (Fase 1).
-EQUIPE = (Perfil.GESTOR_EMPRESA, Perfil.TECNICO)
+#: Análise de IA numa automação: qualquer pessoa que usa o bot, só para ela (decisão do Renan, 26/11/2026; até a
+#: Fase 1 era só a equipe). O freio é o teto por pessoa por dia (`IA_POR_DIA`).
 
 #: A prova de vida do motor desde o último deploy (a tela mostra): o log da API não mostra os registros do motor.
 ULTIMA_VOLTA: datetime | None = None
@@ -1099,8 +1099,6 @@ AVISO_AUTOMACAO = ("\n\n[sistema] Esta mensagem é uma AUTOMAÇÃO que a própri
 async def _rodar_ia(db: Session, regra: Automacao, dono: User, usinas: list[PlantLink], teste: bool = False) -> str:
     from app.services import assistente, assistente_geracao as ger
 
-    if dono.perfil not in EQUIPE:
-        raise RegraInvalida("a análise da IA nas automações é da equipe da O&M")
     if _ia_hoje(db, dono, _agora()) >= IA_POR_DIA:
         raise RegraInvalida(f"passou de {IA_POR_DIA} análises da IA hoje; volta amanhã")
     ctx = ger.Contexto(db=db, user=dono, telefone=dono.telefone or "", automacao=True)

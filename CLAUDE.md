@@ -531,8 +531,9 @@ vai ter memória e instruções, por usuário". O plano (fases, perguntas e padr
 - **Quem tem regra de usina parada LIGADA sai do aviso de parada antigo** (`avisos.paradas_por_usuario`): é o "todas
   menos a usina X" sem aviso em dobro.
 - **A IA de uma automação só lê**: `ctx.automacao` faz `helper.propor` recusar toda ação, e ela não recebe as
-  ferramentas de automação nem de memória (`assistente_automacoes.SO_NA_CONVERSA`); só a equipe (gerente, técnico)
-  pede IA numa regra; 20 por pessoa por dia.
+  ferramentas de automação nem de memória (`assistente_automacoes.SO_NA_CONVERSA`); qualquer pessoa que usa o bot pede
+  IA numa regra, só para ela (decisão do Renan, 26/11/2026: o dono de usina também; até a Fase 1 era só a equipe);
+  20 por pessoa por dia.
 - **Memória** (`services/memoria.py`, `gs_bot_memorias`, cifrada): só o que a pessoa pediu ("lembre que…"); entra no
   `_sistema` como CONTEXTO da pessoa, nunca fato (a REGRA 1 segue). Recusa senha e instrução que mude as regras do
   sistema ("não precisa pedir Sim"). "Anota que o Diogo trabalhou…" é o dia de trabalho do meuPlano, não memória (caso
@@ -540,6 +541,12 @@ vai ter memória e instruções, por usuário". O plano (fases, perguntas e padr
 - Bot: `services/assistente_automacoes.py` (`criar_automacao` com Sim, `minhas_automacoes`, `mexer_automacao`,
   `memoria`); a hora do lembrete é contada pelo servidor (`quando_do_lembrete`), nunca pela IA. Tela do gerente:
   `api/v1/empresa_automacoes.py` (oem-gs › Automações).
+- **Conector do Claude** (Fase 2): `gs_minhas_regras` e `gs_minha_memoria` (`api/v1/mcp.py`, `GS`), só leitura e só da
+  própria pessoa, para quem usa o bot; criar e mexer segue no bot.
+- **Sem a parte helper, o bot diz o motivo** (o Marlon, 26/11/2026: pediu "Destrave" e ouviu "não tenho ferramenta de
+  comando de tracker"): `assistente._SEM_HELPER` entra no `_sistema` de quem não tem `usina_helper` e manda responder
+  "Comandar equipamento não está liberado para você. Peça ao gerente da O&M (oem-gs › Bot do WhatsApp)". No banco de
+  perguntas, o campo `diz` confere um trecho da RESPOSTA (`testes-ia/rodar.py`), além da ferramenta.
 
 ### O GS é o autenticador da família, e guarda cada acesso (Plano Casa GS, 24/11/2026)
 

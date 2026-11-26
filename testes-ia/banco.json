@@ -3224,5 +3224,27 @@
       "grafico_de_series"
     ],
     "origem": "log #754"
+  },
+  {
+    "frase": "Destrave",
+    "espera": [],
+    "sem": [
+      "bot_helper"
+    ],
+    "diz": [
+      "não está liberado"
+    ],
+    "origem": "o Marlon, 26/11 (sem a parte helper, o bot dizia que não tinha ferramenta de tracker)"
+  },
+  {
+    "frase": "Destrava o tracker de Ibitinga",
+    "espera": [],
+    "sem": [
+      "bot_helper"
+    ],
+    "diz": [
+      "não está liberado"
+    ],
+    "origem": "o Marlon, 26/11 (o mesmo caso, com a usina dita)"
   }
 ]

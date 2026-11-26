@@ -137,6 +137,11 @@ def _token(http, **kw):
     return r.json()["access_token"]
 
 
+def _dos_sistemas(http, token):
+    """As ferramentas dos outros sistemas (as da casa, `gs_…`, têm o teste delas no fim)."""
+    return [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"] if not t["name"].startswith("gs_")]
+
+
 def _rpc(http, token, metodo, params=None):
     r = http.post("/mcp", json={"jsonrpc": "2.0", "id": 9, "method": metodo, "params": params or {}},
                   headers={"Authorization": f"Bearer {token}"})
@@ -205,7 +210,7 @@ def test_le_os_dois_sistemas_com_o_token_dela(http, db, fernando, produtos):
     ini = _rpc(http, token, "initialize").json()["result"]
     assert ini["serverInfo"]["name"] == "Gestão Solar" and "Use o monitoramento." in ini["instructions"] \
         and "Abra a manutenção antes." in ini["instructions"]  # o cliente lê o serviço, nunca o produto
-    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    nomes = _dos_sistemas(http, token)
     assert nomes == ["monitoramento_geracao", "manutencao_listar_os"]
     res = _rpc(http, token, "tools/call", {"name": "manutencao_listar_os", "arguments": {"usina": 3}}).json()["result"]
     assert res["content"][0]["text"] == "meuplano:ok"
@@ -217,7 +222,7 @@ def test_so_o_que_o_gerente_liberou(http, db, fernando, produtos):
     token = _token(http)
     fernando.bot_meuplano = False
     db.commit()
-    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    nomes = _dos_sistemas(http, token)
     assert nomes == ["monitoramento_geracao"]
     res = _rpc(http, token, "tools/call", {"name": "manutencao_listar_os"}).json()["result"]
     assert res["isError"] and "liberado" in res["content"][0]["text"]
@@ -227,7 +232,7 @@ def test_sistema_fora_vira_ferramenta_que_avisa(http, db, fernando, produtos):
     _p, estado = produtos
     token = _token(http)
     estado["mp_fora"] = True
-    ferramentas = _rpc(http, token, "tools/list").json()["result"]["tools"]
+    ferramentas = [t for t in _rpc(http, token, "tools/list").json()["result"]["tools"] if not t["name"].startswith("gs_")]
     assert [t["name"] for t in ferramentas] == ["monitoramento_geracao", "manutencao_indisponivel"]
     assert "não respondeu" in ferramentas[1]["description"]
     res = _rpc(http, token, "tools/call", {"name": "manutencao_indisponivel"}).json()["result"]
@@ -295,7 +300,7 @@ def cameras(monkeypatch, db, fernando):
 
 def test_as_cameras_entram_com_o_acesso_ao_meuguarda(http, db, fernando, produtos, cameras):
     token = _token(http)
-    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    nomes = _dos_sistemas(http, token)
     assert nomes[-3:] == ["meuguarda_cameras", "meuguarda_eventos", "meuguarda_foto"]
     assert not any("ver" in n or "alarme_" in n or "classificar" in n for n in nomes)  # sem o ao vivo e sem ação
     estado = _rpc(http, token, "tools/call", {"name": "meuguarda_cameras"}).json()["result"]
@@ -313,7 +318,39 @@ def test_sem_o_acesso_ao_meuguarda_as_cameras_nao_abrem(http, db, fernando, prod
     token = _token(http)
     fernando.meuguarda_liberado = False
     db.commit()
-    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    nomes = _dos_sistemas(http, token)
     assert not any(n.startswith("meuguarda_") for n in nomes)
     res = _rpc(http, token, "tools/call", {"name": "meuguarda_foto", "arguments": {"camera": "térmica 2"}}).json()["result"]
     assert res["isError"] and "câmeras" in res["content"][0]["text"]
+
+
+
+def test_as_regras_e_a_memoria_da_propria_pessoa_so_leitura(http, db, fernando, produtos):
+    """Plano Assistente GS, Fase 2: o conector lê "minhas regras" e "minha memória" (criar e mexer segue no bot)."""
+    import json
+    from datetime import datetime
+
+    from app.services import automacoes as auto
+    from app.services import memoria
+
+    outra = User(apelido="vizinha", nome="Vizinha", email="v@x.com", senha_hash="x", perfil=Perfil.CLIENTE)
+    db.add(outra)
+    db.commit()
+    auto.criar(db, fernando, nome="Resumo da geração às 19:00", gatilho={"tipo": "horario", "hora": "19:00"},
+               acao={"tipo": "resumo_geracao"}, escopo={"todas": True}, agora=datetime.now(auto.BRT))
+    auto.criar(db, outra, nome="Regra da vizinha", gatilho={"tipo": "horario", "hora": "07:00"},
+               acao={"tipo": "resumo_geracao"}, escopo={"todas": True}, agora=datetime.now(auto.BRT))
+    memoria.gravar(db, fernando, "vocabulario", "PF é Porto Ferreira")
+    memoria.gravar(db, outra, "anotacao", "coisa da vizinha")
+    db.commit()
+
+    token = _token(http)
+    nomes = [t["name"] for t in _rpc(http, token, "tools/list").json()["result"]["tools"]]
+    assert nomes[-2:] == ["gs_minhas_regras", "gs_minha_memoria"]
+    regras = json.loads(_rpc(http, token, "tools/call", {"name": "gs_minhas_regras"}).json()["result"]["content"][0]["text"])
+    assert [r["nome"] for r in regras["regras"]] == ["Resumo da geração às 19:00"]        # só as dela
+    mem = json.loads(_rpc(http, token, "tools/call", {"name": "gs_minha_memoria"}).json()["result"]["content"][0]["text"])
+    assert mem["itens"] == [{"n": 1, "tipo": "vocabulário", "texto": "PF é Porto Ferreira"}]
+    assert "gs_minhas_regras" in _rpc(http, token, "initialize").json()["result"]["instructions"]
+    assert _rpc(http, token, "tools/call", {"name": "gs_apagar_tudo"}).json()["result"]["isError"]
+

@@ -190,7 +190,7 @@ FERRAMENTA_CRIAR = _f(
      "limite": {"type": "number", "description": "V na tensão, °C na temperatura (só se a pessoa disse)"},
      "duracao_min": {"type": "integer", "description": "'por mais de 10 min' = 10"},
      "acao": {"type": "string", "enum": ["mensagem", "resumo_geracao", "ia"],
-              "description": "resumo_geracao = o resumo da geração de hoje, sem IA; ia = a IA analisa (só a equipe)"},
+              "description": "resumo_geracao = o resumo da geração de hoje, sem IA; ia = a IA analisa"},
      "pr_abaixo_de": {"type": "number", "description": "condição: só se o PR do dia ficar abaixo deste % (ex.: 70)"},
      "so_com_os_aberta": {"type": "boolean", "description": "gente na usina: só avisa com OS aberta (padrão: sim)"},
      "canais": {"type": "array", "items": {"type": "string", "enum": ["whatsapp", "push"]}},
@@ -310,8 +310,6 @@ async def _montar(ctx, a: dict) -> dict:
         canais = canais or ["whatsapp", "push"]
     else:
         raise Recusa("Que tipo de automação? Lembrete, horário, leitura ou gente na usina: pergunte.")
-    if acao.get("tipo") == "ia" and ctx.user.perfil not in auto.EQUIPE:
-        raise Recusa("A análise da IA nas automações é da equipe da O&M. Posso mandar o resumo da geração sem IA.")
     if acao.get("tipo") == "ia":
         situacao = "ensaio"
     return {"nome": nome, "gatilho": gatilho, "condicoes": condicoes, "escopo": escopo, "acao": acao,

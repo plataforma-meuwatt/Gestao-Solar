@@ -991,6 +991,19 @@ _SEM_CAMERAS = """- CÂMERA de segurança (CFTV, meuGuarda): não está liberada
 
 
 
+#: Sem a parte helper, a IA dizia "não tenho ferramenta de comando de tracker" (o Marlon, 26/11/2026: "Destrave"). O
+#: motivo certo é que comandar equipamento não está liberado para a pessoa, e quem libera é o gerente.
+_SEM_HELPER = """- COMANDAR ou LER EQUIPAMENTO AO VIVO (ligar, desligar, religar, rearmar, resetar, destravar ou mover tracker,
+  gravar ou ler registrador, ler o relé ou o inversor agora) é o helper, e ele NÃO está liberado para esta pessoa.
+  Responda só: "Comandar equipamento não está liberado para você. Peça ao gerente da O&M
+  (oem-gs › Bot do WhatsApp)." Nunca diga que não tem a ferramenta ou que não consegue: o motivo é a liberação. Não
+  chame outra ferramenta no lugar."""
+
+
+def _texto_do_helper(nomes: list[str]) -> str:
+    return "" if "usina_helper" in nomes else _SEM_HELPER + chr(10)
+
+
 def _texto_das_cameras(nomes: list[str]) -> str:
     return (_SEM_CAMERAS if "cameras" not in nomes else _CAMERAS if "alarme_cameras" in nomes else _CAMERAS_SO_LER)
 
@@ -1137,7 +1150,7 @@ de memória.
 - Arquivo/gráfico com `enviado_no_chat: true` já chegou: só confirme, não repita link.
 - Se uma ferramenta disser que a VPN das usinas está parada (ou que o helper está fora), não tente outra rota: diga
   isso à pessoa, com desde quando.
-{_texto_das_cameras(permitidas(ctx.user))}
+{_texto_do_helper(permitidas(ctx.user))}{_texto_das_cameras(permitidas(ctx.user))}
 - Fora dessas áreas, diga com gentileza que não consegue ajudar. Assunto de usina ou de O&M (procedimento, manual,
   configuração, contato, e-mail de concessionária) que a geração e o helper não respondem vai ao meuPlano
   (`manutencao`) ANTES de você dizer que não sabe."""
