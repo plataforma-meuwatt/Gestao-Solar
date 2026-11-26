@@ -49,6 +49,8 @@ class RegraOut(BaseModel):
     dono_apelido: str
     nome: str
     quando: str
+    #: horario | uma_vez | leitura | camera — só horário e lembrete têm "próxima vez"
+    gatilho_tipo: str
     situacao: str
     situacao_rotulo: str
     texto_original: str | None
@@ -66,6 +68,8 @@ class MotorOut(BaseModel):
     ligado: bool
     #: a última volta deste processo (desde o último deploy); None = ainda não deu a primeira
     ultima_volta: datetime | None
+    #: a hora do servidor agora: a tela compara a última volta com ela, não com o relógio do navegador
+    agora: datetime
 
 
 class ListaOut(BaseModel):
@@ -112,9 +116,12 @@ def _saida(db: Session, regra: Automacao, donos: dict[int, User]) -> RegraOut:
     dono = donos.get(regra.user_id)
     return RegraOut(
         id=regra.id, dono=dono.nome if dono else "—", dono_apelido=dono.apelido if dono else "—", nome=regra.nome,
-        quando=auto.descrever(regra), situacao=regra.situacao,
-        situacao_rotulo=SITUACAO.get(regra.situacao, regra.situacao), texto_original=regra.texto_original,
-        proxima_em=auto._utc(regra.proxima_em) if regra.situacao in ("ligada", "ensaio") else None,
+        quando=auto.descrever(regra), gatilho_tipo=str((regra.gatilho or {}).get("tipo") or ""),
+        situacao=regra.situacao, situacao_rotulo=SITUACAO.get(regra.situacao, regra.situacao),
+        texto_original=regra.texto_original,
+        # a "próxima vez" só existe no horário e no lembrete; na leitura é só a próxima conferência do motor
+        proxima_em=(auto._utc(regra.proxima_em) if regra.situacao in ("ligada", "ensaio")
+                    and (regra.gatilho or {}).get("tipo") in ("horario", "uma_vez") else None),
         ultima_volta_em=auto._utc(regra.ultima_volta_em),
         ultimo_disparo=UltimoDisparoOut(em=auto._utc(d.em), evento=d.evento, evento_rotulo=EVENTO.get(d.evento, d.evento),
                                         status=d.status, status_rotulo=STATUS.get(d.status, d.status)) if d else None,
@@ -130,7 +137,7 @@ def listar(db: Session = Depends(get_db), gerente: User = Depends(gestor_empresa
     s = get_settings()
     return ListaOut(regras=[_saida(db, r, donos) for r in regras],
                     motor=MotorOut(ligado=s.gs_motor_minutos > 0 and not s.gs_automacoes_desligadas,
-                                   ultima_volta=auto.ULTIMA_VOLTA))
+                                   ultima_volta=auto.ULTIMA_VOLTA, agora=auto._agora()))
 
 
 @router.patch("/{regra_id}", response_model=RegraOut)
