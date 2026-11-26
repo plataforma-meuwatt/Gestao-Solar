@@ -1035,6 +1035,45 @@ export const dadosDaUsina = (id: number) =>
 export const salvarDadosDaUsina = (id: number, dados: MudancaDeDados) =>
   apiEmpresa.patch<DadosDaUsina>(`/usinas/${id}/dados`, dados).then((r) => r.data)
 
+/** Um dispositivo do índice (a POSIÇÃO do equipamento na usina) com o nó do meuPlano dele. */
+export type DispositivoDaUsina = {
+  gd: number
+  /** O número no GS, como a tela mostra (GD-000021). */
+  codigo: string
+  tipo: string
+  tipo_rotulo: string
+  nome: string
+  /** Falso = não veio na última lista do meuWatt (a posição fica). */
+  ativo: boolean
+  /** O nó já gravado; `rotulo` nulo quando o meuPlano não foi lido agora. */
+  no: { id: number; rotulo: string | null } | null
+  /** O nó que o GS propõe, com o porquê. Nunca é gravado sem a pessoa salvar. */
+  sugestao: { node_id: number; base: 'numero' | 'ordem'; motivo: string } | null
+  filhos: DispositivoDaUsina[]
+}
+
+export type NoCandidato = { id: number; codigo: string; nome: string; local: string; rotulo: string }
+
+export type EquipamentosDaUsina = {
+  usina_id: number
+  usina_codigo: string
+  usina_nome: string
+  dispositivos: DispositivoDaUsina[]
+  /** Os nós do meuPlano que podem ser cada tipo de dispositivo (transformador, inversor). */
+  candidatos: Record<string, NoCandidato[]>
+  /** Falso = os nós não vieram agora; `aviso` diz por quê. */
+  meuplano_lido: boolean
+  aviso: string | null
+  ligados: number
+  total: number
+}
+
+export const equipamentosDaUsina = (id: number) =>
+  apiEmpresa.get<EquipamentosDaUsina>(`/usinas/${id}/dispositivos`).then((r) => r.data)
+
+export const salvarNosDosEquipamentos = (id: number, nos: { gd: number; node_id: number | null }[]) =>
+  apiEmpresa.put<EquipamentosDaUsina>(`/usinas/${id}/dispositivos/nos`, { nos }).then((r) => r.data)
+
 export type UsinaAConfirmar = {
   id: number
   /** O sistema onde ela foi criada (TermoVision, meuPlano, meuWatt). */

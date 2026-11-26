@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react'
 
 import { Cartao, Carregando, Erro, Pagina, Selo, Vazio } from '@/components/base'
 import { DadosDaUsina, UsinasAConfirmar } from '@/features/empresa/DadosDaUsina'
+import { Equipamentos } from '@/features/empresa/Equipamentos'
 import {
   catalogoDeUsinas,
   mostrarTodasAsUsinas,
@@ -190,6 +191,7 @@ function LinhaUsina({
   useEffect(() => setNome(linha.nome), [linha.nome])
   const [casando, setCasando] = useState(false)
   const [vendoDados, setVendoDados] = useState(false)
+  const [vendoEquipamentos, setVendoEquipamentos] = useState(false)
   const [alvo, setAlvo] = useState<string>('')
   const jaEstaAqui = linha.plant_link_id !== null
   // Casar vale para a usina do meuWatt que ainda não tem par: é dela que sai o `mp_usina_id`.
@@ -234,7 +236,7 @@ function LinhaUsina({
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {jaEstaAqui ? (
             <>
               <Selo tom={linha.no_app ? 'ok' : 'sem-dados'}>
@@ -281,10 +283,16 @@ function LinhaUsina({
               {vendoDados ? 'Fechar os dados' : 'Endereço e coordenada'}
             </button>
           ) : null}
+          {jaEstaAqui ? (
+            <button className="btn-fantasma" onClick={() => setVendoEquipamentos((v) => !v)}>
+              {vendoEquipamentos ? 'Fechar os equipamentos' : 'Equipamentos'}
+            </button>
+          ) : null}
         </div>
       </div>
 
       {vendoDados && linha.plant_link_id !== null ? <DadosDaUsina usinaId={linha.plant_link_id} /> : null}
+      {vendoEquipamentos && linha.plant_link_id !== null ? <Equipamentos usinaId={linha.plant_link_id} /> : null}
 
       {/* Casar é dizer "esta usina do meuWatt é aquela do meuPlano". A sugestão ordena e
           diz POR QUE ("mesmo nome", "a 300 m"); quem decide é quem lê — um par errado
