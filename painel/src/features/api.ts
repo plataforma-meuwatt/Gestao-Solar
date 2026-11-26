@@ -1014,6 +1014,8 @@ export type Proprietaria = {
   ativa: boolean
   usinas: ItemDaProprietaria[]
   pessoas: ItemDaProprietaria[]
+  /** só na criação: o que não deu certo no meuPlano */
+  aviso?: string | null
 }
 
 export const proprietarias = () => apiEmpresa.get<Proprietaria[]>('/proprietarias').then((r) => r.data)

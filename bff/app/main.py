@@ -106,6 +106,7 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
     from app.services import motor
 
     await asyncio.sleep(_FOLEGO_DO_BOOT_S)
+    conferido_em = None
 
     while True:
         # O MICRO é aquecido ANTES da espera, e os avisos depois. A leitura ao vivo dele
@@ -171,6 +172,22 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
             raise
         except Exception:  # noqa: BLE001
             _log.exception("cadastro/sincronizar: a volta falhou; a próxima continua agendada")
+
+        # A conferência diária (docs/USINA_NASCE_NO_GS.md, fase 5): usina do meuWatt/meuPlano que não está no GS vai à
+        # fila "A confirmar" do oem-gs. Uma vez por dia (a 1ª volta do dia, e a do deploy).
+        from datetime import UTC, datetime
+        hoje = datetime.now(UTC).date()
+        if conferido_em != hoje:
+            try:
+                from app.services import conferencia
+                with SessionLocal() as db:
+                    r = await conferencia.conferir_todas(db)
+                conferido_em = hoje
+                _log.info("conferencia: %s", {e: len(n) for e, n in r.items()})
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _log.exception("conferencia: a volta falhou; tenta na próxima")
 
 
 @asynccontextmanager

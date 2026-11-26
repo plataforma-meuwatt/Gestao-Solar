@@ -22,11 +22,11 @@ sistemas; criar num sistema registra no GS (a parecida espera o gerente em oem-g
    `gs_plant_links` e, com o token da EMPRESA, no meuPlano (`POST /meuacesso/usinas/` com `owner_id` = o
    `mp_owner_id` da proprietária); o `mp_usina_id` volta e fica gravado. O meuWatt entra quando a usina ganha
    coletor (lá a usina sem coletor não tem o que medir): o GS mostra "falta no meuWatt" até lá.
-2. **Proprietária nova no GS** cria a organização PROPRIETARIA no meuPlano e grava o `mp_owner_id`.
-3. **meuPlano → GS sempre**: registrar a usina nova também fora da sessão do GS (com a chave do sistema e a empresa
+2. ✅ (25/11/2026; só admin do sistema cria organização lá: sem isso, ela fica só no GS e a tela diz) **Proprietária nova no GS** cria a organização PROPRIETARIA no meuPlano e grava o `mp_owner_id`.
+3. ✅ (meuPlano `35665b81`) **meuPlano → GS sempre**: registrar a usina nova também fora da sessão do GS (com a chave do sistema e a empresa
    da usina).
-4. **meuWatt → GS**: o mw-api chama `POST /interno/usinas` ao criar a usina (precisa do OK do Renan para a main).
-5. **Conciliação diária**: usina, proprietária ou pessoa que existe num sistema e não no GS vira pendência em
+4. ✅ (mw-api main `f5ed86a`, `registrar_usina_no_gs`) **meuWatt → GS**: o mw-api chama `POST /interno/usinas` ao criar a usina (precisa do OK do Renan para a main).
+5. ✅ (`services/conferencia.py`, no motor, 1×/dia; também importa as proprietárias novas do meuPlano) **Conciliação diária**: usina, proprietária ou pessoa que existe num sistema e não no GS vira pendência em
    oem-gs (nunca some calada).
 
 ## Eldorado Energia (proprietária 2), em 25/11/2026

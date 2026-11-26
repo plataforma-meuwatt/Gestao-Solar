@@ -1594,6 +1594,8 @@ class ProprietariaOut(BaseModel):
     ativa: bool
     usinas: list[ItemDaProprietariaOut]
     pessoas: list[ItemDaProprietariaOut]
+    #: o que não deu certo nos sistemas (só na criação)
+    aviso: str | None = None
 
 
 def _proprietaria_out(db: Session, p) -> ProprietariaOut:
@@ -1628,15 +1630,28 @@ class ProprietariaIn(BaseModel):
 
 
 @router.post("/proprietarias", response_model=ProprietariaOut, status_code=201)
-def criar_proprietaria(body: ProprietariaIn, db: Session = Depends(get_db),
-                       gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+async def criar_proprietaria(body: ProprietariaIn, db: Session = Depends(get_db),
+                             gerente: User = Depends(gestor_empresa_atual)) -> ProprietariaOut:
+    """Nasce no GS e o GS a cria no meuPlano (docs/USINA_NASCE_NO_GS.md, fase 2). A falha de lá não desfaz a daqui:
+    ela fica "não ligada ao meuPlano" e o `aviso` diz por quê."""
     from app.services import proprietarias
     try:
         p = proprietarias.salvar(db, svc.empresa_exigida(gerente), nome=body.nome, documento=body.documento)
     except proprietarias.RegraDaProprietaria as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     db.commit()
-    return _proprietaria_out(db, p)
+    aviso = None
+    try:
+        mp = await integracoes.cliente_meuplano(db, p.empresa_id)
+        p.mp_owner_id = int((await mp.criar_proprietaria(p.nome, p.documento))["id"])
+        db.commit()
+    except Exception as exc:                               # noqa: BLE001
+        db.rollback()
+        codigo = getattr(getattr(exc, "response", None), "status_code", None)
+        log.warning("proprietária nova %s: meuPlano falhou: %s", p.id, codigo or type(exc).__name__)
+        aviso = ("Criada no GS, mas não no meuPlano: " + ("a conta da empresa lá não é admin do sistema."
+                 if codigo == 403 else "o meuPlano não respondeu bem. Tente de novo pela importação."))
+    return _proprietaria_out(db, p).model_copy(update={"aviso": aviso})
 
 
 class UsinaNovaIn(DadosIn):

@@ -41,12 +41,15 @@ export function ProprietariasDaEmpresa() {
   const { data, isLoading, error } = useQuery({ queryKey: ['empresa', 'proprietarias'], queryFn: proprietarias })
   const [nova, setNova] = useState<{ nome: string; documento: string } | null>(null)
   const [importado, setImportado] = useState<string[] | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
   const atualizar = () => qc.invalidateQueries({ queryKey: ['empresa'] })
 
   const criar = useMutation({
     mutationFn: criarProprietaria,
-    onSuccess: () => {
+    onSuccess: (r) => {
       setNova(null)
+      setImportado(null)
+      setAviso(r.aviso ?? null)
       atualizar()
     },
   })
@@ -73,6 +76,7 @@ export function ProprietariasDaEmpresa() {
           </button>
         </div>
         {importar.error ? <Erro>{mensagemDeErro(importar.error)}</Erro> : null}
+        {aviso ? <Erro>{aviso}</Erro> : null}
         {importado ? (
           <Cartao className="px-5 py-4">
             <p className="text-forte font-semibold mb-1">Importado do meuPlano</p>

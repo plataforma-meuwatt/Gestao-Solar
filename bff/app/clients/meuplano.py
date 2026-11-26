@@ -170,6 +170,11 @@ class MeuPlanoClient:
         dados = await self._get("/api/v1/meuacesso/owners/", kind="PRESTADORA")
         return dados if isinstance(dados, list) else (dados or {}).get("items") or []
 
+    async def criar_proprietaria(self, nome: str, documento: str | None) -> dict[str, Any]:
+        """A proprietária nova nasce no GS e é criada aqui (docs/USINA_NASCE_NO_GS.md, fase 2). Só admin do sistema."""
+        corpo = {"name": nome, "kind": "PROPRIETARIA", **({"document": documento} if documento else {})}
+        return (await self._req("POST", "/api/v1/meuacesso/owners/", json=corpo)).json()
+
     async def criar_usina(self, dados: dict[str, Any], organizacao: int | None) -> dict[str, Any]:
         """A usina nova nasce no GS e é criada aqui (docs/USINA_NASCE_NO_GS.md). `owner_id` = a proprietária;
         `organizacao` = a da O&M (o seletor de empresa de lá): sem ela, um admin cria a usina sem a O&M ligada."""

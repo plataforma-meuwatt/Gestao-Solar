@@ -38,13 +38,13 @@ def test_cadastro_usinas_pessoas_e_o_dono_unico_por_proprietaria(db, c):
     g = c["gerente"]
     with pytest.raises(clientes.RegraDeNegocio):                     # sem proprietária: um dono só
         clientes.definir_usinas(db, c["luiz"], [c["of"].id])
-    p = rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia", documento="12.345.678/0001-90"), db, g)
+    p = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia", documento="12.345.678/0001-90"), db, g))
     assert (p.nome, p.documento) == ("Eldorado Energia", "12345678000190")
     with pytest.raises(HTTPException) as e:
-        rotas.criar_proprietaria(rotas.ProprietariaIn(nome="eldorado energia"), db, g)
+        asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="eldorado energia"), db, g))
     assert e.value.status_code == 400                                 # o mesmo nome na empresa
     with pytest.raises(HTTPException):
-        rotas.criar_proprietaria(rotas.ProprietariaIn(nome="X", documento="123"), db, g)
+        asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="X", documento="123"), db, g))
     p = rotas.usinas_da_proprietaria(p.id, rotas.IdsIn(ids=[c["of"].id, c["pe"].id]), db, g)
     assert [u.nome for u in p.usinas] == ["Ouro Fino", "Pereiras"]
     assert ("proprietaria", None, "Eldorado Energia", "gs") in [
@@ -136,7 +136,7 @@ def test_dar_usinas_confere_tudo_antes_e_so_mexe_nas_desta_empresa(db, c):
     conflito de dono não deixa ninguém meio concedido (antes: as pessoas de antes no laço já ficavam gravadas)."""
     from app.models.empresa import MembroDaEmpresa
     g = c["gerente"]
-    p = rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia"), db, g)
+    p = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia"), db, g))
     rotas.usinas_da_proprietaria(p.id, rotas.IdsIn(ids=[c["of"].id, c["pe"].id]), db, g)
     rotas.pessoas_da_proprietaria(p.id, rotas.IdsIn(ids=[c["fernando"].id, c["luiz"].id]), db, g)
     db.add(MembroDaEmpresa(user_id=c["luiz"].id, empresa_id=c["b"].id))
@@ -163,8 +163,8 @@ def test_mudar_de_proprietaria_tira_as_usinas_da_antiga(db, c):
     """A pessoa vai da proprietária A para a B pela lista de B: sai das usinas de A (antes: ficava com elas, e o
     "Dar as usinas" de A passava a dar 409)."""
     g = c["gerente"]
-    a = rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia"), db, g)
-    b = rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eninsa"), db, g)
+    a = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eldorado Energia"), db, g))
+    b = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Eninsa"), db, g))
     rotas.usinas_da_proprietaria(a.id, rotas.IdsIn(ids=[c["of"].id]), db, g)
     rotas.usinas_da_proprietaria(b.id, rotas.IdsIn(ids=[c["pe"].id]), db, g)
     rotas.pessoas_da_proprietaria(a.id, rotas.IdsIn(ids=[c["fernando"].id, c["luiz"].id]), db, g)
@@ -206,3 +206,24 @@ def test_usina_nasce_no_gs_e_e_criada_no_meuplano_com_a_proprietaria(db, c, monk
     out = asyncio.run(rotas.criar_usina(rotas.UsinaNovaIn(nome="Cai"), db, g))
     link = db.get(PlantLink, out.id)
     assert (link.mp_usina_id, link.ativo) == (None, False) and "NÃO criada" in out.sistemas[1]
+
+
+def test_proprietaria_nasce_no_gs_e_e_criada_no_meuplano(db, c, monkeypatch):
+    """Fase 2: criada aqui, o GS a cria no meuPlano e guarda a organização; recusada lá, fica só aqui com o aviso."""
+    import httpx
+    g = c["gerente"]
+
+    class Mp:
+        async def criar_proprietaria(self, nome, documento):
+            if nome == "Recusada":
+                raise httpx.HTTPStatusError("403", request=httpx.Request("POST", "http://x"),
+                                            response=httpx.Response(403))
+            return {"id": 900}
+
+    async def cliente(db_, eid):
+        return Mp()
+    monkeypatch.setattr(rotas.integracoes, "cliente_meuplano", cliente)
+    p = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Nova Dona"), db, g))
+    assert (p.mp_owner_id, p.aviso) == (900, None)
+    p = asyncio.run(rotas.criar_proprietaria(rotas.ProprietariaIn(nome="Recusada"), db, g))
+    assert p.mp_owner_id is None and "admin do sistema" in p.aviso
