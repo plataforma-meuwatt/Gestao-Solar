@@ -44,7 +44,7 @@ Além do de sempre (apelido, perfil, portão, empresa, o que o gerente liberou),
 | `GET /usinas-da-pessoa` | A **renovação**: `{gs, apelido, nome, email, perfil, empresa_id, sistemas, proprietaria, usinas \| todas_as_usinas \| usinas_fora, lido_em, sessao_gs}`. As usinas vêm como no passe v2 (`[{gs, id}]`, o `id` no sistema que pergunta), a lista inteira (sem o teto do passe). Com `X-Sessao-GS`, volta um `sessao_gs` novo, da MESMA sessão, valendo 60 dias a contar de agora: guardem no lugar do outro (quem usa todo dia não sai no 60º dia). Sugestão: reler de 10 em 10 min e encerrar a sessão no 404 com a frase "Pessoa ou usina não encontrada." (ela não muda sem aviso). |
 | `GET /usinas[?ids=&alteradas_desde=]` | As usinas que a pessoa vê. A plataforma vê todas, a O&M as da empresa (também as fora do aplicativo, com `ativo` falso), o dono as concedidas. Cada usina: `{gs, codigo: "GS-0006", nome, empresa, empresa_id, meuwatt: {slug}, meuplano: {id}, termovision: {codigo}, cidade, uf, kwp, endereco, latitude, longitude, ativo, atualizado_em, proprietaria: {id, nome, meuplano: {id}}}`. O cabeçalho `X-GS-Lido-Em` é o relógio do GS: mande-o (menos 1 min) no próximo `alteradas_desde`. Sem fuso, `alteradas_desde` é de Brasília. |
 | `GET /usinas/{gs}` | Uma usina. |
-| `PATCH /usinas/{gs}` | Muda os dados básicos (`nome`, `endereco`, `cidade`, `uf`, `latitude` + `longitude` juntas, `kwp`). Quem pode: a O&M da usina e o administrador da plataforma, que entraram no sistema pelo GS nos últimos 30 dias. Resposta: `{usina, alterados}`. Cada campo mudado vai ao histórico com quem, de qual sistema, o antes e o depois. |
+| `PATCH /usinas/{gs}` | Muda os dados básicos (`nome`, `endereco`, `cidade`, `uf`, `latitude` + `longitude` juntas, `kwp`). Quem pode: a O&M da usina e o administrador da plataforma, que entraram no sistema pelo GS nos últimos 30 dias. Resposta: `{usina, alterados}`. Cada campo mudado vai ao histórico com quem, de qual sistema, o antes e o depois. O `kwp` da usina ligada ao meuWatt não muda por aqui (abaixo): outro número é **400** e nada do pedido é gravado. |
 | `POST /usinas` | **Registra a usina criada no sistema** (`{nome, referencia, cidade?, uf?, endereco?, latitude?, longitude?, kwp?}`; a `referencia` é o slug no meuWatt, o número no meuPlano ou o código no TermoVision; o meuGuarda usa as do GS e recebe 403). Respostas: **201** `criada` (nenhuma parecida; a que só existe no TermoVision nasce fora do aplicativo); **202** `a_confirmar` + `parecidas` (o gerente decide no oem-gs › Usinas); **200** `ligada` (devolve a usina do GS) ou `descartada`; **409** a usina já é de outra empresa. Pedir de novo é idempotente e é como o sistema sabe o que o gerente decidiu. |
 | `GET /usinas/{gs}/mapa/objetos` | O mapa do GS (o do meuWatt) para o "Importar do GS" do TermoVision. |
 | `GET /usinas/{gs}/mapa/itens` | **Os itens do mapa** para o TermoVision (fase 2 do mapa novo, 25/11/2026): tudo o que existe na usina, no mapa ou não. `{pode_editar, lido_em, itens: [{ref, tipo, nome, pai, detalhe, geometria, meuwatt: {objeto, slot_id | string_number | transformer_id | relay_id}, alterado_por, alterado_em}]}`. Refs estáveis: `trafo:<id>`, `inv:<slot_id>` (pai: o trafo), `str:<slot_id>:<n>` (pai: o inversor), `rele:<relay_id>` (pai: o trafo; o Geral sem pai), `novo:<uuid>` (a subestação criada pela tela) e `obj:<id>` (desenhado sem equipamento ligado). Tipos e formas: subestação Polygon; relé, trafo e inversor Point; string Polygon ou LineString. Lê quem vê a usina na lista do GS, pela sessão do passe (`X-Sessao-GS`); `pode_editar` só para a O&M e a plataforma. Sem a leitura do meuWatt, 502. |
@@ -52,6 +52,24 @@ Além do de sempre (apelido, perfil, portão, empresa, o que o gerente liberou),
 | `GET /usinas/{gs}/mapa/cabos` · `PUT …` | **Os cabos das strings** (26/11/2026), só o TermoVision. GET (quem vê a usina): o `{strings: [{slot_id, string_number, mais_m, menos_m, total_m, secao_mm2, gerado_em, origem}]}` do meuWatt. PUT (a O&M, com o token DELA no meuWatt): `{gerado_em (com fuso, senão 400), secao_mm2 \| null, strings: [{slot_id, string_number, mais_m, menos_m}]}` → `{gravadas, novas, trocadas}`; tudo ou nada, a string fora do cadastro volta **422** com a frase de lá; o mesmo de novo não duplica. Sem resposta do meuWatt, 502 ("PODEM ter sido gravados"). |
 | `POST /usinas/{gs}/mapa` · `DELETE /usinas/{gs}/mapa?termovision=` | Liga e desliga o mapa do TermoVision (só o TermoVision; a O&M com entrada pelo GS nas últimas 12 h). |
 | `POST /passe/termovision` | O passe do TermoVision para o mapa embutido no meuWatt e no meuPlano: `{assertion, expira_em}`. Só para quem tem o TermoVision liberado e entrou no sistema que pede pelo GS, ela mesma, nas últimas 12 h. |
+
+## O kWp da usina ligada ao meuWatt vem do meuWatt (26/11/2026)
+
+No meuWatt a potência da usina é a soma das strings cadastradas, e é ela que entra na taxa de desempenho. Por isso,
+na usina com `meuwatt: {slug}`:
+
+- O GS **guarda** o número de lá em `kwp` (não lê na hora). Quem grava é a conferência diária
+  (`services/conferencia.py`, no motor, 1×/dia e a cada deploy): quando o `total_capacity_kwp` do meuWatt é um número
+  positivo e difere do guardado em mais de 0,01, ele entra, com `atualizado_em` novo e uma linha no histórico em nome
+  do meuWatt, sem pessoa. meuWatt fora do ar, sem número ou com zero: o guardado fica. A usina recém-ligada recebe o
+  número na conferência seguinte.
+- `PATCH /usinas/{gs}` (e a tela Dados do oem-gs) **recusa** o `kwp` diferente do guardado: **400** "O kWp desta usina
+  vem do meuWatt, calculado pelas strings cadastradas lá: mude as strings no meuWatt. Nada foi alterado." O pedido
+  inteiro é recusado (os outros campos que vieram junto não são gravados). O mesmo número de novo passa. Só o
+  próprio meuWatt (`X-Sistema: meuwatt`) o manda por esta rota.
+- `GET /usinas` e a porta da máquina continuam devolvendo o `kwp` guardado, que agora é o do meuWatt: o meuWatt o
+  recebe de volta igual.
+- A usina que não está no meuWatt segue como antes: `kwp` opcional, editável no GS e pelos sistemas.
 
 ## A porta da máquina (só a chave, sem pessoa)
 

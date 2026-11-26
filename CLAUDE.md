@@ -587,6 +587,10 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em
   oem-gs › Usinas (`gs_usinas_a_confirmar`), que diz se é a mesma, outra ou descarta. A que só existe no TermoVision
   nasce FORA do aplicativo (`ativo=False`): o mapa dela existe, os dados de geração e manutenção não.
+  **O kWp da usina ligada ao meuWatt vem do meuWatt** (o dono, 26/11/2026; lá é a soma das strings e entra na taxa de
+  desempenho): `alterar` recusa outro número (400, o pedido inteiro; só o próprio meuWatt o manda), a tela Dados do
+  oem-gs mostra o campo fechado, e a conferência diária (`services/conferencia.py`) grava o de lá com histórico em
+  nome do meuWatt, sem pessoa (`kwp_do_meuwatt`). Sem o meuWatt, o kWp segue opcional e editável.
 - **As proprietárias** (R11, `gs_proprietarias`, `services/proprietarias.py`): a dona da usina (a "PROPRIETARIA" do
   meuPlano, importada de lá). Pessoas da mesma proprietária dividem as usinas dela (`clientes._donos_por_usina`).
 - **Sessões** (R12, `gs_sessoes`, `services/sessoes.py`): todo token leva `iat` e `sid`; a linha nasce no 1º uso e
