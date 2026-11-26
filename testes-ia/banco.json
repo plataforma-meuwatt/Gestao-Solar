@@ -3058,5 +3058,171 @@
       "manutencao"
     ],
     "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "me mostre o diagrama unifilar de porto ferreira",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "origem": "log #689"
+  },
+  {
+    "frase": "gere o diagrama unifilar de porto ferreira",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "origem": "log #694"
+  },
+  {
+    "frase": "mostre o diagrama unifilar de ouro fino",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "origem": "log #715"
+  },
+  {
+    "frase": "gere o unifilar de pirapozinho",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "origem": "log #716"
+  },
+  {
+    "frase": "me mostre a posição da string 10 do inversor 1 do skid 2, de ouro fino",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #753"
+  },
+  {
+    "frase": "me de a localização da string 1, do inversor 2, do skid 3 de ouro fino",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #680"
+  },
+  {
+    "frase": "Compare a gerecao dos inversores de ontem em tiete, quero coluna com diferença em % entre eles, ordenando do melhor ao pior",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #757"
+  },
+  {
+    "frase": "Mostre a tensao nos reles de porto ferreira",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #758"
+  },
+  {
+    "frase": "Limpe os leds de trip dos reles de porto ferreira",
+    "espera": [
+      "reles",
+      "usina_helper"
+    ],
+    "origem": "log #699"
+  },
+  {
+    "frase": "Recolha totalmente o motor 1 do controlador 7 dos trackers de ibitinga",
+    "espera": [
+      "usina_helper",
+      "usina_helper_catalogo"
+    ],
+    "origem": "log #669"
+  },
+  {
+    "frase": "Abra uma OS para Porto Ferreira, responsável e técnico Kewyn, data de 23/11, criticidade urgente, equipamento inversor 4.2, com tarefas das fichas de isolamento CC, medição de tensão CA e termografia. Também coloque uma tarefa sem ficha de download do log, abertura de chamado na ASTEC, que é assistência da Weg.\nNa descrição coloque \"Verificação de falha de aquecimento MPPT6 6\".\n\nEm informações, mencione que já foi aberto chamado na Huawei sob o ticket # 78353.\nColoque que o número de whatsapp da ASTEC é  47 •••• e o e-mail,  garantia-solar@weg.net",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #657"
+  },
+  {
+    "frase": "Crie uma OS para Pereiras para o Diogo\nSubstituição dos equipamentos de rede danificados pela descarga atmosférica",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #726"
+  },
+  {
+    "frase": "Abra uma OS para Porto Ferreira para o Diogo\nTarefas\nMudar conexão do switch principal para o switch de cftv para fibra óptica\nConfigurar a starlink como link de redundância\nTestar velocidade da rede. Fazer backup da configuração atual do mikrotik e voltar o backup da configuração antiga, lara cerificar se com a configuração inicial do mikrotik, antes da empresa de monitoramento configurar a vpn, a velocidade fica normal",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #728"
+  },
+  {
+    "frase": "Crie uma os para Pirapozinho\nResponsável kewyn\nTécnico michel\nAplicação de herbicida início 26/11 conclusão 27/11",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #730"
+  },
+  {
+    "frase": "Preciso criar uma os de preventiva mensal de Pirapozinho para 26/11, técnico kewyn. Já tem um plano de manutenção criado?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #738"
+  },
+  {
+    "frase": "Crie uma pendência para porto ferreira de atualizar a lista de spare parts e passar para o Janderson",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #746"
+  },
+  {
+    "frase": "Crie outra os para tiete para o diogo, recebimento, conferência e posicionamento da caixa de água.\nTarefa com ficha com as perguntas:\nO produto corresponde à especificação da descrição da nota?\nFoto do produto\nFoto da nota\nO produto está\nFoto do produto no local\nA base é rígido e plana?\nJá é possível encher a caixa ou é necessário alguma conexão? hidráulica? Quais? Liste as peças.\nHá alguma outra pendência?\nPegar contato de fornecedores de água, seja o vizinho ou empresa de saneamento da cidade.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #706"
+  },
+  {
+    "frase": "Preciso registrar uma atividade de roçagem em Ibitinga\n\n*Descrição:* Roçagem 06:30 horas de trator a R$ 180,00 por hora. Não foi feito toda área aberta.\n*Data:* 18/11/2026\n*Valor total:* R$ 1.170,00\n*Nome:* Marcio Gazotto",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #740"
+  },
+  {
+    "frase": "Preciso registrar uma tarefa avulsa que já foi executada em 20/11 em Ibitinga pelo Elienai, criticidade alta. Ele substitui os capacitores das SKCs 7 e 8, porque os trackers estavam travando.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #665"
+  },
+  {
+    "frase": "Criar OS para kewyn 27/11 de recebimento de caixa de água em Pirapozinho, no mesmo modelo da os 2047",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #736"
+  },
+  {
+    "frase": "Você consegue adicionar fornecedores de materiais no nosso cadastro do meuplano?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #664"
+  },
+  {
+    "frase": "me de o  grafico da temperatura do trafo de pirapozinho sobreposto com a potencia total dos inversores, skid 2",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #679"
+  },
+  {
+    "frase": "Gere o grafico da temperatura do inversor 1 e sobreponha os inversores, em pirapozinho, no dia de hoje.",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #754"
   }
 ]
