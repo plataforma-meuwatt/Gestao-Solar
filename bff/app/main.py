@@ -194,9 +194,12 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
 async def _rodar_automacoes_de_minuto_em_minuto() -> None:
     """As automações (Plano Assistente GS): uma volta por minuto, com a trava de cada regra no banco
     (`services/automacoes.pegar_devidas`). Uma volta que estoura é registrada e a seguinte acontece."""
+    from datetime import UTC, datetime
+
     from app.core.db import SessionLocal
     from app.services import automacoes
 
+    automacoes.INICIADO_EM = datetime.now(UTC)
     await asyncio.sleep(_FOLEGO_DO_BOOT_S)
     while True:
         try:

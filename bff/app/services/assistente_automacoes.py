@@ -408,17 +408,25 @@ async def mexer_automacao(ctx, a: dict) -> dict:
         return {"teste": await auto.testar(ctx.db, regra),
                 "instrucao": "Mostre o teste à pessoa como está (é o que a regra faria agora; nada foi mandado)."}
     if acao in ("pausar", "ensaio"):
-        auto.mudar(ctx.db, regra, "pausada" if acao == "pausar" else "ensaio")
+        try:
+            auto.mudar(ctx.db, regra, "pausada" if acao == "pausar" else "ensaio")
+        except auto.RegraInvalida as e:
+            raise Recusa(str(e)) from None
         return {"feito": f"Regra {rid} «{nome}» " + ("pausada: não avisa até você dizer «liga a regra %d»." % rid
                                                      if acao == "pausar" else "em ensaio: o 1º aviso sai marcado [ensaio].")}
     if acao == "ligar":
         como = _como_chega(ctx)
+        if (regra.gatilho or {}).get("tipo") == "uma_vez" and (auto._utc(regra.proxima_em) or auto._agora()) <= auto._agora():
+            raise Recusa("Esse lembrete já passou da hora: não há o que ligar. Diga que ela peça um lembrete novo.")
 
         async def executar(db, user, telefone: str) -> str:
             r = db.get(Automacao, rid)
             if r is None or r.apagada_em is not None:
                 return "❌ Essa regra não existe mais."
-            auto.mudar(db, r, "ligada")
+            try:
+                auto.mudar(db, r, "ligada")
+            except auto.RegraInvalida as e:
+                return f"❌ Não liguei: {e}"
             return f"✅ Regra {rid} «{nome}» ligada: os avisos passam a sair de verdade. {como}"
 
         return helper.propor(ctx, f"Ligar a regra {rid} «{nome}» ({auto.descrever(regra)})", 600, executar, [como],

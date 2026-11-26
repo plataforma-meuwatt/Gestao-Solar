@@ -74,6 +74,8 @@ EQUIPE = (Perfil.GESTOR_EMPRESA, Perfil.TECNICO)
 
 #: A prova de vida do motor desde o último deploy (a tela mostra): o log da API não mostra os registros do motor.
 ULTIMA_VOLTA: datetime | None = None
+#: Quando a tarefa do motor subiu neste processo (a tela diz "sem nenhuma volta desde que subiu às HH:MM").
+INICIADO_EM: datetime | None = None
 
 
 class RegraInvalida(Exception):
@@ -288,6 +290,10 @@ def achar(db: Session, dono: User, qual: Any) -> Automacao:
 
 def mudar(db: Session, regra: Automacao, situacao: str, agora: datetime | None = None) -> None:
     agora = agora or _agora()
+    if (situacao in ("ligada", "ensaio") and (regra.gatilho or {}).get("tipo") == "uma_vez"
+            and (_utc(regra.proxima_em) is None or _utc(regra.proxima_em) <= agora)):
+        # ligado de novo, o lembrete vencido dispararia na hora ("era para…") e concluiria: melhor dizer
+        raise RegraInvalida("Essa hora já passou: o lembrete não tem o que ligar. Peça um lembrete novo.")
     regra.situacao = situacao
     regra.rodando_ate = None
     if situacao in ("ligada", "ensaio"):

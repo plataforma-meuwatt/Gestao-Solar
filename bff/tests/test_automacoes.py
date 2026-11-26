@@ -552,3 +552,38 @@ async def test_ao_nascer_do_sol_o_ultimo_dado_da_vespera_nao_faz_a_regra_se_dize
     _acordar(db, regra)
     await auto.rodar_tique(db, t + timedelta(seconds=10))
     assert _disparos(db, regra) == []
+
+
+async def test_a_tela_diz_onde_esta_cega_a_agenda_os_avisos_e_recusa_ligar_lembrete_vencido(mundo):
+    from fastapi import HTTPException
+
+    from app.api.v1 import empresa_automacoes as rotas
+
+    db, renan, mw = mundo["db"], mundo["renan"], mundo["mw"]
+    _janela(db, renan, T0)
+    regra = auto.criar(db, renan, nome="Paradas", agora=T0, gatilho={"tipo": "leitura", "grandeza": "usina_parada"},
+                       acao={"tipo": "mensagem"}, escopo={"todas": True})
+    velho = T0 - timedelta(hours=1)
+    mw.mon["pirapozinho"], mw.mon["tiete"] = _mon(velho), _mon(T0)          # Pirapozinho calado, Tietê lendo
+    for minuto in (0, 21):
+        _acordar(db, regra)
+        await auto.rodar_tique(db, T0 + timedelta(minutes=minuto))
+        mw.mon["tiete"] = _mon(T0 + timedelta(minutes=minuto + 1))
+    [r] = rotas.listar(db=db, gerente=renan).regras
+    assert r.situacao_rotulo == "Ligada · cega" and r.cega.startswith("Cega em Pirapozinho desde")
+    assert r.cega.endswith("a outra lê") and r.onde == "todas as usinas" and r.entrega_rotulo == "WhatsApp e aplicativo"
+    assert r.agenda_rotulo.startswith("Última conferência:") and r.situacao_ajuda == "Os avisos saem para a pessoa."
+    [d] = rotas.disparos(regra.id, db=db, gerente=renan)
+    assert d.evento_rotulo == "Ficou cega (sem dado)" and d.usina == "Pirapozinho" and d.status_rotulo == "Enviado"
+    lista = rotas.listar(db=db, gerente=renan)
+    assert lista.motor.agora is not None and lista.motor.ligado is False   # a suíte não liga o motor
+    # o lembrete que já passou da hora não liga: dispararia na hora
+    lembrete = auto.criar(db, renan, nome="L", gatilho={"tipo": "uma_vez", "em": (T0 + timedelta(minutes=5)).isoformat()},
+                          acao={"tipo": "mensagem", "texto": "x"}, agora=T0)
+    lembrete.situacao, lembrete.proxima_em = "pausada", datetime.now(UTC) - timedelta(minutes=1)   # a rota usa o relógio
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        rotas.mudar(lembrete.id, rotas.MudarIn(situacao="ligada"), db=db, gerente=renan)
+    assert e.value.status_code == 409 and "já passou" in e.value.detail
+    assert rotas._linhas_da_leitura({"fases": {"a": {"valor": 0, "estado": "ok"}}, "leitura_em": T0.isoformat()}) == [
+        "Fase A: 0 V (ok)", "Leitura de 26/11 11:00"]
