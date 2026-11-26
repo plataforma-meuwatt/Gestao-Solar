@@ -198,13 +198,18 @@ def descrever(regra: Automacao) -> str:
     elif tipo == "leitura":
         gr = g.get("grandeza")
         alvo = f" {g['alvo']}" if g.get("alvo") else ""
+        if alvo and _norm(alvo).split()[0] in ("rele", "tr", "trafo", "transformador"):   # "tensão do Relé Skid 1"
+            alvo = f" {g['alvo']}"
+            base = {"tensao_rele": "tensão do", "temperatura_trafo": "temperatura do"}.get(gr, GRANDEZAS.get(gr, gr))
+        else:
+            base = GRANDEZAS.get(gr, gr)
         if gr == "usina_parada":
             quando = "usina parada"
         else:
             unidade = "V" if gr == "tensao_rele" else "°C"
             op = "abaixo de" if (g.get("operador") or ("<" if gr == "tensao_rele" else ">")) == "<" else "acima de"
             limite = g.get("limite") or (TENSAO_PISO_V if gr == "tensao_rele" else None)
-            quando = f"{GRANDEZAS.get(gr, gr)}{alvo} {op} {_n(limite, 0)} {unidade}"
+            quando = f"{base}{alvo} {op} {_n(limite, 0)} {unidade}"
             if gr == "tensao_rele" and op == "abaixo de":
                 quando += " (ou fase zerada)"
         if g.get("duracao_min"):
@@ -223,6 +228,17 @@ def descrever(regra: Automacao) -> str:
 
 
 # ── cadastro (o bot e a tela) ───────────────────────────────────────────────
+
+
+def onde(db: Session, regra: Automacao) -> str | None:
+    """Em quais usinas a regra vale, em palavras ("todas as usinas menos Tiete"). None no lembrete (sem usina)."""
+    e = regra.escopo or {}
+    if e.get("todas"):
+        menos = [u.nome for u in db.scalars(select(PlantLink).where(PlantLink.id.in_(e.get("menos") or [])))]
+        return "todas as usinas" + (f" menos {', '.join(menos)}" if menos else "")
+    if e.get("usinas"):
+        return ", ".join(u.nome for u in db.scalars(select(PlantLink).where(PlantLink.id.in_(e["usinas"])))) or None
+    return None
 
 
 def ativas(db: Session, user_id: int) -> list[Automacao]:
@@ -647,8 +663,9 @@ async def _avaliar_leitura(db: Session, regra: Automacao, dono: User, volta: _Vo
                 continue
             await _cegueira_resolvida(db, regra, dono, volta, alvos, a.chave, link, teste, a)
             if teste is not None:
-                teste.append(f"{link.nome} · {a.alvo}: {a.valor}; {'FORA do limite (' + a.motivo + ')' if a.fora else 'dentro do limite'} "
-                             f"(leitura das {_hora(a.quando)}).")
+                juizo = ("" if g.get("grandeza") == "usina_parada" else
+                         f"; FORA do limite ({a.motivo})" if a.fora else "; dentro do limite")
+                teste.append(f"{link.nome} · {a.alvo}: {a.valor}{juizo} (leitura das {_hora(a.quando)}).")
                 continue
             st = dict(alvos.get(a.chave) or {})
             q = a.quando or volta.agora

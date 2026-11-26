@@ -49,6 +49,8 @@ class RegraOut(BaseModel):
     dono_apelido: str
     nome: str
     quando: str
+    #: em quais usinas, em palavras ("todas as usinas menos Tiete"); None no lembrete
+    onde: str | None
     #: horario | uma_vez | leitura | camera — só horário e lembrete têm "próxima vez"
     gatilho_tipo: str
     situacao: str
@@ -97,6 +99,11 @@ class MudarIn(BaseModel):
     situacao: Literal["ligada", "pausada", "ensaio"]
 
 
+def _status(d: AutomacaoDisparo) -> str:
+    """O teste nunca manda nada: o rótulo diz isso (o "só no registro (ensaio)" confundia com a regra em ensaio)."""
+    return "Nada foi mandado (teste)" if d.evento == "teste" else STATUS.get(d.status, d.status)
+
+
 def _da_empresa(db: Session, gerente: User, regra_id: int) -> Automacao:
     regra = db.scalar(svc.no_escopo(select(Automacao), Automacao.empresa_id, gerente)
                       .where(Automacao.id == regra_id, Automacao.apagada_em.is_(None)))
@@ -116,7 +123,8 @@ def _saida(db: Session, regra: Automacao, donos: dict[int, User]) -> RegraOut:
     dono = donos.get(regra.user_id)
     return RegraOut(
         id=regra.id, dono=dono.nome if dono else "—", dono_apelido=dono.apelido if dono else "—", nome=regra.nome,
-        quando=auto.descrever(regra), gatilho_tipo=str((regra.gatilho or {}).get("tipo") or ""),
+        quando=auto.descrever(regra), onde=auto.onde(db, regra),
+        gatilho_tipo=str((regra.gatilho or {}).get("tipo") or ""),
         situacao=regra.situacao, situacao_rotulo=SITUACAO.get(regra.situacao, regra.situacao),
         texto_original=regra.texto_original,
         # a "próxima vez" só existe no horário e no lembrete; na leitura é só a próxima conferência do motor
@@ -124,7 +132,7 @@ def _saida(db: Session, regra: Automacao, donos: dict[int, User]) -> RegraOut:
                     and (regra.gatilho or {}).get("tipo") in ("horario", "uma_vez") else None),
         ultima_volta_em=auto._utc(regra.ultima_volta_em),
         ultimo_disparo=UltimoDisparoOut(em=auto._utc(d.em), evento=d.evento, evento_rotulo=EVENTO.get(d.evento, d.evento),
-                                        status=d.status, status_rotulo=STATUS.get(d.status, d.status)) if d else None,
+                                        status=d.status, status_rotulo=_status(d)) if d else None,
         cega=_cega(regra), ensaio_segurados=auto.segurados(db, regra) if regra.situacao == "ensaio" else 0,
         ultimo_erro=regra.ultimo_erro, criada_em=auto._utc(regra.criada_em))
 
@@ -165,5 +173,5 @@ def disparos(regra_id: int, db: Session = Depends(get_db),
         PlantLink.id.in_({d.plant_link_id for d in linhas if d.plant_link_id}))).all()}
     return [DisparoOut(id=d.id, em=auto._utc(d.em), evento=d.evento, evento_rotulo=EVENTO.get(d.evento, d.evento),
                        ensaio=bool(d.ensaio), texto=d.texto, canal=d.canal, canal_rotulo=CANAL.get(d.canal or "", "—"),
-                       status=d.status, status_rotulo=STATUS.get(d.status, d.status), erro=d.erro,
+                       status=d.status, status_rotulo=_status(d), erro=d.erro,
                        usina=usinas.get(d.plant_link_id), leitura=d.leitura) for d in linhas]

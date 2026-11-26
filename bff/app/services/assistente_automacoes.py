@@ -370,6 +370,8 @@ async def minhas_automacoes(ctx, a: dict) -> dict:
     for r in regras:
         d = auto.ultimo_disparo(ctx.db, r)
         item = {"numero": r.id, "nome": r.nome, "quando": auto.descrever(r), "situacao": r.situacao}
+        if (onde := auto.onde(ctx.db, r)):
+            item["onde"] = onde
         if r.situacao in ("ligada", "ensaio") and (r.gatilho or {}).get("tipo") in ("horario", "uma_vez") and r.proxima_em:
             item["proxima"] = auto._hora(auto._utc(r.proxima_em), com_dia=True)
         if d is not None:
