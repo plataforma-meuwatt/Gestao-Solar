@@ -2,7 +2,8 @@
 
 O meuWatt, o meuPlano, o meuGuarda e o TermoVision falam com o GS pelo **servidor**, em nome de quem está com a tela
 aberta. Código: `bff/app/api/v1/interno_sistemas.py` (e `interno_termovision.py`, o mapa do TermoVision). Testes:
-`tests/test_interno_sistemas.py`, `tests/test_dados_da_usina.py`, `tests/test_interno_termovision.py`.
+`tests/test_interno_sistemas.py`, `tests/test_interno_maquina.py`, `tests/test_dados_da_usina.py`,
+`tests/test_interno_termovision.py`.
 
 ## Quem chama e por quem
 
@@ -17,7 +18,8 @@ aberta. Código: `bff/app/api/v1/interno_sistemas.py` (e `interno_termovision.py
 
 - Sem a chave certa: **401** "Chave inválida." (nada diz qual chave está configurada).
 - A chave sozinha não fala por ninguém. A pessoa tem de estar ativa, com aquele sistema liberado no GS, a empresa ativa
-  e a sessão do passe valendo. **Encerrar as sessões dela no GS encerra a do sistema também.**
+  e a sessão do passe valendo. **Encerrar as sessões dela no GS encerra a do sistema também.** A única rota que a chave
+  abre sozinha é a porta da máquina (abaixo), que não lê nada de pessoa.
 - **Transição:** sem `X-Sessao-GS`, vale quem entrou pelo GS (no GS ou naquele sistema, ela mesma, com o IP dela) nos
   últimos 60 dias. Mandem o `X-Sessao-GS` (vem em todo passe novo, no campo `sessao_gs`): a transição acaba quando os
   quatro mandarem.
@@ -50,6 +52,33 @@ Além do de sempre (apelido, perfil, portão, empresa, o que o gerente liberou),
 | `GET /usinas/{gs}/mapa/cabos` · `PUT …` | **Os cabos das strings** (26/11/2026), só o TermoVision. GET (quem vê a usina): o `{strings: [{slot_id, string_number, mais_m, menos_m, total_m, secao_mm2, gerado_em, origem}]}` do meuWatt. PUT (a O&M, com o token DELA no meuWatt): `{gerado_em (com fuso, senão 400), secao_mm2 \| null, strings: [{slot_id, string_number, mais_m, menos_m}]}` → `{gravadas, novas, trocadas}`; tudo ou nada, a string fora do cadastro volta **422** com a frase de lá; o mesmo de novo não duplica. Sem resposta do meuWatt, 502 ("PODEM ter sido gravados"). |
 | `POST /usinas/{gs}/mapa` · `DELETE /usinas/{gs}/mapa?termovision=` | Liga e desliga o mapa do TermoVision (só o TermoVision; a O&M com entrada pelo GS nas últimas 12 h). |
 | `POST /passe/termovision` | O passe do TermoVision para o mapa embutido no meuWatt e no meuPlano: `{assertion, expira_em}`. Só para quem tem o TermoVision liberado e entrou no sistema que pede pelo GS, ela mesma, nas últimas 12 h. |
+
+## A porta da máquina (só a chave, sem pessoa)
+
+`GET /api/v1/interno/maquina/usinas[?alteradas_desde=]`. Para a rotina do servidor do sistema, sem ninguém na tela,
+manter a cópia dele do vínculo (o meuWatt preencher e conferir o número do GS de cada usina, por exemplo).
+
+- **Quem chama:** o servidor do meuWatt, do meuPlano ou do TermoVision, só com `X-Sistema` + `X-Chave-Interna`. Os
+  cabeçalhos de pessoa não são lidos (mandar não muda nada). Sem a chave certa, o mesmo **401** "Chave inválida.". O
+  meuGuarda usa o número do GS e não tem usina ligada a ele: **403**.
+- **O que volta:** `{usinas: [...], desligadas: [...]}`. Em `usinas`, todas as usinas do índice ligadas AO SISTEMA QUE
+  CHAMA, de qualquer empresa, também as desligadas no aplicativo (`ativo` falso): `{gs, codigo: "GS-0006", nome,
+  meuwatt: {slug} | meuplano: {id} | termovision: {codigo}, cidade, uf, kwp, endereco, latitude, longitude, ativo,
+  atualizado_em}`. Das três referências vem só a de quem chama.
+- **O que não volta, de propósito:** a empresa, a proprietária, a mesma usina nos outros sistemas (nem como nulo) e
+  qualquer coisa de pessoa. A chave continua sem falar por ninguém: ela só lê as linhas do índice que são dela.
+- **Reler só o que mudou:** `alteradas_desde` e `X-GS-Lido-Em` são os do `GET /usinas` (mande o `X-GS-Lido-Em`, menos
+  1 min, no próximo `alteradas_desde`; sem fuso, é de Brasília). A usina volta quando qualquer dado da linha dela mudou,
+  também o que esta rota não mostra (o vínculo com outro sistema, a proprietária): pode voltar igual.
+- **O vínculo que saiu:** com `alteradas_desde`, `desligadas` traz `{gs, codigo, meuwatt: {slug} (a referência que
+  saiu), desligada_em}` para cada referência do sistema que deixou aquela usina do GS de lá para cá (do histórico por
+  campo). Apliquem as `desligadas` antes das `usinas`: a referência que mudou de usina sai de uma e vem na outra. Na
+  leitura inteira (sem `alteradas_desde`) `desligadas` vem vazia: o que não veio em `usinas` não está ligado.
+- **O limite:** as `desligadas` valem o que o histórico guarda. A usina apagada do GS leva o histórico junto, e um
+  vínculo mudado direto no banco não deixa linha. Por isso, além de reler o que mudou, façam uma **leitura inteira de
+  tempos em tempos** (uma vez por dia basta) e tirem o que não veio.
+- **O registro:** uma linha por sistema e hora no Registro de acessos, sem pessoa ("Servidor do meuWatt (sem pessoa)"),
+  que só a plataforma vê.
 
 ## "Parecida"
 

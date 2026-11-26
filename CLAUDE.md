@@ -577,7 +577,11 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
 - **A porta dos sistemas** (`api/v1/interno_sistemas.py`, contrato em `docs/CONTRATO_SISTEMAS.md`): os quatro sistemas
   leem e editam pelo servidor, em nome de quem está com a tela aberta. Uma chave por sistema; a chave sozinha não fala
   por ninguém (`pessoa`: a sessão do passe em `X-Sessao-GS` ou, na transição, uma entrada pelo GS nos últimos 60
-  dias). Pessoa, usina ou empresa que não serve = 404 com a mesma frase.
+  dias). Pessoa, usina ou empresa que não serve = 404 com a mesma frase. A ÚNICA rota que a chave abre sozinha é a
+  porta da máquina (`GET /interno/maquina/usinas`, a rotina do servidor do sistema sem ninguém na tela): só as linhas
+  do índice ligadas ao sistema que chama, com a referência DELE e os dados básicos, sem a empresa, sem a proprietária e
+  sem a mesma usina nos outros sistemas; o vínculo que saiu vem em `desligadas` (do histórico por campo). Rota nova
+  só com a chave não nasce sem essa mesma estreiteza.
 - **O cadastro mestre da usina** (R10, `services/dados_da_usina.py`): nome, endereço, cidade, UF, coordenada e kWp
   moram em `gs_plant_links`, com histórico por campo (`gs_usinas_historico`: quem, de qual sistema, antes e depois). A
   usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em
