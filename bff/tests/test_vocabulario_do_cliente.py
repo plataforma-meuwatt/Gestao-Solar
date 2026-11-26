@@ -46,7 +46,7 @@ V1 = Path(__file__).resolve().parents[1] / "app" / "api" / "v1"
 #
 # `painel.py` saiu pelo mesmo motivo em 23/10/2026: a plataforma deixou de ter token ("adm
 # não tem token", regra do dono), e com as pontes dela foi embora o que ele nomeava.
-DO_GESTOR = {"painel_clientes.py", "empresa.py"}
+DO_GESTOR = {"painel_clientes.py", "empresa.py", "empresa_dispositivos.py"}
 
 #: A exceção, com o motivo — não uma lista para onde empurrar o que der trabalho.
 #:

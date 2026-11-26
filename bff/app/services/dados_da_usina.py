@@ -30,7 +30,8 @@ CAMPOS = (*TEXTOS, *NUMEROS)
 ROTULO = {"nome": "Nome", "endereco": "Endereço", "cidade": "Cidade", "uf": "UF", "latitude": "Latitude",
           "longitude": "Longitude", "kwp": "Potência (kWp)", "mw_plant_slug": "Usina no meuWatt",
           "mp_usina_id": "Usina no meuPlano", "tv_codigo": "Mapa no TermoVision", "criada": "Criada",
-          "ativo": "No aplicativo", "mw_micro_plant_id": "Usina no portal do fabricante", "proprietaria": "Proprietária"}
+          "ativo": "No aplicativo", "mw_micro_plant_id": "Usina no portal do fabricante", "proprietaria": "Proprietária",
+          "no_do_dispositivo": "Nó do meuPlano no equipamento"}
 
 
 def formatar(campo: str, texto: str | None) -> str | None:

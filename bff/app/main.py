@@ -41,6 +41,7 @@ from app.api.v1 import (
     documents,
     empresa,
     empresa_automacoes,
+    empresa_dispositivos,
     energia,
     equipamentos,
     exportacao,
@@ -316,6 +317,7 @@ app.include_router(interno_whatsapp.router)
 app.include_router(interno_meuguarda.router)
 app.include_router(empresa.router)
 app.include_router(empresa_automacoes.router)
+app.include_router(empresa_dispositivos.router)
 app.include_router(plants.router)
 app.include_router(paradas.router)
 app.include_router(billing.router)

@@ -832,6 +832,12 @@ class MeuPlanoClient:
         """Uma usina: o cadastro, com o pino (`latitude`, `longitude`) e o contorno (`area_poligono`, [[lat, lng], ...])."""
         return await self._get(f"/api/v1/meuacesso/usinas/{usina_id}")
 
+    async def nos_da_usina(self, usina_id: int) -> list[dict[str, Any]]:
+        """A árvore da usina em lista plana (os nós ativos): `id`, `parent_id`, `type_code`, `code`, `display_name`,
+        `path`, `display_order`. O oem-gs › Usinas › Equipamentos tira daqui os nós que podem ser cada dispositivo."""
+        dados = await self._get(f"/api/v1/meuacesso/usinas/{usina_id}/nodes")
+        return dados if isinstance(dados, list) else []
+
     async def mapa_da_usina(self, usina_id: int) -> dict[str, Any]:
         """O mapa da usina como o meuPlano o mostra: o pino e o contorno, o voo e os objetos do mapa do meuWatt, cada um
         ligado ao nó da árvore (`node_id`) — com o `aviso` quando o meuWatt recusou ou caiu."""

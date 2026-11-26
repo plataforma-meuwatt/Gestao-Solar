@@ -166,8 +166,14 @@ def ligar_nos(db: Session, usina: PlantLink, itens: list[dict]) -> dict:
     que não são de dispositivo desta usina. Não confirma: quem chama dá o commit."""
     por_ref = {x.mw_ref: x for x in todos_da_usina(db, usina) if x.mw_ref}
     sem = [d["ref"] for d in itens if d["ref"] not in por_ref]
-    mudam = {por_ref[d["ref"]]: d["node_id"] for d in itens
-             if d["ref"] in por_ref and por_ref[d["ref"]].mp_node_id != d["node_id"]}
+    feito = aplicar_nos(db, {por_ref[d["ref"]]: d["node_id"] for d in itens if d["ref"] in por_ref})
+    return {**feito, "sem_dispositivo": sem}
+
+
+def aplicar_nos(db: Session, pedido: dict[DeviceLink, int | None]) -> dict:
+    """O nó de cada dispositivo do `pedido` (nulo desliga), com a regra de sempre: um nó é uma posição só, e a troca
+    cabe num pedido. É a mesma para a porta da máquina (`ligar_nos`) e para a pessoa no oem-gs. Não confirma."""
+    mudam = {linha: no for linha, no in pedido.items() if linha.mp_node_id != no}
     nos = [no for no in mudam.values() if no is not None]
     if nos:                                                # um nó é uma posição: quem o tem hoje sai dele NESTE pedido?
         for dono in db.scalars(select(DeviceLink).where(DeviceLink.mp_node_id.in_(nos)).order_by(DeviceLink.id)).all():
@@ -181,4 +187,4 @@ def ligar_nos(db: Session, usina: PlantLink, itens: list[dict]) -> dict:
     for linha, no in mudam.items():
         linha.mp_node_id = no
     db.flush()
-    return {"ligados": len(nos), "desligados": desligados, "sem_dispositivo": sem}
+    return {"ligados": len(nos), "desligados": desligados}
