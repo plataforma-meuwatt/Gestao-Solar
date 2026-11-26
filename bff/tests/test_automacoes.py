@@ -633,6 +633,7 @@ async def test_o_teto_de_ia_vira_erro_e_a_regra_vai_para_a_proxima_hora_marcada(
     [d] = _disparos(db, regra)
     assert d.evento == "erro" and "análises da IA hoje" in d.texto
     assert auto._utc(regra.proxima_em) == T0 + timedelta(days=1, minutes=30)   # não tenta de novo de madrugada
+    assert d.texto.endswith(f"A próxima tentativa é {auto._hora(regra.proxima_em, com_dia=True)}.")   # e diz isso
 
 
 async def test_o_teto_de_leituras_da_volta_adia_a_regra_para_a_volta_seguinte(mundo, monkeypatch):
@@ -668,17 +669,25 @@ async def test_o_resumo_atrasado_diz_a_hora_que_era(mundo):
     assert "(era para 11:30; atrasou)" in s["whatsapp"][0]["texto"]
 
 
-async def test_o_lembrete_que_nao_sai_em_1_h_desiste_com_o_erro_registrado(mundo, monkeypatch):
+async def test_o_lembrete_que_nao_sai_em_1_h_desiste_e_avisa_que_desistiu(mundo, monkeypatch):
+    """Com a volta de verdade (de 5 em 5 min): a 1 h conta da hora do lembrete, não da última tentativa."""
     db, renan = mundo["db"], mundo["renan"]
     _janela(db, renan, T0)
     regra = auto.criar(db, renan, nome="L", gatilho={"tipo": "uma_vez", "em": (T0 + timedelta(minutes=1)).isoformat()},
                        acao={"tipo": "ia", "prompt": "analisa"}, escopo={"todas": True}, agora=T0)
     monkeypatch.setattr(auto, "_ia_hoje", lambda db_, dono, agora: auto.IA_POR_DIA)   # a ação quebra sempre
-    await auto.rodar_tique(db, T0 + timedelta(minutes=1))
-    assert regra.situacao == "ligada" and auto._utc(regra.proxima_em) == T0 + timedelta(minutes=6)   # tenta de novo
-    await auto.rodar_tique(db, T0 + timedelta(minutes=70))
-    assert regra.situacao == "concluida" and regra.proxima_em is None and regra.ultimo_erro       # passou de 1 h: desiste
-    assert {d.evento for d in _disparos(db, regra)} == {"erro"}
+    t = T0 + timedelta(minutes=1)
+    while t <= T0 + timedelta(minutes=56):                 # até 55 min de atraso: tenta de novo
+        await auto.rodar_tique(db, t)
+        assert regra.situacao == "ligada" and auto._utc(regra.proxima_em) == t + timedelta(minutes=5)
+        t += timedelta(minutes=5)
+    [erro] = _disparos(db, regra)                          # o mesmo erro no dia: um aviso só
+    assert "Tento de novo a cada 5 min por até 1 h." in erro.texto
+    await auto.rodar_tique(db, T0 + timedelta(minutes=66))   # 65 min depois da hora dele: desiste
+    assert regra.situacao == "concluida" and regra.proxima_em is None and regra.ultimo_erro
+    textos = [d.texto for d in _disparos(db, regra)]
+    assert len(textos) == 2 and textos[1].startswith(f"⚠️ Desisti do lembrete {regra.id} «L»: deu erro por mais de 1 h")
+    assert "..." not in textos[1] and "Peça um lembrete novo." in textos[1]
 
 
 async def test_a_leitura_e_dividida_entre_as_regras_do_mesmo_dono_na_mesma_volta(mundo):

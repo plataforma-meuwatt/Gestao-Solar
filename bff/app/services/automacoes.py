@@ -384,14 +384,23 @@ async def rodar_tique(db: Session, agora: datetime | None = None) -> dict:
             db.rollback()
             regra = db.get(Automacao, id_)
             log.exception("automacoes: a regra %s falhou", id_)
-            await _registrar_erro(db, regra, agora, e)
             tipo = (regra.gatilho or {}).get("tipo")
+            # o lembrete que não sai em 1 h desiste: 1 h da hora DELE, não da última tentativa (essa anda a cada 5 min)
+            desiste = tipo == "uma_vez" and agora - (_ts(regra.gatilho.get("em")) or agora) > ATRASO_MAX
             if tipo == "horario":                          # a de horário vai à próxima hora marcada: tentar a cada
-                regra.proxima_em = proxima_execucao(regra.gatilho, agora)   # 5 min rodaria "a de hoje" de madrugada
-            elif tipo == "uma_vez" and agora - (_utc(regra.proxima_em) or agora) > ATRASO_MAX:
-                regra.situacao, regra.proxima_em = "concluida", None       # o lembrete que não sai em 1 h desiste
+                proxima = proxima_execucao(regra.gatilho, agora)   # 5 min rodaria "a de hoje" de madrugada
+                depois = (f"A próxima tentativa é {_hora(proxima, com_dia=True)}." if proxima
+                          else "Ela não tem outra hora marcada.")
+            elif desiste:
+                proxima, depois = None, ""
+            elif tipo == "uma_vez":
+                proxima, depois = agora + timedelta(minutes=5), "Tento de novo a cada 5 min por até 1 h."
             else:
-                regra.proxima_em = agora + timedelta(minutes=5)
+                proxima, depois = agora + timedelta(minutes=5), "Tento de novo em 5 min."
+            await _registrar_erro(db, regra, agora, e, depois, desistiu=desiste)
+            regra.proxima_em = proxima
+            if desiste:
+                regra.situacao = "concluida"
         regra.rodando_ate = None
         regra.ultima_volta_em = agora
         db.commit()
@@ -399,18 +408,26 @@ async def rodar_tique(db: Session, agora: datetime | None = None) -> dict:
     return {"regras": len(ids), "leituras": volta.leituras}
 
 
-async def _registrar_erro(db: Session, regra: Automacao, agora: datetime, e: Exception) -> None:
+async def _registrar_erro(db: Session, regra: Automacao, agora: datetime, e: Exception, depois: str,
+                         desistiu: bool = False) -> None:
+    """`depois` diz a próxima tentativa de verdade. O aviso de que o lembrete desistiu tem chave própria: a do erro é a
+    mesma frase no mesmo dia, e a única engoliria o único aviso de que ele não vai mais tocar."""
     import hashlib
 
     frase = (str(e) or type(e).__name__)[:300]
     regra.ultimo_erro = frase
     db.commit()
     dono = db.get(User, regra.user_id)
-    if dono is not None:                                   # uma vez por erro por dia: o dono sabe que a regra não rodou
-        marca = hashlib.sha1(frase.encode()).hexdigest()[:12]
-        await _disparar(db, regra, dono, evento="erro", chave=f"erro:{agora.astimezone(BRT).date()}:{marca}",
-                        texto=f"⚠️ A regra {regra.id} «{regra.nome}» deu erro: {frase}. Tento de novo em 5 min.",
-                        agora=agora, rodape=False)
+    if dono is None:
+        return
+    if desistiu:
+        chave = f"desisti:{regra.id}"
+        texto = (f"⚠️ Desisti do lembrete {regra.id} «{regra.nome}»: deu erro por mais de 1 h ({frase.rstrip('. ')}). "
+                 "Peça um lembrete novo.")
+    else:                                                  # uma vez por erro por dia: o dono sabe que a regra não rodou
+        chave = f"erro:{agora.astimezone(BRT).date()}:{hashlib.sha1(frase.encode()).hexdigest()[:12]}"
+        texto = f"⚠️ A regra {regra.id} «{regra.nome}» deu erro: {frase.rstrip('. ')}. {depois}"
+    await _disparar(db, regra, dono, evento="erro", chave=chave, texto=texto, agora=agora, rodape=False)
 
 
 async def _avaliar(db: Session, regra: Automacao, volta: _Volta) -> None:
