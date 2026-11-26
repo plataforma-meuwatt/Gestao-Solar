@@ -3,6 +3,7 @@
  * coordenada e a potência. O gerente edita aqui; o meuPlano, o TermoVision e o meuGuarda
  * leem e editam pela porta deles, e cada mudança fica no histórico com quem, de onde, o
  * antes e o depois. O nome continua na linha da usina (um lugar só para cada campo).
+ * A potência da usina ligada ao meuWatt vem de lá (a soma das strings): aqui ela só se lê.
  *
  * E as usinas criadas em outro sistema que parecem uma daqui ficam "a confirmar": quem
  * decide se é a mesma é o gerente, nunca a semelhança de nome ou de lugar.
@@ -82,6 +83,7 @@ export function DadosDaUsina({ usinaId }: { usinaId: number }) {
   if (isLoading || !form) return error ? <Erro>{mensagemDeErro(error)}</Erro> : <Carregando />
   if (!data) return null
   const original = doServidor(data)
+  const doMeuWatt = data.mw_slug !== null
   const muda = (campo: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setAviso(null)
     setForm({ ...form, [campo]: e.target.value })
@@ -93,7 +95,8 @@ export function DadosDaUsina({ usinaId }: { usinaId: number }) {
     if (form.endereco !== original.endereco) m.endereco = form.endereco
     if (form.cidade !== original.cidade) m.cidade = form.cidade
     if (form.uf !== original.uf) m.uf = form.uf
-    if (form.kwp !== original.kwp) {
+    // o kWp da usina ligada ao meuWatt vem de lá: o campo fica fechado e não é mandado (o servidor recusaria)
+    if (!doMeuWatt && form.kwp !== original.kwp) {
       const kwp = potenciaDigitada(form.kwp)
       if (kwp !== null && Number.isNaN(kwp)) return setAviso('A potência vai em pt-BR: 1.250 ou 1.250,5.')
       m.kwp = kwp
@@ -128,7 +131,17 @@ export function DadosDaUsina({ usinaId }: { usinaId: number }) {
           <Campo rotulo="Latitude" value={form.latitude} onChange={muda('latitude')} inputMode="decimal" />
           <Campo rotulo="Longitude" value={form.longitude} onChange={muda('longitude')} inputMode="decimal" />
         </div>
-        <Campo rotulo="Potência (kWp)" value={form.kwp} onChange={muda('kwp')} inputMode="decimal" />
+        {doMeuWatt ? (
+          <Campo
+            rotulo="Potência (kWp)"
+            value={original.kwp}
+            disabled
+            readOnly
+            nota="Vem do meuWatt, calculado pelas strings cadastradas lá."
+          />
+        ) : (
+          <Campo rotulo="Potência (kWp)" value={form.kwp} onChange={muda('kwp')} inputMode="decimal" />
+        )}
       </div>
       <div className="flex items-center gap-3 flex-wrap">
         <button className="btn-secundario" disabled={salvar.isPending} onClick={enviar}>

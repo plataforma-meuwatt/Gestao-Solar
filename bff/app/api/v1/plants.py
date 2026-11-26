@@ -413,13 +413,12 @@ def _capacidade_declarada(diario: Any) -> float | None:
 def _capacidade_dos_inversores(agora: dict[str, Any]) -> float | None:
     """Capacidade instalada somada dos inversores, quando o vínculo não a tem.
 
-    `PlantLink.kwp` só é preenchido à mão no painel, e está NULO em todas as usinas —
-    então `pct_capacidade` nunca era calculado, a barra ficava vazia e o topo da aba
-    Usinas anunciava "0,0 MWp". O número existe do outro lado o tempo todo:
-    `InverterMonitoring.capacity_kwp`.
+    `PlantLink.kwp` pode estar NULO (é opcional no cadastro) — e aí `pct_capacidade`
+    nunca era calculado, a barra ficava vazia e o topo da aba Usinas anunciava "0,0 MWp".
+    O número existe do outro lado o tempo todo: `InverterMonitoring.capacity_kwp`.
 
-    O valor do vínculo continua tendo precedência: se o gestor digitou a capacidade de
-    projeto, é ela que vale — a soma dos inversores é o que sobra quando ninguém digitou.
+    Na lista e no detalhe da usina quem vale primeiro é a capacidade DECLARADA pelo meuWatt
+    (`_capacidade_declarada`); o `PlantLink.kwp` é o que sobra quando ela não veio.
     """
     # Mudo fica de fora TAMBÉM aqui. O numerador (`_potencia_da_usina`) já o exclui; se o
     # denominador o mantivesse, uma usina com dois de três inversores calados mostraria a
@@ -622,9 +621,8 @@ async def listar_usinas(
             nome=link.nome,
             cidade=link.cidade,
             uf=link.uf,
-            # O cadastro do painel tem precedência; a soma dos inversores é o que vale
-            # quando ninguém digitou a capacidade — que é o caso de todas as usinas hoje.
-            # Só a capacidade DECLARADA (do meuWatt) ou a CADASTRADA (pelo gestor). A
+            # A capacidade DECLARADA pelo meuWatt vale primeiro; a CADASTRADA no GS
+            # (`PlantLink.kwp`) é o que sobra quando a de lá não veio. Só essas duas. A
             # soma dos inversores que estão falando saiu daqui: ela encolhe quando um
             # aparelho emudece, e `_capacidade_declarada` chama isso de fabricar o número
             # — não pode ser fabricação só porque o relatório diário falhou. Sem nenhuma

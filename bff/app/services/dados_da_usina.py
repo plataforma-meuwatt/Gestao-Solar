@@ -5,6 +5,9 @@ confirmar' e o gerente da O&M decide").
 
 - `alterar`: grava só o que mudou, campo a campo, com uma linha de histórico por campo (`gs_usinas_historico`), e marca
   `atualizado_em` (os sistemas releem com `alteradas_desde`). A coordenada vai sempre em par.
+- O kWp da usina ligada ao meuWatt vem de lá (o dono, 26/11/2026): no meuWatt a potência é a soma das strings
+  cadastradas e é ela que entra na taxa de desempenho. `alterar` recusa o kWp diferente nessa usina (só o próprio
+  meuWatt o manda) e `kwp_do_meuwatt` grava o de lá, na conferência diária (`services/conferencia.py`).
 - `parecidas`: as usinas da empresa que podem ser a mesma: o nome igual depois de tirar acento, "UFV" e pontuação, um
   contido no outro, ou parecido (difflib ≥ 0,85); ou a menos de 1,5 km. Quem decide é o gerente, nunca esta função.
 """
@@ -47,6 +50,10 @@ def formatar(campo: str, texto: str | None) -> str | None:
         return bruto.replace(",", "§").replace(".", ",").replace("§", ".")
     return texto
 PERTO_KM = 1.5
+#: a diferença de kWp que conta como outro número (abaixo disso é arredondamento)
+FOLGA_KWP = 0.01
+KWP_E_DO_MEUWATT = ("O kWp desta usina vem do meuWatt, calculado pelas strings cadastradas lá: mude as strings no "
+                    "meuWatt. Nada foi alterado.")
 
 
 class DadoInvalido(ValueError):
@@ -99,6 +106,12 @@ def alterar(db: Session, link: PlantLink, mudancas: dict, *, por: User | None, s
         raise DadoInvalido("A coordenada vai inteira: latitude e longitude juntas.")
     if "latitude" in novos and (novos["latitude"] is None) != (novos["longitude"] is None):
         raise DadoInvalido("A coordenada vai inteira: latitude e longitude juntas.")
+    # o kWp da usina ligada ao meuWatt é o de lá: o mesmo número passa (a tela que devolve o que leu), outro recusa o
+    # pedido INTEIRO, antes de gravar qualquer campo (quem pediu não fica achando que a potência mudou)
+    if "kwp" in novos and link.mw_plant_slug and sistema != "meuwatt":
+        if _outro_kwp(link.kwp, novos["kwp"]):
+            raise DadoInvalido(KWP_E_DO_MEUWATT)
+        del novos["kwp"]
     feitos = []
     for campo, valor in novos.items():
         antes = getattr(link, campo)
@@ -110,6 +123,28 @@ def alterar(db: Session, link: PlantLink, mudancas: dict, *, por: User | None, s
     if feitos:
         link.atualizado_em = datetime.now(UTC)
     return feitos
+
+
+def _outro_kwp(guardado: float | None, novo: float | None) -> bool:
+    if guardado is None or novo is None:
+        return guardado is not novo
+    return abs(guardado - novo) > FOLGA_KWP
+
+
+def kwp_do_meuwatt(db: Session, link: PlantLink, valor) -> bool:
+    """Guarda no GS o kWp que o meuWatt calcula para a usina ligada a ele, com a linha no histórico em nome do meuWatt
+    (sem pessoa). Sem número positivo de lá (ausente, zero, usina sem strings), o guardado fica como está. Devolve se
+    mudou. Não confirma."""
+    if not link.mw_plant_slug or isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return False
+    valor = float(valor)
+    if not math.isfinite(valor) or valor <= 0 or not _outro_kwp(link.kwp, valor):
+        return False
+    historico(db, link, "kwp", link.kwp, valor, por=None, sistema="meuwatt",
+              motivo="calculado pelas strings cadastradas lá")
+    link.kwp = valor
+    link.atualizado_em = datetime.now(UTC)
+    return True
 
 
 def criar(db: Session, *, empresa: int, dados: dict, campo: str, ref, por: User | None, sistema: str,

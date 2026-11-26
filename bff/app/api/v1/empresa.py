@@ -947,7 +947,11 @@ async def salvar_usina(
         link.nome = body.nome
     # cidade, UF e potência vêm do catálogo só ao nascer ou quando o GS ainda não tem: depois, os dados básicos
     # moram aqui (Plano Casa GS, R10), e uma troca de nome nesta tela não pode desfazer o que foi editado em Dados
+    # o kWp da usina que JÁ está aqui e é ligada ao meuWatt não vem do corpo do pedido: vem de lá, na conferência
+    # diária (`dados_da_usina.kwp_do_meuwatt`)
     for campo in ("cidade", "uf", "kwp"):
+        if campo == "kwp" and not nova and link.mw_plant_slug:
+            continue
         if nova or getattr(link, campo) is None:
             setattr(link, campo, getattr(body, campo))
     link.ativo = body.no_app

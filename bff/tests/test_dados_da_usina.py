@@ -191,6 +191,55 @@ def test_a_tela_dados_e_a_troca_de_nome_no_catalogo(db, c, monkeypatch):
     assert ("nome", "UFV Ibitinga", "Ibitinga (Deva)", "gs") in _hist(db, ib)
 
 
+def test_o_kwp_da_usina_ligada_ao_meuwatt_vem_de_la(http, c, db, monkeypatch):
+    g, ib = c["gerente"], c["ib"]
+    url = f"/api/v1/interno/usinas/{ib.id}"
+    # sem o meuWatt, o kWp é do GS: muda como os outros campos, com histórico
+    r = http.patch(url, headers=_h(g), json={"kwp": 1250})
+    assert r.status_code == 200 and r.json()["alterados"] == ["kwp"], r.text
+    assert _hist(db, ib) == [("kwp", None, "1250.0", "meuplano")]
+    assert db.query(HistoricoDaUsina).first().por_id == g.id
+    ib.mw_plant_slug = "ibitinga"
+    db.commit()
+    # ligada ao meuWatt: outro kWp recusa o pedido inteiro (a cidade que veio junto não muda)
+    for corpo in ({"cidade": "Outra", "kwp": 900}, {"kwp": None}):
+        r = http.patch(url, headers=_h(g), json=corpo)
+        assert r.status_code == 400 and "vem do meuWatt" in r.json()["detail"], (corpo, r.text)
+    db.refresh(ib)
+    assert (ib.cidade, ib.kwp) == ("Ibitinga", 1250.0) and len(_hist(db, ib)) == 1
+    with pytest.raises(HTTPException) as e:                # a tela Dados do oem-gs: a mesma recusa
+        rotas_empresa.alterar_dados_da_usina(ib.id, DadosIn(kwp=10), db, g)
+    assert e.value.status_code == 400 and e.value.detail == dados_da_usina.KWP_E_DO_MEUWATT
+    # o mesmo número passa, e o resto do pedido é gravado
+    r = http.patch(url, headers=_h(g), json={"cidade": "Outra", "kwp": 1250.0})
+    assert r.status_code == 200 and r.json()["alterados"] == ["cidade"], r.text
+
+    # o número de lá é gravado em nome do meuWatt, sem pessoa
+    antes = ib.atualizado_em
+    assert dados_da_usina.kwp_do_meuwatt(db, ib, 1300.5) is True
+    db.commit()
+    db.refresh(ib)
+    linha = db.query(HistoricoDaUsina).order_by(HistoricoDaUsina.id.desc()).first()
+    assert (linha.campo, linha.antes, linha.depois, linha.sistema, linha.por_id) == (
+        "kwp", "1250.0", "1300.5", "meuwatt", None)
+    assert ib.kwp == 1300.5 and ib.atualizado_em != antes
+    for valor in (1300.5, 1300.505, 0, -5, None, "1400", True, float("nan")):   # igual, sem número ou zero: fica
+        assert dados_da_usina.kwp_do_meuwatt(db, ib, valor) is False, valor
+    assert dados_da_usina.kwp_do_meuwatt(db, c["de_b"], 500.0) is False         # a que não é ligada ao meuWatt
+    assert ib.kwp == 1300.5 and c["de_b"].kwp is None
+
+    # o catálogo não põe kWp do corpo do pedido na usina ligada ao meuWatt que ainda não tem
+    import asyncio
+    monkeypatch.setattr(rotas_empresa, "_o_seu_token_enxerga", lambda *a, **k: asyncio.sleep(0))
+    tiete = PlantLink(nome="Tietê", empresa_id=c["a"].id, mw_plant_slug="tiete")
+    db.add(tiete)
+    db.commit()
+    asyncio.run(rotas_empresa.salvar_usina(rotas_empresa.UsinaIn(plant_link_id=tiete.id, kwp=999.0, no_app=True),
+                                           db, g))
+    db.refresh(tiete)
+    assert tiete.kwp is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
 
