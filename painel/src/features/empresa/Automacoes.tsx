@@ -99,7 +99,7 @@ export function AutomacoesDaEmpresa() {
   )
   const filtro = donos.some(([apelido]) => apelido === pessoa) ? pessoa : ''
   const linhas = filtro ? regras.filter((r) => r.dono_apelido === filtro) : regras
-  const motor = data ? estadoDoMotor(data.motor) : null
+  let motor = data ? estadoDoMotor(data.motor) : null
 
   // a releitura de fundo que falhou não apaga a lista: ela fica, com a faixa dizendo de quando é. A hora da falha é a
   // do servidor: o relógio do navegador corrigido pela diferença medida na última leitura boa.
@@ -108,6 +108,9 @@ export function AutomacoesDaEmpresa() {
     const frase = mensagemDeErro(error)
     const desvio = Date.parse(data.motor.agora) - dataUpdatedAt
     naoAtualizou = `Não consegui atualizar às ${hora(errorUpdatedAt + desvio)}: ${frase}${/[.!?]$/.test(frase) ? '' : '.'} A lista abaixo é de ${hora(data.motor.agora)}.`
+    // com a lista parada, a linha do motor envelhece junto: o que se sabe dele é de quando a lista foi lida
+    if (errorUpdatedAt + desvio - Date.parse(data.motor.agora) > MOTOR_CALADO_MS)
+      motor = { texto: `Sem notícia do motor desde ${hora(data.motor.agora)}: a lista não atualiza`, alerta: true }
   }
 
   return (
