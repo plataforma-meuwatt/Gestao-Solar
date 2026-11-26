@@ -131,3 +131,41 @@ class UsinaAConfirmar(Base):
     usina_id: Mapped[int | None] = mapped_column(ForeignKey("gs_plant_links.id", ondelete="SET NULL"), nullable=True)
     decidido_por_id: Mapped[int | None] = mapped_column(ForeignKey("gs_users.id", ondelete="SET NULL"), nullable=True)
     decidido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeviceLink(Base):
+    """O índice de dispositivos (fase 2 do guarda-chuva, 26/11/2026): o `gs_plant_links` um andar abaixo. Uma linha por
+    POSIÇÃO de equipamento da usina (o lugar: "transformador 1", "inversor da posição 3"; não o aparelho, que pode ser
+    trocado). O `id` é o número do dispositivo no GS (`GD-000123`), e cada sistema o guarda ao lado do registro dele.
+    A regra de quem grava e de quem fica ausente está em `services/dispositivos.py`."""
+
+    __tablename__ = "gs_device_links"
+    # a mesma referência de um sistema num dispositivo só (a trava no banco, como a das usinas)
+    __table_args__ = (
+        Index("ux_gs_device_links_mw_ref", "mw_ref", unique=True,
+              postgresql_where=text("mw_ref IS NOT NULL"), sqlite_where=text("mw_ref IS NOT NULL")),
+        Index("ux_gs_device_links_mp_node", "mp_node_id", unique=True,
+              postgresql_where=text("mp_node_id IS NOT NULL"), sqlite_where=text("mp_node_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plant_link_id: Mapped[int] = mapped_column(ForeignKey("gs_plant_links.id", ondelete="CASCADE"), index=True)
+    #: um de `services.dispositivos.TIPOS` (conferido no código: tipo novo não pede migração)
+    tipo: Mapped[str] = mapped_column(String(20))
+    #: o rótulo que o sistema de origem usa ("TR-01", "INV12")
+    nome: Mapped[str] = mapped_column(String(160))
+    #: o dispositivo acima (o pai do inversor é o transformador dele)
+    pai_id: Mapped[int | None] = mapped_column(ForeignKey("gs_device_links.id", ondelete="SET NULL"), index=True,
+                                               nullable=True)
+    #: a referência no meuWatt, na grafia padrão: `trafo:<transformers.id>`, `inv:<inverter_slots.id>`
+    mw_ref: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    #: o `nodes.id` do meuPlano (fase seguinte)
+    mp_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: a referência no TermoVision (fase seguinte)
+    tv_ref: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    #: falso = não veio na última lista do sistema (a linha nunca é apagada)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    #: desde quando está ausente (a 1ª lista em que não veio); nulo quando volta
+    ausente_desde: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

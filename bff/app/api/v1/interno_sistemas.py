@@ -24,6 +24,8 @@ não confirma quem existe). Cada leitura entra no Registro de acessos, uma linha
   do sistema, sem ninguém na tela, mantendo a cópia dele do vínculo). A chave segue sem falar por ninguém: não lê nada
   de pessoa, só as linhas do índice ligadas ao PRÓPRIO sistema, com os dados básicos e a referência dele (nem a empresa,
   nem a proprietária, nem a mesma usina nos outros sistemas). Uma linha por sistema e hora no Registro de acessos.
+  A porta da máquina tem ainda o índice de dispositivos (`interno_dispositivos.py`), com a única ESCRITA que a chave
+  faz sozinha: as referências de dispositivo do próprio sistema, nas usinas ligadas a ele.
 """
 import logging
 from datetime import UTC, datetime, timedelta
@@ -218,6 +220,11 @@ class UsinaDoGS(BaseModel):
 
 def codigo(gs: int) -> str:
     return f"GS-{gs:04d}"
+
+
+def codigo_do_dispositivo(gd: int) -> str:
+    """O número do dispositivo no índice (`gs_device_links`), como o da usina: `GD-000123`."""
+    return f"GD-{gd:06d}"
 
 
 def proprietaria_de(db: Session, proprietaria_id: int | None) -> ProprietariaDoGS | None:

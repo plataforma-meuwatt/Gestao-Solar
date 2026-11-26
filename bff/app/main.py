@@ -32,6 +32,7 @@ from app.api.v1 import (
     interno_termovision,
     interno_sistemas,
     interno_mapa_itens,
+    interno_dispositivos,
     termovision_aviso,
     unifilar_publico,
     auth,
@@ -331,6 +332,7 @@ app.include_router(termovision_aviso.router)
 app.include_router(interno_termovision.router)
 app.include_router(interno_sistemas.router)
 app.include_router(interno_mapa_itens.router)
+app.include_router(interno_dispositivos.router)
 app.include_router(documents.router)
 app.include_router(energia.router)
 app.include_router(exportacao.router)

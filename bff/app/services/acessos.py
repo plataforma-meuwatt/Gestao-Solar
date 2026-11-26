@@ -482,7 +482,7 @@ def _quem(a: AcessoGS, u: User | None) -> str:
         return "Vários logins, do mesmo lugar"
     if a.motivo == AMBIGUO:
         return f"E-mail de mais de uma conta ({a.login})"
-    if a.acao == "leitura" and not a.login:               # a porta da máquina: só a chave do sistema, sem pessoa
+    if a.acao in ("leitura", "gravacao") and not a.login:  # a porta da máquina: só a chave do sistema, sem pessoa
         return f"Servidor do {SISTEMA.get(a.sistema, a.sistema)} (sem pessoa)"
     if not a.login:
         return "Login em branco"

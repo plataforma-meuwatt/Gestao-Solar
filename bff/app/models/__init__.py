@@ -18,7 +18,7 @@ from app.models.mcp import TokenMcp
 from app.models.notificacao import NotificacaoEnviada, NotificacaoPreferencia
 from app.models.pessoa import Pessoa
 from app.models.permissao import AvisoEnviado, Dispositivo, Permissao
-from app.models.plant import HistoricoDaUsina, PlantLink, UsinaAConfirmar
+from app.models.plant import DeviceLink, HistoricoDaUsina, PlantLink, UsinaAConfirmar
 from app.models.sessao import RedefinicaoDeSenha, SessaoGS
 from app.models.processamento_tv import ProcessamentoTV
 from app.models.usina_oculta import UsinaOculta
@@ -47,6 +47,7 @@ __all__ = [
     "VinculoProduto",
     "SenhaProvisoria",
     "PlantLink",
+    "DeviceLink",
     "SessaoGS",
     "RedefinicaoDeSenha",
     "Proprietaria",
