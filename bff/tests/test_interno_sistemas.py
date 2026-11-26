@@ -432,6 +432,50 @@ def test_os_itens_do_mapa_para_o_termovision_por_mover_e_tirar(http, cenario, db
     assert http.get(url, headers=hd).status_code == 404                                    # Ibitinga não é dele
 
 
+def test_os_cabos_das_strings_passam_ao_meuwatt_como_a_pessoa(http, cenario, db, monkeypatch):
+    """Os cabos das strings (TermoVision → GS → meuWatt, 26/11/2026): a O&M grava, tudo ou nada; o 422 de lá volta com a
+    frase; o dono lê e não grava; sem fuso é 400."""
+    import httpx
+
+    from app.core.security import criar_token_sistema
+    from app.services import vinculos
+    c, g, dono = cenario, cenario["gerente"], cenario["dono"]
+    dono.termovision_liberado = True
+    db.commit()
+
+    class MW:
+        corpos = []
+
+        async def mapa_cabos(self, slug):
+            return {"strings": [{"slot_id": 5, "string_number": 1, "total_m": 30.0}]}
+
+        async def mapa_gravar_cabos(self, slug, corpo):
+            self.corpos.append(corpo)
+            if corpo["strings"][0]["slot_id"] == 999:
+                raise httpx.HTTPStatusError("x", request=httpx.Request("PUT", "http://mw"), response=httpx.Response(
+                    422, json={"detail": "string fora do cadastro desta usina: vaga 999 string 1"}))
+            return {"gravadas": 1, "novas": 1, "trocadas": 0}
+
+    mw = MW()
+    monkeypatch.setattr(vinculos, "cliente_meuwatt", lambda db, uid, **k: mw)
+    url = f"/api/v1/interno/usinas/{c['ib'].id}/mapa/cabos"
+    h = {**_h(g, sistema="termovision", empresa=c["a"].id), "X-Sessao-GS": criar_token_sistema(g.id, "termovision")}
+    corpo = {"gerado_em": "2026-11-26T10:00:00-03:00", "secao_mm2": None,
+             "strings": [{"slot_id": 5, "string_number": 1, "mais_m": 12.5, "menos_m": 17.5}]}
+    r = http.put(url, headers=h, json=corpo)
+    assert r.status_code == 200 and r.json() == {"gravadas": 1, "novas": 1, "trocadas": 0}
+    assert mw.corpos[0]["origem"] == "termovision" and mw.corpos[0]["strings"][0]["mais_m"] == 12.5
+    ruim = {**corpo, "strings": [{**corpo["strings"][0], "slot_id": 999}]}
+    r = http.put(url, headers=h, json=ruim)
+    assert r.status_code == 422 and "vaga 999" in r.json()["detail"]
+    assert http.put(url, headers=h, json={**corpo, "gerado_em": "2026-11-26T10:00:00"}).status_code == 400
+    assert http.get(url, headers=h).json()["strings"][0]["total_m"] == 30.0
+    hd = {**_h(dono, sistema="termovision"), "X-Sessao-GS": criar_token_sistema(dono.id, "termovision")}
+    url_dono = f"/api/v1/interno/usinas/{c['of'].id}/mapa/cabos"
+    assert http.get(url_dono, headers=hd).status_code == 200
+    assert http.put(url_dono, headers=hd, json=corpo).status_code == 403
+
+
 def test_o_mapa_acha_a_usina_na_outra_empresa_da_pessoa(http, cenario, db, monkeypatch):
     """O recado do TermoVision (25/11): quem opera em mais de uma empresa abre o mapa embutido com o passe de uma, numa
     usina da outra. Vale qualquer empresa ATIVA da pessoa que veja a usina; a desativada, não."""

@@ -243,3 +243,58 @@ async def tirar_item(gs: int, ref: str, request: Request, body: SaidaIn | None =
     except httpx.HTTPError as exc:
         raise _recusa(exc) from exc
     return {"item": next((i for i in await _ler(mw, slug) if i["ref"] == ref), None)}
+
+
+class CaboIn(BaseModel):
+    slot_id: int
+    string_number: int
+    mais_m: float = Field(ge=0)
+    menos_m: float = Field(ge=0)
+
+
+class CabosIn(BaseModel):
+    gerado_em: datetime
+    secao_mm2: float | None = Field(None, gt=0)
+    strings: list[CaboIn] = Field(min_length=1)
+
+
+@router.get("/usinas/{gs}/mapa/cabos")
+async def ler_cabos(gs: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    """O comprimento dos cabos de cada string, como o meuWatt guarda (o TermoVision mede; a bitola vem de lá)."""
+    from app.services.vinculos import SemConexao, cliente_meuwatt
+
+    u, link, _ = _da_porta(db, request, gs, f"os cabos das strings da usina {codigo(gs)}")
+    try:
+        mw = cliente_meuwatt(db, u.id)
+    except SemConexao as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Os cabos não puderam ser lidos: {exc}") from exc
+    slug = link.mw_plant_slug
+    db.commit()
+    try:
+        return await mw.mapa_cabos(slug)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Os cabos não vieram do meuWatt agora.") from exc
+
+
+@router.put("/usinas/{gs}/mapa/cabos")
+async def gravar_cabos(gs: int, body: CabosIn, request: Request, db: Session = Depends(get_db)):
+    """Grava os cabos de várias strings de uma vez, como a pessoa (tudo ou nada no meuWatt: string fora do cadastro =
+    422 com a vaga e a string). Mandar o mesmo de novo não duplica: lá é um por string."""
+    if body.gerado_em.tzinfo is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "gerado_em precisa do fuso (ex.: 2026-11-26T10:00:00-03:00).")
+    mw, slug = _quem_edita(db, request, gs)
+    corpo = {"origem": "termovision", **body.model_dump(mode="json")}
+    try:
+        return await mw.mapa_gravar_cabos(slug, corpo)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 422:
+            try:
+                detalhe = exc.response.json().get("detail")
+            except ValueError:
+                detalhe = None
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detalhe or "Alguma string não está no cadastro desta usina.") from exc
+        raise _recusa(exc) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            "O meuWatt não respondeu: os cabos PODEM ter sido gravados. Leia de novo.") from exc

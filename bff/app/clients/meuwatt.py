@@ -200,6 +200,15 @@ class MeuWattClient:
         transformer_id}]."""
         return await self._get(f"/plants/{slug}/mapa/equipamentos", timeout=20)
 
+    async def mapa_cabos(self, slug: str) -> dict[str, Any]:
+        """O comprimento dos cabos de cada string (`strings` [{slot_id, string_number, mais_m, menos_m, total_m,
+        secao_mm2, gerado_em, origem}])."""
+        return await self._get(f"/plants/{slug}/mapa/cabos")
+
+    async def mapa_gravar_cabos(self, slug: str, corpo: dict[str, Any]) -> Any:
+        """Tudo ou nada: string fora do cadastro = 422. Volta {gravadas, novas, trocadas}."""
+        return await self._enviar("PUT", f"/plants/{slug}/mapa/cabos", json=corpo)
+
     async def mcp(self, mensagem: dict[str, Any]) -> dict[str, Any]:
         """Uma mensagem JSON-RPC ao conector do Claude daqui (`POST /mcp`), com o token PESSOAL da pessoa: o conector
         único do Gestão Solar (`api/v1/mcp.py`) repassa por aqui o que o Claude dela pede. O gêmeo leva até 150 s."""
