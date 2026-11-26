@@ -962,6 +962,7 @@ class MeuPlanoClient:
         """Executa a PROPOSTA que o assistente devolveu (o "Confirmar" da web). O meuPlano
         revalida os argumentos e a permissão de quem é o token."""
         r = await self._req(
-            "POST", "/api/v1/meuacesso/assistant/apply", token=token, json={"action": acao, "args": args}
+            "POST", "/api/v1/meuacesso/assistant/apply", token=token, json={"action": acao, "args": args},
+            timeout=300.0,   # editar a proposta comercial roda a IA no Word (1–3 min); as outras ações voltam antes
         )
         return r.json()

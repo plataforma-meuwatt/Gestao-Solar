@@ -104,7 +104,8 @@ _MANUTENCAO = {"type": "function", "function": {
                     "diagrama de rede), criar, completar, mudar e apagar. Passe a pergunta COMPLETA, com usina e período "
                     "(descrição de rede ou de equipamento: a mensagem da pessoa INTEIRA, palavra por palavra). Também o "
                     "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
-                    "contratos, diária e dia de trabalho de prestador. O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
+                    "contratos, diária e dia de trabalho de prestador; as PROPOSTAS COMERCIAIS do CRM (mandar o PDF da proposta, "
+                    "alterar o texto dela). O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
                     "para as INFORMAÇÕES DO RELATÓRIO de uma OS são `informacoes_do_relatorio`."),
     "parameters": {"type": "object", "properties": {
         "pergunta": {"type": "string"},
