@@ -3,7 +3,8 @@
 O meuWatt, o meuPlano, o meuGuarda e o TermoVision falam com o GS pelo **servidor**, em nome de quem está com a tela
 aberta. Código: `bff/app/api/v1/interno_sistemas.py` (e `interno_termovision.py`, o mapa do TermoVision). Testes:
 `tests/test_interno_sistemas.py`, `tests/test_interno_maquina.py`, `tests/test_dados_da_usina.py`,
-`tests/test_interno_termovision.py`.
+`tests/test_interno_termovision.py`. O índice de dispositivos: `interno_dispositivos.py`, `services/dispositivos.py`,
+`tests/test_interno_dispositivos.py`.
 
 ## Quem chama e por quem
 
@@ -18,8 +19,10 @@ aberta. Código: `bff/app/api/v1/interno_sistemas.py` (e `interno_termovision.py
 
 - Sem a chave certa: **401** "Chave inválida." (nada diz qual chave está configurada).
 - A chave sozinha não fala por ninguém. A pessoa tem de estar ativa, com aquele sistema liberado no GS, a empresa ativa
-  e a sessão do passe valendo. **Encerrar as sessões dela no GS encerra a do sistema também.** A única rota que a chave
-  abre sozinha é a porta da máquina (abaixo), que não lê nada de pessoa.
+  e a sessão do passe valendo. **Encerrar as sessões dela no GS encerra a do sistema também.** As únicas rotas que a
+  chave abre sozinha são as da porta da máquina (abaixo), que não leem nada de pessoa: a leitura das usinas ligadas ao
+  sistema e o índice de dispositivos, que é a única ESCRITA que a chave faz sozinha (só as referências de dispositivo
+  do próprio sistema, só nas usinas ligadas a ele).
 - **Transição:** sem `X-Sessao-GS`, vale quem entrou pelo GS (no GS ou naquele sistema, ela mesma, com o IP dela) nos
   últimos 60 dias. Mandem o `X-Sessao-GS` (vem em todo passe novo, no campo `sessao_gs`): a transição acaba quando os
   quatro mandarem.
@@ -97,6 +100,72 @@ manter a cópia dele do vínculo (o meuWatt preencher e conferir o número do GS
   tempos em tempos** (uma vez por dia basta) e tirem o que não veio.
 - **O registro:** uma linha por sistema e hora no Registro de acessos, sem pessoa ("Servidor do meuWatt (sem pessoa)"),
   que só a plataforma vê.
+
+## O índice de dispositivos (porta da máquina, 26/11/2026)
+
+O índice de usinas um andar abaixo (`gs_device_links`): o GS dá um número a cada POSIÇÃO de equipamento da usina (o
+lugar: "transformador 1", "inversor da posição 3"; não o aparelho, que pode ser trocado), e cada sistema guarda esse
+número ao lado do registro dele. Nesta fase: transformadores e inversores, vindos do meuWatt.
+
+- **O número:** `gd` (inteiro), mostrado como `GD-000017` (seis dígitos; o da usina é `GS-0006`). É para sempre: o
+  dispositivo que some e volta tem o mesmo.
+- **A grafia padrão da referência do meuWatt** é a que as rotas do mapa já usam: `trafo:<transformers.id>` e
+  `inv:<inverter_slots.id>` (nas fases seguintes, `str:<slot_id>:<n>` e `rele:<relay_id>`). Esta é A grafia: em
+  minúsculas, sem espaço, com o número de lá. Os tipos: `transformador` e `inversor` agora; reservados `string`,
+  `rele`, `estacao`, `medidor`, `stringbox` e `gateway`.
+- **Quem chama:** só o servidor do **meuWatt**, com `X-Sistema` + `X-Chave-Interna` (sem pessoa). Chave errada: **401**
+  "Chave inválida.". meuGuarda: **403**. meuPlano e TermoVision: **403** "…ainda não recebe…" (as colunas deles já
+  existem). Usina que não existe ou que não está ligada ao sistema que chama: **404** "Pessoa ou usina não
+  encontrada." (a mesma frase).
+- **É uma escrita só com a chave, e é estreita:** o sistema grava só as referências DELE de dispositivo, só nas usinas
+  ligadas a ele; nunca um dado da usina (nem o `atualizado_em` dela), nunca a referência de outro sistema.
+
+### `PUT /api/v1/interno/maquina/usinas/{gs}/dispositivos`
+
+A lista INTEIRA das posições daquela usina no sistema que chama (até 5000):
+
+```json
+{"dispositivos": [
+  {"ref": "trafo:41", "tipo": "transformador", "nome": "TR-01", "pai": null},
+  {"ref": "inv:99", "tipo": "inversor", "nome": "INV12", "pai": "trafo:41"}
+]}
+```
+
+`pai` é a `ref` de outro dispositivo da MESMA lista (em qualquer ordem), ou nulo (pode faltar). Tudo numa transação:
+
+- `ref` nova: nasce, com um `gd` novo. `ref` conhecida nesta usina: o `nome`, o `tipo` e o `pai` são atualizados se
+  mudaram; a que estava ausente volta. O `atualizado_em` só anda no que mudou: a mesma lista de novo não muda nada.
+- **Ausente:** o dispositivo desta usina que NÃO veio na lista nunca é apagado: fica `ativo: false`, com a data da
+  primeira lista em que faltou (`ausente_desde`, no banco). A lista vazia põe todos como ausentes.
+- **409:** uma `ref` que já é de OUTRA usina do GS (ativa ou ausente lá) recusa o pedido inteiro, e o `detail` diz
+  quais ("Já em outra usina do GS: inv:99. Um dispositivo não muda de usina sozinho: nada foi gravado."). Também 409
+  quando dois pedidos gravam a mesma `ref` ao mesmo tempo ("…mande de novo.").
+- **422:** a `ref` fora da grafia (`^(trafo|inv):\d+$`), o `tipo` que não é o da `ref`, a `ref` repetida, o `pai` que
+  não está na lista (ou é o próprio); nesses o `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
+  vazio, mais de 5000) é o 422 do FastAPI, com `detail` em lista.
+
+Resposta **200**:
+
+```json
+{"dispositivos": [
+   {"gd": 17, "codigo": "GD-000017", "tipo": "transformador", "nome": "TR-01", "pai": null, "ativo": true,
+    "meuwatt": {"ref": "trafo:41"}},
+   {"gd": 18, "codigo": "GD-000018", "tipo": "inversor", "nome": "INV12", "pai": 17, "ativo": true,
+    "meuwatt": {"ref": "inv:99"}}],
+ "criados": 2, "alterados": 0, "ausentes": 0}
+```
+
+`pai` na resposta é o `gd` do pai. A lista traz todos os dispositivos da usina com referência do sistema que chama,
+também os ausentes (`ativo: false`), na ordem do `gd`. Os contadores dizem o que ESTE pedido fez: `criados` (ganharam
+número), `alterados` (os que já existiam e mudaram de nome, tipo ou pai, ou voltaram) e `ausentes` (ficaram ausentes
+agora; os que já estavam não contam).
+
+### `GET /api/v1/interno/maquina/usinas/{gs}/dispositivos`
+
+A mesma lista (`{"dispositivos": [...]}`), sem os contadores. Mesmas recusas (401, 403, 404).
+
+**O registro:** uma linha por sistema, usina e hora no Registro de acessos, sem pessoa ("Servidor do meuWatt (sem
+pessoa)"): `leitura` para o GET, `gravacao` para o PUT.
 
 ## "Parecida"
 

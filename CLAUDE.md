@@ -582,6 +582,16 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   do índice ligadas ao sistema que chama, com a referência DELE e os dados básicos, sem a empresa, sem a proprietária e
   sem a mesma usina nos outros sistemas; o vínculo que saiu vem em `desligadas` (do histórico por campo). Rota nova
   só com a chave não nasce sem essa mesma estreiteza.
+- **O índice de dispositivos** (guarda-chuva, fase 2, 26/11/2026; `gs_device_links`, `services/dispositivos.py`,
+  `api/v1/interno_dispositivos.py`): o índice de usinas um andar abaixo. Uma linha por POSIÇÃO de equipamento (o lugar,
+  não o aparelho), com o número do GS (`GD-000123`, `codigo_do_dispositivo`) que cada sistema guarda ao lado do
+  registro dele. Nesta fase, transformadores e inversores do meuWatt; os tipos reservados (`dispositivos.TIPOS`) e as
+  colunas do meuPlano e do TermoVision já existem. A grafia padrão da referência do meuWatt é a do mapa:
+  `trafo:<id>`, `inv:<slot_id>` (depois `str:<slot_id>:<n>`, `rele:<id>`). ⛔ **É a segunda exceção, e a única ESCRITA,
+  do "a chave sozinha não fala por ninguém"** (`PUT`/`GET /interno/maquina/usinas/{gs}/dispositivos`): o sistema grava
+  só as referências DELE de dispositivo, só nas usinas ligadas a ele, nunca um dado da usina e nunca a referência de
+  outro sistema. Manda a lista INTEIRA; o que não veio fica ausente (`ativo` falso, nunca apagado) e a referência de
+  outra usina recusa o pedido inteiro (409). Não alargue: escrita nova só com a chave não nasce sem essa estreiteza.
 - **O cadastro mestre da usina** (R10, `services/dados_da_usina.py`): nome, endereço, cidade, UF, coordenada e kWp
   moram em `gs_plant_links`, com histórico por campo (`gs_usinas_historico`: quem, de qual sistema, antes e depois). A
   usina criada num sistema se registra no GS (`POST /interno/usinas`); a PARECIDA (`parecidas`) espera o gerente em
