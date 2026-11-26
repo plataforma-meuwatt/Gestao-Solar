@@ -519,8 +519,8 @@ vai ter memória e instruções, por usuário". O plano (fases, perguntas e padr
 - **O relógio da regra** (`_cegueira`, `_avaliar_horario`): cega 20 min (câmera: 5) depois da última leitura, nunca
   contando de antes de a usina acordar (`acordada_em`: ao nascer do sol o último dado é da véspera). O horário atrasado
   até 60 min dispara com "(era para HH:MM; atrasou)", sem afirmar a causa; mais que isso é `perdida` e reagenda. Erro
-  numa regra de horário (inclusive o teto de IA) vai à próxima hora marcada; o lembrete que não sai em 1 h desiste, com
-  o erro registrado. A condição que não vale vira a linha `nao_valeu` ("nada foi mandado"). O PR sem hora dita: 18:30.
+  numa regra de horário (inclusive o teto de IA) vai à próxima hora marcada, e o aviso de erro diz qual; o lembrete com
+  erro tenta de 5 em 5 min e, passada 1 h da hora DELE (não da última tentativa), desiste e avisa que desistiu. A condição que não vale vira a linha `nao_valeu` ("nada foi mandado"). O PR sem hora dita: 18:30.
 - **A tela do gerente lê frases prontas da API** (`agenda_rotulo`, `situacao_ajuda`, `entrega_rotulo`, `cega`,
   `leitura_linhas`; o código do meuWatt traduzido em `ESTADO_DA_LEITURA`): rótulo novo nasce lá, nunca na tela.
 - **Lê com o token PRÓPRIO do dono** (`so_proprio=True`); sem ele, cega com o motivo. Entrega da Fase 1: ao próprio
