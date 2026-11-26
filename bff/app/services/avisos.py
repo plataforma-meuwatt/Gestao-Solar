@@ -247,7 +247,12 @@ async def paradas_por_usuario(db: Session, imediatas: frozenset[str] = frozenset
     a ela: a leitura é a mesma, e repeti-la por pessoa multiplicaria a carga no
     meuWatt pelo número de clientes.
     """
-    pessoas = permissoes.usuarios_com_permissao(db, CATEGORIA, SUBCATEGORIA)
+    from app.services import automacoes
+
+    # Quem tem uma regra de usina parada LIGADA recebe por ela ("todas menos a usina X", o dono, 26/11/2026): o aviso
+    # antigo sairia em dobro das outras e avisaria justo da que a pessoa tirou.
+    pessoas = [p for p in permissoes.usuarios_com_permissao(db, CATEGORIA, SUBCATEGORIA)
+               if not automacoes.tem_regra_de_parada_ligada(db, p.id)]
     if not pessoas:
         return []
 
@@ -605,7 +610,9 @@ def na_janela_do_whatsapp(db: Session, usuario: User) -> bool:
 
     if not usuario.telefone or "bot_meuwatt" not in usuario.bot_ativo:
         return False
-    ultima = db.scalar(select(func.max(RegistroBot.em)).where(RegistroBot.gs_user_id == usuario.id))
+    # o aviso de uma automação também vira linha do Log, mas não é mensagem DA PESSOA: não abre a janela
+    ultima = db.scalar(select(func.max(RegistroBot.em)).where(RegistroBot.gs_user_id == usuario.id,
+                                                             RegistroBot.resultado != "automacao"))
     if ultima is None:
         return False
     ultima = ultima if ultima.tzinfo else ultima.replace(tzinfo=UTC)

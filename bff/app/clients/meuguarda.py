@@ -18,9 +18,10 @@ class MeuGuarda:
         self.base_url = base_url.rstrip("/")
         self._cabecalhos = {"Authorization": f"Bearer {sessao}", "X-Portao": portao}
 
-    async def _req(self, metodo: str, caminho: str, corpo: dict | None = None, espera_s: float = 20) -> httpx.Response:
+    async def _req(self, metodo: str, caminho: str, corpo: dict | None = None, espera_s: float = 20,
+                   params: dict | None = None) -> httpx.Response:
         async with httpx.AsyncClient(timeout=espera_s) as c:
-            r = await c.request(metodo, f"{self.base_url}{caminho}", headers=self._cabecalhos, json=corpo)
+            r = await c.request(metodo, f"{self.base_url}{caminho}", headers=self._cabecalhos, json=corpo, params=params)
         return r.raise_for_status()
 
     async def eu(self) -> dict[str, Any]:
@@ -49,6 +50,11 @@ class MeuGuarda:
     async def alarmes(self) -> list[dict[str, Any]]:
         """Os ABERTOS, das usinas que a pessoa vê."""
         return (await self._req("GET", "/api/alarmes")).json()
+
+    async def alarmes_desde(self, de: str, limite: int = 300) -> list[dict[str, Any]]:
+        """Todos os eventos (abertos e fechados: com a detecção desligada, o evento já entra fechado) desde `de` (ISO
+        com fuso), das usinas que a pessoa vê, o mais novo primeiro. A automação "gente na usina" lê por aqui."""
+        return (await self._req("GET", "/api/alarmes", params={"abertos": "false", "de": de, "limite": limite})).json()
 
     async def link(self, camera_id: int, canal: int = 1) -> dict[str, Any]:
         """`{url, expira_em, camera}`: abre a câmera ao vivo sem login, por 15 min (cada abertura vai ao log de lá)."""

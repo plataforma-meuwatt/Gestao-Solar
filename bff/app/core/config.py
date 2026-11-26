@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # aviso repetido.
     gs_motor_minutos: int = 0
 
+    # O interruptor das AUTOMAÇÕES (`services/automacoes.py`, a volta de um minuto que roda junto do motor): `1` desliga
+    # sem deploy, como o `GS_2FA_DESLIGADA`. As regras ficam guardadas e voltam a rodar ao religar.
+    gs_automacoes_desligadas: bool = False
+
     # A sessão do painel do gestor é curta de propósito: é a tela que guarda as
     # credenciais de serviço dos dois upstreams.
     gs_painel_sessao_horas: int = 8

@@ -39,6 +39,7 @@ from app.api.v1 import (
     carteira,
     documents,
     empresa,
+    empresa_automacoes,
     energia,
     equipamentos,
     exportacao,
@@ -190,18 +191,37 @@ async def _rodar_motor_de_tempos_em_tempos(minutos: int) -> None:
                 _log.exception("conferencia: a volta falhou; tenta na próxima")
 
 
+async def _rodar_automacoes_de_minuto_em_minuto() -> None:
+    """As automações (Plano Assistente GS): uma volta por minuto, com a trava de cada regra no banco
+    (`services/automacoes.pegar_devidas`). Uma volta que estoura é registrada e a seguinte acontece."""
+    from app.core.db import SessionLocal
+    from app.services import automacoes
+
+    await asyncio.sleep(_FOLEGO_DO_BOOT_S)
+    while True:
+        try:
+            with SessionLocal() as db:
+                await automacoes.rodar_tique(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.exception("automacoes: a volta falhou; a próxima continua agendada")
+        await asyncio.sleep(automacoes.VOLTA_S)
+
+
 @asynccontextmanager
 async def _ciclo_de_vida(_app: FastAPI):
     """As sessões com os upstreams vivem enquanto o processo vive (keep-alive, ver
     `clients/http.py`); no desligamento elas são devolvidas, para não ficar conexão
-    pendurada. E, se `GS_MOTOR_MINUTOS` for maior que zero, o motor de avisos roda aqui."""
-    tarefa = (
-        asyncio.create_task(_rodar_motor_de_tempos_em_tempos(settings.gs_motor_minutos))
-        if settings.gs_motor_minutos > 0
-        else None
-    )
+    pendurada. E, se `GS_MOTOR_MINUTOS` for maior que zero, o motor de avisos roda aqui (e, sem o
+    `GS_AUTOMACOES_DESLIGADAS`, a volta de um minuto das automações)."""
+    tarefas = []
+    if settings.gs_motor_minutos > 0:
+        tarefas.append(asyncio.create_task(_rodar_motor_de_tempos_em_tempos(settings.gs_motor_minutos)))
+        if not settings.gs_automacoes_desligadas:
+            tarefas.append(asyncio.create_task(_rodar_automacoes_de_minuto_em_minuto()))
     yield
-    if tarefa is not None:
+    for tarefa in tarefas:
         tarefa.cancel()
     await http_upstream.fechar_sessoes()
 
@@ -291,6 +311,7 @@ app.include_router(painel_acessos.router)
 app.include_router(interno_whatsapp.router)
 app.include_router(interno_meuguarda.router)
 app.include_router(empresa.router)
+app.include_router(empresa_automacoes.router)
 app.include_router(plants.router)
 app.include_router(paradas.router)
 app.include_router(billing.router)

@@ -297,7 +297,9 @@ def test_sem_o_token_a_parte_liberada_fica_parada_e_o_resto_do_cadastro_salva(db
     assert u.bot_ativo == {"bot_meuwatt"} and assistente.permitidas(u) == [*ger.FERRAMENTAS,
                                                                            *assistente.par.FERRAMENTAS,
                                                                            "procurar_consulta", "consultar",
-                                                                           "grafico_de_series"]
+                                                                           "grafico_de_series",
+                                                                           # automações e memória: de quem usa o bot
+                                                                           *assistente.auto_bot.FERRAMENTAS]
     cadastro.liberar_bot(u, "bot_meuplano", True)          # já estava ligada: não reconfere
     assert u.bot_meuplano
 

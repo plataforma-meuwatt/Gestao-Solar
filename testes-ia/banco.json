@@ -2910,5 +2910,153 @@
       }
     },
     "origem": "o Renan 25/11: \"o bot vai receber os problemas conhecidos e cadastrar\""
+  },
+  {
+    "frase": "Quando acabar a tensão no relé de Pirapozinho por mais de 10 min, me envia msg",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "leitura",
+        "grandeza": "tensao_rele",
+        "duracao_min": 10
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "envia o relatório de geração todo dia às 19h",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "horario",
+        "hora": "19:00"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "Me lembra de ver a geração amanhã meio dia",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "lembrete"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "se a temperatura do TR-02 de Pereiras subir acima de 90 graus me manda msg e push no app",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "leitura",
+        "grandeza": "temperatura_trafo",
+        "limite": 90
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "se alguma usina parar me avisa, menos Tietê",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "leitura",
+        "grandeza": "usina_parada"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "quando alguém entrar em Pirapozinho com OS aberta me manda mensagem",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "gente_na_usina"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "às 18h30 analisa o rendimento de Ibitinga se o PR ficar abaixo de 75",
+    "espera": [
+      "criar_automacao"
+    ],
+    "argumentos": {
+      "criar_automacao": {
+        "tipo": "horario"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "quais regras eu tenho?",
+    "espera": [
+      "minhas_automacoes"
+    ],
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "pausa a regra 2",
+    "espera": [
+      "mexer_automacao"
+    ],
+    "argumentos": {
+      "mexer_automacao": {
+        "acao": "pausar"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "Lembre que PF é Porto Ferreira",
+    "espera": [
+      "memoria"
+    ],
+    "argumentos": {
+      "memoria": {
+        "acao": "gravar"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "o que você lembra de mim?",
+    "espera": [
+      "memoria"
+    ],
+    "argumentos": {
+      "memoria": {
+        "acao": "listar"
+      }
+    },
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "a senha do smartlogger de tietê é 4821, lembra disso",
+    "espera": [
+      "memoria"
+    ],
+    "ou_sem_ferramenta": true,
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
+  },
+  {
+    "frase": "cria um lembrete no meuPlano para a OS 1638 amanhã às 8h",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "26/11 automações e memória (os exemplos do Renan)"
   }
 ]

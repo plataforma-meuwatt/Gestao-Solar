@@ -53,6 +53,8 @@ from app.services import assistente_meuguarda as mg
 from app.services import assistente_termovision as tv
 from app.services import assistente_campo as campo
 from app.services import assistente_mapa as mapa
+from app.services import assistente_automacoes as auto_bot
+from app.services import memoria
 
 log = logging.getLogger("gs.assistente")
 
@@ -427,7 +429,7 @@ FERRAMENTAS = {**ger.FERRAMENTAS, "manutencao": (manutencao, _MANUTENCAO),
                "avaliar_lugar": (local.avaliar_lugar, local.FERRAMENTA_AVALIAR),
                "lugares_da_equipe": (local.lugares_da_equipe, local.FERRAMENTA_LISTA_LUGARES),
                **helper.FERRAMENTAS, **cad.FERRAMENTAS,
-               **par.FERRAMENTAS, **mg.FERRAMENTAS, **campo.FERRAMENTAS, **tv.FERRAMENTAS}
+               **par.FERRAMENTAS, **mg.FERRAMENTAS, **campo.FERRAMENTAS, **tv.FERRAMENTAS, **auto_bot.FERRAMENTAS}
 
 
 #: Mensagem mais velha que isto não é respondida (fica no log como `atrasada`).
@@ -968,6 +970,8 @@ def permitidas(user) -> list[str]:
     nomes += catalogo.permitidas(user)                       # o catálogo do conector do Claude: o resto que se lê
     if user.perfil == Perfil.GESTOR_EMPRESA:                 # cadastrar gente: só o gerente da O&M
         nomes += list(cad.FERRAMENTAS)
+    if ativo:                                                # automações e memória: de quem usa o bot (a parte de
+        nomes += list(auto_bot.FERRAMENTAS)                  # cada gatilho é conferida na ferramenta)
     return nomes
 
 
@@ -1010,7 +1014,7 @@ outro sistema).
 Fala com {ctx.user.nome} ({ctx.user.apelido}). Usinas com monitoramento liberadas: {usinas}.
 Liberado para esta pessoa: {", ".join(areas) or "nada"}. Pergunta de área NÃO liberada: diga que o acesso
 a essa parte não está liberado e que o gerente da O&M pode liberar. Não tente responder de outro jeito.
-
+{memoria.bloco(ctx.db, ctx.user)}
 REGRA 1 (a mais importante): você JAMAIS afirma algo sem consultar. Todo fato do meuWatt, do meuPlano ou do helper
 (se uma OS, um relatório, uma tarefa ou um cadastro existe ou não, a situação, o número, o nome, a data, o valor) sai
 de uma ferramenta chamada NESTA mensagem. A conversa de antes é só contexto: o que ela disse pode ter mudado (alguém
@@ -1042,9 +1046,10 @@ de memória.
   são SEMPRE do meuPlano (`manutencao`). Geração, diagnóstico e paradas trazem os `problemas_conhecidos` abertos da
   usina: o que já é sabido, diga que é sabido, sem tratar como novidade.
 - Equipamento AO VIVO (ler inversor/relé/caixa agora, testar comunicação, alarmes do campo) ou AÇÃO na usina →
-  `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia, lembrete) → `manutencao`, com o pedido
+  `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia) → `manutencao`, com o pedido
   completo. Nunca pergunte "posso fazer? (Sim/Não)" em texto: chame a ferramenta, e o sistema mostra o resumo com o
   botão Sim.
+{auto_bot.PROMPT}
 - CONTATO DE TRIP, de liga ou de desliga de um DISJUNTOR no mapa do helper (o "!" do unifilar: "associar o contato de
   trip do DJ BT SKID 1") → `usina_helper`, rota `/api/religa/mapa_editar` com op "declarar", o disjuntor, atributo
   "trip" e a fonte (via "gateway", o gateway, a entrada n, active_high). Antes, PERGUNTE a entrada (DI) do Gateway:
@@ -1062,8 +1067,8 @@ de memória.
   para reenviar numa frase com até 3 números (ex.: "a UC é 1234567") — nunca o número sozinho, que vale como
   tentativa de senha.
 - Ação NUNCA é executada por você: a ferramenta devolve `proposta_pendente`, e o SISTEMA põe o resumo e o pedido
-  de confirmação ao pé da sua resposta. No meuPlano (criar ou concluir OS, lançar o dia, lembrete) a pessoa
-  confirma com SIM — NÃO fale de senha. Só ação no EQUIPAMENTO pelo helper (ligar, desligar, gravar parâmetro)
+  de confirmação ao pé da sua resposta. No meuPlano (criar ou concluir OS, lançar o dia) e nas automações daqui a
+  pessoa confirma com SIM — NÃO fale de senha. Só ação no EQUIPAMENTO pelo helper (ligar, desligar, gravar parâmetro)
   pede a SENHA DE ATUAÇÃO; fale dela só nesse caso. Nunca peça a senha de login atual nem escreva a de atuação.
   Nunca diga que fez. Ler não pede nada. Com a proposta, escreva no máximo UMA linha e não repita o resumo nem
   peça o SIM: o sistema já mostra os dois.
@@ -1214,7 +1219,8 @@ def de_memoria(texto: str, pedido: str) -> bool:
 async def responder(ctx: ger.Contexto, historico: list[dict], aviso: str = "") -> str:
     """`aviso`: o que o sistema diz à IA só nesta mensagem (`CANCELADA_PARA_A_IA`)."""
     msgs: list[dict] = [{"role": "system", "content": _sistema(ctx) + aviso}, *historico]
-    ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)]
+    ferramentas = [FERRAMENTAS[n][1] for n in permitidas(ctx.user)
+                   if not (getattr(ctx, "automacao", False) and n in auto_bot.SO_NA_CONVERSA)]   # a automação só lê
     cobrou = False
     rodada, limite = 0, MAX_RODADAS
     while rodada < limite:
@@ -1696,6 +1702,38 @@ def _gravar_conversa(conv: ConversaWhatsapp, historico: list[dict], revelados: S
          "d": list(dict.fromkeys(digitados))[-SEGREDOS_DA_CONVERSA:]}, ensure_ascii=False))
 
 
+async def aviso_na_conversa(db: Session, user: User, texto: str, travar: bool = True) -> bool:
+    """O aviso de uma AUTOMAÇÃO entra na conversa (cifrada) como fala do bot, para a resposta da pessoa ("abre uma OS
+    para isso") ter contexto, e no Log do bot com o resultado `automacao` (que não abre a janela de 24 h:
+    `automacoes.na_janela`, `avisos.na_janela_do_whatsapp`). Com o bot no meio de um turno desta pessoa, a conversa fica
+    como está (o turno a regravaria sem o aviso): o aviso fica só no Log. Devolve se entrou na conversa."""
+    _registrar(db, user.telefone or "", user, "automacao", resposta=texto, ferramentas=["automacao"])
+
+    def gravar() -> bool:
+        conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
+        if conv is None:
+            conv = ConversaWhatsapp(telefone=user.telefone, gs_user_id=user.id, mensagens="[]")
+            db.add(conv)
+        elif conv.gs_user_id != user.id:
+            return False
+        historico, revelados, digitados = _ler_conversa(conv)
+        historico.append({"role": "assistant", "content": texto})
+        _gravar_conversa(conv, historico, revelados, digitados)
+        db.commit()
+        return True
+
+    if not user.telefone:
+        return False
+    if not travar:
+        return gravar()
+    trava = _TRAVAS.setdefault(user.telefone.lstrip("+"), asyncio.Lock())
+    if trava.locked():
+        log.info("automação: a conversa de %s está num turno; o aviso fica só no Log do bot", user.id)
+        return False
+    async with trava:
+        return gravar()
+
+
 def _para_fora(mensagens: list[dict], revelados: Sequence[str]) -> list[dict]:
     """O histórico que vai ao meuPlano e à IA, sem as senhas que o meuPlano já revelou (avaliação 27: voltavam em claro
     a cada turno — e lá ficavam gravadas)."""
@@ -2026,6 +2064,12 @@ async def _atender(evento: dict) -> None:
             _registrar(db, telefone, user, "sem_texto", pergunta=f"[{evento.get('tipo') or 'mídia'}]", resposta=aviso,
                        em=enviada)
             return
+        try:                                               # a janela abriu: os avisos das automações que esperaram a
+            from app.services import automacoes            # pessoa falar saem ANTES da resposta, e entram na conversa
+            await automacoes.entregar_adiadas(db, user)
+        except Exception:                                  # noqa: BLE001 — nunca cala o turno
+            log.warning("assistente: não entregou os avisos que esperavam", exc_info=True)
+            db.rollback()
         tarefa = asyncio.create_task(_digitando_enquanto(evento.get("wamid"), fim))
         conv = db.scalar(select(ConversaWhatsapp).where(ConversaWhatsapp.telefone == user.telefone))
         if conv is None:

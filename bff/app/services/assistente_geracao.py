@@ -81,6 +81,8 @@ class Contexto:
     #: as mensagens da classificação de paradas que este turno começou (`assistente_paradas`): saem pelo sistema, com
     #: os botões, no lugar da resposta da IA
     fluxo: list | None = None
+    #: a IA roda numa AUTOMAÇÃO (`services/automacoes`), não numa conversa: só lê; `helper.propor` recusa toda ação
+    automacao: bool = False
 
 
 #: A lista de usinas do meuWatt de cada pessoa, por 5 min — ela era pedida a cada "oi".

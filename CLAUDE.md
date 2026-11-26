@@ -496,6 +496,44 @@ conector do meuguarda também, nesse do GS") não tem conector próprio: as LEIT
 (estado e alarmes abertos, eventos de um período, a foto de agora como imagem), com o acesso ao meuGuarda; o link ao
 vivo fica de fora (abre a câmera sem login).
 
+### Automações e memória do bot (Plano Assistente GS, 26/11/2026)
+
+O dono: "tudo é gatilho, ação e onde enviar. Gatilho são todos os parâmetros do meuWatt, meuPlano e até mesmo meuGuarda.
+Ação pode ser muita coisa, até um prompt de IA. E aí o envio é WhatsApp ou e-mail, para uma ou mais pessoas", e "o bot
+vai ter memória e instruções, por usuário". O plano (fases, perguntas e padrões) está no doc "Plano Assistente GS"
+(https://claude.ai/artifact/1HjjBVMgaExearYmriyjV2).
+
+- **A regra é uma linha** de `gs_automacoes` (gatilho, condições, escopo, ação, entrega em JSON; o lembrete é o gatilho
+  de uma vez), e TODA saída vira linha em `gs_automacao_disparos`, inclusive em ensaio (única por regra, chave do
+  evento, destinatário e ensaio: a chave descreve o evento, não a volta). Motor: `services/automacoes.py`, uma volta
+  por minuto ao lado do laço de 10 min (`main.py`; desliga com `GS_AUTOMACOES_DESLIGADAS=1`), a regra presa por
+  `rodando_ate` num `UPDATE … RETURNING` (a condição inteira no WHERE).
+- **Cada sistema detecta o que é dele; o GS só compara e conta o tempo.** Tensão do relé = a tela Leituras do meuWatt
+  (sem tensão = as fases abaixo do PISO de 1.000 V de lá; "zeroed" = falta de fase; fase marcada «já sei» não conta);
+  trafo = as sondas do `monitoring/current`; parada = a régua do aviso de parada (`avisos._parados` +
+  `_so_as_materiais`); gente na usina = `GET /api/alarmes?abertos=false&de=` do meuGuarda (câmera e central) com a OS
+  aberta do meuPlano.
+- **Nunca enganar**: a duração conta pela hora da LEITURA, só dado fresco; sem dado com sol a regra avisa que está cega
+  (uma vez por episódio) e quando volta a ler; à noite (fora da janela solar) o coletor dorme e ela não se diz cega;
+  "voltou" só com 10 min seguidos dentro do limite.
+- **Lê com o token PRÓPRIO do dono** (`so_proprio=True`); sem ele, cega com o motivo. Entrega da Fase 1: ao próprio
+  dono; WhatsApp em texto só dentro da janela de 24 h (`automacoes.na_janela`: a linha `automacao` do Log NÃO abre
+  janela, e `avisos.na_janela_do_whatsapp` também a ignora); push do aplicativo; senão o aviso espera a próxima
+  mensagem dele (`entregar_adiadas`, antes da resposta, 24 h; o vencido é contado). Sem modelo aprovado na Meta não há
+  outro caminho (em 26/11 a conta tinha zero modelos).
+- **Quem tem regra de usina parada LIGADA sai do aviso de parada antigo** (`avisos.paradas_por_usuario`): é o "todas
+  menos a usina X" sem aviso em dobro.
+- **A IA de uma automação só lê**: `ctx.automacao` faz `helper.propor` recusar toda ação, e ela não recebe as
+  ferramentas de automação nem de memória (`assistente_automacoes.SO_NA_CONVERSA`); só a equipe (gerente, técnico)
+  pede IA numa regra; 20 por pessoa por dia.
+- **Memória** (`services/memoria.py`, `gs_bot_memorias`, cifrada): só o que a pessoa pediu ("lembre que…"); entra no
+  `_sistema` como CONTEXTO da pessoa, nunca fato (a REGRA 1 segue). Recusa senha e instrução que mude as regras do
+  sistema ("não precisa pedir Sim"). "Anota que o Diogo trabalhou…" é o dia de trabalho do meuPlano, não memória (caso
+  do banco).
+- Bot: `services/assistente_automacoes.py` (`criar_automacao` com Sim, `minhas_automacoes`, `mexer_automacao`,
+  `memoria`); a hora do lembrete é contada pelo servidor (`quando_do_lembrete`), nunca pela IA. Tela do gerente:
+  `api/v1/empresa_automacoes.py` (oem-gs › Automações).
+
 ### O GS é o autenticador da família, e guarda cada acesso (Plano Casa GS, 24/11/2026)
 
 O dono: "GS é o pai, é o autenticador" e "o GS é o detentor dos acessos, quero que ele tenha a auditoria completa dos

@@ -957,6 +957,8 @@ def propor(ctx, resumo: str, prazo_s: int, executar, detalhes=(), avisos=(), par
     - O texto que a pessoa confirma é do SISTEMA, não da IA: `bloco_da_proposta` é acrescentado
       ao pé da resposta, com o resumo exato, os avisos e o prazo (`assistente._atender`)."""
     user = ctx.user
+    if getattr(ctx, "automacao", False):                # a IA de uma automação só lê: ninguém está ali para o Sim
+        return {"erro": "Numa automação nenhuma ação é proposta: só leia e responda."}
     from app.services import assistente_pdf
     if assistente_pdf.esperando(user.id):               # a assinatura armada nesta mensagem espera o PIN
         return {"erro": "Uma ação por vez: há uma assinatura esperando o PIN da pessoa nesta mensagem. Fale só dela."}
