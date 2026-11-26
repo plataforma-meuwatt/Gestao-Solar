@@ -460,7 +460,7 @@ GS: dict[str, tuple[str, dict]] = {
 
 def _tem_gs(usuario: User) -> bool:
     """Quem usa o bot tem regras e memória (as mesmas ferramentas do bot: `assistente.permitidas`)."""
-    return bool(usuario.bot_ativo)
+    return bool(getattr(usuario, "bot_ativo", None))
 
 
 async def _chamar_gs(db: Session, usuario: User, ferramenta: str) -> dict:
