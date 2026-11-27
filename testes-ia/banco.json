@@ -3224,5 +3224,91 @@
       "grafico_de_series"
     ],
     "origem": "log #754"
+  },
+  {
+    "frase": "me mostre a posição da string 10 do inversor  do skid 2, de ouro fino",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #752"
+  },
+  {
+    "frase": "Me passe a localização física da string 2S2 do skid 1 em porto-ferreira",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #763"
+  },
+  {
+    "frase": "Me passe a localização física da string 2S2 do skid 1 em ibitinga",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #764"
+  },
+  {
+    "frase": "Crie uma pendência em Pereiras.\nSubstituição dos nobreaks da cabine.\nLançamento do cabo do quadro de distribuição do inversor híbrido até a cabine",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #723"
+  },
+  {
+    "frase": "Adicione tarefa à OS 2050, pode ser em forma de check-list\nLevar\n2 bombonas de 200 l vazia\nPegar galões de 20 l vazio para gasolina\nSeparar galão de 20 litros vazio e pegar 10 litros de roundup na usina do zezé\nLevar galão de 2-4,D\nLevar motobomba à gasolina de aplicar veneno\nLevar atomizado e óleo 2t\nComprar glifosinato em são José do rio preto\nPegar dimensões da usina e calcular com o agrônomo a qnt de produto necessário e a diluição/dosagem por hectare",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #734"
+  },
+  {
+    "frase": "Agora crie uma outra OS relacionada a OS 2043.\nO tracker M7.1 voltou a travar.\nQuem executa é o diogo no dia de hoje.\nCriticidade alta.\nTarefas medir ângulo inclinação sela central com atuador recolhido.\nMedir capacitores\nInverter saí da SKC com outro atuador (só pode fazer isso com trackers com 1 motor). Exemplo, se o tracker que está travando é o M7.1, então tem que trocar os bornes na SKC com M7.2, pois a SKC funciona em blocos, saídas de 1 a 5 e 6 a 10.\nSe tiver o manual dos trackers anexe ele. Vou enviar umas fotos em seguidas para você anexar na OS.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #674"
+  },
+  {
+    "frase": "Acrescente um tarefa na OS 2042, verificar os conectores das strings da MPPT 6 do lado dos módulos e nos bornes do inversor; substituir todos os conectores no lado do inversor.",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #660"
+  },
+  {
+    "frase": "cadastre fornecedor de espuma para filtro\nSA Flex\n(19) ••••\nR. Particular, •••• - Tres Marias, Campinas - SP, ••••\nhttps://saflex.com.br",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #770"
+  },
+  {
+    "frase": "cadastre outro fornecedor de espuma/manta para filtro de ventilador\nAcital Isolamento Térmico e Acústico\n47 ••••\nhttps://www.acital.com.br/manta-polietileno-expandido\nR. 1ᵒ de Janeiro, •••• - Itoupava Norte - Blumenau - SC",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #773"
+  },
+  {
+    "frase": "Como estão os inversores de ibitimga",
+    "espera": [
+      "geracao"
+    ],
+    "origem": "log #759"
+  },
+  {
+    "frase": "Gere o grafico da temperatura do transformador 1 e sobreponha os inversores, em pirapozinho, no dia de hoje, das 7h até as 19h",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #755"
+  },
+  {
+    "frase": "Gere o grafico da temperatura do transformador 1 e sobreponha os inversores, em pirapozinho, no dia de ontem, das 7h até as 19h",
+    "espera": [
+      "procurar_consulta",
+      "grafico_de_series"
+    ],
+    "origem": "log #756"
   }
 ]
