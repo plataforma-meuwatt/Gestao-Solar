@@ -34,9 +34,12 @@ router = APIRouter(prefix="/api/empresa", tags=["empresa · O&M"])
 
 #: os tipos de dispositivo que têm nó candidato no meuPlano (os outros aparecem na árvore, sem lista)
 ROTULO_DO_TIPO = {"transformador": "Transformador", "inversor": "Inversor"}
-#: os outros equipamentos do índice que a tela mostra, cada tipo no grupo dele, só para ler (o nó de cada um chega pela
-#: rotina do meuPlano, como o das strings)
+#: os outros equipamentos do índice que a tela mostra, cada tipo no grupo dele. A pessoa também liga o nó deles (são
+#: poucos e não há regra segura para casar sozinho); só a string fica de fora (centenas, ligadas pela rotina do meuPlano)
 GRUPOS = {"rele": "Relés de proteção", "estacao": "Estações meteorológicas", "medidor_ssu": "Medidores da fronteira"}
+#: o tipo em palavras, para a frase da recusa ("o nó 9 não é um relé desta usina")
+_UM = {"transformador": "um transformador", "inversor": "um inversor", "rele": "um relé", "estacao": "uma estação",
+       "medidor_ssu": "um medidor de energia"}
 
 
 class NoOut(BaseModel):
@@ -118,7 +121,8 @@ class EquipamentosOut(BaseModel):
     #: de cada uma é ligado pela rotina do meuPlano, não pela pessoa)
     strings: int = 0
     strings_ligadas: int = 0
-    #: os relés, as estações e os medidores da fronteira, cada tipo no grupo dele, só para ler (o grupo vazio não vem)
+    #: os relés, as estações e os medidores da fronteira, cada tipo no grupo dele (o grupo vazio não vem). A pessoa
+    #: liga o nó deles como o dos transformadores, com os candidatos de `candidatos[tipo]`; não há sugestão
     grupos: list[GrupoOut] = []
 
 
@@ -200,7 +204,7 @@ def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, a
         usina_id=usina.id, usina_codigo=codigo(usina.id), usina_nome=usina.nome, dispositivos=raizes,
         candidatos={tipo: [CandidatoOut(id=n["id"], codigo=str(n.get("code") or ""),
                                         nome=str(n.get("display_name") or ""), local=_local(n), rotulo=_rotulo(n))
-                           for n in sugestao_de_nos.candidatos(nos or [], tipo)] for tipo in sugestao_de_nos.TIPO_DO_NO},
+                           for n in sugestao_de_nos.candidatos(nos or [], tipo)] for tipo in sugestao_de_nos.TIPOS_DO_NO},
         meuplano_lido=nos is not None, aviso=aviso,
         ligados=sum(1 for x in linhas if x.mp_node_id is not None), total=len(linhas),
         strings=len(strings), strings_ligadas=sum(1 for s in strings if s.mp_node_id is not None),
@@ -239,10 +243,10 @@ async def gravar_nos_da_usina(usina_id: int, body: NosIn, db: Session = Depends(
                                                          "uma posição só.")
     if any(gd not in linhas for gd in gds):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Equipamento não encontrado nesta usina")
-    if any(linhas[gd].tipo not in sugestao_de_nos.TIPO_DO_NO for gd in gds):
+    if any(linhas[gd].tipo not in sugestao_de_nos.TIPOS_DO_NO for gd in gds):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            "Aqui se ligam só transformadores e inversores: o nó dos outros (strings, relés, estações, "
-                            "medidores) é ligado pelo meuPlano, sozinho. Nada foi gravado.")
+                            "As strings não se ligam aqui: o nó de cada uma é ligado pelo meuPlano, sozinho. Nada foi "
+                            "gravado.")
     nos, aviso = await _nos_do_meuplano(db, gerente, usina)
     por_no = {n["id"]: n for n in nos or []}
     pedido = {linhas[d.gd]: d.node_id for d in body.nos}
@@ -252,10 +256,9 @@ async def gravar_nos_da_usina(usina_id: int, body: NosIn, db: Session = Depends(
         if nos is None:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                                 (aviso or "O meuPlano não respondeu agora.") + " Nada foi gravado.")
-        if por_no.get(no, {}).get("type_code") != sugestao_de_nos.TIPO_DO_NO.get(linha.tipo):
+        if por_no.get(no, {}).get("type_code") not in sugestao_de_nos.TIPOS_DO_NO[linha.tipo]:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                f"O nó {no} não é um {ROTULO_DO_TIPO.get(linha.tipo, linha.tipo).lower()} desta usina "
-                                "no meuPlano. Nada foi gravado.")
+                                f"O nó {no} não é {_UM[linha.tipo]} desta usina no meuPlano. Nada foi gravado.")
     antes = {linha: linha.mp_node_id for linha in pedido}
     try:
         dispositivos.aplicar_nos(db, pedido)

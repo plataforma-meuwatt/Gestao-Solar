@@ -1073,7 +1073,8 @@ export type EquipamentosDaUsina = {
   /** As strings da usina no índice e quantas já têm nó no meuPlano: a tela só diz a conta. */
   strings: number
   strings_ligadas: number
-  /** Os relés, as estações e os medidores da fronteira, cada tipo no grupo dele: só para ler. */
+  /** Os relés, as estações e os medidores da fronteira, cada tipo no grupo dele. A pessoa escolhe o nó de cada um
+   *  (os candidatos vêm em `candidatos[tipo]`); não há sugestão. */
   grupos: {
     tipo: string
     titulo: string

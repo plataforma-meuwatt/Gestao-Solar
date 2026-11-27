@@ -247,7 +247,9 @@ então a rota dos nós acima não liga nada sozinha. Quem diz qual nó é qual d
 oem-gs › Usinas › Equipamentos (`GET /api/empresa/usinas/{id}/dispositivos` e `PUT …/dispositivos/nos`, com a sessão
 dele; não é rota dos sistemas). O GS lê os nós da usina no meuPlano com a conta da empresa
 (`GET /api/v1/meuacesso/usinas/{usina_id}/nodes`), mostra como candidatos só os `transformador_potencia` e os
-`inversor`, e propõe o par (pelo número; senão pela ordem; o inversor só dentro do transformador cujo nó se sabe). A
+`inversor`, e propõe o par (pelo número; senão pela ordem; o inversor só dentro do transformador cujo nó se sabe). O
+relé, a estação e o medidor da fronteira também são ligados ali pela pessoa, sem sugestão (candidatos: `rele_protecao`
+e `rele_temperatura`; `estação solarimétrica`, `piranometro` e `datalogger`; `medidor_energia`). A string, não. A
 sugestão nunca é gravada sem o Salvar da pessoa. O que ela salva cai na mesma coluna (`mp_node_id`), com a mesma
 regra (um nó é uma posição só), e o meuPlano o recebe na leitura dele (`GET …/dispositivos`, o bloco `meuplano`).
 

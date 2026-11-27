@@ -20,6 +20,14 @@ import re
 
 #: o tipo de nó do meuPlano que pode ser cada tipo de dispositivo
 TIPO_DO_NO = {"transformador": "transformador_potencia", "inversor": "inversor"}
+#: os tipos de nó que a pessoa pode escolher para cada tipo de dispositivo, no oem-gs › Usinas › Equipamentos. O relé, a
+#: estação e o medidor da fronteira (28/11/2026) não têm sugestão: os nomes não batem, o meuPlano tem nó repetido e
+#: solto, e o índice não diz se o relé é de proteção ou de temperatura. A pessoa liga os poucos que são, uma vez. Os
+#: nomes dos tipos são os do meuPlano (`mapa_usina.TIPOS_DO_OBJETO` de lá usa os mesmos para a estação).
+TIPOS_DO_NO = {**{tipo: (no,) for tipo, no in TIPO_DO_NO.items()},
+               "rele": ("rele_protecao", "rele_temperatura"),
+               "estacao": ("estação solarimétrica", "piranometro", "datalogger"),
+               "medidor_ssu": ("medidor_energia",)}
 BASE = {"numero": "pelo número", "ordem": "pela ordem"}
 
 
@@ -34,8 +42,8 @@ def numero(*textos: str | None) -> int | None:
 
 def candidatos(nos: list[dict], tipo: str) -> list[dict]:
     """Os nós que podem ser um dispositivo daquele tipo, na ordem da árvore (e pelo código)."""
-    alvo = TIPO_DO_NO.get(tipo)
-    return sorted((n for n in nos if n.get("type_code") == alvo),
+    alvo = TIPOS_DO_NO.get(tipo, ())
+    return sorted((n for n in nos if n.get("type_code") in alvo),
                   key=lambda n: (n.get("display_order") or 0, str(n.get("code") or ""), n["id"]))
 
 

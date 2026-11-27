@@ -24,9 +24,32 @@ import { mensagemDeErro } from '@/lib/api'
 const emLista = (itens: DispositivoDaUsina[], nivel = 0): { d: DispositivoDaUsina; nivel: number }[] =>
   itens.flatMap((d) => [{ d, nivel }, ...emLista(d.filhos, nivel + 1)])
 
+/** O relé, a estação e o medidor da fronteira na forma das outras linhas: sem sugestão, sem filhos e sem strings. */
+const dosGrupos = (dados: EquipamentosDaUsina): DispositivoDaUsina[] =>
+  dados.grupos.flatMap((g) =>
+    g.itens.map((i) => ({
+      gd: i.gd,
+      codigo: i.codigo,
+      tipo: g.tipo,
+      tipo_rotulo: i.debaixo_de ?? 'da usina',
+      nome: i.nome,
+      ativo: i.ativo,
+      no: i.no,
+      sugestao: null,
+      filhos: [],
+      strings: 0,
+      strings_ligadas: 0,
+    })),
+  )
+
 /** O que a tela mostra ao abrir: o nó gravado; sem ele, a sugestão do GS. */
 const aoAbrir = (dados: EquipamentosDaUsina): Record<number, number | null> =>
-  Object.fromEntries(emLista(dados.dispositivos).map(({ d }) => [d.gd, d.no?.id ?? d.sugestao?.node_id ?? null]))
+  Object.fromEntries(
+    [...emLista(dados.dispositivos).map(({ d }) => d), ...dosGrupos(dados)].map((d) => [
+      d.gd,
+      d.no?.id ?? d.sugestao?.node_id ?? null,
+    ]),
+  )
 
 export function Equipamentos({ usinaId }: { usinaId: number }) {
   const qc = useQueryClient()
@@ -54,9 +77,10 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
   if (!data) return null
 
   const linhas = emLista(data.dispositivos)
-  const mudancas = linhas
-    .filter(({ d }) => d.gd in escolhas && escolhas[d.gd] !== (d.no?.id ?? null))
-    .map(({ d }) => ({ gd: d.gd, node_id: escolhas[d.gd] }))
+  const outros = dosGrupos(data)
+  const mudancas = [...linhas.map(({ d }) => d), ...outros]
+    .filter((d) => d.gd in escolhas && escolhas[d.gd] !== (d.no?.id ?? null))
+    .map((d) => ({ gd: d.gd, node_id: escolhas[d.gd] }))
   const aLigar = mudancas.filter((m) => m.node_id !== null).length
   const aDesligar = mudancas.length - aLigar
   // o mesmo nó escolhido duas vezes: a tela diz antes de o servidor recusar
@@ -77,8 +101,8 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
           {data.ligados} de {data.total} {data.total === 1 ? 'equipamento ligado' : 'equipamentos ligados'} ao meuPlano
         </p>
         <p className="text-sm text-rotulo">
-          Diga qual nó da árvore do meuPlano é cada transformador e cada inversor daqui. A sugestão é um palpite do
-          Gestão Solar: confira antes de salvar.
+          Diga qual nó da árvore do meuPlano é cada equipamento daqui. A sugestão (só nos transformadores e nos
+          inversores) é um palpite do Gestão Solar: confira antes de salvar.
         </p>
         {data.strings ? (
           <p className="text-sm text-fraco">
@@ -110,7 +134,31 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
         </p>
       )}
 
-      {linhas.length ? (
+      {/* O relé, a estação e o medidor da fronteira: sem sugestão (os nomes não batem), a pessoa escolhe o nó. */}
+      {data.grupos.map((g) => (
+        <div key={g.tipo} className="border-t border-borda pt-3">
+          <p className="rotulo-campo">
+            {g.titulo} ({g.itens.length})
+          </p>
+          <ul className="grid gap-2">
+            {outros
+              .filter((d) => d.tipo === g.tipo)
+              .map((d) => (
+                <Linha
+                  key={d.gd}
+                  d={d}
+                  nivel={0}
+                  candidatos={data.candidatos[d.tipo] ?? []}
+                  valor={escolhas[d.gd] ?? null}
+                  repetido={escolhas[d.gd] != null && repetidos.has(escolhas[d.gd] as number)}
+                  aoEscolher={(v) => escolher(d.gd, v)}
+                />
+              ))}
+          </ul>
+        </div>
+      ))}
+
+      {linhas.length || outros.length ? (
         <div className="flex items-center gap-3 flex-wrap">
           {confirmando ? (
             <>
@@ -151,36 +199,6 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
         </div>
       ) : null}
       {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
-
-      {/* Os outros equipamentos do índice, só para ler: o nó de cada um chega pelo meuPlano, como o das strings. */}
-      {data.grupos.map((g) => (
-        <div key={g.tipo} className="border-t border-borda pt-3">
-          <p className="rotulo-campo">
-            {g.titulo} ({g.itens.length})
-          </p>
-          <ul className="grid gap-2">
-            {g.itens.map((i) => (
-              <li key={i.gd} className="grid gap-1 sm:grid-cols-2 sm:items-start">
-                <div className="min-w-0">
-                  <p className="text-sm text-forte">
-                    {i.nome}
-                    {i.debaixo_de ? <span className="text-fraco"> · {i.debaixo_de}</span> : null}
-                  </p>
-                  <p className="text-xs text-fraco mono">{i.codigo}</p>
-                  {i.ativo ? null : (
-                    <p className="mt-1">
-                      <Selo tom="sem-dados">fora da última lista do meuWatt</Selo>
-                    </p>
-                  )}
-                </div>
-                <p className="text-sm text-rotulo min-w-0">
-                  {i.no ? (i.no.rotulo ?? `nó ${i.no.id} do meuPlano`) : <span className="text-fraco">sem nó no meuPlano</span>}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </div>
   )
 }
