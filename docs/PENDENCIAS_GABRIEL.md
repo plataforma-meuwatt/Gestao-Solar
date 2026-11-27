@@ -76,3 +76,16 @@ responde com o certificado do nome antigo. Ponha o `server_name` novo e o certif
 ## O que NÃO é seu (fica com o Renan ou com o Claude da VM dele)
 OTA do app (sai pela bancada, pelo script seguro), a IA paliativa (`llm-claude`, na VM do Renan), os modelos da Meta,
 a troca dos segredos que apareceram numa saída de comando em 26/11, a senha de atuação do Marlon.
+
+## 9. Helper: o que mudou no unifilar desde a promoção (2.51.12 → 2.51.13, só na develop)
+A main tem a 2.51.12 (26/11). Na develop (`dev-helper.gestao.solar`) está a **2.51.13**, que corrige o caso de Ouro
+Fino do Renan ("por que não temos tensão no barramento?"): os três 7SR10 liam ~8,1 kV por fase, mas o unifilar dizia
+"tensão sem leitura" (texto fixo) e só mostrava a tensão com zoom ≥ 140 %. Agora a tensão do barramento aparece em
+qualquer zoom, **entre fases** (média fase-neutro × √3, ~14,1 kV), com a fonte e a hora; no zoom máximo, as três fases
+como foram lidas. Sem o DJ Geral, a rede É o barramento e o rótulo da rede mostra a mesma leitura. Sem leitura com hora
+continua "—" / "sem leitura". Commit `d6e1068`; teste `tests/test_unifilar.js` (com mutação).
+Lembrando o que a 2.51.8–2.51.12 já levou à main: a leitura compartilhada passou a ser uma por (usina, assinatura) — duas
+telas não se apagam mais —, e o 7SR10 que calou no barramento (ou respondeu sem o bloco de E/S ou sem os LEDs) é relido
+uma vez no fim da fila e herda a leitura boa anterior por 90 s, dito com a hora.
+**Pronto quando:** você conferiu o unifilar de Ouro Fino no `dev-helper.gestao.solar` e deu o OK para levar a 2.51.13 à
+main (a promoção é pelo Renan).
