@@ -33,9 +33,13 @@ class _MeuPlano:
                 400, request=req, json={"detail": "Nenhuma etapa da obra casa 'quadra Z'."}))
         if acao == "anotar_diario_de_obra":
             return {"data": {"rdo_id": 77, "registro_id": 555, "mensagem": "Anotado."}}
+        if acao == "lancar_dia_de_obra":
+            return {"data": {"rdo_id": 88, "registro_id": None, "mensagem": "Lançado.",
+                             "midia_para": {"rdo_id": 88, "atividade_id": 162, "etapa": "Lançar a fibra"}}}
         return {"data": {}}
 
-    async def foto_no_diario(self, rdo_id, registro_id, nome, conteudo, tipo, legenda):
+    async def foto_no_diario(self, rdo_id, registro_id, nome, conteudo, tipo, legenda, atividade_id=None):
+        self.atividades = getattr(self, "atividades", []) + [atividade_id]
         if conteudo in self.falha_em:
             req = httpx.Request("POST", f"https://mp/api/v1/meuacesso/rdo/{rdo_id}/fotos")
             raise httpx.HTTPStatusError("400", request=req, response=httpx.Response(
@@ -109,3 +113,28 @@ async def test_outra_acao_nao_leva_as_fotos(db, cena):
     h.mostrada(dono.id)
     resposta = await h.confirmar_por_mensagem(db, dono, dono.telefone, "Sim")
     assert mp.fotos == [] and "📷" not in resposta and len(fotos.recebidas(dono.telefone)) == 2
+
+
+LOTE = {"action": "lancar_dia_de_obra",
+        "args": {"obra": "Fibra", "itens": [{"tipo": "avanco", "etapa": "fibra", "quantidade": 300, "quem": "ambos"},
+                                            {"tipo": "clima", "tempo": "chuvoso", "hora": "14h", "parou": True}]},
+        "preview": {"summary": "Lançar 2 item(ns) no diário da obra Fibra (27/11/2026)",
+                    "lines": [{"kind": "obra", "text": "Obra: Fibra · 27/11/2026 · diário de Dono"},
+                              {"kind": "avanco", "text": "Avanço · Lançar a fibra: +300 m (Dono +150 m, Thiago +150 m)"},
+                              {"kind": "clima", "text": "Clima 14:00 · agora: chuvoso (parou o serviço)"}]}}
+
+
+async def test_lote_do_dia_leva_as_fotos_para_onde_o_meuplano_manda(db, cena):
+    """`lancar_dia_de_obra` (fase 4): uma proposta com vários itens; depois do Sim as fotos e vídeos sobem no
+    `midia_para` (aqui: o diário 88, na etapa 162, sem registro)."""
+    mp = _MeuPlano()
+    dono = cena(mp)
+    out = assistente._proposta_do_meuplano(ger.Contexto(db=db, user=dono, telefone=dono.telefone), LOTE)
+    assert out["detalhes"][-1] == "📷 2 foto(s) vão junto, ligada(s) a esta anotação"
+    assert "Avanço · Lançar a fibra: +300 m (Dono +150 m, Thiago +150 m)" in out["detalhes"]
+    h.mostrada(dono.id)
+    resposta = await h.confirmar_por_mensagem(db, dono, dono.telefone, "Sim")
+    assert mp.aplicadas == ["lancar_dia_de_obra"]
+    assert [(r, g, c) for r, g, c, _, _ in mp.fotos] == [(88, None, b"JPG11"), (88, None, b"JPG12")]
+    assert mp.atividades == [162, 162]
+    assert resposta.endswith("📷 2 foto(s) ligada(s) à etapa Lançar a fibra.")

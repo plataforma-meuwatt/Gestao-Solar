@@ -250,11 +250,13 @@ async def anexar_fotos(ctx, a: dict) -> dict:
 
 
 async def subir_no_diario(mp, dados: dict, lista: list[dict], telefone: str, etapa: str | None) -> str:
-    """Depois do Sim da anotação do DIÁRIO DE OBRA (`anotar_diario_de_obra` do meuPlano): cada foto da conversa sobe no
-    diário com o `registro_id` da anotação, com o token DA PESSOA (`mp`), e herda a etapa dela. Devolve o que dizer:
-    nunca "subiu" do que não subiu."""
+    """Depois do Sim do DIÁRIO DE OBRA (`anotar_diario_de_obra` / `lancar_dia_de_obra` do meuPlano): cada foto e vídeo
+    da conversa sobe no diário onde o meuPlano mandou (`midia_para`: o diário, a anotação/problema — herda a etapa
+    dela — ou a etapa), com o token DA PESSOA (`mp`). Devolve o que dizer: nunca "subiu" do que não subiu."""
     from app.services.integracoes import detalhe_do_upstream
-    rdo, reg = dados.get("rdo_id"), dados.get("registro_id")
+    alvo = dados.get("midia_para") or dados
+    rdo, reg, ativ = alvo.get("rdo_id"), alvo.get("registro_id"), alvo.get("atividade_id")
+    etapa = alvo.get("etapa") or etapa
     if not rdo:
         return (f"⚠️ A anotação foi gravada, mas o meuPlano não devolveu o diário: {quantos(lista)} NÃO subiram. "
                 "Anexe pela tela do diário da obra.")
@@ -265,7 +267,7 @@ async def subir_no_diario(mp, dados: dict, lista: list[dict], telefone: str, eta
             conteudo, tipo = await whatsapp.baixar_midia(f["id"])
             tipo = tipo or ("video/mp4" if f.get("video") else "image/jpeg")
             await mp.foto_no_diario(int(rdo), reg, f"whatsapp-{i}.{tipo.split('/')[-1].split(';')[0]}", conteudo,
-                                    tipo, f["legenda"])
+                                    tipo, f["legenda"], atividade_id=ativ)
         except whatsapp.GatewayIndisponivel:
             falhas.append(f"{qual}: não consegui baixar do WhatsApp")
             continue
@@ -278,7 +280,7 @@ async def subir_no_diario(mp, dados: dict, lista: list[dict], telefone: str, eta
             continue
         feitas.append(f)
         _tirar(telefone, f["id"])
-    onde = f"à etapa {etapa}" if etapa else "à anotação do dia"
+    onde = f"à etapa {etapa}" if etapa else ("à anotação do dia" if reg else "ao diário do dia")
     motivos = "".join(f"\n• {m}" for m in falhas)
     if not feitas:
         return f"❌ Nenhuma das {quantos(lista)} subiu ao diário:{motivos}"

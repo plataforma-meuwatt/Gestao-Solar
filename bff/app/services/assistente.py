@@ -364,6 +364,10 @@ def _valores_secretos(args: Any) -> list[str]:
             and (c.get("is_segredo") or _CHAVE_DE_SENHA.search(str(c.get("chave") or "")))] if isinstance(campos, list) else []
 
 
+#: As ações do DIÁRIO DE OBRA do meuPlano que levam as fotos e vídeos da conversa (devolvem `midia_para`).
+OBRA_COM_MIDIA = {"anotar_diario_de_obra", "lancar_dia_de_obra"}
+
+
 def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | None = None,
                           feitos: tuple[str, ...] = (), acoes_feitas: tuple[tuple[str, dict], ...] = ()) -> dict:
     """Ação do assistente do meuPlano (criar/concluir OS, lançar o dia, lembrete…) volta como
@@ -381,7 +385,7 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
     ctx.digitados.extend(_valores_secretos(args))          # "salve a senha do Wi-Fi: rede / X" — o X some de tudo
     # As fotos da conversa vão junto da anotação do DIÁRIO DE OBRA (27/11/2026): só nessa ação; nas outras (conta de
     # energia, anexar na tarefa) elas seguem o caminho de sempre.
-    da_obra = fotos.recebidas(ctx.telefone) if acao == "anotar_diario_de_obra" else []
+    da_obra = fotos.recebidas(ctx.telefone) if acao in OBRA_COM_MIDIA else []
     etapa = next((str(ln.get("text") or "").removeprefix("Etapa: ") for ln in previa.get("lines") or []
                   if ln.get("kind") == "etapa"), None)
     etapa = None if etapa in (None, "", "geral do dia") else etapa

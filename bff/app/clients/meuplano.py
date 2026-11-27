@@ -783,9 +783,10 @@ class MeuPlanoClient:
         return r.json()
 
     async def foto_no_diario(self, rdo_id: int, registro_id: int | None, nome: str, conteudo: bytes,
-                             tipo: str | None, legenda: str) -> dict[str, Any]:
-        """Uma foto (ou vídeo) no DIÁRIO DE OBRA, ligada à anotação (`registro_id`): ela herda a etapa dela."""
-        data = {"legenda": legenda, **({"registro_id": str(registro_id)} if registro_id else {})}
+                             tipo: str | None, legenda: str, atividade_id: int | None = None) -> dict[str, Any]:
+        """Uma foto (ou vídeo) no DIÁRIO DE OBRA, ligada à anotação (`registro_id`: herda a etapa dela) ou à etapa."""
+        data = {"legenda": legenda, **({"registro_id": str(registro_id)} if registro_id else {}),
+                **({"atividade_id": str(atividade_id)} if atividade_id else {})}
         r = await self._req("POST", f"/api/v1/meuacesso/rdo/{rdo_id}/fotos", timeout=120,
                             files={"file": (nome, conteudo, tipo or "image/jpeg")}, data=data)
         return r.json()
