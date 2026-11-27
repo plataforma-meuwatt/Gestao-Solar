@@ -45,10 +45,13 @@ PADRAO = {"trafo": "transformador", "inv": "inversor"}
 #: fronteira (`ssu:<ssu_readers.id>`, tipo `medidor_ssu`; o `medidor` sozinho segue reservado para o medidor de
 #: energia) entraram em 27/11/2026. O relé e a estação ficam debaixo de um transformador ou soltos (da usina); o
 #: medidor da fronteira é sempre da usina (`PAI`).
-GRAFIA = {"meuwatt": {**PADRAO, "str": "string", "rele": "rele", "est": "estacao", "ssu": "medidor_ssu"}}
+#: O GATEWAY (a caixa ABS, `gw:<gateways.id>`, 28/11/2026) é da usina: vários transformadores podem pender de um só,
+#: por isso não tem pai.
+GRAFIA = {"meuwatt": {**PADRAO, "str": "string", "rele": "rele", "est": "estacao", "ssu": "medidor_ssu",
+                      "gw": "gateway"}}
 #: de que prefixo pode ser o pai de cada um, quando há pai (vazio = não tem pai). Quem não está aqui (o transformador
 #: e o inversor) segue com a regra de sempre: qualquer dispositivo da mesma lista. A string tem a regra dela.
-PAI = {"rele": ("trafo",), "est": ("trafo",), "ssu": ()}
+PAI = {"rele": ("trafo",), "est": ("trafo",), "ssu": (), "gw": ()}
 #: o que vem depois do prefixo: um número só, a não ser na string (a vaga e a entrada)
 _NUMERO = r"\d+"
 _CORPO = {"str": r"\d+:\d+"}

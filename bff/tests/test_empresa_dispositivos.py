@@ -214,7 +214,7 @@ def test_as_strings_so_entram_na_contagem(db, c):
     inv12 = next(d for d in _todos(out) if d.nome == "INV12")
     assert (inv12.filhos, inv12.strings, inv12.strings_ligadas) == ([], 3, 0)
     assert all((d.strings, d.strings_ligadas) == (0, 0) for d in _todos(out) if d.nome != "INV12")
-    assert set(out.candidatos) == {"transformador", "inversor", "rele", "estacao", "medidor_ssu"}
+    assert set(out.candidatos) == {"transformador", "inversor", "rele", "estacao", "medidor_ssu", "gateway"}
     # a rotina do meuPlano ligou duas (e a ausente, que não entra na conta): a conta vem do índice, sem ler o meuPlano
     for ref, no in (("str:90:1", 9001), ("str:90:7", 9007), ("str:90:9", 9009)):
         db.query(DeviceLink).filter_by(mw_ref=ref).one().mp_node_id = no
@@ -273,25 +273,32 @@ def test_a_pessoa_liga_o_no_do_rele_da_estacao_e_do_medidor(db, c):
         _no(312, "piranometro", "PIR-1", "Piranômetro", pai=311, ordem=1, caminho="Pereiras > Estação solarimétrica > Piranômetro"),
         _no(313, "datalogger", "DL-1", "Datalogger", pai=311, ordem=2),
         _no(321, "medidor_energia", "MED-1", "Medidor da fronteira", pai=1, ordem=6),
+        _no(341, "gateway", "GW-1", "Gateway", pai=100, ordem=8, caminho="Pereiras > Skid 1 > Gateway"),
+        _no(342, "gateway", "GW-2", "Gateway", pai=200, ordem=8, caminho="Pereiras > Skid 2 > Gateway"),
+        _no(343, "gateway_io", "GIO-1", "Gateway de I/O", pai=100, ordem=9),
         _no(331, "rele", "RX", "Relé de outro tipo", pai=1, ordem=7)]
     rele = DeviceLink(plant_link_id=per.id, tipo="rele", nome="Relé do TR-01", mw_ref="rele:5", pai_id=tr1.id)
     geral = DeviceLink(plant_link_id=per.id, tipo="rele", nome="Relé geral", mw_ref="rele:6", ativo=False)
     est = DeviceLink(plant_link_id=per.id, tipo="estacao", nome="Estação 1", mw_ref="est:3")
     ssu = DeviceLink(plant_link_id=per.id, tipo="medidor_ssu", nome="Fronteira", mw_ref="ssu:9")
     s = DeviceLink(plant_link_id=per.id, tipo="string", nome="String 1", mw_ref="str:90:1", pai_id=c["invs"][0].id)
-    db.add_all([rele, geral, est, ssu, s])
+    gw = DeviceLink(plant_link_id=per.id, tipo="gateway", nome="ABS Skid 1", mw_ref="gw:7")
+    db.add_all([rele, geral, est, ssu, s, gw])
     db.commit()
     out = _ver(db, c)
     # os candidatos de cada tipo, pelo tipo do nó no meuPlano, com o lugar no rótulo (há nós de mesmo nome)
     assert {t: [x.id for x in lista] for t, lista in out.candidatos.items()} == {
         "transformador": [101, 201], "inversor": [111, 211, 112, 212, 113, 213], "rele": [301, 302, 303],
-        "estacao": [312, 313, 311], "medidor_ssu": [321]}
+        "estacao": [312, 313, 311], "medidor_ssu": [321], "gateway": [341, 342]}
+    assert [x.rotulo for x in out.candidatos["gateway"]] == ["Gateway · GW-1 · Skid 1", "Gateway · GW-2 · Skid 2"]
+    assert [(g.tipo, g.titulo) for g in out.grupos][-1] == ("gateway", "Gateways")      # o quarto grupo, por último
     assert [x.rotulo for x in out.candidatos["rele"]] == [
         "Relé de proteção · RP-1 · Skid 1", "Relé de temperatura · RT-1 · Skid 1", "Relé de temperatura · RT-2 · Skid 2"]
     assert all(i.no is None for g in out.grupos for i in g.itens)       # nada é ligado sozinho, e não há sugestão
     # liga os quatro num salvar (o ausente também), com o histórico de quem fez
     out = _gravar(db, c, (rele, 302), (geral, 301), (est, 311), (ssu, 321), (tr1, 101))
-    assert {i.nome: i.no.model_dump() for g in out.grupos for i in g.itens} == {
+    assert out.grupos[-1].itens[0].no is None              # o gateway não veio no pedido: fica como está
+    assert {i.nome: i.no.model_dump() for g in out.grupos[:-1] for i in g.itens} == {
         "Relé do TR-01": {"id": 302, "rotulo": "Relé de temperatura · RT-1 · Skid 1"},
         "Relé geral": {"id": 301, "rotulo": "Relé de proteção · RP-1 · Skid 1"},
         "Estação 1": {"id": 311, "rotulo": "Estação solarimétrica · EST-1"},
@@ -302,22 +309,25 @@ def test_a_pessoa_liga_o_no_do_rele_da_estacao_e_do_medidor(db, c):
         "no_do_dispositivo", f"GD-{rele.id:06d} Relé do TR-01: sem nó",
         f"GD-{rele.id:06d} Relé do TR-01: nó 302 (Relé de temperatura)", c["g"].id)
     # a troca num salvar, e o nó nulo desliga; o que não veio fica
-    out = _gravar(db, c, (rele, 301), (geral, 302), (ssu, None))
+    out = _gravar(db, c, (rele, 301), (geral, 302), (ssu, None), (gw, 342))
     assert {i.nome: i.no.id if i.no else None for g in out.grupos for i in g.itens} == {
-        "Relé do TR-01": 301, "Relé geral": 302, "Estação 1": 311, "Fronteira": None}
+        "Relé do TR-01": 301, "Relé geral": 302, "Estação 1": 311, "Fronteira": None, "ABS Skid 1": 342}
+    assert out.grupos[-1].itens[0].no.rotulo == "Gateway · GW-2 · Skid 2"
     for pares, codigo_http, frase in (
             ([(rele, 302)], 409, f"O nó 302 já está no equipamento GD-{geral.id:06d}"),     # um nó é uma posição só
             ([(ssu, 311)], 400, "não é um medidor de energia desta usina"),               # o nó da estação
             ([(rele, 331)], 400, "não é um relé desta usina"),                            # o tipo que não é candidato
             ([(rele, 111)], 400, "não é um relé desta usina"),                            # um nó de inversor
             ([(est, 9999)], 400, "não é uma estação desta usina"),
+            ([(gw, 343)], 400, "não é um gateway desta usina"),                           # o gateway de I/O é outro tipo
+            ([(gw, 301)], 400, "não é um gateway desta usina"),
             ([(c["invs"][0], 303)], 400, "não é um inversor desta usina"),                # e o inversor não pega relé
             ([(est, 313), (s, 111)], 400, "As strings não se ligam aqui")):               # a string segue de fora
         with pytest.raises(HTTPException) as e:
             _gravar(db, c, *pares)
         assert e.value.status_code == codigo_http and frase in e.value.detail, (pares, e.value.detail)
     db.expire_all()
-    assert (rele.mp_node_id, est.mp_node_id, ssu.mp_node_id, s.mp_node_id) == (301, 311, None, None)
+    assert (rele.mp_node_id, est.mp_node_id, ssu.mp_node_id, s.mp_node_id, gw.mp_node_id) == (301, 311, None, None, 342)
     # sem o meuPlano, desligar pode; ligar, não
     c["estado"]["erro"] = ConnectionError("fora")
     with pytest.raises(HTTPException) as e:
@@ -334,7 +344,7 @@ def test_sem_o_meuplano_os_dispositivos_vem_assim_mesmo(db, c):
         c["estado"]["erro"] = erro
         out = _ver(db, c)
         assert out.meuplano_lido is False and frase in out.aviso and out.total == 9 and out.ligados == 1
-        assert out.candidatos == dict.fromkeys(("transformador", "inversor", "rele", "estacao", "medidor_ssu"), [])
+        assert out.candidatos == dict.fromkeys(("transformador", "inversor", "rele", "estacao", "medidor_ssu", "gateway"), [])
         assert all(d.sugestao is None for d in _todos(out))
         assert next(d for d in _todos(out) if d.nome == "INV12").no.model_dump() == {"id": 111, "rotulo": None}
     out = _ver(db, c, usina=c["so_mw"])                    # a usina que não está no meuPlano: nem pergunta

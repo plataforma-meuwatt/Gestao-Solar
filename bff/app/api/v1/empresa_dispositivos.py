@@ -36,10 +36,11 @@ router = APIRouter(prefix="/api/empresa", tags=["empresa · O&M"])
 ROTULO_DO_TIPO = {"transformador": "Transformador", "inversor": "Inversor"}
 #: os outros equipamentos do índice que a tela mostra, cada tipo no grupo dele. A pessoa também liga o nó deles (são
 #: poucos e não há regra segura para casar sozinho); só a string fica de fora (centenas, ligadas pela rotina do meuPlano)
-GRUPOS = {"rele": "Relés de proteção", "estacao": "Estações meteorológicas", "medidor_ssu": "Medidores da fronteira"}
+GRUPOS = {"rele": "Relés de proteção", "estacao": "Estações meteorológicas", "medidor_ssu": "Medidores da fronteira",
+          "gateway": "Gateways"}
 #: o tipo em palavras, para a frase da recusa ("o nó 9 não é um relé desta usina")
 _UM = {"transformador": "um transformador", "inversor": "um inversor", "rele": "um relé", "estacao": "uma estação",
-       "medidor_ssu": "um medidor de energia"}
+       "medidor_ssu": "um medidor de energia", "gateway": "um gateway"}
 
 
 class NoOut(BaseModel):

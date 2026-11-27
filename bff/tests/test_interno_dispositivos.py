@@ -180,7 +180,13 @@ def test_so_a_usina_ligada_ao_sistema_que_chama(http, c, db):
 def test_a_lista_que_nao_serve_e_422_e_nada_e_gravado(http, c, db):
     tr, inv = LISTA
     ruins = [
-        ([{**tr, "ref": "gw:41"}], "não serve"), ([{**tr, "ref": "medidor:41"}], "não serve"),   # prefixo que não há
+        ([{**tr, "ref": "sb:41"}], "não serve"), ([{**tr, "ref": "medidor:41"}], "não serve"),   # prefixo que não há
+        ([{"ref": "gw:1", "tipo": "rele", "nome": "ABS", "pai": None}], "é de gateway"),
+        ([{"ref": "rele:1", "tipo": "gateway", "nome": "ABS", "pai": None}], "é de rele"),
+        ([tr, {"ref": "gw:1", "tipo": "gateway", "nome": "ABS", "pai": "trafo:41"}], "não tem pai"),
+        ([{"ref": "gw:1", "tipo": "gateway", "nome": "ABS"}, {"ref": "gw:2", "tipo": "gateway", "nome": "ABS 2", "pai": "gw:1"}],
+         "não tem pai"),
+        ([{"ref": "gw:1:2", "tipo": "gateway", "nome": "ABS", "pai": None}], "não serve"),
         ([{**tr, "ref": "rele:41"}], "é de rele"),                                  # o relé que veio como trafo
         ([{"ref": "ssu:1", "tipo": "rele", "nome": "Fronteira", "pai": None}], "é de medidor_ssu"),
         ([{"ref": "est:1", "tipo": "estacao_solar", "nome": "Estação", "pai": None}], "é de estacao"),
@@ -387,7 +393,7 @@ def test_os_pares_que_nao_servem_sao_422_e_nada_e_gravado(http, c, db):
     for pares, frase in (([("inv:99", 555), ("inv:99", 556)], "mais de uma vez"),         # a mesma referência
                          ([("inv:99", 555), ("inv:100", 555)], "nó 555 veio mais de uma vez"),
                          ([("inversor:99", 555)], "não serve"),                           # a grafia do meuPlano
-                         ([("str:99", 555)], "não serve"), ([("gw:9", 555)], "não serve"),
+                         ([("str:99", 555)], "não serve"), ([("sb:9", 555)], "não serve"),
                          ([("str:99:1", 555), ("str:99:1", 556)], "mais de uma vez"),
                          ([("str:99:1", 555), ("inv:99", 555)], "nó 555 veio mais de uma vez"),
                          ([("INV:99", 555)], "não serve")):
@@ -541,6 +547,41 @@ def test_o_meuplano_liga_o_no_do_rele_da_estacao_e_do_medidor(http, c, db):
     # o ausente na lista do meuWatt guarda o nó
     http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA})
     assert db.query(DeviceLink).filter_by(mw_ref="rele:5").one().mp_node_id == 801
+
+
+def test_o_gateway_entra_como_dispositivo_da_usina(http, c, db):
+    ib = c["ib"]
+    gws = [{"ref": "gw:7", "tipo": "gateway", "nome": "ABS Skid 1", "pai": None},
+           {"ref": "gw:8", "tipo": "gateway", "nome": "ABS Skid 2"}]
+    # a lista de antes (sem gateway) segue igual, e nada fica ausente por ele não vir
+    antes_dele = http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS]}).json()
+    assert (antes_dele["criados"], antes_dele["ausentes"]) == (7, 0)
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": [*gws, *LISTA, *OUTROS]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (2, 0, 0)
+    por = _por(corpo)
+    assert por["gw:7"] == {"gd": por["gw:7"]["gd"], "codigo": f"GD-{por['gw:7']['gd']:06d}", "tipo": "gateway",
+                           "nome": "ABS Skid 1", "pai": None, "ativo": True, "meuwatt": {"ref": "gw:7"}}
+    assert {r: d for r, d in por.items() if not r.startswith("gw:")} == _por(antes_dele)
+    marcas = _marcas(db)
+    assert http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS, *gws]}).json() == {**corpo, "criados": 0}
+    assert _marcas(db) == marcas
+    # as duas leituras o trazem; o que não veio fica ausente e volta com o mesmo número; de outra usina, 409
+    assert http.get(_url(ib), headers=_h()).json() == {"dispositivos": corpo["dispositivos"]}
+    do_mp = {d["meuwatt"]["ref"]: d for d in http.get(_url(ib), headers=_h("meuplano")).json()["dispositivos"]}
+    assert (do_mp["gw:8"]["tipo"], do_mp["gw:8"]["meuplano"]) == ("gateway", None)
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS, gws[0]]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 0, 1)
+    assert (_por(corpo)["gw:8"]["ativo"], _por(corpo)["gw:8"]["gd"]) == (False, por["gw:8"]["gd"])
+    assert http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS, *gws]}).json()["alterados"] == 1
+    r = http.put(_url(c["of"]), headers=_h(), json={"dispositivos": [gws[0]]})
+    assert r.status_code == 409 and "gw:7" in r.json()["detail"]
+    # o meuPlano liga o nó dele, com as regras de sempre
+    corpo = _ligar(http, ib, ("gw:7", 901), ("gw:99", 902)).json()
+    assert (corpo["ligados"], corpo["sem_dispositivo"], _nos_de(corpo)["gw:7"], _nos_de(corpo)["gw:8"]) == (
+        1, ["gw:99"], 901, None)
+    r = _ligar(http, ib, ("gw:8", 901))
+    assert r.status_code == 409 and "nó 901" in r.json()["detail"]
+    assert _ligar(http, ib, ("gw:7", None)).json()["desligados"] == 1
 
 
 if __name__ == "__main__":

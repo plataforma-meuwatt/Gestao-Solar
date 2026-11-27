@@ -27,7 +27,8 @@ TIPO_DO_NO = {"transformador": "transformador_potencia", "inversor": "inversor"}
 TIPOS_DO_NO = {**{tipo: (no,) for tipo, no in TIPO_DO_NO.items()},
                "rele": ("rele_protecao", "rele_temperatura"),
                "estacao": ("estação solarimétrica", "piranometro", "datalogger"),
-               "medidor_ssu": ("medidor_energia",)}
+               "medidor_ssu": ("medidor_energia",),
+               "gateway": ("gateway",)}
 BASE = {"numero": "pelo número", "ordem": "pela ordem"}
 
 

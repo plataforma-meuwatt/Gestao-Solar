@@ -602,7 +602,8 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   (`est:<id>`, tipo `estacao`) e o medidor da fronteira (`ssu:<id>`, tipo `medidor_ssu`); o relé e a estação ficam
   debaixo de um `trafo:` ou soltos, o medidor é sempre da usina (`dispositivos.PAI`); na tela Equipamentos vêm em
   grupos, e a pessoa liga o nó deles como o dos transformadores (28/11/2026: são poucos e não há regra segura para
-  casar sozinho; sem sugestão; os tipos de nó de cada um em `sugestao_de_nos.TIPOS_DO_NO`). Só a string não se liga
+  casar sozinho; sem sugestão; os tipos de nó de cada um em `sugestao_de_nos.TIPOS_DO_NO`). O gateway (`gw:<id>`,
+  tipo `gateway`, sempre da usina) entrou do mesmo jeito, no quarto grupo. Só a string não se liga
   à mão.
   ⛔ **É a segunda exceção, e a única ESCRITA,
   do "a chave sozinha não fala por ninguém"** (`PUT`/`GET /interno/maquina/usinas/{gs}/dispositivos`): o sistema grava

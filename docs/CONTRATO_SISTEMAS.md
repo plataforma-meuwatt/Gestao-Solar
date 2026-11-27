@@ -156,12 +156,13 @@ A lista INTEIRA das posições daquela usina no sistema que chama (até 5000):
   | `rele` | `rele:<relays.id>` | o `trafo:<id>` dele, na mesma lista, ou nulo (o relé da usina) |
   | `estacao` | `est:<weather_stations.id>` | o `trafo:<id>` dela, na mesma lista, ou nulo |
   | `medidor_ssu` | `ssu:<ssu_readers.id>` | sempre nulo (é da usina) |
+  | `gateway` | `gw:<gateways.id>` | sempre nulo (28/11/2026: o gateway serve a usina; vários transformadores pendem de um) |
 
   A lista SEM nenhum deles segue valendo como antes. Quando eles já existem no GS e a lista vem sem eles, ficam
   ausentes, como qualquer dispositivo que não veio. O `medidor` (sem `_ssu`) segue reservado para o medidor de energia.
-- **422:** a `ref` fora da grafia (`^(trafo|inv|rele|est|ssu):\d+$` ou `^str:\d+:\d+$`; qualquer outro prefixo), o
+- **422:** a `ref` fora da grafia (`^(trafo|inv|rele|est|ssu|gw):\d+$` ou `^str:\d+:\d+$`; qualquer outro prefixo), o
   `tipo` que não é o da `ref`, a `ref` repetida, o `pai` que não está na lista (ou é o próprio), a string cujo `pai`
-  não é o `inv:` da vaga dela, o relé ou a estação cujo `pai` não é um `trafo:`, o medidor da fronteira com `pai`;
+  não é o `inv:` da vaga dela, o relé ou a estação cujo `pai` não é um `trafo:`, o medidor da fronteira ou o gateway com `pai`;
   nesses o `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
   vazio, mais de 5000) é o 422 do FastAPI, com `detail` em lista.
 
@@ -198,7 +199,7 @@ meuPlano chama, na usina ligada a ele. Até 5000 pares:
 ```
 
 `ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>` e, desde 27/11/2026, `str:<vaga>:<n>`, `rele:<n>`,
-`est:<n>` e `ssu:<n>`; quem chama
+`est:<n>`, `ssu:<n>` e `gw:<n>`; quem chama
 traduz a dele). **As strings são ligadas AUTOMATICAMENTE** (o dono, 27/11/2026): quem casa a string com o nó é a rotina
 do meuPlano, que conhece a árvore dele, e manda os pares por esta rota (num pedido só de strings, uns 400 por usina);
 ninguém confirma uma a uma, e a tela do gerente só mostra a conta por inversor. As regras são as mesmas de qualquer
@@ -249,7 +250,8 @@ dele; não é rota dos sistemas). O GS lê os nós da usina no meuPlano com a co
 (`GET /api/v1/meuacesso/usinas/{usina_id}/nodes`), mostra como candidatos só os `transformador_potencia` e os
 `inversor`, e propõe o par (pelo número; senão pela ordem; o inversor só dentro do transformador cujo nó se sabe). O
 relé, a estação e o medidor da fronteira também são ligados ali pela pessoa, sem sugestão (candidatos: `rele_protecao`
-e `rele_temperatura`; `estação solarimétrica`, `piranometro` e `datalogger`; `medidor_energia`). A string, não. A
+e `rele_temperatura`; `estação solarimétrica`, `piranometro` e `datalogger`; `medidor_energia`), e o gateway
+(candidato: `gateway`). A string, não. A
 sugestão nunca é gravada sem o Salvar da pessoa. O que ela salva cai na mesma coluna (`mp_node_id`), com a mesma
 regra (um nó é uma posição só), e o meuPlano o recebe na leitura dele (`GET …/dispositivos`, o bloco `meuplano`).
 
