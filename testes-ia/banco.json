@@ -2042,7 +2042,8 @@
   {
     "frase": "Veja se tem tracker parado em ibitinga",
     "espera": [
-      "usina_helper"
+      "usina_helper",
+      "usina_helper_catalogo"
     ],
     "origem": "log #466 (16/11: o Renan pediu o tracker parado de Ibitinga)"
   },
