@@ -110,7 +110,8 @@ número ao lado do registro dele. Nesta fase: transformadores e inversores, vind
 - **O número:** `gd` (inteiro), mostrado como `GD-000017` (seis dígitos; o da usina é `GS-0006`). É para sempre: o
   dispositivo que some e volta tem o mesmo.
 - **A grafia padrão da referência do meuWatt** é a que as rotas do mapa já usam: `trafo:<transformers.id>` e
-  `inv:<inverter_slots.id>` (nas fases seguintes, `str:<slot_id>:<n>` e `rele:<relay_id>`). Esta é A grafia: em
+  `inv:<inverter_slots.id>` e, desde 27/11/2026, `str:<inverter_slots.id>:<n>` (a string; abaixo). Na fase
+  seguinte, `rele:<relay_id>`. Esta é A grafia: em
   minúsculas, sem espaço, com o número de lá. Os tipos: `transformador` e `inversor` agora; reservados `string`,
   `rele`, `estacao`, `medidor`, `stringbox` e `gateway`.
 - **Quem chama:** o servidor do sistema, com `X-Sistema` + `X-Chave-Interna` (sem pessoa). A LISTA (`PUT
@@ -143,8 +144,13 @@ A lista INTEIRA das posições daquela usina no sistema que chama (até 5000):
 - **409:** uma `ref` que já é de OUTRA usina do GS (ativa ou ausente lá) recusa o pedido inteiro, e o `detail` diz
   quais ("Já em outra usina do GS: inv:99. Um dispositivo não muda de usina sozinho: nada foi gravado."). Também 409
   quando dois pedidos gravam a mesma `ref` ao mesmo tempo ("…mande de novo.").
-- **422:** a `ref` fora da grafia (`^(trafo|inv):\d+$`), o `tipo` que não é o da `ref`, a `ref` repetida, o `pai` que
-  não está na lista (ou é o próprio); nesses o `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
+- **A string é uma POSIÇÃO** (27/11/2026): a do inversor mais o número da ENTRADA CC em que ela está ligada. O
+  número tem buracos (não é a ordem numa lista). `{"ref": "str:111:7", "tipo": "string", "nome": "String 7",
+  "pai": "inv:111"}`: o `pai` é obrigatório e é o inversor DELA (a mesma vaga da `ref`), na mesma lista. A string que
+  sai da entrada fica ausente, como qualquer dispositivo; a mesma entrada de novo volta com o mesmo `gd`.
+- **422:** a `ref` fora da grafia (`^(trafo|inv):\d+$` ou `^str:\d+:\d+$`), o `tipo` que não é o da `ref`, a `ref`
+  repetida, o `pai` que não está na lista (ou é o próprio), a string cujo `pai` não é o `inv:` da vaga dela; nesses o
+  `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
   vazio, mais de 5000) é o 422 do FastAPI, com `detail` em lista.
 
 Resposta **200**:
@@ -179,7 +185,8 @@ meuPlano chama, na usina ligada a ele. Até 5000 pares:
 {"nos": [{"ref": "inv:99", "node_id": 555}, {"ref": "trafo:41", "node_id": 500}]}
 ```
 
-`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>`; quem chama traduz a dele). `node_id` é o `nodes.id` do
+`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>`; quem chama traduz a dele; a `str:` ainda não entra
+aqui: é 422, e o nó da string será ligado numa fase seguinte). `node_id` é o `nodes.id` do
 meuPlano (inteiro ≥ 1) ou nulo; o campo é obrigatório. Tudo numa transação, e o mesmo pedido de novo não muda nada:
 
 - O dispositivo DESTA usina com aquela `ref` (ativo ou ausente) ganha o nó; o `atualizado_em` só anda se mudou.

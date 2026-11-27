@@ -86,8 +86,11 @@ class EquipamentosOut(BaseModel):
     meuplano_lido: bool
     #: por que não (a frase vai à tela)
     aviso: str | None = None
+    #: `ligados` e `total` contam só os transformadores e os inversores (os que a tela mostra)
     ligados: int
     total: int
+    #: quantas strings ativas a usina tem no índice (a tela só diz o número: elas não entram na lista)
+    strings: int = 0
 
 
 class NoDoDispositivoIn(BaseModel):
@@ -136,7 +139,10 @@ def _rotulo(no: dict) -> str:
     return " · ".join(p for p in (str(no.get("display_name") or ""), str(no.get("code") or ""), _local(no)) if p)
 
 
-def _montar(usina: PlantLink, linhas: list[DeviceLink], nos: list[dict] | None, aviso: str | None) -> EquipamentosOut:
+def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, aviso: str | None) -> EquipamentosOut:
+    # a tela é dos transformadores e dos inversores: as strings (centenas por usina) só entram na contagem, e o nó
+    # delas será ligado sozinho numa fase seguinte
+    linhas = [x for x in todas if x.tipo in sugestao_de_nos.TIPO_DO_NO]
     por_no = {n["id"]: n for n in nos or []}
     planos = [{"gd": x.id, "tipo": x.tipo, "nome": x.nome, "pai": x.pai_id, "ativo": bool(x.ativo),
                "node_id": x.mp_node_id} for x in linhas]
@@ -156,7 +162,8 @@ def _montar(usina: PlantLink, linhas: list[DeviceLink], nos: list[dict] | None, 
                                         nome=str(n.get("display_name") or ""), local=_local(n), rotulo=_rotulo(n))
                            for n in sugestao_de_nos.candidatos(nos or [], tipo)] for tipo in sugestao_de_nos.TIPO_DO_NO},
         meuplano_lido=nos is not None, aviso=aviso,
-        ligados=sum(1 for x in linhas if x.mp_node_id is not None), total=len(linhas))
+        ligados=sum(1 for x in linhas if x.mp_node_id is not None), total=len(linhas),
+        strings=sum(1 for x in todas if x.tipo == "string" and x.ativo))
 
 
 @router.get("/usinas/{usina_id}/dispositivos", response_model=EquipamentosOut)

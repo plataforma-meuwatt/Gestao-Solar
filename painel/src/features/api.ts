@@ -1064,8 +1064,11 @@ export type EquipamentosDaUsina = {
   /** Falso = os nós não vieram agora; `aviso` diz por quê. */
   meuplano_lido: boolean
   aviso: string | null
+  /** `ligados` e `total` contam os transformadores e os inversores (os que a tela mostra). */
   ligados: number
   total: number
+  /** Quantas strings a usina tem no índice: a tela só diz o número. */
+  strings: number
 }
 
 export const equipamentosDaUsina = (id: number) =>

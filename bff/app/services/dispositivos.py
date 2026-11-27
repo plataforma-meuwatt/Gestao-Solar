@@ -37,7 +37,15 @@ REFERENCIA = {"meuwatt": "mw_ref", "meuplano": "mp_node_id", "termovision": "tv_
 #: a grafia aceita de cada sistema nesta fase: o prefixo da referência e o tipo que ele diz. Sistema fora daqui ainda
 #: não manda dispositivos
 PADRAO = {"trafo": "transformador", "inv": "inversor"}
-GRAFIA = {"meuwatt": PADRAO}
+#: a STRING (fase 4, 27/11/2026) também é uma POSIÇÃO: a do inversor mais o número da entrada CC em que ela está
+#: ligada (`str:<inverter_slots.id>:<n>`; o número tem buracos, não é a ordem numa lista). O pai é o inversor dela
+#: (`inv:<o mesmo slot>`), na mesma lista. Os nós do meuPlano ainda não se ligam a strings (`PADRAO` segue sem ela).
+GRAFIA = {"meuwatt": {**PADRAO, "str": "string"}}
+#: o que vem depois do prefixo: um número só, a não ser na string (a vaga e a entrada)
+_NUMERO = r"\d+"
+_CORPO = {"str": r"\d+:\d+"}
+#: como se escreve cada referência, para a frase da recusa
+_EXEMPLO = {"str": "str:<vaga do inversor>:<número da entrada>"}
 #: quem liga os nós dele aos dispositivos que já existem (não cria dispositivo)
 LIGA_NOS = ("meuplano",)
 #: o teto da lista de uma usina
@@ -62,24 +70,28 @@ class NoDeOutro(ValueError):
 
 def conferir(quem: str, itens: list[dict]) -> None:
     """A lista inteira antes de gravar: a grafia da referência, o tipo que ela diz, sem repetida, e o pai na própria
-    lista."""
+    lista. A string tem de ter por pai o inversor DELA (`str:111:7` debaixo de `inv:111`)."""
     grafia = GRAFIA[quem]
-    padrao = re.compile(rf"({'|'.join(grafia)}):\d+")
+    padrao = re.compile("|".join(f"(?P<{p}>{p}:{_CORPO.get(p, _NUMERO)})" for p in grafia))
     refs = set()
     for d in itens:
         ref = d["ref"]
         achado = padrao.fullmatch(ref)
         if achado is None:
-            raise ListaInvalida(f"A referência {ref!r} não serve: use " + " ou ".join(f"{p}:<número>" for p in grafia)
-                                + ".")
-        if d["tipo"] != grafia[achado.group(1)]:
-            raise ListaInvalida(f"A referência {ref} é de {grafia[achado.group(1)]}, e veio como {d['tipo']!r}.")
+            raise ListaInvalida(f"A referência {ref!r} não serve: use "
+                                + " ou ".join(_EXEMPLO.get(p, f"{p}:<número>") for p in grafia) + ".")
+        if d["tipo"] != grafia[achado.lastgroup]:
+            raise ListaInvalida(f"A referência {ref} é de {grafia[achado.lastgroup]}, e veio como {d['tipo']!r}.")
         if ref in refs:
             raise ListaInvalida(f"A referência {ref} veio mais de uma vez.")
         refs.add(ref)
     for d in itens:
         if d["pai"] is not None and (d["pai"] not in refs or d["pai"] == d["ref"]):
             raise ListaInvalida(f"O pai de {d['ref']} ({d['pai']}) tem de ser outro dispositivo da mesma lista.")
+        if d["tipo"] == "string":                          # a string é a entrada DAQUELE inversor
+            dele = "inv:" + d["ref"].split(":")[1]
+            if d["pai"] != dele:
+                raise ListaInvalida(f"O pai da string {d['ref']} tem de ser o inversor dela ({dele}), na mesma lista.")
 
 
 def da_usina(db: Session, quem: str, usina: PlantLink) -> list[DeviceLink]:

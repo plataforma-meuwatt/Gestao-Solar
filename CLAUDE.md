@@ -594,7 +594,10 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   não o aparelho), com o número do GS (`GD-000123`, `codigo_do_dispositivo`) que cada sistema guarda ao lado do
   registro dele. Nesta fase, transformadores e inversores do meuWatt; os tipos reservados (`dispositivos.TIPOS`) e as
   colunas do meuPlano e do TermoVision já existem. A grafia padrão da referência do meuWatt é a do mapa:
-  `trafo:<id>`, `inv:<slot_id>` (depois `str:<slot_id>:<n>`, `rele:<id>`). ⛔ **É a segunda exceção, e a única ESCRITA,
+  `trafo:<id>`, `inv:<slot_id>` e, desde 27/11/2026, a STRING `str:<slot_id>:<n>` (a posição = a vaga do inversor
+  mais o número da ENTRADA CC, com buracos; o pai é o `inv:` da mesma vaga, na mesma lista; centenas por usina, por
+  isso a tela Equipamentos só diz quantas são e o nó delas ainda não se liga); depois `rele:<id>`.
+  ⛔ **É a segunda exceção, e a única ESCRITA,
   do "a chave sozinha não fala por ninguém"** (`PUT`/`GET /interno/maquina/usinas/{gs}/dispositivos`): o sistema grava
   só as referências DELE de dispositivo, só nas usinas ligadas a ele, nunca um dado da usina e nunca a referência de
   outro sistema. Manda a lista INTEIRA; o que não veio fica ausente (`ativo` falso, nunca apagado) e a referência de

@@ -180,7 +180,16 @@ def test_so_a_usina_ligada_ao_sistema_que_chama(http, c, db):
 def test_a_lista_que_nao_serve_e_422_e_nada_e_gravado(http, c, db):
     tr, inv = LISTA
     ruins = [
-        ([{**tr, "ref": "str:41:2"}], "não serve"),                                  # grafia de fase futura
+        ([{**tr, "ref": "rele:41"}], "não serve"),                                   # grafia de fase futura
+        ([{**tr, "ref": "str:41"}], "não serve"), ([{**tr, "ref": "str:41:2:3"}], "não serve"),
+        ([{**tr, "ref": "str:41:2"}], "é de string"),                               # a string que veio como trafo
+        ([tr, inv, {"ref": "str:99:7", "tipo": "inversor", "nome": "String 7", "pai": "inv:99"}], "é de string"),
+        ([tr, inv, {"ref": "str:99:7", "tipo": "string", "nome": "String 7", "pai": None}], "inversor dela (inv:99)"),
+        ([tr, inv, {"ref": "str:99:7", "tipo": "string", "nome": "String 7", "pai": "trafo:41"}], "inversor dela (inv:99)"),
+        ([tr, inv, {"ref": "str:98:7", "tipo": "string", "nome": "String 7", "pai": "inv:99"}], "inversor dela (inv:98)"),
+        ([tr, {"ref": "str:99:7", "tipo": "string", "nome": "String 7", "pai": "inv:99"}], "mesma lista"),   # sem o inversor
+        ([tr, inv, {"ref": "str:99:7", "tipo": "string", "nome": "String 7", "pai": "inv:99"},
+          {"ref": "str:99:7", "tipo": "string", "nome": "String 7 de novo", "pai": "inv:99"}], "mais de uma vez"),
         ([{**tr, "ref": "trafo:abc"}], "não serve"),
         ([{**tr, "ref": "TRAFO:41"}], "não serve"),
         ([{**tr, "tipo": "inversor"}], "é de transformador"),                       # o tipo não bate com a referência
@@ -224,6 +233,52 @@ def test_a_escrita_da_maquina_so_toca_os_dispositivos_dela_e_entra_no_registro(h
     assert linhas[0].motivo == (f"meuWatt gravou pela porta da máquina (só a chave, sem pessoa): os dispositivos da "
                                 f"usina GS-{ib.id:04d}")
     assert [x["quem"] for x in acessos.listar(db)] == ["Servidor do meuWatt (sem pessoa)"] * 2
+
+
+def test_as_strings_entram_como_posicao_debaixo_do_inversor_delas(http, c, db):
+    """A string é a entrada CC do inversor (`str:<vaga>:<n>`; o número tem buracos), com o inversor dela por pai."""
+    strings = [{"ref": f"str:99:{n}", "tipo": "string", "nome": f"String {n}", "pai": "inv:99"} for n in (1, 2, 7, 18)]
+    r = http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": [*strings[::-1], *LISTA]})   # em qualquer ordem
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (6, 0, 0)
+    por = _por(corpo)
+    s7 = por["str:99:7"]
+    assert s7 == {"gd": s7["gd"], "codigo": f"GD-{s7['gd']:06d}", "tipo": "string", "nome": "String 7",
+                  "pai": por["inv:99"]["gd"], "ativo": True, "meuwatt": {"ref": "str:99:7"}}
+    antes = _marcas(db)
+    assert http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": [*LISTA, *strings]}).json() == {**corpo, "criados": 0}
+    assert _marcas(db) == antes
+    # a string que saiu da entrada fica ausente (nunca é apagada) e volta com o mesmo número; a renomeada muda só ela
+    corpo = http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": [
+        *LISTA, strings[0], {**strings[1], "nome": "String 2 (leste)"}, strings[3]]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 1, 1)
+    assert (_por(corpo)["str:99:7"]["ativo"], _por(corpo)["str:99:7"]["gd"]) == (False, s7["gd"])
+    assert _por(corpo)["str:99:2"]["nome"] == "String 2 (leste)"
+    # a mesma entrada em outra usina recusa o pedido inteiro, como qualquer dispositivo
+    r = http.put(_url(c["of"]), headers=_h(), json={"dispositivos": [
+        {"ref": "inv:99", "tipo": "inversor", "nome": "INV12", "pai": None}, strings[0]]})
+    assert r.status_code == 409 and "str:99:1" in r.json()["detail"]
+    # o meuPlano lê as strings na lista dele (sem nó) e ainda não liga nó a string
+    do_mp = http.get(_url(c["ib"]), headers=_h("meuplano")).json()["dispositivos"]
+    assert [d for d in do_mp if d["tipo"] == "string"][0]["meuplano"] is None and len(do_mp) == 6
+    r = http.put(_nos(c["ib"]), headers=_h("meuplano"), json={"nos": [{"ref": "str:99:1", "node_id": 800}]})
+    assert r.status_code == 422 and "não serve" in r.json()["detail"]
+
+
+def test_a_lista_de_uma_usina_grande_cabe_num_pedido(http, c, db):
+    """A maior usina manda uns 400 de uma vez (os transformadores, os inversores e as strings): um pedido só."""
+    lista = [{"ref": "trafo:1", "tipo": "transformador", "nome": "TR-01", "pai": None}]
+    for i in range(20):
+        lista.append({"ref": f"inv:{100 + i}", "tipo": "inversor", "nome": f"INV{i:02d}", "pai": "trafo:1"})
+        lista += [{"ref": f"str:{100 + i}:{n}", "tipo": "string", "nome": f"String {n}", "pai": f"inv:{100 + i}"}
+                  for n in range(1, 21)]
+    corpo = http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": lista}).json()
+    assert (corpo["criados"], len(corpo["dispositivos"])) == (421, 421)
+    antes = _marcas(db)
+    corpo = http.put(_url(c["ib"]), headers=_h(), json={"dispositivos": lista}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 0, 0) and _marcas(db) == antes
+    assert max(len(x.mw_ref) for x in db.query(DeviceLink)) <= 60 and len("str:123456:99") <= 60
 
 
 # --------------------------------------------------------------------------- o meuPlano liga os nós dele

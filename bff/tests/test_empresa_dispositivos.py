@@ -202,6 +202,25 @@ def test_a_tela_traz_a_arvore_os_candidatos_e_a_sugestao_sem_gravar_nada(db, c):
     assert db.query(HistoricoDaUsina).count() == 0
 
 
+def test_as_strings_so_entram_na_contagem(db, c):
+    """A tela é dos transformadores e dos inversores: as strings (centenas por usina) não viram lista."""
+    inv = c["invs"][0]
+    db.add_all([DeviceLink(plant_link_id=c["per"].id, tipo="string", nome=f"String {n}", mw_ref=f"str:90:{n}",
+                           pai_id=inv.id, ativo=n != 9) for n in (1, 2, 7, 9)])
+    db.commit()
+    out = _ver(db, c)
+    assert (out.strings, out.ligados, out.total) == (3, 0, 9)                     # a ausente não conta
+    assert {d.tipo for d in _todos(out)} == {"transformador", "inversor"}
+    assert next(d for d in _todos(out) if d.nome == "INV12").filhos == []
+    assert set(out.candidatos) == {"transformador", "inversor"}
+    out = _gravar(db, c, (c["tr1"], 101))
+    assert (out.strings, out.ligados, out.total) == (3, 1, 9)
+    s = db.query(DeviceLink).filter_by(mw_ref="str:90:1").one()
+    with pytest.raises(HTTPException) as e:                                       # e não se liga nó a string por aqui
+        _gravar(db, c, (s, 111))
+    assert e.value.status_code == 400 and s.mp_node_id is None
+
+
 def test_sem_o_meuplano_os_dispositivos_vem_assim_mesmo(db, c):
     c["invs"][0].mp_node_id = 111
     db.commit()

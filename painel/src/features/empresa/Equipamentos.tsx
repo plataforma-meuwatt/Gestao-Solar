@@ -80,6 +80,12 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
           Diga qual nó da árvore do meuPlano é cada transformador e cada inversor daqui. A sugestão é um palpite do
           Gestão Solar: confira antes de salvar.
         </p>
+        {data.strings ? (
+          <p className="text-sm text-fraco">
+            {data.strings.toLocaleString('pt-BR')} {data.strings === 1 ? 'string' : 'strings'} no índice. Elas não
+            aparecem nesta lista.
+          </p>
+        ) : null}
       </div>
       {data.aviso ? <Aviso>{data.aviso}</Aviso> : null}
 
