@@ -215,10 +215,14 @@ def main() -> None:
     if o.avaliar:
         _gravar_trilha()
     erros = 0
+    erradas = []
     for caso, r in asyncio.run(_varias(casos, o.inteira, o.vezes)):
         if "espera" in caso:
             ok = _passou(caso, r)
             erros += not ok
+            if not ok:
+                erradas.append(f"{caso['frase'][:60]!r} | esperado {caso['espera'] or 'sem ferramenta'}"
+                               f" | chamou {r['ferramentas'] or 'nada'}")
             print(f"{'OK  ' if ok else 'ERRO'} | {caso['frase'][:70]} | esperado {caso['espera'] or 'sem ferramenta'}"
                   f" | chamou {r['ferramentas'] or 'nada'}" + ("" if ok else f" | {r.get('erro') or r['texto'][:200]}"
                   + (f" | devia dizer um de {caso['diz']}" if caso.get("diz") else "")
@@ -240,6 +244,8 @@ def main() -> None:
     if o.banco:
         total = len(casos) * o.vezes
         print(f"\n{total - erros}/{total} certas" + (f" · {erros} ERRADA(S)" if erros else ""))
+        if erradas:                 # a lista junta no fim: quem só vê o fim do log (a bancada) enxerga todas
+            print("ERRADAS:", *erradas, sep=chr(10) + "  ")
         sys.exit(1 if erros else 0)
 
 
