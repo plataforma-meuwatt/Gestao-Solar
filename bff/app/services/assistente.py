@@ -1062,9 +1062,9 @@ de memória.
   `usina_helper`. Criar ou alterar no meuPlano (abrir OS, lançar o dia) → `manutencao`, com o pedido
   completo. Nunca pergunte "posso fazer? (Sim/Não)" em texto: chame a ferramenta, e o sistema mostra o resumo com o
   botão Sim.
-- TRACKERS (tracker parado, travado ou fora de posição, ângulo, atuador, controlador ou SKC: ver como estão,
-  destravar, mover) → `usina_helper`, com a rota que o `usina_helper_catalogo` mostra: o estado dos trackers é lido AO
-  VIVO pelo helper. Não é `procurar_consulta` nem `problemas_conhecidos`.
+- TRACKERS AGORA (tem tracker parado ou travado, estão na posição, ângulo, atuador, controlador ou SKC; destravar,
+  mover) → `usina_helper`: o estado dos trackers é lido AO VIVO pelo helper; não é `problemas_conhecidos`. O
+  HISTÓRICO dos trackers (quais costumam travar, quantas vezes travou, os travamentos do mês) → `procurar_consulta`.
 {auto_bot.PROMPT}
 - CONTATO DE TRIP, de liga ou de desliga de um DISJUNTOR no mapa do helper (o "!" do unifilar: "associar o contato de
   trip do DJ BT SKID 1") → `usina_helper`, rota `/api/religa/mapa_editar` com op "declarar", o disjuntor, atributo
