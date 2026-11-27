@@ -782,6 +782,14 @@ class MeuPlanoClient:
                             data={"description": descricao, "uploaded_by": autor})
         return r.json()
 
+    async def foto_no_diario(self, rdo_id: int, registro_id: int | None, nome: str, conteudo: bytes,
+                             tipo: str | None, legenda: str) -> dict[str, Any]:
+        """Uma foto (ou vídeo) no DIÁRIO DE OBRA, ligada à anotação (`registro_id`): ela herda a etapa dela."""
+        data = {"legenda": legenda, **({"registro_id": str(registro_id)} if registro_id else {})}
+        r = await self._req("POST", f"/api/v1/meuacesso/rdo/{rdo_id}/fotos", timeout=120,
+                            files={"file": (nome, conteudo, tipo or "image/jpeg")}, data=data)
+        return r.json()
+
     async def anexar_na_os(self, os_id: int, nome: str, conteudo: bytes, tipo: str | None,
                            descricao: str) -> dict[str, Any]:
         """Um arquivo nos Anexos da OS (a aba Anexos do site), com o token de quem manda; lá o autor é o dono dele."""

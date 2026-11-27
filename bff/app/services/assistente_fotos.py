@@ -247,3 +247,41 @@ async def anexar_fotos(ctx, a: dict) -> dict:
     return helper.propor(ctx, resumo, PRAZO_S, executar, [lugar] if lugar else [], parte="bot_meuplano",
                          confirmacao="sim",
                          conversa=[*ctx.historico[-HISTORICO_MEUPLANO:], {"role": "user", "content": ctx.pedido}])
+
+
+async def subir_no_diario(mp, dados: dict, lista: list[dict], telefone: str, etapa: str | None) -> str:
+    """Depois do Sim da anotação do DIÁRIO DE OBRA (`anotar_diario_de_obra` do meuPlano): cada foto da conversa sobe no
+    diário com o `registro_id` da anotação, com o token DA PESSOA (`mp`), e herda a etapa dela. Devolve o que dizer:
+    nunca "subiu" do que não subiu."""
+    from app.services.integracoes import detalhe_do_upstream
+    rdo, reg = dados.get("rdo_id"), dados.get("registro_id")
+    if not rdo:
+        return (f"⚠️ A anotação foi gravada, mas o meuPlano não devolveu o diário: {quantos(lista)} NÃO subiram. "
+                "Anexe pela tela do diário da obra.")
+    feitas, falhas = [], []
+    for i, f in enumerate(lista, 1):
+        qual = f"{'vídeo' if f.get('video') else 'foto'} {i}"
+        try:
+            conteudo, tipo = await whatsapp.baixar_midia(f["id"])
+            tipo = tipo or ("video/mp4" if f.get("video") else "image/jpeg")
+            await mp.foto_no_diario(int(rdo), reg, f"whatsapp-{i}.{tipo.split('/')[-1].split(';')[0]}", conteudo,
+                                    tipo, f["legenda"])
+        except whatsapp.GatewayIndisponivel:
+            falhas.append(f"{qual}: não consegui baixar do WhatsApp")
+            continue
+        except httpx.HTTPStatusError as e:
+            falhas.append(f"{qual}: o meuPlano recusou "
+                          f"({str(detalhe_do_upstream(e.response) or e.response.status_code).rstrip('. ')})")
+            continue
+        except httpx.HTTPError:
+            falhas.append(f"{qual}: o meuPlano não respondeu a tempo (pode ter entrado: confira)")
+            continue
+        feitas.append(f)
+        _tirar(telefone, f["id"])
+    onde = f"à etapa {etapa}" if etapa else "à anotação do dia"
+    motivos = "".join(f"\n• {m}" for m in falhas)
+    if not feitas:
+        return f"❌ Nenhuma das {quantos(lista)} subiu ao diário:{motivos}"
+    if falhas:
+        return f"⚠️ {quantos(feitas)} de {len(lista)} ligada(s) {onde}; NÃO subiram:{motivos}"
+    return f"📷 {quantos(feitas)} ligada(s) {onde}."

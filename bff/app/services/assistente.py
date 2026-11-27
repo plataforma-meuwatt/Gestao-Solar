@@ -107,7 +107,8 @@ _MANUTENCAO = {"type": "function", "function": {
                     "(descrição de rede ou de equipamento: a mensagem da pessoa INTEIRA, palavra por palavra). Também o "
                     "FINANCEIRO (contas a pagar e a receber, saldos, DRE, fluxo de caixa, margem, pagar/dar baixa), "
                     "contratos, diária e dia de trabalho de prestador; as PROPOSTAS COMERCIAIS do CRM (mandar o PDF da proposta, "
-                    "alterar o texto dela). O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
+                    "alterar o texto dela); o DIÁRIO DE OBRA (anotações e fotos da obra: o que foi feito, o que "
+                    "atrapalhou, o avanço de cada etapa). O RELATÓRIO da OS em PDF é `relatorio_da_os`; texto e fotos "
                     "para as INFORMAÇÕES DO RELATÓRIO de uma OS são `informacoes_do_relatorio`."),
     "parameters": {"type": "object", "properties": {
         "pergunta": {"type": "string"},
@@ -378,6 +379,12 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
     previa = r.get("preview") or {}
     resumo = previa.get("summary") or acao or "ação no meuPlano"
     ctx.digitados.extend(_valores_secretos(args))          # "salve a senha do Wi-Fi: rede / X" — o X some de tudo
+    # As fotos da conversa vão junto da anotação do DIÁRIO DE OBRA (27/11/2026): só nessa ação; nas outras (conta de
+    # energia, anexar na tarefa) elas seguem o caminho de sempre.
+    da_obra = fotos.recebidas(ctx.telefone) if acao == "anotar_diario_de_obra" else []
+    etapa = next((str(ln.get("text") or "").removeprefix("Etapa: ") for ln in previa.get("lines") or []
+                  if ln.get("kind") == "etapa"), None)
+    etapa = None if etapa in (None, "", "geral do dia") else etapa
 
     async def executar(db: Session, user: User, telefone: str) -> str:
         try:
@@ -399,13 +406,26 @@ def _proposta_do_meuplano(ctx: ger.Contexto, r: dict, conversa: list[dict] | Non
         except httpx.HTTPError:
             return ("⚠️ O meuPlano não respondeu a tempo: a ação PODE ter sido gravada. "
                     "Confira no meuPlano antes de pedir de novo.")
-        return _desfecho_do_meuplano(resumo, (feito or {}).get("data"))
+        aplicado.update(mp=mp, dados=(feito or {}).get("data"))
+        return _desfecho_do_meuplano(resumo, aplicado["dados"])
+
+    aplicado: dict[str, Any] = {}
+
+    async def executar_com_fotos(db: Session, user: User, telefone: str) -> str:
+        desfecho = await executar(db, user, telefone)
+        dados = aplicado.get("dados")
+        if desfecho.startswith("✅") and isinstance(dados, dict):
+            return desfecho + "\n" + await fotos.subir_no_diario(aplicado["mp"], dados, da_obra, telefone, etapa)
+        return desfecho + f"\n\nAs {fotos.quantos(da_obra)} NÃO foram ao diário."
 
     linhas = [ln.get("text") for ln in previa.get("lines") or []]
+    if da_obra:
+        linhas.append(f"📷 {fotos.quantos(da_obra)} vão junto, ligada(s) a esta anotação")
     # Até 15 linhas no resumo; o resto, dito — a pessoa não confirma o que não viu (avaliação 20)
     detalhes = linhas[:15] + ([f"… e mais {len(linhas) - 15}. Veja a lista inteira no meuPlano antes de confirmar"]
                               if len(linhas) > 15 else [])
-    proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar, detalhes, previa.get("warnings") or [],
+    proposta = helper.propor(ctx, resumo, PRAZO_PROPOSTA_MP_S, executar_com_fotos if da_obra else executar, detalhes,
+                             previa.get("warnings") or [],
                              parte="bot_meuplano", confirmacao="sim", conversa=conversa, feitos=feitos,
                              acao=(acao, args), acoes_feitas=acoes_feitas)
     proposta["detalhes"], proposta["avisos"] = detalhes, previa.get("warnings") or []
@@ -1097,6 +1117,9 @@ de memória.
   ou a OS (da legenda ou da conversa); pediu NA OS, não numa tarefa → `anexos_da_os`. Disse a usina e o
   serviço ("a roçagem de Tietê"): ache a tarefa com `manutencao` e chame `anexar_fotos` nesta mesma mensagem. Sem saber
   onde, pergunte em qual tarefa ou OS. Ela confirma com Sim; o resto do pedido (lançar o dia…) segue depois do Sim.
+  Foto com o ANDAMENTO DE UMA OBRA ("hoje concretamos 40 estacas da quadra B", a cerca que ficou pronta) é o DIÁRIO
+  DE OBRA, não tarefa: `manutencao` com o texto da pessoa (o meuPlano propõe a anotação, e as fotos vão junto dela
+  depois do Sim). Foto sem texto: pergunte a que se refere; a resposta dela leva as fotos.
   Foto de EQUIPAMENTO para o CADASTRO (plaqueta, etiqueta, o equipamento instalado) → `ler_plaqueta` e, com o que ela
   leu, `manutencao` para completar o equipamento; guardar a foto na ficha do equipamento → `fotos_no_equipamento`.
 - «[📄 PDF recebido: «nome»]» = um arquivo que a pessoa mandou aqui (você não o lê). Pedido de assinar ESSE arquivo
