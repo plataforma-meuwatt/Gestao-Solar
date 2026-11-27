@@ -64,6 +64,10 @@ class DispositivoOut(BaseModel):
     sugestao: SugestaoOut | None = None
     #: os dispositivos debaixo dele (os inversores do transformador)
     filhos: list["DispositivoOut"] = []
+    #: só no inversor: as strings ativas debaixo dele no índice, e quantas já têm nó no meuPlano (ligadas pela rotina
+    #: de lá; a tela só mostra a conta)
+    strings: int = 0
+    strings_ligadas: int = 0
 
 
 class CandidatoOut(BaseModel):
@@ -89,8 +93,10 @@ class EquipamentosOut(BaseModel):
     #: `ligados` e `total` contam só os transformadores e os inversores (os que a tela mostra)
     ligados: int
     total: int
-    #: quantas strings ativas a usina tem no índice (a tela só diz o número: elas não entram na lista)
+    #: quantas strings ativas a usina tem no índice, e quantas já têm nó no meuPlano (elas não entram na lista: o nó
+    #: de cada uma é ligado pela rotina do meuPlano, não pela pessoa)
     strings: int = 0
+    strings_ligadas: int = 0
 
 
 class NoDoDispositivoIn(BaseModel):
@@ -140,9 +146,13 @@ def _rotulo(no: dict) -> str:
 
 
 def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, aviso: str | None) -> EquipamentosOut:
-    # a tela é dos transformadores e dos inversores: as strings (centenas por usina) só entram na contagem, e o nó
-    # delas será ligado sozinho numa fase seguinte
+    # a tela é dos transformadores e dos inversores: as strings (centenas por usina) só entram na conta de cada
+    # inversor, tirada do índice. Quem liga o nó delas é a rotina do meuPlano (`PUT …/dispositivos/nos`)
     linhas = [x for x in todas if x.tipo in sugestao_de_nos.TIPO_DO_NO]
+    strings = [x for x in todas if x.tipo == "string" and x.ativo]
+    do_pai: dict[int | None, list[DeviceLink]] = {}
+    for s in strings:
+        do_pai.setdefault(s.pai_id, []).append(s)
     por_no = {n["id"]: n for n in nos or []}
     planos = [{"gd": x.id, "tipo": x.tipo, "nome": x.nome, "pai": x.pai_id, "ativo": bool(x.ativo),
                "node_id": x.mp_node_id} for x in linhas]
@@ -152,7 +162,9 @@ def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, a
         nome=x.nome, ativo=bool(x.ativo),
         no=NoOut(id=x.mp_node_id, rotulo=_rotulo(por_no[x.mp_node_id]) if x.mp_node_id in por_no else None)
         if x.mp_node_id is not None else None,
-        sugestao=SugestaoOut(**sugestoes[x.id]) if x.id in sugestoes else None) for x in linhas}
+        sugestao=SugestaoOut(**sugestoes[x.id]) if x.id in sugestoes else None,
+        strings=len(do_pai.get(x.id, [])),
+        strings_ligadas=sum(1 for s in do_pai.get(x.id, []) if s.mp_node_id is not None)) for x in linhas}
     raizes = []
     for x in linhas:                                       # a árvore: quem tem pai nesta usina vai debaixo dele
         (saida[x.pai_id].filhos if x.pai_id in saida else raizes).append(saida[x.id])
@@ -163,7 +175,7 @@ def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, a
                            for n in sugestao_de_nos.candidatos(nos or [], tipo)] for tipo in sugestao_de_nos.TIPO_DO_NO},
         meuplano_lido=nos is not None, aviso=aviso,
         ligados=sum(1 for x in linhas if x.mp_node_id is not None), total=len(linhas),
-        strings=sum(1 for x in todas if x.tipo == "string" and x.ativo))
+        strings=len(strings), strings_ligadas=sum(1 for s in strings if s.mp_node_id is not None))
 
 
 @router.get("/usinas/{usina_id}/dispositivos", response_model=EquipamentosOut)
@@ -198,6 +210,10 @@ async def gravar_nos_da_usina(usina_id: int, body: NosIn, db: Session = Depends(
                                                          "uma posição só.")
     if any(gd not in linhas for gd in gds):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Equipamento não encontrado nesta usina")
+    if any(linhas[gd].tipo not in sugestao_de_nos.TIPO_DO_NO for gd in gds):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Aqui se ligam só transformadores e inversores: o nó de cada string é ligado pelo meuPlano, "
+                            "sozinho. Nada foi gravado.")
     nos, aviso = await _nos_do_meuplano(db, gerente, usina)
     por_no = {n["id"]: n for n in nos or []}
     pedido = {linhas[d.gd]: d.node_id for d in body.nos}

@@ -1050,6 +1050,9 @@ export type DispositivoDaUsina = {
   /** O nó que o GS propõe, com o porquê. Nunca é gravado sem a pessoa salvar. */
   sugestao: { node_id: number; base: 'numero' | 'ordem'; motivo: string } | null
   filhos: DispositivoDaUsina[]
+  /** Só no inversor: as strings dele no índice e quantas já têm nó no meuPlano (ligadas pela rotina de lá). */
+  strings: number
+  strings_ligadas: number
 }
 
 export type NoCandidato = { id: number; codigo: string; nome: string; local: string; rotulo: string }
@@ -1067,8 +1070,9 @@ export type EquipamentosDaUsina = {
   /** `ligados` e `total` contam os transformadores e os inversores (os que a tela mostra). */
   ligados: number
   total: number
-  /** Quantas strings a usina tem no índice: a tela só diz o número. */
+  /** As strings da usina no índice e quantas já têm nó no meuPlano: a tela só diz a conta. */
   strings: number
+  strings_ligadas: number
 }
 
 export const equipamentosDaUsina = (id: number) =>

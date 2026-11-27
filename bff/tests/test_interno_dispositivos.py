@@ -259,11 +259,9 @@ def test_as_strings_entram_como_posicao_debaixo_do_inversor_delas(http, c, db):
     r = http.put(_url(c["of"]), headers=_h(), json={"dispositivos": [
         {"ref": "inv:99", "tipo": "inversor", "nome": "INV12", "pai": None}, strings[0]]})
     assert r.status_code == 409 and "str:99:1" in r.json()["detail"]
-    # o meuPlano lê as strings na lista dele (sem nó) e ainda não liga nó a string
+    # o meuPlano lê as strings na lista dele, sem nó enquanto a rotina de lá não as liga
     do_mp = http.get(_url(c["ib"]), headers=_h("meuplano")).json()["dispositivos"]
     assert [d for d in do_mp if d["tipo"] == "string"][0]["meuplano"] is None and len(do_mp) == 6
-    r = http.put(_nos(c["ib"]), headers=_h("meuplano"), json={"nos": [{"ref": "str:99:1", "node_id": 800}]})
-    assert r.status_code == 422 and "não serve" in r.json()["detail"]
 
 
 def test_a_lista_de_uma_usina_grande_cabe_num_pedido(http, c, db):
@@ -380,7 +378,10 @@ def test_os_pares_que_nao_servem_sao_422_e_nada_e_gravado(http, c, db):
     for pares, frase in (([("inv:99", 555), ("inv:99", 556)], "mais de uma vez"),         # a mesma referência
                          ([("inv:99", 555), ("inv:100", 555)], "nó 555 veio mais de uma vez"),
                          ([("inversor:99", 555)], "não serve"),                           # a grafia do meuPlano
-                         ([("str:99:1", 555)], "não serve"), ([("INV:99", 555)], "não serve")):
+                         ([("str:99", 555)], "não serve"), ([("rele:9", 555)], "não serve"),
+                         ([("str:99:1", 555), ("str:99:1", 556)], "mais de uma vez"),
+                         ([("str:99:1", 555), ("inv:99", 555)], "nó 555 veio mais de uma vez"),
+                         ([("INV:99", 555)], "não serve")):
         r = _ligar(http, c["ib"], *pares)
         assert r.status_code == 422 and frase in r.json()["detail"], (pares, r.text)
     assert _ligar(http, c["ib"], ("inv:99", None), ("inv:100", None)).status_code == 200    # dois nulos não são repetição
@@ -430,6 +431,41 @@ def test_ligar_nos_so_grava_o_no_e_entra_no_registro(http, c, db):
     assert [(a.acao, a.gs_user_id, a.login, a.ok) for a in linhas] == [("gravacao", None, "", True)]
     assert linhas[0].motivo == (f"meuPlano gravou pela porta da máquina (só a chave, sem pessoa): os nós dele nos "
                                 f"dispositivos da usina GS-{ib.id:04d}")
+
+
+def test_o_meuplano_liga_os_nos_das_strings_pela_mesma_rota(http, c, db):
+    """As strings são ligadas pela rotina do meuPlano, num pedido só delas, com as regras de qualquer dispositivo."""
+    ib = c["ib"]
+    lista = [*LISTA, {"ref": "inv:100", "tipo": "inversor", "nome": "INV13", "pai": "trafo:41"}]
+    for vaga in (99, 100):
+        lista += [{"ref": f"str:{vaga}:{n}", "tipo": "string", "nome": f"String {n}", "pai": f"inv:{vaga}"}
+                  for n in range(1, 201)]
+    assert http.put(_url(ib), headers=_h(), json={"dispositivos": lista}).json()["criados"] == 403
+    pares = [(f"str:{vaga}:{n}", vaga * 1000 + n) for vaga in (99, 100) for n in range(1, 201)]
+    r = _ligar(http, ib, *pares, ("str:99:900", 5), ("str:777:1", 6))               # 400 pares de uma vez
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert (corpo["ligados"], corpo["desligados"], corpo["sem_dispositivo"]) == (400, 0, ["str:99:900", "str:777:1"])
+    assert (_nos_de(corpo)["str:99:7"], _nos_de(corpo)["str:100:200"], _nos_de(corpo)["inv:99"]) == (99007, 100200, None)
+    antes = _marcas(db)
+    assert _ligar(http, ib, *pares).json()["ligados"] == 0 and _marcas(db) == antes   # de novo: nada muda
+    # não vir não é desligar; o nó nulo desliga; a troca cabe num pedido
+    corpo = _ligar(http, ib, ("str:99:1", None), ("str:99:2", 99003), ("str:99:3", 99002)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (2, 1)
+    assert [_nos_de(corpo)[r_] for r_ in ("str:99:1", "str:99:2", "str:99:3", "str:99:4")] == [None, 99003, 99002, 99004]
+    # um nó é uma posição só, seja de string ou de inversor: recusa o pedido inteiro, com o nó e o código
+    gd = db.query(DeviceLink).filter_by(mw_ref="str:99:4").one().id
+    for par in (("str:99:1", 99004), ("inv:99", 99004)):
+        r = _ligar(http, ib, par, ("str:99:5", 77))
+        assert r.status_code == 409 and "nó 99004" in r.json()["detail"] and f"GD-{gd:06d}" in r.json()["detail"], r.text
+    assert db.query(DeviceLink).filter_by(mw_ref="str:99:5").one().mp_node_id == 99005
+    # a string que sai da lista do meuWatt fica ausente e guarda o nó; o histórico da usina não ganha linha por string
+    http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA})
+    assert db.query(DeviceLink).filter_by(mw_ref="str:100:9").one().mp_node_id == 100009
+    from app.models.plant import HistoricoDaUsina
+    assert db.query(HistoricoDaUsina).count() == 0
+    linhas = db.query(AcessoGS).filter_by(sistema="meuplano", acao="gravacao").all()
+    assert len(linhas) == 1 and "os nós dele nos dispositivos" in linhas[0].motivo   # uma linha por usina e hora
 
 
 if __name__ == "__main__":

@@ -39,7 +39,8 @@ REFERENCIA = {"meuwatt": "mw_ref", "meuplano": "mp_node_id", "termovision": "tv_
 PADRAO = {"trafo": "transformador", "inv": "inversor"}
 #: a STRING (fase 4, 27/11/2026) também é uma POSIÇÃO: a do inversor mais o número da entrada CC em que ela está
 #: ligada (`str:<inverter_slots.id>:<n>`; o número tem buracos, não é a ordem numa lista). O pai é o inversor dela
-#: (`inv:<o mesmo slot>`), na mesma lista. Os nós do meuPlano ainda não se ligam a strings (`PADRAO` segue sem ela).
+#: (`inv:<o mesmo slot>`), na mesma lista. O nó do meuPlano de cada string é ligado pela rotina do meuPlano, que conhece a
+#: árvore dele (`ligar_nos`, também com `str:`); a pessoa só casa transformadores e inversores (`PADRAO`).
 GRAFIA = {"meuwatt": {**PADRAO, "str": "string"}}
 #: o que vem depois do prefixo: um número só, a não ser na string (a vaga e a entrada)
 _NUMERO = r"\d+"
@@ -68,11 +69,16 @@ class NoDeOutro(ValueError):
         self.no, self.gd = no, gd
 
 
+def _padrao(grafia: dict[str, str]) -> re.Pattern:
+    """A referência de qualquer um dos prefixos de `grafia`; o grupo que casou diz qual (`lastgroup`)."""
+    return re.compile("|".join(f"(?P<{p}>{p}:{_CORPO.get(p, _NUMERO)})" for p in grafia))
+
+
 def conferir(quem: str, itens: list[dict]) -> None:
     """A lista inteira antes de gravar: a grafia da referência, o tipo que ela diz, sem repetida, e o pai na própria
     lista. A string tem de ter por pai o inversor DELA (`str:111:7` debaixo de `inv:111`)."""
     grafia = GRAFIA[quem]
-    padrao = re.compile("|".join(f"(?P<{p}>{p}:{_CORPO.get(p, _NUMERO)})" for p in grafia))
+    padrao = _padrao(grafia)
     refs = set()
     for d in itens:
         ref = d["ref"]
@@ -156,14 +162,16 @@ def todos_da_usina(db: Session, usina: PlantLink) -> list[DeviceLink]:
 
 
 def conferir_nos(itens: list[dict]) -> None:
-    """Os pares (referência, nó) antes de gravar: a grafia padrão, sem referência repetida e sem nó repetido."""
-    padrao = re.compile(rf"({'|'.join(PADRAO)}):\d+")
+    """Os pares (referência, nó) antes de gravar: a grafia padrão (também a da string), sem referência repetida e
+    sem nó repetido."""
+    grafia = GRAFIA["meuwatt"]
+    padrao = _padrao(grafia)
     refs, nos = set(), set()
     for d in itens:
         ref, no = d["ref"], d["node_id"]
         if padrao.fullmatch(ref) is None:
-            raise ListaInvalida(f"A referência {ref!r} não serve: use " + " ou ".join(f"{p}:<número>" for p in PADRAO)
-                                + ".")
+            raise ListaInvalida(f"A referência {ref!r} não serve: use "
+                                + " ou ".join(_EXEMPLO.get(p, f"{p}:<número>") for p in grafia) + ".")
         if ref in refs:
             raise ListaInvalida(f"A referência {ref} veio mais de uma vez.")
         if no is not None and no in nos:

@@ -82,8 +82,9 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
         </p>
         {data.strings ? (
           <p className="text-sm text-fraco">
-            {data.strings.toLocaleString('pt-BR')} {data.strings === 1 ? 'string' : 'strings'} no índice. Elas não
-            aparecem nesta lista.
+            {data.strings_ligadas.toLocaleString('pt-BR')} de {data.strings.toLocaleString('pt-BR')}{' '}
+            {data.strings === 1 ? 'string ligada' : 'strings ligadas'}. Quem liga as strings é o meuPlano, sozinho: aqui
+            só aparece a conta de cada inversor.
           </p>
         ) : null}
       </div>
@@ -188,6 +189,11 @@ function Linha({
           {d.nome} <span className="text-fraco">· {d.tipo_rotulo}</span>
         </label>
         <p className="text-xs text-fraco mono">{d.codigo}</p>
+        {d.strings ? (
+          <p className={`text-xs ${d.strings_ligadas < d.strings ? 'text-ambar-texto' : 'text-fraco'}`}>
+            {d.strings_ligadas}/{d.strings} {d.strings === 1 ? 'string ligada' : 'strings ligadas'}
+          </p>
+        ) : null}
         {d.ativo ? null : (
           <p className="mt-1">
             <Selo tom="sem-dados">fora da última lista do meuWatt</Selo>

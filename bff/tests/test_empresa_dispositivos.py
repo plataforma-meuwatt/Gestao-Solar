@@ -209,16 +209,32 @@ def test_as_strings_so_entram_na_contagem(db, c):
                            pai_id=inv.id, ativo=n != 9) for n in (1, 2, 7, 9)])
     db.commit()
     out = _ver(db, c)
-    assert (out.strings, out.ligados, out.total) == (3, 0, 9)                     # a ausente não conta
+    assert (out.strings, out.strings_ligadas, out.ligados, out.total) == (3, 0, 0, 9)   # a ausente não conta
     assert {d.tipo for d in _todos(out)} == {"transformador", "inversor"}
-    assert next(d for d in _todos(out) if d.nome == "INV12").filhos == []
+    inv12 = next(d for d in _todos(out) if d.nome == "INV12")
+    assert (inv12.filhos, inv12.strings, inv12.strings_ligadas) == ([], 3, 0)
+    assert all((d.strings, d.strings_ligadas) == (0, 0) for d in _todos(out) if d.nome != "INV12")
     assert set(out.candidatos) == {"transformador", "inversor"}
+    # a rotina do meuPlano ligou duas (e a ausente, que não entra na conta): a conta vem do índice, sem ler o meuPlano
+    for ref, no in (("str:90:1", 9001), ("str:90:7", 9007), ("str:90:9", 9009)):
+        db.query(DeviceLink).filter_by(mw_ref=ref).one().mp_node_id = no
+    db.commit()
+    c["estado"]["erro"] = ConnectionError("fora")
+    out = _ver(db, c)
+    inv12 = next(d for d in _todos(out) if d.nome == "INV12")
+    assert (out.strings, out.strings_ligadas, inv12.strings, inv12.strings_ligadas) == (3, 2, 3, 2)
+    assert (out.ligados, out.total) == (0, 9)             # o "x de y ligados" segue sendo dos trafos e inversores
+    c["estado"]["erro"] = None
     out = _gravar(db, c, (c["tr1"], 101))
-    assert (out.strings, out.ligados, out.total) == (3, 1, 9)
+    assert (out.strings, out.strings_ligadas, out.ligados, out.total) == (3, 2, 1, 9)
+    # a pessoa não liga nem desliga string por aqui
     s = db.query(DeviceLink).filter_by(mw_ref="str:90:1").one()
-    with pytest.raises(HTTPException) as e:                                       # e não se liga nó a string por aqui
-        _gravar(db, c, (s, 111))
-    assert e.value.status_code == 400 and s.mp_node_id is None
+    for no in (111, None):
+        with pytest.raises(HTTPException) as e:
+            _gravar(db, c, (c["tr2"], 201), (s, no))
+        assert e.value.status_code == 400 and "só transformadores e inversores" in e.value.detail
+    db.expire_all()
+    assert s.mp_node_id == 9001 and c["tr2"].mp_node_id is None
 
 
 def test_sem_o_meuplano_os_dispositivos_vem_assim_mesmo(db, c):

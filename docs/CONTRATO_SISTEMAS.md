@@ -185,8 +185,11 @@ meuPlano chama, na usina ligada a ele. Até 5000 pares:
 {"nos": [{"ref": "inv:99", "node_id": 555}, {"ref": "trafo:41", "node_id": 500}]}
 ```
 
-`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>`; quem chama traduz a dele; a `str:` ainda não entra
-aqui: é 422, e o nó da string será ligado numa fase seguinte). `node_id` é o `nodes.id` do
+`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>` e, desde 27/11/2026, `str:<vaga>:<n>`; quem chama
+traduz a dele). **As strings são ligadas AUTOMATICAMENTE** (o dono, 27/11/2026): quem casa a string com o nó é a rotina
+do meuPlano, que conhece a árvore dele, e manda os pares por esta rota (num pedido só de strings, uns 400 por usina);
+ninguém confirma uma a uma, e a tela do gerente só mostra a conta por inversor. As regras são as mesmas de qualquer
+dispositivo. `node_id` é o `nodes.id` do
 meuPlano (inteiro ≥ 1) ou nulo; o campo é obrigatório. Tudo numa transação, e o mesmo pedido de novo não muda nada:
 
 - O dispositivo DESTA usina com aquela `ref` (ativo ou ausente) ganha o nó; o `atualizado_em` só anda se mudou.

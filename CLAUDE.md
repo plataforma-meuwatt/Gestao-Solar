@@ -596,7 +596,9 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   colunas do meuPlano e do TermoVision já existem. A grafia padrão da referência do meuWatt é a do mapa:
   `trafo:<id>`, `inv:<slot_id>` e, desde 27/11/2026, a STRING `str:<slot_id>:<n>` (a posição = a vaga do inversor
   mais o número da ENTRADA CC, com buracos; o pai é o `inv:` da mesma vaga, na mesma lista; centenas por usina, por
-  isso a tela Equipamentos só diz quantas são e o nó delas ainda não se liga); depois `rele:<id>`.
+  isso a tela Equipamentos só mostra a conta por inversor, "ligadas/no índice"; o nó de cada string é ligado
+  AUTOMATICAMENTE pela rotina do meuPlano, na rota dos nós, sem confirmação de pessoa e sem linha de histórico por
+  string: a pessoa só casa transformadores e inversores); depois `rele:<id>`.
   ⛔ **É a segunda exceção, e a única ESCRITA,
   do "a chave sozinha não fala por ninguém"** (`PUT`/`GET /interno/maquina/usinas/{gs}/dispositivos`): o sistema grava
   só as referências DELE de dispositivo, só nas usinas ligadas a ele, nunca um dado da usina e nunca a referência de
