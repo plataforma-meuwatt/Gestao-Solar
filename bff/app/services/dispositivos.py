@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.models.plant import DeviceLink, PlantLink
 
 #: os tipos que o índice conhece. Hoje entram os dois primeiros; os outros estão reservados (fases seguintes)
-TIPOS = ("transformador", "inversor", "string", "rele", "estacao", "medidor", "stringbox", "gateway")
+TIPOS = ("transformador", "inversor", "string", "rele", "estacao", "medidor_ssu", "medidor", "stringbox", "gateway")
 #: a coluna do dispositivo que guarda a referência dele em cada sistema
 REFERENCIA = {"meuwatt": "mw_ref", "meuplano": "mp_node_id", "termovision": "tv_ref"}
 #: a grafia aceita de cada sistema nesta fase: o prefixo da referência e o tipo que ele diz. Sistema fora daqui ainda
@@ -41,7 +41,14 @@ PADRAO = {"trafo": "transformador", "inv": "inversor"}
 #: ligada (`str:<inverter_slots.id>:<n>`; o número tem buracos, não é a ordem numa lista). O pai é o inversor dela
 #: (`inv:<o mesmo slot>`), na mesma lista. O nó do meuPlano de cada string é ligado pela rotina do meuPlano, que conhece a
 #: árvore dele (`ligar_nos`, também com `str:`); a pessoa só casa transformadores e inversores (`PADRAO`).
-GRAFIA = {"meuwatt": {**PADRAO, "str": "string"}}
+#: O RELÉ de proteção (`rele:<relays.id>`), a ESTAÇÃO meteorológica (`est:<weather_stations.id>`) e o MEDIDOR da
+#: fronteira (`ssu:<ssu_readers.id>`, tipo `medidor_ssu`; o `medidor` sozinho segue reservado para o medidor de
+#: energia) entraram em 27/11/2026. O relé e a estação ficam debaixo de um transformador ou soltos (da usina); o
+#: medidor da fronteira é sempre da usina (`PAI`).
+GRAFIA = {"meuwatt": {**PADRAO, "str": "string", "rele": "rele", "est": "estacao", "ssu": "medidor_ssu"}}
+#: de que prefixo pode ser o pai de cada um, quando há pai (vazio = não tem pai). Quem não está aqui (o transformador
+#: e o inversor) segue com a regra de sempre: qualquer dispositivo da mesma lista. A string tem a regra dela.
+PAI = {"rele": ("trafo",), "est": ("trafo",), "ssu": ()}
 #: o que vem depois do prefixo: um número só, a não ser na string (a vaga e a entrada)
 _NUMERO = r"\d+"
 _CORPO = {"str": r"\d+:\d+"}
@@ -98,6 +105,11 @@ def conferir(quem: str, itens: list[dict]) -> None:
             dele = "inv:" + d["ref"].split(":")[1]
             if d["pai"] != dele:
                 raise ListaInvalida(f"O pai da string {d['ref']} tem de ser o inversor dela ({dele}), na mesma lista.")
+        prefixo = d["ref"].split(":")[0]
+        if prefixo in PAI and d["pai"] is not None and d["pai"].split(":")[0] not in PAI[prefixo]:
+            raise ListaInvalida(
+                f"O pai de {d['ref']} ({d['pai']}) tem de ser um transformador (trafo:<número>) da mesma lista, ou nenhum."
+                if PAI[prefixo] else f"{d['ref']} é da usina: não tem pai (veio {d['pai']}).")
 
 
 def da_usina(db: Session, quem: str, usina: PlantLink) -> list[DeviceLink]:

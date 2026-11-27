@@ -237,6 +237,33 @@ def test_as_strings_so_entram_na_contagem(db, c):
     assert s.mp_node_id == 9001 and c["tr2"].mp_node_id is None
 
 
+def test_reles_estacoes_e_medidores_vem_em_grupos_so_para_ler(db, c):
+    per, tr1 = c["per"], c["tr1"]
+    antes = _ver(db, c)
+    assert antes.grupos == []                              # sem nenhum, a tela é a de sempre
+    db.add_all([DeviceLink(plant_link_id=per.id, tipo="rele", nome="Relé do TR-01", mw_ref="rele:5", pai_id=tr1.id,
+                           mp_node_id=101),
+                DeviceLink(plant_link_id=per.id, tipo="rele", nome="Relé geral", mw_ref="rele:6", ativo=False),
+                DeviceLink(plant_link_id=per.id, tipo="estacao", nome="Estação 1", mw_ref="est:3", mp_node_id=70000),
+                DeviceLink(plant_link_id=per.id, tipo="medidor_ssu", nome="Fronteira", mw_ref="ssu:9")])
+    db.commit()
+    out = _ver(db, c)
+    assert [(g.tipo, g.titulo, [(i.nome, i.ativo, i.debaixo_de, i.no.model_dump() if i.no else None) for i in g.itens])
+            for g in out.grupos] == [
+        ("rele", "Relés de proteção", [("Relé do TR-01", True, "TR-01", {"id": 101, "rotulo": "Trafo do Skid 1 · TR-S1 · Skid 1"}),
+                                       ("Relé geral", False, None, None)]),
+        ("estacao", "Estações meteorológicas", [("Estação 1", True, None, {"id": 70000, "rotulo": None})]),
+        ("medidor_ssu", "Medidores da fronteira", [("Fronteira", True, None, None)])]
+    assert out.grupos[0].itens[0].codigo.startswith("GD-")
+    # as linhas de transformador e inversor, a conta de ligados e a das strings não mudam com eles
+    assert (out.dispositivos, out.candidatos, out.total, out.strings) == (antes.dispositivos, antes.candidatos, 9, 0)
+    assert out.ligados == antes.ligados == 0
+    rele = db.query(DeviceLink).filter_by(mw_ref="rele:6").one()
+    with pytest.raises(HTTPException) as e:                # só para ler: a pessoa não liga o nó deles
+        _gravar(db, c, (rele, 111))
+    assert e.value.status_code == 400 and "só transformadores e inversores" in e.value.detail
+
+
 def test_sem_o_meuplano_os_dispositivos_vem_assim_mesmo(db, c):
     c["invs"][0].mp_node_id = 111
     db.commit()

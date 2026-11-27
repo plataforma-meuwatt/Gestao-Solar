@@ -598,7 +598,10 @@ logs de acessos de cada pessoa". O plano inteiro está no documento "Plano Casa 
   mais o número da ENTRADA CC, com buracos; o pai é o `inv:` da mesma vaga, na mesma lista; centenas por usina, por
   isso a tela Equipamentos só mostra a conta por inversor, "ligadas/no índice"; o nó de cada string é ligado
   AUTOMATICAMENTE pela rotina do meuPlano, na rota dos nós, sem confirmação de pessoa e sem linha de histórico por
-  string: a pessoa só casa transformadores e inversores); depois `rele:<id>`.
+  string: a pessoa só casa transformadores e inversores). Também desde 27/11/2026: o relé (`rele:<id>`), a estação
+  (`est:<id>`, tipo `estacao`) e o medidor da fronteira (`ssu:<id>`, tipo `medidor_ssu`); o relé e a estação ficam
+  debaixo de um `trafo:` ou soltos, o medidor é sempre da usina (`dispositivos.PAI`); na tela Equipamentos vêm em
+  grupos, só para ler.
   ⛔ **É a segunda exceção, e a única ESCRITA,
   do "a chave sozinha não fala por ninguém"** (`PUT`/`GET /interno/maquina/usinas/{gs}/dispositivos`): o sistema grava
   só as referências DELE de dispositivo, só nas usinas ligadas a ele, nunca um dado da usina e nunca a referência de

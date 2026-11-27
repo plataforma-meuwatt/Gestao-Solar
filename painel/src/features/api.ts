@@ -1073,6 +1073,20 @@ export type EquipamentosDaUsina = {
   /** As strings da usina no índice e quantas já têm nó no meuPlano: a tela só diz a conta. */
   strings: number
   strings_ligadas: number
+  /** Os relés, as estações e os medidores da fronteira, cada tipo no grupo dele: só para ler. */
+  grupos: {
+    tipo: string
+    titulo: string
+    itens: {
+      gd: number
+      codigo: string
+      nome: string
+      ativo: boolean
+      /** O transformador em que está, quando está em um. */
+      debaixo_de: string | null
+      no: { id: number; rotulo: string | null } | null
+    }[]
+  }[]
 }
 
 export const equipamentosDaUsina = (id: number) =>

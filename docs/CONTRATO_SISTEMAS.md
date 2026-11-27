@@ -110,8 +110,8 @@ número ao lado do registro dele. Nesta fase: transformadores e inversores, vind
 - **O número:** `gd` (inteiro), mostrado como `GD-000017` (seis dígitos; o da usina é `GS-0006`). É para sempre: o
   dispositivo que some e volta tem o mesmo.
 - **A grafia padrão da referência do meuWatt** é a que as rotas do mapa já usam: `trafo:<transformers.id>` e
-  `inv:<inverter_slots.id>` e, desde 27/11/2026, `str:<inverter_slots.id>:<n>` (a string; abaixo). Na fase
-  seguinte, `rele:<relay_id>`. Esta é A grafia: em
+  `inv:<inverter_slots.id>` e, desde 27/11/2026, `str:<inverter_slots.id>:<n>` (a string; abaixo),
+  `rele:<relays.id>`, `est:<weather_stations.id>` e `ssu:<ssu_readers.id>` (abaixo). Esta é A grafia: em
   minúsculas, sem espaço, com o número de lá. Os tipos: `transformador` e `inversor` agora; reservados `string`,
   `rele`, `estacao`, `medidor`, `stringbox` e `gateway`.
 - **Quem chama:** o servidor do sistema, com `X-Sistema` + `X-Chave-Interna` (sem pessoa). A LISTA (`PUT
@@ -148,9 +148,21 @@ A lista INTEIRA das posições daquela usina no sistema que chama (até 5000):
   número tem buracos (não é a ordem numa lista). `{"ref": "str:111:7", "tipo": "string", "nome": "String 7",
   "pai": "inv:111"}`: o `pai` é obrigatório e é o inversor DELA (a mesma vaga da `ref`), na mesma lista. A string que
   sai da entrada fica ausente, como qualquer dispositivo; a mesma entrada de novo volta com o mesmo `gd`.
-- **422:** a `ref` fora da grafia (`^(trafo|inv):\d+$` ou `^str:\d+:\d+$`), o `tipo` que não é o da `ref`, a `ref`
-  repetida, o `pai` que não está na lista (ou é o próprio), a string cujo `pai` não é o `inv:` da vaga dela; nesses o
-  `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
+- **O relé, a estação e o medidor da fronteira** (27/11/2026), na mesma lista inteira, com as mesmas garantias (um
+  `gd` para sempre, ausente quando não vem, nunca apagado):
+
+  | `tipo` | `ref` | `pai` |
+  |---|---|---|
+  | `rele` | `rele:<relays.id>` | o `trafo:<id>` dele, na mesma lista, ou nulo (o relé da usina) |
+  | `estacao` | `est:<weather_stations.id>` | o `trafo:<id>` dela, na mesma lista, ou nulo |
+  | `medidor_ssu` | `ssu:<ssu_readers.id>` | sempre nulo (é da usina) |
+
+  A lista SEM nenhum deles segue valendo como antes. Quando eles já existem no GS e a lista vem sem eles, ficam
+  ausentes, como qualquer dispositivo que não veio. O `medidor` (sem `_ssu`) segue reservado para o medidor de energia.
+- **422:** a `ref` fora da grafia (`^(trafo|inv|rele|est|ssu):\d+$` ou `^str:\d+:\d+$`; qualquer outro prefixo), o
+  `tipo` que não é o da `ref`, a `ref` repetida, o `pai` que não está na lista (ou é o próprio), a string cujo `pai`
+  não é o `inv:` da vaga dela, o relé ou a estação cujo `pai` não é um `trafo:`, o medidor da fronteira com `pai`;
+  nesses o `detail` é uma frase. O corpo fora do formato (campo a mais, `nome`
   vazio, mais de 5000) é o 422 do FastAPI, com `detail` em lista.
 
 Resposta **200**:
@@ -185,7 +197,8 @@ meuPlano chama, na usina ligada a ele. Até 5000 pares:
 {"nos": [{"ref": "inv:99", "node_id": 555}, {"ref": "trafo:41", "node_id": 500}]}
 ```
 
-`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>` e, desde 27/11/2026, `str:<vaga>:<n>`; quem chama
+`ref` é a do meuWatt na grafia PADRÃO (`trafo:<n>`, `inv:<n>` e, desde 27/11/2026, `str:<vaga>:<n>`, `rele:<n>`,
+`est:<n>` e `ssu:<n>`; quem chama
 traduz a dele). **As strings são ligadas AUTOMATICAMENTE** (o dono, 27/11/2026): quem casa a string com o nó é a rotina
 do meuPlano, que conhece a árvore dele, e manda os pares por esta rota (num pedido só de strings, uns 400 por usina);
 ninguém confirma uma a uma, e a tela do gerente só mostra a conta por inversor. As regras são as mesmas de qualquer

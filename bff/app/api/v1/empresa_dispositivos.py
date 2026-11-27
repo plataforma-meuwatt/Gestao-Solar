@@ -34,6 +34,9 @@ router = APIRouter(prefix="/api/empresa", tags=["empresa · O&M"])
 
 #: os tipos de dispositivo que têm nó candidato no meuPlano (os outros aparecem na árvore, sem lista)
 ROTULO_DO_TIPO = {"transformador": "Transformador", "inversor": "Inversor"}
+#: os outros equipamentos do índice que a tela mostra, cada tipo no grupo dele, só para ler (o nó de cada um chega pela
+#: rotina do meuPlano, como o das strings)
+GRUPOS = {"rele": "Relés de proteção", "estacao": "Estações meteorológicas", "medidor_ssu": "Medidores da fronteira"}
 
 
 class NoOut(BaseModel):
@@ -79,6 +82,24 @@ class CandidatoOut(BaseModel):
     rotulo: str
 
 
+class OutroOut(BaseModel):
+    gd: int
+    codigo: str
+    nome: str
+    ativo: bool
+    #: o nome do transformador em que está, quando está em um (o relé e a estação); nulo = da usina
+    debaixo_de: str | None = None
+    #: o nó do meuPlano, quando a rotina de lá já o ligou
+    no: NoOut | None = None
+
+
+class GrupoOut(BaseModel):
+    tipo: str
+    #: o nome do grupo na tela ("Relés de proteção")
+    titulo: str
+    itens: list[OutroOut]
+
+
 class EquipamentosOut(BaseModel):
     usina_id: int
     usina_codigo: str
@@ -97,6 +118,8 @@ class EquipamentosOut(BaseModel):
     #: de cada uma é ligado pela rotina do meuPlano, não pela pessoa)
     strings: int = 0
     strings_ligadas: int = 0
+    #: os relés, as estações e os medidores da fronteira, cada tipo no grupo dele, só para ler (o grupo vazio não vem)
+    grupos: list[GrupoOut] = []
 
 
 class NoDoDispositivoIn(BaseModel):
@@ -168,6 +191,11 @@ def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, a
     raizes = []
     for x in linhas:                                       # a árvore: quem tem pai nesta usina vai debaixo dele
         (saida[x.pai_id].filhos if x.pai_id in saida else raizes).append(saida[x.id])
+    nome_de = {x.id: x.nome for x in todas}
+    grupos = [GrupoOut(tipo=tipo, titulo=titulo, itens=[OutroOut(
+        gd=x.id, codigo=codigo_do_dispositivo(x.id), nome=x.nome, ativo=bool(x.ativo), debaixo_de=nome_de.get(x.pai_id),
+        no=NoOut(id=x.mp_node_id, rotulo=_rotulo(por_no[x.mp_node_id]) if x.mp_node_id in por_no else None)
+        if x.mp_node_id is not None else None) for x in todas if x.tipo == tipo]) for tipo, titulo in GRUPOS.items()]
     return EquipamentosOut(
         usina_id=usina.id, usina_codigo=codigo(usina.id), usina_nome=usina.nome, dispositivos=raizes,
         candidatos={tipo: [CandidatoOut(id=n["id"], codigo=str(n.get("code") or ""),
@@ -175,7 +203,8 @@ def _montar(usina: PlantLink, todas: list[DeviceLink], nos: list[dict] | None, a
                            for n in sugestao_de_nos.candidatos(nos or [], tipo)] for tipo in sugestao_de_nos.TIPO_DO_NO},
         meuplano_lido=nos is not None, aviso=aviso,
         ligados=sum(1 for x in linhas if x.mp_node_id is not None), total=len(linhas),
-        strings=len(strings), strings_ligadas=sum(1 for s in strings if s.mp_node_id is not None))
+        strings=len(strings), strings_ligadas=sum(1 for s in strings if s.mp_node_id is not None),
+        grupos=[g for g in grupos if g.itens])
 
 
 @router.get("/usinas/{usina_id}/dispositivos", response_model=EquipamentosOut)
@@ -212,8 +241,8 @@ async def gravar_nos_da_usina(usina_id: int, body: NosIn, db: Session = Depends(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Equipamento não encontrado nesta usina")
     if any(linhas[gd].tipo not in sugestao_de_nos.TIPO_DO_NO for gd in gds):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            "Aqui se ligam só transformadores e inversores: o nó de cada string é ligado pelo meuPlano, "
-                            "sozinho. Nada foi gravado.")
+                            "Aqui se ligam só transformadores e inversores: o nó dos outros (strings, relés, estações, "
+                            "medidores) é ligado pelo meuPlano, sozinho. Nada foi gravado.")
     nos, aviso = await _nos_do_meuplano(db, gerente, usina)
     por_no = {n["id"]: n for n in nos or []}
     pedido = {linhas[d.gd]: d.node_id for d in body.nos}

@@ -151,6 +151,36 @@ export function Equipamentos({ usinaId }: { usinaId: number }) {
         </div>
       ) : null}
       {salvar.error ? <Erro>{mensagemDeErro(salvar.error)}</Erro> : null}
+
+      {/* Os outros equipamentos do índice, só para ler: o nó de cada um chega pelo meuPlano, como o das strings. */}
+      {data.grupos.map((g) => (
+        <div key={g.tipo} className="border-t border-borda pt-3">
+          <p className="rotulo-campo">
+            {g.titulo} ({g.itens.length})
+          </p>
+          <ul className="grid gap-2">
+            {g.itens.map((i) => (
+              <li key={i.gd} className="grid gap-1 sm:grid-cols-2 sm:items-start">
+                <div className="min-w-0">
+                  <p className="text-sm text-forte">
+                    {i.nome}
+                    {i.debaixo_de ? <span className="text-fraco"> · {i.debaixo_de}</span> : null}
+                  </p>
+                  <p className="text-xs text-fraco mono">{i.codigo}</p>
+                  {i.ativo ? null : (
+                    <p className="mt-1">
+                      <Selo tom="sem-dados">fora da última lista do meuWatt</Selo>
+                    </p>
+                  )}
+                </div>
+                <p className="text-sm text-rotulo min-w-0">
+                  {i.no ? (i.no.rotulo ?? `nó ${i.no.id} do meuPlano`) : <span className="text-fraco">sem nó no meuPlano</span>}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   )
 }

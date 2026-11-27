@@ -180,7 +180,16 @@ def test_so_a_usina_ligada_ao_sistema_que_chama(http, c, db):
 def test_a_lista_que_nao_serve_e_422_e_nada_e_gravado(http, c, db):
     tr, inv = LISTA
     ruins = [
-        ([{**tr, "ref": "rele:41"}], "não serve"),                                   # grafia de fase futura
+        ([{**tr, "ref": "gw:41"}], "não serve"), ([{**tr, "ref": "medidor:41"}], "não serve"),   # prefixo que não há
+        ([{**tr, "ref": "rele:41"}], "é de rele"),                                  # o relé que veio como trafo
+        ([{"ref": "ssu:1", "tipo": "rele", "nome": "Fronteira", "pai": None}], "é de medidor_ssu"),
+        ([{"ref": "est:1", "tipo": "estacao_solar", "nome": "Estação", "pai": None}], "é de estacao"),
+        ([tr, inv, {"ref": "rele:5", "tipo": "rele", "nome": "Relé", "pai": "inv:99"}], "tem de ser um transformador"),
+        ([tr, inv, {"ref": "est:5", "tipo": "estacao", "nome": "Estação", "pai": "inv:99"}], "tem de ser um transformador"),
+        ([tr, {"ref": "rele:5", "tipo": "rele", "nome": "Relé", "pai": "trafo:42"}], "mesma lista"),    # o trafo não veio
+        ([tr, {"ref": "ssu:5", "tipo": "medidor_ssu", "nome": "Fronteira", "pai": "trafo:41"}], "não tem pai"),
+        ([{"ref": "rele:5", "tipo": "rele", "nome": "Geral", "pai": None},
+          {"ref": "rele:6", "tipo": "rele", "nome": "Relé", "pai": "rele:5"}], "tem de ser um transformador"),
         ([{**tr, "ref": "str:41"}], "não serve"), ([{**tr, "ref": "str:41:2:3"}], "não serve"),
         ([{**tr, "ref": "str:41:2"}], "é de string"),                               # a string que veio como trafo
         ([tr, inv, {"ref": "str:99:7", "tipo": "inversor", "nome": "String 7", "pai": "inv:99"}], "é de string"),
@@ -378,7 +387,7 @@ def test_os_pares_que_nao_servem_sao_422_e_nada_e_gravado(http, c, db):
     for pares, frase in (([("inv:99", 555), ("inv:99", 556)], "mais de uma vez"),         # a mesma referência
                          ([("inv:99", 555), ("inv:100", 555)], "nó 555 veio mais de uma vez"),
                          ([("inversor:99", 555)], "não serve"),                           # a grafia do meuPlano
-                         ([("str:99", 555)], "não serve"), ([("rele:9", 555)], "não serve"),
+                         ([("str:99", 555)], "não serve"), ([("gw:9", 555)], "não serve"),
                          ([("str:99:1", 555), ("str:99:1", 556)], "mais de uma vez"),
                          ([("str:99:1", 555), ("inv:99", 555)], "nó 555 veio mais de uma vez"),
                          ([("INV:99", 555)], "não serve")):
@@ -466,6 +475,72 @@ def test_o_meuplano_liga_os_nos_das_strings_pela_mesma_rota(http, c, db):
     assert db.query(HistoricoDaUsina).count() == 0
     linhas = db.query(AcessoGS).filter_by(sistema="meuplano", acao="gravacao").all()
     assert len(linhas) == 1 and "os nós dele nos dispositivos" in linhas[0].motivo   # uma linha por usina e hora
+
+
+# --------------------------------------------------------------------------- relés, estações e medidores da fronteira
+OUTROS = [{"ref": "rele:5", "tipo": "rele", "nome": "Relé do TR-01", "pai": "trafo:41"},
+          {"ref": "rele:6", "tipo": "rele", "nome": "Relé geral", "pai": None},
+          {"ref": "est:3", "tipo": "estacao", "nome": "Estação 1", "pai": "trafo:41"},
+          {"ref": "est:4", "tipo": "estacao", "nome": "Estação da usina"},
+          {"ref": "ssu:9", "tipo": "medidor_ssu", "nome": "Fronteira", "pai": None}]
+
+
+def test_reles_estacoes_e_medidores_entram_como_qualquer_dispositivo(http, c, db):
+    ib = c["ib"]
+    # a lista de HOJE (sem os tipos novos) segue igual: nada fica ausente por eles não virem
+    hoje = http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA}).json()
+    assert (hoje["criados"], hoje["alterados"], hoje["ausentes"]) == (2, 0, 0)
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": [*OUTROS, *LISTA]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (5, 0, 0)
+    por = _por(corpo)
+    assert por["trafo:41"] == _por(hoje)["trafo:41"] and por["inv:99"] == _por(hoje)["inv:99"]
+    tr = por["trafo:41"]["gd"]
+    assert [(r, por[r]["tipo"], por[r]["pai"]) for r in ("rele:5", "rele:6", "est:3", "est:4", "ssu:9")] == [
+        ("rele:5", "rele", tr), ("rele:6", "rele", None), ("est:3", "estacao", tr), ("est:4", "estacao", None),
+        ("ssu:9", "medidor_ssu", None)]
+    assert por["ssu:9"] == {"gd": por["ssu:9"]["gd"], "codigo": f"GD-{por['ssu:9']['gd']:06d}", "tipo": "medidor_ssu",
+                            "nome": "Fronteira", "pai": None, "ativo": True, "meuwatt": {"ref": "ssu:9"}}
+    antes = _marcas(db)
+    assert http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS]}).json() == {**corpo, "criados": 0}
+    assert _marcas(db) == antes
+    # a leitura dos dois sistemas os traz com o tipo
+    assert http.get(_url(ib), headers=_h()).json() == {"dispositivos": corpo["dispositivos"]}
+    do_mp = {d["meuwatt"]["ref"]: d for d in http.get(_url(ib), headers=_h("meuplano")).json()["dispositivos"]}
+    assert (do_mp["rele:6"]["tipo"], do_mp["est:3"]["tipo"], do_mp["ssu:9"]["tipo"], do_mp["ssu:9"]["meuplano"]) == (
+        "rele", "estacao", "medidor_ssu", None)
+    # o que não veio fica ausente (nunca é apagado) e volta com o mesmo número; o relé muda de transformador
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": [
+        *LISTA, {**OUTROS[0], "pai": None}, OUTROS[1], OUTROS[3]]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 1, 2)
+    assert [(_por(corpo)[r]["ativo"], _por(corpo)[r]["gd"]) for r in ("est:3", "ssu:9")] == [
+        (False, por["est:3"]["gd"]), (False, por["ssu:9"]["gd"])]
+    assert _por(corpo)["rele:5"]["pai"] is None and db.query(DeviceLink).count() == 7
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS]}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 3, 0)
+    assert _por(corpo)["ssu:9"] == por["ssu:9"]
+    # a mesma referência em outra usina recusa o pedido inteiro
+    r = http.put(_url(c["of"]), headers=_h(), json={"dispositivos": [OUTROS[4]]})
+    assert r.status_code == 409 and "ssu:9" in r.json()["detail"]
+    # e a lista de hoje, de novo, põe os tipos novos como ausentes como poria qualquer um que não veio
+    corpo = http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA}).json()
+    assert (corpo["criados"], corpo["alterados"], corpo["ausentes"]) == (0, 0, 5)
+
+
+def test_o_meuplano_liga_o_no_do_rele_da_estacao_e_do_medidor(http, c, db):
+    ib = c["ib"]
+    http.put(_url(ib), headers=_h(), json={"dispositivos": [*LISTA, *OUTROS]})
+    corpo = _ligar(http, ib, ("rele:5", 801), ("est:3", 802), ("ssu:9", 803), ("rele:77", 804)).json()
+    assert (corpo["ligados"], corpo["desligados"], corpo["sem_dispositivo"]) == (3, 0, ["rele:77"])
+    assert [_nos_de(corpo)[r] for r in ("rele:5", "est:3", "ssu:9", "rele:6")] == [801, 802, 803, None]
+    # um nó é uma posição só; não vir não é desligar; o nó nulo desliga
+    r = _ligar(http, ib, ("rele:6", 803))
+    assert r.status_code == 409 and "nó 803" in r.json()["detail"]
+    corpo = _ligar(http, ib, ("ssu:9", None)).json()
+    assert (corpo["ligados"], corpo["desligados"]) == (0, 1)
+    assert [_nos_de(corpo)[r] for r in ("rele:5", "est:3", "ssu:9")] == [801, 802, None]
+    # o ausente na lista do meuWatt guarda o nó
+    http.put(_url(ib), headers=_h(), json={"dispositivos": LISTA})
+    assert db.query(DeviceLink).filter_by(mw_ref="rele:5").one().mp_node_id == 801
 
 
 if __name__ == "__main__":
