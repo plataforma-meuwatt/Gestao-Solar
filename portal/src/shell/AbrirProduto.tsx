@@ -26,7 +26,7 @@ import { ExternalLink, Loader2 } from 'lucide-react'
 import { api, mensagemDeErro } from '@/lib/api'
 
 /** Os sistemas que esta conta abre pelo GS (`GET /api/sessao/produtos`): entram pelo passe, no endereço de entrada deles. */
-type DaSessao = { produto: string; nome: string; url: string }
+type DaSessao = { produto: string; nome: string; url: string; direto?: boolean }
 
 export function AbrirProduto() {
   const [abrindo, setAbrindo] = useState<string | null>(null)
@@ -40,7 +40,9 @@ export function AbrirProduto() {
   const lista = daSessao ?? []
   if (lista.length === 0) return null
 
-  async function abrir(produto: string, entrada: string) {
+  async function abrir(produto: string, entrada: string, direto?: boolean) {
+    // o helper: só abre (http, pela VPN); a pessoa entra lá com o login do GS
+    if (direto) { window.open(entrada, '_blank', 'noopener,noreferrer'); return }
     setAbrindo(produto)
     setErro(null)
     try {
@@ -57,11 +59,11 @@ export function AbrirProduto() {
 
   return (
     <div className="flex items-center gap-1.5">
-      {lista.map((o) => ({ chave: o.produto, nome: o.nome, entrada: o.url })).map((p) => (
+      {lista.map((o) => ({ chave: o.produto, nome: o.nome, entrada: o.url, direto: o.direto })).map((p) => (
         <button
           key={p.chave}
           type="button"
-          onClick={() => void abrir(p.chave, p.entrada)}
+          onClick={() => void abrir(p.chave, p.entrada, p.direto)}
           disabled={abrindo !== null}
           title={`Abrir o ${p.nome} já conectado`}
           className="flex items-center gap-1.5 rounded-campo border border-borda px-2.5 py-1.5 text-xs font-semibold text-fraco transition-colors hover:border-ambar/40 hover:text-corpo disabled:opacity-50"

@@ -244,3 +244,22 @@ def test_a_sessao_de_entrada_do_gestao_solar_so_gera_assercao(db, publica):
     db.commit()
     with pytest.raises(HTTPException):
         sessao.entrar_no_produto("termovision", sessao.EntrarIn(volta="https://meuguarda.gestao.solar/"), cred, db)
+
+
+def test_o_botao_do_helper_so_abre_a_pagina_e_so_para_quem_tem_o_helper_liberado(db):
+    """O helper é http só pela VPN: o botão abre a página (sem passe) e a pessoa entra lá com o login do GS, que passa
+    pelo meuWatt. Por isso só aparece com o helper liberado no bot E a conta ligada ao meuWatt."""
+    from app.models.user import VinculoProduto
+    g = _conta(db, "gerente.helper", Perfil.GESTOR_EMPRESA)
+    cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=security.criar_token_empresa(g.id, g.empresa_id)[0])
+    g.bot_helper = True
+    db.commit()
+    assert "helper" not in [p.produto for p in sessao.produtos_da_sessao(cred, db)]   # sem o meuWatt, o helper recusa
+    db.add(VinculoProduto(gs_user_id=g.id, produto="meuwatt", usuario_remoto_id="9", token_cifrado="x"))
+    db.commit()
+    db.refresh(g)
+    h = sessao.produtos_da_sessao(cred, db)[-1]
+    assert (h.produto, h.url, h.direto) == ("helper", "http://helper.gestao.solar/", True)
+    g.bot_helper = False
+    db.commit()
+    assert "helper" not in [p.produto for p in sessao.produtos_da_sessao(cred, db)]

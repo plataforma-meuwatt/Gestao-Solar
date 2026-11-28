@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     meuguarda_web_url: str = "https://meuguarda.gestao.solar"
     #: O SITE do TermoVision (o botão "TermoVision" dos portões: a entrada pelo Gestão Solar fica em `/entrar.html`).
     termovision_web_url: str = "https://termovision.gestao.solar"
+    #: O helper de produção (VM do Gabriel, só pela VPN, http): o botão "helper" dos portões só ABRE a página; a pessoa
+    #: entra lá com o "Entrar com o Gestão Solar" dele. Sem passe: o passe não viaja por http.
+    helper_web_url: str = "http://helper.gestao.solar"
     #: a API do TermoVision que o bot chama ("Processar <usina>", provisionar a conta)
     termovision_api_url: str = "https://app.termovision.tech"
     #: o endereço público desta API (o TermoVision só avisa a hosts que ele conhece)

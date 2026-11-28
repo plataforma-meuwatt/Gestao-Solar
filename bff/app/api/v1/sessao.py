@@ -411,6 +411,8 @@ class ProdutoOut(BaseModel):
     nome: str
     #: A `volta` para o `POST /api/sessao/{produto}`: a entrada do produto.
     url: str
+    #: Abrir a `url` DIRETO, sem passe (o helper: http só pela VPN; a pessoa entra lá com o login do GS).
+    direto: bool = False
 
 
 @router.get("/produtos", response_model=list[ProdutoOut])
@@ -420,8 +422,14 @@ def produtos_da_sessao(
     """Os produtos que esta pessoa abre pelo Gestão Solar (o gerente liberou): os botões dos três portões."""
     usuario, _ = _conta_do_portao(cred, db, request)
     entradas = _entradas()
+    from app.core.config import get_settings
     from app.services.login_externo import liberados
-    return [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p]) for p in liberados(usuario)]
+    lista = [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p]) for p in liberados(usuario)]
+    # o helper: para quem o gerente liberou o helper no bot e que entra no meuWatt (o helper loga pelo meuWatt)
+    if usuario.bot_helper and usuario.entra_no_meuwatt:
+        lista.append(ProdutoOut(produto="helper", nome="helper", url=f"{get_settings().helper_web_url.rstrip('/')}/",
+                                direto=True))
+    return lista
 
 
 class EntrarIn(BaseModel):
