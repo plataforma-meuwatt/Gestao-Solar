@@ -3332,5 +3332,47 @@
       "grafico_de_series"
     ],
     "origem": "log #756"
+  },
+  {
+    "frase": "Você tem a senha do cadeado de Pirapozinho?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #781"
+  },
+  {
+    "frase": "Qual a senha do logger de bady 2?",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #783"
+  },
+  {
+    "frase": "me mostre o diagrama unifilar de porto ferreira",
+    "espera": [
+      "diagrama_unifilar"
+    ],
+    "origem": "log #692"
+  },
+  {
+    "frase": "me mostre a posição da string 10 do inversor  do skid 2, de ouro fino por exemplo",
+    "espera": [
+      "mapa_equipamento"
+    ],
+    "origem": "log #717"
+  },
+  {
+    "frase": "Vc pode comparar em uma tabela simples a medicao dos inversores de cada skid vs o medido pelo medidor particular?",
+    "espera": [
+      "balanco_energia"
+    ],
+    "origem": "log #534"
+  },
+  {
+    "frase": "Crie uma pendência em Pereiras.\nSubstância dos nobreaks da cabine.\nLançamento do cabo do quadro de distribuição do inversor híbrido até a cabine",
+    "espera": [
+      "manutencao"
+    ],
+    "origem": "log #722"
   }
 ]
