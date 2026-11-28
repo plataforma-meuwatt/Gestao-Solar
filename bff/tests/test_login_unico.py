@@ -133,7 +133,7 @@ def test_usinas_do_passe_so_da_empresa_da_sessao_e_a_plataforma_ve_todas(db, usi
 
 def test_entrada_unica_dos_quatro_e_sem_endereco_morto():
     from app.api.v1.sessao import VOLTAS, _volta
-    assert sorted(VOLTAS) == ["meuguarda", "meuplano", "meuwatt", "termovision"]
+    assert sorted(VOLTAS) == ["helper", "meuguarda", "meuplano", "meuwatt", "termovision"]
     assert _volta("meuplano", "https://app.meuplano.solar/os/1") == "https://app.meuplano.solar/os/1"
     for ruim in ("https://meuplano.meuwatt.com.br/", "http://app.meuplano.solar/", "https://app.meuwatt.com.br.x.io/"):
         with pytest.raises(HTTPException):

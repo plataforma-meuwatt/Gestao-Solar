@@ -636,7 +636,7 @@ export const trocarDePapel = (apelido: string, senha?: string, codigo?: string) 
   sessao.post<TrocaDePapel>('/trocar', { apelido, senha: senha ?? null, codigo: codigo || null }).then((r) => r.data)
 
 /** Os produtos que esta sessão abre pelo Gestão Solar (o gerente liberou): os botões do menu. */
-export type ProdutoDaSessao = { produto: string; nome: string; url: string; direto?: boolean }
+export type ProdutoDaSessao = { produto: string; nome: string; url: string }
 export const produtosDaSessao = () => sessao.get<ProdutoDaSessao[]>('/produtos').then((r) => r.data)
 
 /** A volta é deste sistema? 204 = é; 400 = não é (a página nem manda ao login). */

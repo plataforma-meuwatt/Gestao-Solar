@@ -357,12 +357,13 @@ def _volta(produto: str, volta: str) -> str:
     nome, hosts = VOLTAS[produto]
     try:
         u = urlsplit((volta or "").strip())
-        valida = u.scheme == "https" and u.netloc in hosts
+        from app.services.login_externo import SO_HTTP
+        valida = (u.scheme == "https" or (u.scheme == "http" and produto in SO_HTTP)) and u.netloc in hosts
     except ValueError:
         valida = False
     if not valida:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Esse endereço de volta não é do {nome}.")
-    return urlunsplit(("https", u.netloc, u.path or "/", u.query, ""))
+    return urlunsplit((u.scheme, u.netloc, u.path or "/", u.query, ""))
 
 
 def _escopo(cred: HTTPAuthorizationCredentials | None) -> str | None:
@@ -403,6 +404,11 @@ def _passe(db: Session, usuario: User, produto: str, portao: str, empresa: int |
     if produto in login_externo.SO_LOGIN:
         meuplano_id = login_externo.meuplano_id_de(db, usuario.id) if produto == login_externo.TERMOVISION else None
         return login_externo.assinar_login(usuario, produto, portao, empresa, meuplano_id, db=db)
+    if produto == "helper":                                # o helper entra pelo meuWatt: o passe é o do meuWatt
+        if not usuario.bot_helper:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "O helper não está liberado para você. Peça ao gerente da O&M (oem-gs › Bot do WhatsApp).")
+        return login_externo.assinar(usuario, Produto.MEUWATT, db=db, empresa_id=empresa)
     return login_externo.assinar(usuario, Produto(produto), db=db, empresa_id=empresa)
 
 
@@ -411,8 +417,6 @@ class ProdutoOut(BaseModel):
     nome: str
     #: A `volta` para o `POST /api/sessao/{produto}`: a entrada do produto.
     url: str
-    #: Abrir a `url` DIRETO, sem passe (o helper: http só pela VPN; a pessoa entra lá com o login do GS).
-    direto: bool = False
 
 
 @router.get("/produtos", response_model=list[ProdutoOut])
@@ -427,8 +431,7 @@ def produtos_da_sessao(
     lista = [ProdutoOut(produto=p, nome=VOLTAS[p][0], url=entradas[p]) for p in liberados(usuario)]
     # o helper: para quem o gerente liberou o helper no bot e que entra no meuWatt (o helper loga pelo meuWatt)
     if usuario.bot_helper and usuario.entra_no_meuwatt:
-        lista.append(ProdutoOut(produto="helper", nome="helper", url=f"{get_settings().helper_web_url.rstrip('/')}/",
-                                direto=True))
+        lista.append(ProdutoOut(produto="helper", nome="helper", url=f"{get_settings().helper_web_url.rstrip('/')}/"))
     return lista
 
 

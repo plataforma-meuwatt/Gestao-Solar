@@ -766,9 +766,8 @@ function AbrirProdutos() {
   const { data } = useQuery({ queryKey: ['sessao', 'produtos'], queryFn: produtosDaSessao, staleTime: 300_000 })
   const [erro, setErro] = React.useState('')
   if (!data?.length) return null
-  const abrir = (produto: string, url: string, direto?: boolean) => {
+  const abrir = (produto: string, url: string) => {
     setErro('')
-    if (direto) { window.open(url, '_blank', 'noopener,noreferrer'); return }   // o helper: entra lá com o login do GS
     entrarNoProduto(produto, url)
       .then((r) => window.open(r.url, '_blank', 'noopener,noreferrer'))
       .catch((e) => setErro(mensagemDeErro(e)))
@@ -776,7 +775,7 @@ function AbrirProdutos() {
   return (
     <div className="mb-1.5 grid gap-1.5">
       {data.map((p) => (
-        <button key={p.produto} onClick={() => abrir(p.produto, p.url, p.direto)} className="btn-fantasma w-full">
+        <button key={p.produto} onClick={() => abrir(p.produto, p.url)} className="btn-fantasma w-full">
           <ExternalLink size={13} />
           Abrir o {p.nome}
         </button>

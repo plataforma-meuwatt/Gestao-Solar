@@ -133,7 +133,13 @@ SISTEMAS: dict[str, tuple[str, frozenset[str]]] = {
     "termovision": ("TermoVision", frozenset({"termovision.gestao.solar", "app.termovision.tech",
                                               "termovision.meuwatt.com.br", "termovision.meuplano.solar",
                                               "meuguarda.gestao.solar", "meuguarda.177.153.20.214.sslip.io"})),
+    # o helper (botão dos portões, 28/11/2026): recebe o passe do meuWatt (ele troca no `/auth/gestao-solar` de lá)
+    "helper": ("helper", frozenset({"helper.gestao.solar", "dev-helper.gestao.solar"})),
 }
+
+#: Os que só existem em http (só pela VPN, sem certificado ainda). O passe vai no FRAGMENTO, que não sai do navegador;
+#: o helper já recebia essa mesma asserção por http no formulário "Entrar com o Gestão Solar" dele.
+SO_HTTP = frozenset({"helper"})
 
 
 def entradas() -> dict[str, str]:

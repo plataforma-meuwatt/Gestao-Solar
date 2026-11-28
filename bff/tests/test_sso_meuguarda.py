@@ -246,9 +246,9 @@ def test_a_sessao_de_entrada_do_gestao_solar_so_gera_assercao(db, publica):
         sessao.entrar_no_produto("termovision", sessao.EntrarIn(volta="https://meuguarda.gestao.solar/"), cred, db)
 
 
-def test_o_botao_do_helper_so_abre_a_pagina_e_so_para_quem_tem_o_helper_liberado(db):
-    """O helper é http só pela VPN: o botão abre a página (sem passe) e a pessoa entra lá com o login do GS, que passa
-    pelo meuWatt. Por isso só aparece com o helper liberado no bot E a conta ligada ao meuWatt."""
+def test_o_botao_do_helper_leva_o_passe_do_meuwatt_e_so_para_quem_tem_o_helper_liberado(db, publica):
+    """O helper entra pelo meuWatt: o botão só aparece com o helper liberado no bot E a conta ligada ao meuWatt, e leva
+    o passe do meuWatt para o endereço http dele (só pela VPN)."""
     from app.models.user import VinculoProduto
     g = _conta(db, "gerente.helper", Perfil.GESTOR_EMPRESA)
     cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=security.criar_token_empresa(g.id, g.empresa_id)[0])
@@ -259,7 +259,15 @@ def test_o_botao_do_helper_so_abre_a_pagina_e_so_para_quem_tem_o_helper_liberado
     db.commit()
     db.refresh(g)
     h = sessao.produtos_da_sessao(cred, db)[-1]
-    assert (h.produto, h.url, h.direto) == ("helper", "http://helper.gestao.solar/", True)
+    assert (h.produto, h.url) == ("helper", "http://helper.gestao.solar/")
+    url = sessao.entrar_no_produto("helper", sessao.EntrarIn(volta=h.url), cred, db).url
+    assert url.startswith("http://helper.gestao.solar/#assercao=")
+    assert jwt.get_unverified_claims(url.split("#assercao=")[1])["aud"] == "meuwatt"
+    for volta in ("http://outro.gestao.solar/", "http://meuguarda.gestao.solar/"):   # http só para o helper
+        with pytest.raises(HTTPException):
+            sessao.entrar_no_produto("helper" if "outro" in volta else "meuguarda", sessao.EntrarIn(volta=volta), cred, db)
     g.bot_helper = False
     db.commit()
     assert "helper" not in [p.produto for p in sessao.produtos_da_sessao(cred, db)]
+    with pytest.raises(HTTPException):                     # e o passe também não sai
+        sessao.entrar_no_produto("helper", sessao.EntrarIn(volta=h.url), cred, db)
